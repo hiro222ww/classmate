@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getOrCreateDeviceId } from "@/lib/device";
 
@@ -47,7 +47,10 @@ function isBlTopic(t: Topic) {
 const AGE_MIN = 18; // とりあえず成人だけ
 const AGE_MAX = 130;
 
-export default function ClassFilterPage() {
+/**
+ * useSearchParams() を使う本体は、Suspense の内側に置く必要がある（Next.js のビルド要件）
+ */
+function ClassFilterPageInner() {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -57,8 +60,8 @@ export default function ClassFilterPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
 
   // 世界観・テーマ（任意）
-  const [worldKey, setWorldKey] = useState<string>(sp.get("world") || "all");
-  const [topicKey, setTopicKey] = useState<string>(sp.get("topic") || "all");
+  const [worldKey, setWorldKey] = useState<string>(() => sp.get("world") || "all");
+  const [topicKey, setTopicKey] = useState<string>(() => sp.get("topic") || "all");
 
   // 年齢レンジ（固定プリセットなし）
   const [minAge, setMinAge] = useState<number>(() => {
@@ -321,7 +324,15 @@ export default function ClassFilterPage() {
         </button>
         <button
           onClick={apply}
-          style={{ flex: 1, padding: 12, borderRadius: 12, border: "none", background: "#111", color: "#fff", fontWeight: 800 }}
+          style={{
+            flex: 1,
+            padding: 12,
+            borderRadius: 12,
+            border: "none",
+            background: "#111",
+            color: "#fff",
+            fontWeight: 800,
+          }}
         >
           適用してクラスを見る
         </button>
@@ -385,5 +396,17 @@ function TopicSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+/**
+ * ✅ これが “page” の default export
+ * useSearchParams() を使う Inner を Suspense で包む
+ */
+export default function Page() {
+  return (
+    <Suspense fallback={<main style={{ padding: 16, maxWidth: 900, margin: "0 auto" }}>読み込み中...</main>}>
+      <ClassFilterPageInner />
+    </Suspense>
   );
 }
