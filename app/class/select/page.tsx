@@ -86,72 +86,6 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Modal({
-  open,
-  title,
-  children,
-  onClose,
-}: {
-  open: boolean;
-  title: string;
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  if (!open) return null;
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.35)",
-        display: "grid",
-        placeItems: "center",
-        padding: 16,
-        zIndex: 50,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(560px, 100%)",
-          background: "#fff",
-          color: "#111",
-          borderRadius: 18,
-          border: "1px solid #e5e5e5",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            padding: 16,
-            borderBottom: "1px solid #eee",
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <strong style={{ fontSize: 16 }}>{title}</strong>
-          <button
-            onClick={onClose}
-            style={{
-              border: "1px solid #ddd",
-              background: "#fff",
-              borderRadius: 10,
-              padding: "6px 10px",
-              cursor: "pointer",
-            }}
-          >
-            閉じる
-          </button>
-        </div>
-        <div style={{ padding: 16 }}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
 export default function ClassSelectPage() {
   const [deviceId, setDeviceId] = useState("");
 
@@ -175,9 +109,7 @@ export default function ClassSelectPage() {
   const [needTopicOpen, setNeedTopicOpen] = useState(false);
   const [pendingClass, setPendingClass] = useState<ClassRow | null>(null);
 
-  // ✅ 管理UIを表示する条件：
-  // - ふだんは出さない
-  // - URLに ?admin=1 を付けた時だけ出す（devでもprodでも）
+  // ✅ 管理UI：?admin=1 の時だけ表示
   const [showAdminUI, setShowAdminUI] = useState(false);
   useEffect(() => {
     try {
@@ -202,6 +134,7 @@ export default function ClassSelectPage() {
 
     (async () => {
       try {
+        // entitlements
         const er = await fetch("/api/user/entitlements", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -231,6 +164,7 @@ export default function ClassSelectPage() {
           topic_plan: topicPlan,
         });
 
+        // prefs get
         const pr = await fetch("/api/user/match-prefs", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -242,10 +176,14 @@ export default function ClassSelectPage() {
         }
 
         await reloadCatalog();
+      } catch (e: any) {
+        console.error(e);
+        alert(e?.message ?? "load_failed");
       } finally {
         setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------- billing ----------
@@ -346,11 +284,6 @@ export default function ClassSelectPage() {
   const isDefaultClass = (c: ClassRow) =>
     c.name === "ホームルーム" || c.name === "フリークラス";
 
-  const defaultClass = useMemo(() => {
-    const maxA = Math.max(prefs.min_age, prefs.max_age);
-    return classes.find((c) => isDefaultClass(c) && !(c.is_sensitive && maxA < 18)) ?? null;
-  }, [classes, prefs]);
-
   const boards = useMemo(
     () => filtered.filter((c) => !isDefaultClass(c)).sort((a, b) => a.name.localeCompare(b.name)),
     [filtered]
@@ -365,13 +298,19 @@ export default function ClassSelectPage() {
     return need <= topicPlan;
   }
 
+  // ✅ ボード参加用（課金チェックあり）
   async function doTransfer(c: ClassRow) {
-    if (!deviceId) return;
+    if (!deviceId) {
+      alert("deviceId の取得中です。数秒後にもう一度押してください。");
+      return;
+    }
+
     setBusy(true);
     try {
       if (!hasTopicAccess(c)) {
         setPendingClass(c);
         setNeedTopicOpen(true);
+        alert(`このボードは ${tierName(requiredMonthlyPriceForClass(c))} 以上が必要です`);
         return;
       }
 
@@ -386,24 +325,35 @@ export default function ClassSelectPage() {
         if (j?.error === "class_slots_limit") {
           setPendingClass(c);
           setNeedSlotsOpen(true);
+          alert("クラス枠が足りません");
           return;
         }
         alert(j?.error ?? "failed");
         return;
       }
 
-      window.location.href = "/call";
+      // ✅ room 経由
+      window.location.href = "/room?autojoin=1";
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "transfer_failed");
     } finally {
       setBusy(false);
     }
   }
 
-  async function enterDefault() {
-    if (!defaultClass) {
-      alert("入口が見つかりません");
+  // ✅ 「今すぐ入る」＝無料テーマ（クラス/課金/transferに依存しない入口）
+  async function enterQuickFreeTheme() {
+    if (loading) return;
+
+    if (!deviceId) {
+      alert("deviceId の取得中です。数秒後にもう一度押してください。");
       return;
     }
-    await doTransfer(defaultClass);
+
+    // 入口は常に「無料テーマ」に固定
+    // RoomClient 側で topic=free を優先して join するようにする（次の作業）
+    window.location.href = "/room?autojoin=1&mode=quick&topic=free";
   }
 
   function BoardCard({ c }: { c: ClassRow }) {
@@ -435,7 +385,7 @@ export default function ClassSelectPage() {
 
         <button
           onClick={() => doTransfer(c)}
-          disabled={busy || loading}
+          disabled={busy || loading || !deviceId}
           style={{
             width: "100%",
             padding: "10px 12px",
@@ -444,7 +394,7 @@ export default function ClassSelectPage() {
             background: locked ? "#f3f3f3" : "#111",
             color: locked ? "#111" : "#fff",
             fontWeight: 900,
-            cursor: busy || loading ? "not-allowed" : "pointer",
+            cursor: busy || loading || !deviceId ? "not-allowed" : "pointer",
           }}
         >
           {locked ? `参加（要：${tierName(need)}以上）` : "参加する"}
@@ -466,20 +416,7 @@ export default function ClassSelectPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
           <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>世界観/テーマで絞って参加</div>
         </div>
-
-        <button
-          onClick={() => (window.location.href = "/call")}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #ccc",
-            background: "#fff",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          通話へ
-        </button>
+        {/* ✅ 右上の「通話へ」ボタンは削除 */}
       </header>
 
       <section style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -541,17 +478,17 @@ export default function ClassSelectPage() {
         </button>
       </section>
 
-      {/* 通常の入口 */}
+      {/* 通常の入口（無料テーマ） */}
       <section style={{ marginTop: 14, border: "1px solid #ddd", borderRadius: 18, padding: 16, background: "#fff" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
           <div>
             <strong style={{ fontSize: 16 }}>今すぐ入る</strong>
-            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>通常の入口</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>無料テーマ（考えずに入れる入口）</div>
           </div>
 
           <button
-            onClick={enterDefault}
-            disabled={busy || loading || !defaultClass}
+            onClick={enterQuickFreeTheme}
+            disabled={busy || loading || !deviceId}
             style={{
               padding: "12px 14px",
               borderRadius: 14,
@@ -559,8 +496,9 @@ export default function ClassSelectPage() {
               background: "#111",
               color: "#fff",
               fontWeight: 900,
-              cursor: busy || loading ? "not-allowed" : "pointer",
+              cursor: busy || loading || !deviceId ? "not-allowed" : "pointer",
               whiteSpace: "nowrap",
+              opacity: busy || loading || !deviceId ? 0.6 : 1,
             }}
           >
             入る

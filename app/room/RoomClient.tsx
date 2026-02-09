@@ -53,10 +53,21 @@ function AvatarRow({ count, capacity }: { count: number; capacity: number }) {
   );
 }
 
+// Responseを「必ず」文字列で取り出してからJSONを試す（失敗理由を潰さない）
+async function readJsonBestEffort(res: Response) {
+  const text = await res.text().catch(() => "");
+  try {
+    return { ok: res.ok, status: res.status, json: JSON.parse(text), text };
+  } catch {
+    return { ok: res.ok, status: res.status, json: null as any, text };
+  }
+}
+
 export default function RoomClient() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+  const [deviceId, setDeviceId] = useState<string>("");
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [joining, setJoining] = useState(false);
@@ -70,11 +81,31 @@ export default function RoomClient() {
   // プロフィール登録チェック（未登録なら /profile）
   useEffect(() => {
     (async () => {
-      const deviceId = getOrCreateDeviceId();
-      const res = await fetch(
-        `/api/profile?device_id=${encodeURIComponent(deviceId)}`
-      );
-      const data = res.ok ? await res.json() : null;
+      const id = getOrCreateDeviceId();
+      setDeviceId(id);
+
+      // まずはGET（今の実装に合わせる）
+      let data: Profile | null = null;
+
+      // GET: /api/profile?device_id=...
+      try {
+        const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, { cache: "no-store" });
+        const r = await readJsonBestEffort(res);
+        if (r.ok && r.json) data = r.json as Profile;
+      } catch {}
+
+      // GETがダメならPOSTで取得を試す（API側がPOST設計の場合に備える）
+      if (!data) {
+        try {
+          const res = await fetch(`/api/profile`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ deviceId: id, mode: "get" }),
+          });
+          const r = await readJsonBestEffort(res);
+          if (r.ok && r.json) data = r.json as Profile;
+        } catch {}
+      }
 
       if (!data) {
         router.replace("/profile");
@@ -94,38 +125,62 @@ export default function RoomClient() {
     setJoining(true);
 
     try {
+      // ★重要：deviceId を送る（サーバがユーザー特定やRLS回避に使える）
+      const payload = {
+        deviceId,
+        topic: "default",
+        name: profile.display_name,
+        capacity: 5,
+      };
+
       const res = await fetch("/api/session/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic: "default",
-          name: profile.display_name,
-          capacity: 5,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        setJoinError(msg || "参加に失敗しました");
+      const r = await readJsonBestEffort(res);
+
+      // デバッグを必ず表示（localでもprodでも原因が分かる）
+      setDebug(
+        JSON.stringify(
+          {
+            request: payload,
+            response: {
+              ok: r.ok,
+              status: r.status,
+              json: r.json,
+              text: r.text?.slice(0, 4000), // 長すぎると見づらいのでカット
+            },
+          },
+          null,
+          2
+        )
+      );
+
+      if (!r.ok) {
+        // JSONで error が返るならそれを優先
+        const msg =
+          (r.json && (r.json.error || r.json.message)) ||
+          (r.text && r.text.trim()) ||
+          "参加に失敗しました（/api/session/join）";
+        setJoinError(msg);
         return;
       }
 
-      const data: JoinResult = await res.json();
-      setDebug(JSON.stringify(data, null, 2));
+      const data: JoinResult = (r.json ?? {}) as JoinResult;
 
       if (!data.sessionId) {
-        setJoinError(
-          "APIの返り値に sessionId がありません（/api/session/join を確認してください）"
-        );
+        setJoinError("APIの返り値に sessionId がありません（/api/session/join を確認してください）");
         return;
       }
 
       setSessionId(data.sessionId);
-      setMemberCount(data.memberCount);
-      setCapacity(data.capacity);
+      setMemberCount(data.memberCount ?? 0);
+      setCapacity(data.capacity ?? 5);
 
       // 2人以上なら自動で通話へ（必ず sessionId 付き）
-      if (data.memberCount >= 2) {
+      if ((data.memberCount ?? 0) >= 2) {
         router.push(`/call?sessionId=${encodeURIComponent(data.sessionId)}`);
       }
     } catch (e: any) {
@@ -137,18 +192,13 @@ export default function RoomClient() {
 
   if (loading) return <p style={{ padding: 16, color: "#111" }}>確認中...</p>;
 
-  // 今はフリークラス固定（後で board 名に切り替え可）
   const title = "フリークラス";
 
   return (
     <ChalkboardRoomShell
       title={title}
       subtitle={profile ? `ようこそ、${profile.display_name} さん` : undefined}
-      lines={[
-        "無言でもOK",
-        "合わなければ移動してOK",
-        "2人以上で自動的に通話が始まります",
-      ]}
+      lines={["無言でもOK", "合わなければ移動してOK", "2人以上で自動的に通話が始まります"]}
     >
       <div style={{ display: "grid", gap: 12, color: "#111" }}>
         {joinError && (
@@ -214,16 +264,9 @@ export default function RoomClient() {
           </div>
 
           {sessionId && (
-            <div
-              style={{
-                marginTop: 12,
-                paddingTop: 12,
-                borderTop: "1px solid #eee",
-              }}
-            >
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee" }}>
               <div style={{ fontSize: 12, color: "#666" }}>
-                sessionId:{" "}
-                <span style={{ fontFamily: "monospace" }}>{sessionId}</span>
+                sessionId: <span style={{ fontFamily: "monospace" }}>{sessionId}</span>
               </div>
 
               <a
@@ -255,9 +298,11 @@ export default function RoomClient() {
               overflow: "auto",
               background: "#fff",
               color: "#111",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
             }}
           >
-{debug}
+            {debug}
           </pre>
         )}
       </div>
