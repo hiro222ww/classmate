@@ -1,70 +1,66 @@
+// app/api/class/list/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const SUPABASE_URL =
+  process.env.SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  "";
 
-async function handle() {
-  try {
-    const [worldsRes, topicsRes, classesRes] = await Promise.all([
-      supabase
-        .from("worlds")
-        .select("world_key,title,description,is_sensitive,min_age")
-        .order("min_age", { ascending: true })
-        .order("title", { ascending: true }),
+const ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  "";
 
-      supabase
-        .from("topics")
-        .select("topic_key,title,description,is_sensitive,min_age,monthly_price")
-        .order("min_age", { ascending: true })
-        .order("monthly_price", { ascending: true })
-        .order("title", { ascending: true }),
-
-      supabase
-        .from("classes")
-        .select("id,name,description,world_key,topic_key,min_age,is_sensitive,is_user_created,created_at")
-        .order("created_at", { ascending: false }),
-    ]);
-
-    if (worldsRes.error || topicsRes.error || classesRes.error) {
-      return NextResponse.json(
-        {
-          error: "db_error",
-          detail: {
-            worlds: worldsRes.error?.message ?? null,
-            topics: topicsRes.error?.message ?? null,
-            classes: classesRes.error?.message ?? null,
-          },
-        },
-        { status: 500 }
-      );
-    }
-
-    const topics = (topicsRes.data ?? []).map((t: any) => ({
-      ...t,
-      monthly_price: typeof t.monthly_price === "number" ? t.monthly_price : 0,
-    }));
-
-    return NextResponse.json({
-      worlds: worldsRes.data ?? [],
-      topics,
-      classes: classesRes.data ?? [],
-    });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "server_error", message: e?.message ?? String(e) },
-      { status: 500 }
-    );
-  }
+function bad(status: number, error: string) {
+  return NextResponse.json({ ok: false, error }, { status });
 }
 
 export async function GET() {
-  return handle();
-}
-export async function POST() {
-  return handle();
+  try {
+    if (!SUPABASE_URL) return bad(500, "SUPABASE_URL is not set");
+    if (!ANON_KEY) return bad(500, "NEXT_PUBLIC_SUPABASE_ANON_KEY is not set");
+
+    const supabase = createClient(SUPABASE_URL, ANON_KEY, {
+      auth: { persistSession: false },
+    });
+
+    // worlds
+    const { data: worlds, error: wErr } = await supabase
+      .from("worlds")
+      .select("world_key,title,description,is_sensitive,min_age")
+      .order("world_key", { ascending: true });
+
+    if (wErr) return bad(500, `worlds: ${wErr.message}`);
+
+    // topics（非表示はユーザーには出さない）
+    const { data: topics, error: tErr } = await supabase
+      .from("topics")
+      .select("topic_key,title,description,is_sensitive,min_age,monthly_price")
+      .eq("is_archived", false)
+      .order("monthly_price", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (tErr) return bad(500, `topics: ${tErr.message}`);
+
+    // classes（ボード）
+    const { data: classes, error: cErr } = await supabase
+      .from("classes")
+      .select("id,name,description,world_key,topic_key,min_age,is_sensitive,is_user_created,created_at")
+      .order("created_at", { ascending: true });
+
+    if (cErr) return bad(500, `classes: ${cErr.message}`);
+
+    return NextResponse.json({
+      ok: true,
+      worlds: worlds ?? [],
+      topics: topics ?? [],
+      classes: classes ?? [],
+    });
+  } catch (e: any) {
+    return bad(500, e?.message ?? "class list failed");
+  }
 }

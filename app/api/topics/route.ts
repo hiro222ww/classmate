@@ -1,83 +1,44 @@
-// app/api/admin/topics/route.ts
+// app/api/topics/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const SUPABASE_URL =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.SUPABASE_URL ||
+  "";
 
-function deny(msg = "forbidden") {
-  return NextResponse.json({ error: msg }, { status: 403 });
+const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+function ok(topics: any[]) {
+  return NextResponse.json({ ok: true, topics }, { status: 200 });
+}
+function ng(error: string) {
+  // “真っ白”防止：失敗でもJSONで topics:[] を返す
+  return NextResponse.json({ ok: false, error, topics: [] }, { status: 200 });
 }
 
-export async function POST(req: Request) {
+export async function GET() {
   try {
-    const body = await req.json();
+    if (!SUPABASE_URL) return ng("SUPABASE_URL is not set");
+    if (!ANON_KEY) return ng("NEXT_PUBLIC_SUPABASE_ANON_KEY is not set");
 
-    const password = String(body.password ?? "");
-    if (!process.env.ADMIN_PASSWORD) {
-      return NextResponse.json({ error: "ADMIN_PASSWORD not set" }, { status: 500 });
-    }
-    if (password !== process.env.ADMIN_PASSWORD) return deny();
+    const supabase = createClient(SUPABASE_URL, ANON_KEY, {
+      auth: { persistSession: false },
+    });
 
-    const mode = String(body.mode ?? "list");
+    const { data, error } = await supabase
+      .from("topics")
+      .select("topic_key,title,description,is_sensitive,min_age,monthly_price,is_archived,created_at")
+      .eq("is_archived", false)
+      .order("monthly_price", { ascending: true })
+      .order("created_at", { ascending: true });
 
-    if (mode === "list") {
-      const { data, error } = await supabase
-        .from("topics")
-        .select("topic_key,title,description,is_sensitive,min_age,monthly_price")
-        .order("min_age", { ascending: true })
-        .order("monthly_price", { ascending: true })
-        .order("title", { ascending: true });
-
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-      // monthly_price null対策
-      const topics = (data ?? []).map((t: any) => ({
-        ...t,
-        monthly_price: typeof t.monthly_price === "number" ? t.monthly_price : 0,
-      }));
-
-      return NextResponse.json({ topics });
-    }
-
-    if (mode === "update") {
-      const topic_key = String(body.topic_key ?? "");
-      const patch = body.patch ?? {};
-      if (!topic_key) return NextResponse.json({ error: "missing_topic_key" }, { status: 400 });
-
-      // 安全のため、許可する列だけ通す
-      const allowed: any = {};
-      if (typeof patch.title === "string") allowed.title = patch.title;
-      if (typeof patch.description === "string") allowed.description = patch.description;
-      if (typeof patch.is_sensitive === "boolean") allowed.is_sensitive = patch.is_sensitive;
-      if (Number.isFinite(patch.min_age)) allowed.min_age = Number(patch.min_age);
-
-      if (Number.isFinite(patch.monthly_price)) {
-        const mp = Number(patch.monthly_price);
-        const ok = mp === 0 || mp === 400 || mp === 800 || mp === 1200;
-        if (!ok) return NextResponse.json({ error: "invalid_monthly_price" }, { status: 400 });
-        allowed.monthly_price = mp;
-      }
-
-      const { error } = await supabase
-        .from("topics")
-        .update(allowed)
-        .eq("topic_key", topic_key);
-
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-      return NextResponse.json({ ok: true });
-    }
-
-    return NextResponse.json({ error: "unknown_mode" }, { status: 400 });
+    if (error) return ng(error.message);
+    return ok(data ?? []);
   } catch (e: any) {
-    return NextResponse.json(
-      { error: "server_error", message: e?.message ?? String(e) },
-      { status: 500 }
-    );
+    return ng(e?.message ?? "topics api failed");
   }
 }

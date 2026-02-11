@@ -1,5 +1,5 @@
 // app/page.tsx
-import Link from "next/link";
+import HomeClient from "./HomeClient";
 
 export default function HomePage() {
   return (
@@ -15,22 +15,10 @@ export default function HomePage() {
           <br />
           もっと濃い話題は <b>ボード</b> から入れます。
         </p>
+      </section>
 
-        <Link
-          href="/class/select"
-          style={{
-            display: "inline-block",
-            marginTop: 16,
-            padding: "12px 16px",
-            borderRadius: 12,
-            background: "black",
-            color: "white",
-            textDecoration: "none",
-            fontWeight: 800,
-          }}
-        >
-          はじめる（入る場所を選ぶ）
-        </Link>
+      <section style={{ marginTop: 18 }}>
+        <HomeClient />
       </section>
     </main>
   );

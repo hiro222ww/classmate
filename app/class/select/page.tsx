@@ -120,12 +120,28 @@ export default function ClassSelectPage() {
     }
   }, []);
 
+  // ✅ ここが座礁ポイントだった：
+  // topics を /api/class/list から読んでいたのをやめる
+  // ★ topics は常に /api/topics（管理画面が更新する正規ルート）を読む
   async function reloadCatalog() {
-    const r = await fetch("/api/class/list", { cache: "no-store" });
-    const j = await r.json();
-    setWorlds(j.worlds ?? []);
-    setTopics(j.topics ?? []);
-    setClasses(j.classes ?? []);
+    try {
+      // 1) worlds / classes は従来通り
+      const r = await fetch("/api/class/list", { cache: "no-store" });
+      const j = await r.json().catch(() => ({}));
+      setWorlds(j.worlds ?? []);
+      setClasses(j.classes ?? []);
+
+      // 2) topics は正規の /api/topics
+      const tr = await fetch("/api/topics", { cache: "no-store" });
+      const tj = await tr.json().catch(() => ({}));
+      setTopics(tj.topics ?? []);
+    } catch (e) {
+      console.error(e);
+      // ここで落として真っ白にしない
+      setWorlds([]);
+      setClasses([]);
+      setTopics([]);
+    }
   }
 
   useEffect(() => {
@@ -351,8 +367,6 @@ export default function ClassSelectPage() {
       return;
     }
 
-    // 入口は常に「無料テーマ」に固定
-    // RoomClient 側で topic=free を優先して join するようにする（次の作業）
     window.location.href = "/room?autojoin=1&mode=quick&topic=free";
   }
 
@@ -416,7 +430,6 @@ export default function ClassSelectPage() {
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
           <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>世界観/テーマで絞って参加</div>
         </div>
-        {/* ✅ 右上の「通話へ」ボタンは削除 */}
       </header>
 
       <section style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -539,7 +552,8 @@ export default function ClassSelectPage() {
               <option value="all">テーマ: すべて</option>
               {topics.map((t) => (
                 <option key={t.topic_key} value={t.topic_key}>
-                  {t.title} {t.is_sensitive ? "🔞" : ""} {t.monthly_price ? `（要:${tierName(t.monthly_price)}以上）` : ""}
+                  {t.title} {t.is_sensitive ? "🔞" : ""}{" "}
+                  {t.monthly_price ? `（要:${tierName(t.monthly_price)}以上）` : ""}
                 </option>
               ))}
             </select>

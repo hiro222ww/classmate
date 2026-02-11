@@ -1,59 +1,64 @@
 // app/room/RoomClient.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
+import { supabase } from "@/lib/supabaseClient";
 import { getOrCreateDeviceId } from "@/lib/device";
 
-type Profile = {
+type SessionStatusResult = {
+  ok: boolean;
+  session?: {
+    id: string;
+    topic: string;
+    status: "forming" | "active" | "closed";
+    capacity: number;
+    created_at: string;
+  };
+  members?: { display_name: string; joined_at: string }[];
+  memberCount?: number;
+  error?: string;
+};
+
+type RoomMessage = {
+  id: string;
+  session_id: string;
   device_id: string;
   display_name: string;
-  birth_date: string | null;
-  gender: string | null;
-  photo_path: string | null;
+  message: string;
+  created_at: string;
 };
 
-type JoinResult = {
-  sessionId: string;
-  status: "forming" | "active" | "closed";
-  memberCount: number;
-  capacity: number;
-};
-
-function AvatarRow({ count, capacity }: { count: number; capacity: number }) {
-  const n = Math.max(0, Math.min(count, capacity));
-  const items = Array.from({ length: capacity }, (_, i) => i);
-
-  return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      {items.map((i) => {
-        const filled = i < n;
-        return (
-          <div
-            key={i}
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 999,
-              background: filled ? "#111" : "#f0f0f0",
-              color: filled ? "#fff" : "#aaa",
-              display: "grid",
-              placeItems: "center",
-              fontWeight: 900,
-              fontSize: 12,
-            }}
-            title={filled ? "参加中" : "空き"}
-          >
-            {filled ? "●" : "○"}
-          </div>
-        );
-      })}
-    </div>
-  );
+function randomUuid(): string {
+  const c: any = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  const bytes = new Uint8Array(16);
+  c?.getRandomValues?.(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-// Responseを「必ず」文字列で取り出してからJSONを試す（失敗理由を潰さない）
+function deriveSessionIdFromUrl(): string {
+  const sp = new URLSearchParams(window.location.search);
+  const direct =
+    (sp.get("sessionId") ?? "").trim() ||
+    (sp.get("session_id") ?? "").trim() ||
+    (sp.get("session") ?? "").trim();
+
+  if (direct) return direct;
+
+  const key = "classmate_room_session_uuid";
+  const saved = sessionStorage.getItem(key);
+  if (saved) return saved;
+
+  const sid = randomUuid();
+  sessionStorage.setItem(key, sid);
+  return sid;
+}
+
 async function readJsonBestEffort(res: Response) {
   const text = await res.text().catch(() => "");
   try {
@@ -63,248 +68,257 @@ async function readJsonBestEffort(res: Response) {
   }
 }
 
+function Bubble({ mine, name, text, time }: { mine: boolean; name: string; text: string; time: string }) {
+  const bg = mine ? "#bff5a6" : "#ffffff";
+  const border = mine ? "1px solid #7fdd6b" : "1px solid #e5e7eb";
+  return (
+    <div style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+      <div style={{ maxWidth: "78%", display: "grid", gap: 4 }}>
+        {!mine ? <div style={{ fontSize: 11, fontWeight: 900, color: "#6b7280" }}>{name}</div> : null}
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 16,
+            border,
+            background: bg,
+            color: "#111",
+            fontWeight: 800,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {text}
+        </div>
+        <div style={{ fontSize: 10, color: "#9ca3af", textAlign: mine ? "right" : "left", fontWeight: 800 }}>{time}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function RoomClient() {
   const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
-  const [deviceId, setDeviceId] = useState<string>("");
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  const [joining, setJoining] = useState(false);
-  const [joinError, setJoinError] = useState("");
-  const [debug, setDebug] = useState<string>("");
-
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [memberCount, setMemberCount] = useState(0);
+  const [sessionId, setSessionId] = useState("");
+  const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
+  const [memberCount, setMemberCount] = useState(0);
+  const [members, setMembers] = useState<{ display_name: string; joined_at: string }[]>([]);
+  const [err, setErr] = useState("");
 
-  // プロフィール登録チェック（未登録なら /profile）
+  const deviceIdRef = useRef("");
+  const displayNameRef = useRef("");
+
+  const pollTimer = useRef<number | null>(null);
+
+  const [msgs, setMsgs] = useState<RoomMessage[]>([]);
+  const [draft, setDraft] = useState("");
+
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollToBottom = (smooth: boolean) => bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+
   useEffect(() => {
-    (async () => {
-      const id = getOrCreateDeviceId();
-      setDeviceId(id);
-
-      // まずはGET（今の実装に合わせる）
-      let data: Profile | null = null;
-
-      // GET: /api/profile?device_id=...
-      try {
-        const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, { cache: "no-store" });
-        const r = await readJsonBestEffort(res);
-        if (r.ok && r.json) data = r.json as Profile;
-      } catch {}
-
-      // GETがダメならPOSTで取得を試す（API側がPOST設計の場合に備える）
-      if (!data) {
-        try {
-          const res = await fetch(`/api/profile`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ deviceId: id, mode: "get" }),
-          });
-          const r = await readJsonBestEffort(res);
-          if (r.ok && r.json) data = r.json as Profile;
-        } catch {}
-      }
-
-      if (!data) {
-        router.replace("/profile");
-        return;
-      }
-
-      setProfile(data);
-      setLoading(false);
-    })();
-  }, [router]);
-
-  async function joinSession() {
-    if (!profile || joining) return;
-
-    setJoinError("");
-    setDebug("");
-    setJoining(true);
-
+    deviceIdRef.current = getOrCreateDeviceId();
     try {
-      // ★重要：deviceId を送る（サーバがユーザー特定やRLS回避に使える）
-      const payload = {
-        deviceId,
-        topic: "default",
-        name: profile.display_name,
-        capacity: 5,
-      };
-
-      const res = await fetch("/api/session/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const r = await readJsonBestEffort(res);
-
-      // デバッグを必ず表示（localでもprodでも原因が分かる）
-      setDebug(
-        JSON.stringify(
-          {
-            request: payload,
-            response: {
-              ok: r.ok,
-              status: r.status,
-              json: r.json,
-              text: r.text?.slice(0, 4000), // 長すぎると見づらいのでカット
-            },
-          },
-          null,
-          2
-        )
-      );
-
-      if (!r.ok) {
-        // JSONで error が返るならそれを優先
-        const msg =
-          (r.json && (r.json.error || r.json.message)) ||
-          (r.text && r.text.trim()) ||
-          "参加に失敗しました（/api/session/join）";
-        setJoinError(msg);
-        return;
-      }
-
-      const data: JoinResult = (r.json ?? {}) as JoinResult;
-
-      if (!data.sessionId) {
-        setJoinError("APIの返り値に sessionId がありません（/api/session/join を確認してください）");
-        return;
-      }
-
-      setSessionId(data.sessionId);
-      setMemberCount(data.memberCount ?? 0);
-      setCapacity(data.capacity ?? 5);
-
-      // 2人以上なら自動で通話へ（必ず sessionId 付き）
-      if ((data.memberCount ?? 0) >= 2) {
-        router.push(`/call?sessionId=${encodeURIComponent(data.sessionId)}`);
-      }
-    } catch (e: any) {
-      setJoinError(e?.message ?? "参加に失敗しました");
-    } finally {
-      setJoining(false);
+      displayNameRef.current =
+        localStorage.getItem("classmate_display_name") ||
+        localStorage.getItem("display_name") ||
+        "You";
+    } catch {
+      displayNameRef.current = "You";
     }
+  }, []);
+
+  useEffect(() => {
+    const sid = deriveSessionIdFromUrl();
+    setSessionId(sid);
+  }, []);
+
+  // ✅ status polling（静かに）
+  async function fetchStatus(sid: string) {
+    try {
+      const res = await fetch(`/api/session/status?sessionId=${encodeURIComponent(sid)}`, { cache: "no-store" });
+      const r = await readJsonBestEffort(res);
+      const j = (r.json ?? {}) as SessionStatusResult;
+      if (!r.ok || !j.ok) return;
+
+      const mc = Number(j.memberCount ?? (j.members?.length ?? 0));
+      const cap = Number(j.session?.capacity ?? 5);
+
+      setStatus(j.session?.status ?? "forming");
+      setCapacity(Number.isFinite(cap) && cap > 0 ? cap : 5);
+      setMembers(j.members ?? []);
+      setMemberCount(mc);
+      setErr("");
+    } catch {}
   }
 
-  if (loading) return <p style={{ padding: 16, color: "#111" }}>確認中...</p>;
+  useEffect(() => {
+    if (!sessionId) return;
+    fetchStatus(sessionId);
 
-  const title = "フリークラス";
+    if (pollTimer.current) window.clearInterval(pollTimer.current);
+    pollTimer.current = window.setInterval(() => fetchStatus(sessionId), 5000);
+
+    return () => {
+      if (pollTimer.current) window.clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    };
+  }, [sessionId]);
+
+  // 初回：メッセージ取得
+  useEffect(() => {
+    if (!sessionId) return;
+    (async () => {
+      const { data } = await supabase
+        .from("room_messages")
+        .select("id, session_id, device_id, display_name, message, created_at")
+        .eq("session_id", sessionId)
+        .order("created_at", { ascending: true })
+        .limit(200);
+      setMsgs((data ?? []) as any);
+      queueMicrotask(() => scrollToBottom(false));
+    })();
+  }, [sessionId]);
+
+  // Realtime
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const ch = supabase
+      .channel(`room_messages:${sessionId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "room_messages", filter: `session_id=eq.${sessionId}` },
+        (payload: any) => {
+          const row = payload?.new as RoomMessage;
+          if (!row?.id) return;
+          setMsgs((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
+          queueMicrotask(() => scrollToBottom(true));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [sessionId]);
+
+  const names = useMemo(() => (members ?? []).map((m) => m.display_name).filter(Boolean), [members]);
+  const filled = Math.min(names.length > 0 ? names.length : memberCount, capacity);
+
+  async function sendMessage() {
+    const text = draft.trim();
+    if (!text || !sessionId) return;
+    setDraft("");
+
+    const optimisticId = randomUuid();
+    const now = new Date().toISOString();
+
+    setMsgs((prev) => [
+      ...prev,
+      {
+        id: optimisticId,
+        session_id: sessionId,
+        device_id: deviceIdRef.current,
+        display_name: displayNameRef.current || "You",
+        message: text,
+        created_at: now,
+      },
+    ]);
+    queueMicrotask(() => scrollToBottom(true));
+
+    const { error } = await supabase.from("room_messages").insert({
+      id: optimisticId,
+      session_id: sessionId,
+      device_id: deviceIdRef.current,
+      display_name: displayNameRef.current || "You",
+      message: text,
+    });
+
+    if (error) setErr(`送信に失敗: ${error.message}`);
+  }
+
+  const goToCall = () => {
+    if (!sessionId) return;
+    const returnTo = `/room?sessionId=${encodeURIComponent(sessionId)}`;
+    router.push(`/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(returnTo)}`);
+  };
 
   return (
-    <ChalkboardRoomShell
-      title={title}
-      subtitle={profile ? `ようこそ、${profile.display_name} さん` : undefined}
-      lines={["無言でもOK", "合わなければ移動してOK", "2人以上で自動的に通話が始まります"]}
-    >
-      <div style={{ display: "grid", gap: 12, color: "#111" }}>
-        {joinError && (
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid #f5c2c7",
-              background: "#f8d7da",
-              borderRadius: 10,
-              color: "#842029",
-            }}
-          >
-            <p style={{ margin: 0, fontWeight: 900 }}>エラー</p>
-            <p style={{ margin: "6px 0 0 0" }}>{joinError}</p>
+    <ChalkboardRoomShell title="待機" subtitle={sessionId ? `セッション：${sessionId}` : undefined}>
+      <div style={{ display: "grid", gap: 12 }}>
+        {err ? (
+          <div style={{ padding: 10, border: "1px solid #f5c2c7", background: "#f8d7da", borderRadius: 10, color: "#842029" }}>
+            <p style={{ margin: 0, fontWeight: 900 }}>エラー/警告</p>
+            <p style={{ margin: "6px 0 0 0" }}>{err}</p>
           </div>
-        )}
+        ) : null}
 
-        <div
-          style={{
-            border: "1px solid #ddd",
-            borderRadius: 14,
-            padding: 12,
-            background: "#fff",
-            color: "#111",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
+        <div style={{ border: "1px solid #ddd", borderRadius: 14, padding: 12, background: "#fff" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontWeight: 900 }}>参加状況</div>
+              <div style={{ fontWeight: 900 }}>クラス</div>
               <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                参加者：<b>{memberCount}</b> / {capacity}
+                参加者：<b>{memberCount}</b> / {capacity} ・ 状態：{status === "active" ? "通話中" : status === "closed" ? "終了" : "待機"}
               </div>
             </div>
 
             <button
-              onClick={joinSession}
-              disabled={joining}
-              style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "none",
-                background: "#111",
-                color: "#fff",
-                fontWeight: 900,
-                cursor: joining ? "not-allowed" : "pointer",
-                whiteSpace: "nowrap",
-              }}
+              onClick={goToCall}
+              style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", background: "#111", color: "#fff", fontWeight: 900, cursor: "pointer" }}
             >
-              {joining ? "入室中..." : "通話に入る"}
+              通話へ
             </button>
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <AvatarRow count={memberCount} capacity={capacity} />
-          </div>
+          {/* メッセージ */}
+          <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 12, display: "flex", flexDirection: "column", minHeight: 420 }}>
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>メッセージ</div>
 
-          {sessionId && (
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee" }}>
-              <div style={{ fontSize: 12, color: "#666" }}>
-                sessionId: <span style={{ fontFamily: "monospace" }}>{sessionId}</span>
-              </div>
-
-              <a
-                href={`/call?sessionId=${encodeURIComponent(sessionId)}`}
-                style={{
-                  display: "inline-block",
-                  marginTop: 10,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  background: "#111",
-                  color: "#fff",
-                  textDecoration: "none",
-                  fontWeight: 900,
-                }}
-              >
-                通話へ進む（手動）
-              </a>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 240,
+                overflow: "auto",
+                background: "#f3f4f6",
+                border: "1px solid #e5e7eb",
+                borderRadius: 14,
+                padding: 10,
+                display: "grid",
+                gap: 10,
+              }}
+            >
+              {msgs.map((m) => {
+                const mine = m.device_id === deviceIdRef.current;
+                const t = new Date(m.created_at);
+                const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+                return <Bubble key={m.id} mine={mine} name={m.display_name} text={m.message} time={time} />;
+              })}
+              <div ref={bottomRef} />
             </div>
-          )}
-        </div>
 
-        {debug && (
-          <pre
-            style={{
-              margin: 0,
-              padding: 12,
-              border: "1px solid #ddd",
-              borderRadius: 12,
-              overflow: "auto",
-              background: "#fff",
-              color: "#111",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
-            {debug}
-          </pre>
-        )}
+            <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+                placeholder="メッセージを入力"
+                style={{ flex: 1, padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", fontWeight: 800, outline: "none" }}
+              />
+              <button
+                onClick={sendMessage}
+                style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", background: "#111", color: "#fff", fontWeight: 900, cursor: "pointer", minWidth: 86 }}
+              >
+                送信
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </ChalkboardRoomShell>
   );

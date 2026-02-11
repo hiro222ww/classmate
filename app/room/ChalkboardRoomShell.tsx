@@ -1,6 +1,8 @@
 // app/room/ChalkboardRoomShell.tsx
+"use client";
+
 import Link from "next/link";
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 type Props = {
   title: string;
@@ -8,7 +10,18 @@ type Props = {
   lines?: string[];
   right?: React.ReactNode;
   children: React.ReactNode;
+
+  // ✅ 任意：戻り先を明示したいとき
+  returnTo?: string;
 };
+
+function safeEncode(s: string) {
+  try {
+    return encodeURIComponent(s);
+  } catch {
+    return "";
+  }
+}
 
 export function ChalkboardRoomShell({
   title,
@@ -16,30 +29,39 @@ export function ChalkboardRoomShell({
   lines = ["無言でもOK", "合わなければ移動してOK"],
   right,
   children,
+  returnTo,
 }: Props) {
+  // ✅ SSR/CSR差分を絶対に出さない：最初は固定href
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const currentUrl = useMemo(() => {
+    if (!mounted) return "";
+    if (returnTo) return returnTo;
+    // 今いるURLを returnTo にする（room/call どっちでも使える）
+    return `${window.location.pathname}${window.location.search}`;
+  }, [mounted, returnTo]);
+
+  const moveHref = mounted
+    ? `/class/select?returnTo=${safeEncode(currentUrl)}`
+    : "/class/select";
+
+  const homeHref = mounted
+    ? `/?returnTo=${safeEncode(currentUrl)}`
+    : "/";
+
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto" }}>
       {/* top bar */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "center",
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
         <div style={{ display: "grid", gap: 2 }}>
-          <div style={{ fontWeight: 900, fontSize: 14, color: "#111" }}>
-            {title}
-          </div>
-          {subtitle ? (
-            <div style={{ fontSize: 12, color: "#555" }}>{subtitle}</div>
-          ) : null}
+          <div style={{ fontWeight: 900, fontSize: 14, color: "#111" }}>{title}</div>
+          {subtitle ? <div style={{ fontSize: 12, color: "#555" }}>{subtitle}</div> : null}
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <Link
-            href="/class/select"
+            href={moveHref}
             style={{
               display: "inline-block",
               padding: "8px 10px",
@@ -55,7 +77,7 @@ export function ChalkboardRoomShell({
           </Link>
 
           <Link
-            href="/"
+            href={homeHref}
             style={{
               display: "inline-block",
               padding: "8px 10px",
@@ -86,26 +108,14 @@ export function ChalkboardRoomShell({
             boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: 12,
-            }}
-          >
-            <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.2 }}>
-              {title}
-            </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+            <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.2 }}>{title}</div>
             <div style={{ fontSize: 12, opacity: 0.85 }}>board</div>
           </div>
 
           <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
             {lines.map((t, i) => (
-              <div
-                key={i}
-                style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.95 }}
-              >
+              <div key={i} style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.95 }}>
                 ・{t}
               </div>
             ))}
@@ -114,7 +124,6 @@ export function ChalkboardRoomShell({
       </div>
 
       {/* content */}
-      {/* ✅ ここで本文の文字色を強制的に黒系にする（globals.css が白文字でも読める） */}
       <section style={{ marginTop: 14, color: "#111" }}>{children}</section>
     </main>
   );
