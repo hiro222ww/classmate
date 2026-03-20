@@ -372,19 +372,20 @@ export default function ClassSelectPage() {
     );
   }
 
-  function goProfileIfNeeded(error: string | undefined) {
-  if (error !== "profile_required") return false;
+    function goProfileIfNeeded(error: string | undefined) {
+    if (error !== "profile_required") return false;
 
-  const ok = window.confirm(
-    "クラスに参加するにはプロフィール登録が必要です。\nプロフィール登録ページへ移動しますか？"
-  );
+    const ok = window.confirm(
+      "クラスに参加するにはプロフィール登録が必要です。\nプロフィール登録ページへ移動しますか？"
+    );
 
-  if (ok) {
-    window.location.href = "/profile";
+    if (ok) {
+      window.location.href = "/profile";
+    }
+
+    return true;
   }
-
-  return true;
-}
+  
   async function doTransfer(c: ClassRow) {
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
@@ -509,6 +510,8 @@ export default function ClassSelectPage() {
   return;
 }
 
+
+
       if (!json?.classId) {
         alert("match_join_failed");
         return;
@@ -604,75 +607,91 @@ export default function ClassSelectPage() {
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto", color: "#111" }}>
       <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
-            世界観/テーマで絞って参加
-          </div>
-        </div>
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  }}
+>
+  <div>
+    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
+    <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
+      世界観/テーマで絞って参加
+    </div>
+  </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap",
-            justifyContent: "flex-end",
-          }}
-        >
-          <Link
-            href="/premium"
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            プランを見る
-          </Link>
+  <div
+    style={{
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      flexWrap: "wrap",
+      justifyContent: "flex-end",
+    }}
+  >
+    {/* 🟢 追加：プロフィール導線 */}
+    <Link
+      href="/profile"
+      style={{
+        padding: "8px 10px",
+        borderRadius: 12,
+        border: "1px solid #4ade80",
+        background: "#ecfdf5",
+        fontWeight: 900,
+        color: "#166534",
+        textDecoration: "none",
+      }}
+    >
+      プロフィール登録
+    </Link>
 
-          <Link
-            href="/billing"
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            お支払い・解約
-          </Link>
+    <Link
+      href="/premium"
+      style={{
+        padding: "8px 10px",
+        borderRadius: 12,
+        border: "1px solid #ccc",
+        background: "#fff",
+        fontWeight: 900,
+        color: "#111",
+        textDecoration: "none",
+      }}
+    >
+      プランを見る
+    </Link>
 
-          <Link
-            href="/"
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            今のクラス
-          </Link>
-        </div>
-      </header>
+    <Link
+      href="/billing"
+      style={{
+        padding: "8px 10px",
+        borderRadius: 12,
+        border: "1px solid #ccc",
+        background: "#fff",
+        fontWeight: 900,
+        color: "#111",
+        textDecoration: "none",
+      }}
+    >
+      お支払い・解約
+    </Link>
+
+    <Link
+      href="/"
+      style={{
+        padding: "8px 10px",
+        borderRadius: 12,
+        border: "1px solid #ccc",
+        background: "#fff",
+        fontWeight: 900,
+        color: "#111",
+        textDecoration: "none",
+      }}
+    >
+      今のクラス
+    </Link>
+  </div>
+</header>
 
       {joinLimitMessage ? (
         <div
