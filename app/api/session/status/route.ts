@@ -1,4 +1,3 @@
-// app/api/session/status/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -35,40 +34,41 @@ export async function GET(req: Request) {
 
     const sb = admin();
 
-    // 1) session 取得
-    let s = await sb
+    const s = await sb
       .from("sessions")
       .select("id, topic, status, capacity, created_at")
       .eq("id", sessionIdRaw)
       .maybeSingle();
 
-    // 2) 無ければ作る（quick room 用）
-    if (!s.data) {
-      const ins = await sb
-        .from("sessions")
-        .insert({
-          id: sessionIdRaw,
-          topic: "free",
-          status: "forming",
-          capacity: 5,
-        })
-        .select("id, topic, status, capacity, created_at")
-        .single();
-
-      if (ins.error) {
-        return NextResponse.json({ ok: false, error: ins.error.message }, { status: 500 });
-      }
-
-      // ✅ 作成したデータを以後の共通フローに載せる
-      s = { data: ins.data, error: null } as any;
+    if (s.error) {
+      return NextResponse.json({ ok: false, error: s.error.message }, { status: 500 });
     }
 
-    // 3) members 取得（無い環境でも落とさない）
+    // 勝手に free session を作らない
+    if (!s.data) {
+      return NextResponse.json({
+        ok: true,
+        session: {
+          id: sessionIdRaw,
+          topic: "",
+          status: "forming",
+          capacity: 5,
+          created_at: null,
+        },
+        members: [],
+        memberCount: 0,
+      });
+    }
+
     const m = await sb
       .from("session_members")
       .select("display_name, joined_at")
       .eq("session_id", sessionIdRaw)
       .order("joined_at", { ascending: true });
+
+    if (m.error) {
+      return NextResponse.json({ ok: false, error: m.error.message }, { status: 500 });
+    }
 
     const members = Array.isArray(m.data) ? m.data : [];
     const memberCount = members.length;

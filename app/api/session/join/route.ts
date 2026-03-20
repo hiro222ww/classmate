@@ -8,8 +8,19 @@ function isUuid(s: string) {
   );
 }
 
+function buildTopicLabelFromClass(cls: any) {
+  const rawName = String(cls?.name ?? "").trim();
+  const topicKey = String(cls?.topic_key ?? "").trim();
+  const worldKey = String(cls?.world_key ?? "").trim();
+
+  if (rawName && rawName.toLowerCase() !== "free") return rawName;
+  if (!topicKey) return "フリークラス";
+  if (topicKey === "free") return "フリークラス";
+  if (worldKey) return `${topicKey}`;
+  return topicKey;
+}
+
 async function upsertMember(sessionId: string, name: string) {
-  // display_name をキーにしてるけど、理想は device_id も持たせて一意制約にする（後で改善可）
   return await supabaseAdmin
     .from("session_members")
     .upsert(
@@ -22,16 +33,69 @@ async function upsertMember(sessionId: string, name: string) {
     );
 }
 
+async function ensureSessionRow(params: {
+  sessionId: string;
+  topic: string;
+  capacity: number;
+}) {
+  const { sessionId, topic, capacity } = params;
+
+  const { data: existing, error: existingErr } = await supabaseAdmin
+    .from("sessions")
+    .select("id, topic, capacity, status")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (existingErr) {
+    return { ok: false as const, error: existingErr };
+  }
+
+  if (existing) {
+    const updates: Record<string, any> = {};
+    if (!existing.topic && topic) updates.topic = topic;
+    if ((!existing.capacity || Number(existing.capacity) <= 0) && capacity > 0) {
+      updates.capacity = capacity;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      const { error: updateErr } = await supabaseAdmin
+        .from("sessions")
+        .update(updates)
+        .eq("id", sessionId);
+
+      if (updateErr) {
+        return { ok: false as const, error: updateErr };
+      }
+    }
+
+    return { ok: true as const };
+  }
+
+  const { error: insertErr } = await supabaseAdmin.from("sessions").insert({
+    id: sessionId,
+    topic,
+    status: "forming",
+    capacity: capacity > 0 ? capacity : 5,
+  });
+
+  if (insertErr) {
+    return { ok: false as const, error: insertErr };
+  }
+
+  return { ok: true as const };
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
     const sessionIdRaw = String(body.sessionId ?? "").trim();
+    const classIdRaw = String(body.classId ?? "").trim();
     const topic = String(body.topic ?? "").trim();
     const name = String(body.name ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
 
-    // --- ① Room/Call 用：sessionId で参加記録だけする ---
+    // --- ① Room/Call 用：sessionId で参加 ---
     if (sessionIdRaw) {
       if (!isUuid(sessionIdRaw)) {
         return NextResponse.json(
@@ -39,6 +103,7 @@ export async function POST(req: Request) {
           { status: 400 }
         );
       }
+
       if (!name) {
         return NextResponse.json(
           { ok: false, error: "name required" },
@@ -46,16 +111,63 @@ export async function POST(req: Request) {
         );
       }
 
+      let resolvedTopic = topic;
+      let resolvedCapacity = Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
+
+      // classId があるなら class 情報から session を整える
+      if (classIdRaw) {
+        const { data: cls, error: clsErr } = await supabaseAdmin
+          .from("classes")
+          .select("id, name, topic_key, world_key")
+          .eq("id", classIdRaw)
+          .maybeSingle();
+
+        if (clsErr) {
+          console.error("[session/join] class lookup error:", clsErr);
+          return NextResponse.json(
+            { ok: false, error: clsErr.message },
+            { status: 500 }
+          );
+        }
+
+        if (cls) {
+          resolvedTopic = buildTopicLabelFromClass(cls);
+        } else {
+          resolvedTopic = resolvedTopic || "クラス";
+        }
+      } else {
+        resolvedTopic = resolvedTopic || "クラス";
+      }
+
+      const ensured = await ensureSessionRow({
+        sessionId: sessionIdRaw,
+        topic: resolvedTopic,
+        capacity: resolvedCapacity,
+      });
+
+      if (!ensured.ok) {
+        console.error("[session/join] ensure session error:", ensured.error);
+        return NextResponse.json(
+          { ok: false, error: ensured.error.message },
+          { status: 500 }
+        );
+      }
+
       const { error } = await upsertMember(sessionIdRaw, name);
       if (error) {
-        console.error("member upsert error:", error);
+        console.error("[session/join] member upsert error:", error);
         return NextResponse.json(
           { ok: false, error: error.message },
           { status: 500 }
         );
       }
 
-      return NextResponse.json({ ok: true, sessionId: sessionIdRaw });
+      return NextResponse.json({
+        ok: true,
+        sessionId: sessionIdRaw,
+        topic: resolvedTopic,
+        capacity: resolvedCapacity,
+      });
     }
 
     // --- ② 既存用途：topic から join_or_create_session（RPC） ---
@@ -70,7 +182,7 @@ export async function POST(req: Request) {
     });
 
     if (error) {
-      console.error("RPC error:", error);
+      console.error("[session/join] RPC error:", error);
       return new NextResponse(error.message, { status: 500 });
     }
 
@@ -91,12 +203,10 @@ export async function POST(req: Request) {
       });
     }
 
-    // ✅ RPCで返ったsessionIdでも、念のため session_members に参加記録を残す
     {
       const { error: upsertErr } = await upsertMember(sessionId, name);
       if (upsertErr) {
-        console.error("member upsert error after rpc:", upsertErr);
-        // 参加記録失敗でもセッション作成自体は成功してるので、致命にしない
+        console.error("[session/join] member upsert error after rpc:", upsertErr);
       }
     }
 
@@ -104,11 +214,11 @@ export async function POST(req: Request) {
       ok: true,
       sessionId,
       status,
-      memberCount, // RPC由来（status API側で再計算してもOK）
+      memberCount,
       capacity: cap,
     });
   } catch (e: any) {
-    console.error("session join error:", e);
+    console.error("[session/join] server error:", e);
     return new NextResponse(e?.message ?? "server error", { status: 500 });
   }
 }

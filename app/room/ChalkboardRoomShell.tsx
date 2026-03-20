@@ -1,8 +1,7 @@
-// app/room/ChalkboardRoomShell.tsx
 "use client";
 
 import Link from "next/link";
-import React, { useEffect, useMemo, useState } from "react";
+import React from "react";
 
 type Props = {
   title: string;
@@ -11,17 +10,9 @@ type Props = {
   right?: React.ReactNode;
   children: React.ReactNode;
 
-  // ✅ 任意：戻り先を明示したいとき
+  // 互換のため残すが、このコンポーネント内では使わない
   returnTo?: string;
 };
-
-function safeEncode(s: string) {
-  try {
-    return encodeURIComponent(s);
-  } catch {
-    return "";
-  }
-}
 
 export function ChalkboardRoomShell({
   title,
@@ -29,34 +20,40 @@ export function ChalkboardRoomShell({
   lines = ["無言でもOK", "合わなければ移動してOK"],
   right,
   children,
-  returnTo,
 }: Props) {
-  // ✅ SSR/CSR差分を絶対に出さない：最初は固定href
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // DOM構造を固定
+  const subtitleText = subtitle ?? "";
+  const hasSubtitle = subtitleText.length > 0;
 
-  const currentUrl = useMemo(() => {
-    if (!mounted) return "";
-    if (returnTo) return returnTo;
-    // 今いるURLを returnTo にする（room/call どっちでも使える）
-    return `${window.location.pathname}${window.location.search}`;
-  }, [mounted, returnTo]);
-
-  const moveHref = mounted
-    ? `/class/select?returnTo=${safeEncode(currentUrl)}`
-    : "/class/select";
-
-  const homeHref = mounted
-    ? `/?returnTo=${safeEncode(currentUrl)}`
-    : "/";
+  const moveHref = "/class/select";
+  const homeHref = "/";
 
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto" }}>
-      {/* top bar */}
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
         <div style={{ display: "grid", gap: 2 }}>
-          <div style={{ fontWeight: 900, fontSize: 14, color: "#111" }}>{title}</div>
-          {subtitle ? <div style={{ fontSize: 12, color: "#555" }}>{subtitle}</div> : null}
+          <div style={{ fontWeight: 900, fontSize: 14, color: "#111" }}>
+            {title}
+          </div>
+
+          <div
+            style={{
+              fontSize: 12,
+              color: "#555",
+              minHeight: 16,
+              visibility: hasSubtitle ? "visible" : "hidden",
+            }}
+            suppressHydrationWarning
+          >
+            {subtitleText}
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -96,7 +93,6 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
-      {/* chalkboard */}
       <div style={{ marginTop: 12 }}>
         <div
           style={{
@@ -108,14 +104,26 @@ export function ChalkboardRoomShell({
             boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-            <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.2 }}>{title}</div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.2 }}>
+              {title}
+            </div>
             <div style={{ fontSize: 12, opacity: 0.85 }}>board</div>
           </div>
 
           <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
             {lines.map((t, i) => (
-              <div key={i} style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.95 }}>
+              <div
+                key={i}
+                style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.95 }}
+              >
                 ・{t}
               </div>
             ))}
@@ -123,7 +131,6 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
-      {/* content */}
       <section style={{ marginTop: 14, color: "#111" }}>{children}</section>
     </main>
   );

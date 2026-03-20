@@ -145,23 +145,33 @@ function makeRng(seed: number) {
   };
 }
 
-/** ===== 音（チョーク + コンコン） : WebAudio、ファイル不要 ===== */
+/** ===== 音（リアル寄りチョーク + コンコン） : WebAudio、ファイル不要 =====
+ * 重要：止まらない系は「AudioContextごと閉じる dispose()」で確実に止める
+ */
 function useBoardSounds() {
   const ctxRef = useRef<AudioContext | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-  const noiseRef = useRef<AudioBufferSourceNode | null>(null);
-  const lastTickRef = useRef(0);
+  const masterRef = useRef<GainNode | null>(null);
+
+  const srcRef = useRef<AudioBufferSourceNode | null>(null);
+  const chalkGainRef = useRef<GainNode | null>(null);
+  const bpRef = useRef<BiquadFilterNode | null>(null);
+
+  const lfoRef = useRef<OscillatorNode | null>(null);
+  const lfoGainRef = useRef<GainNode | null>(null);
 
   const ensure = () => {
     if (ctxRef.current) return;
     const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as any;
     if (!Ctx) return;
+
     const ctx = new Ctx();
+
     const master = ctx.createGain();
     master.gain.value = 0.9;
     master.connect(ctx.destination);
+
     ctxRef.current = ctx;
-    gainRef.current = master;
+    masterRef.current = master;
   };
 
   const resumeIfNeeded = () => {
@@ -170,98 +180,163 @@ function useBoardSounds() {
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
   };
 
-  const startNoise = () => {
+  const startIfNeeded = () => {
     ensure();
     const ctx = ctxRef.current;
-    const master = gainRef.current;
+    const master = masterRef.current;
     if (!ctx || !master) return;
 
     resumeIfNeeded();
+    if (srcRef.current) return;
 
-    if (noiseRef.current) return;
-
-    // 1秒ノイズをループ
-    const bufferSize = Math.floor(ctx.sampleRate * 1.0);
+    // ループノイズ（2秒）
+    const bufferSize = Math.floor(ctx.sampleRate * 2.0);
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.4;
+    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
 
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.loop = true;
 
-    // チョークっぽく：ハイパス + ちょい共鳴
+    // フィルタでチョーク帯域を作る
     const hp = ctx.createBiquadFilter();
     hp.type = "highpass";
-    hp.frequency.value = 700;
+    hp.frequency.value = 650;
 
     const bp = ctx.createBiquadFilter();
     bp.type = "bandpass";
-    bp.frequency.value = 1800;
+    bp.frequency.value = 2600;
     bp.Q.value = 0.9;
 
-    const g = ctx.createGain();
-    g.gain.value = 0;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 9500;
+
+    // 出力ゲイン
+    const chalkGain = ctx.createGain();
+    chalkGain.gain.value = 0.0;
+
+    // ざらつき（微小ゲート）
+    const lfo = ctx.createOscillator();
+    lfo.type = "triangle";
+    lfo.frequency.value = 16;
+
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.12;
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(chalkGain.gain);
 
     src.connect(hp);
     hp.connect(bp);
-    bp.connect(g);
-    g.connect(master);
+    bp.connect(lp);
+    lp.connect(chalkGain);
+    chalkGain.connect(master);
 
     src.start();
-    noiseRef.current = src;
+    lfo.start();
 
-    // 保存しておきたいので gainをnodeとして取れるようにする
-    // （masterは常時、gがチョーク音の音量）
-    (gainRef as any).chalkGain = g;
+    srcRef.current = src;
+    chalkGainRef.current = chalkGain;
+    bpRef.current = bp;
+    lfoRef.current = lfo;
+    lfoGainRef.current = lfoGain;
   };
 
-  const stopNoise = () => {
-    const ctx = ctxRef.current;
-    const cg: GainNode | null = (gainRef as any).chalkGain ?? null;
-    if (ctx && cg) {
-      const t = ctx.currentTime;
-      cg.gain.cancelScheduledValues(t);
-      cg.gain.setTargetAtTime(0, t, 0.02);
-    }
-
-    const src = noiseRef.current;
-    noiseRef.current = null;
+  // ✅ 最強：AudioContextごと閉じる（鳴り止まない系の完全対策）
+  const dispose = () => {
     try {
-      src?.stop();
-      src?.disconnect();
+      srcRef.current?.stop();
+    } catch {}
+    try {
+      lfoRef.current?.stop();
+    } catch {}
+
+    try {
+      srcRef.current?.disconnect();
+    } catch {}
+    try {
+      lfoRef.current?.disconnect();
+    } catch {}
+    try {
+      chalkGainRef.current?.disconnect();
+    } catch {}
+    try {
+      bpRef.current?.disconnect();
+    } catch {}
+    try {
+      lfoGainRef.current?.disconnect();
+    } catch {}
+
+    srcRef.current = null;
+    lfoRef.current = null;
+    chalkGainRef.current = null;
+    bpRef.current = null;
+    lfoGainRef.current = null;
+
+    const ctx = ctxRef.current;
+    ctxRef.current = null;
+    masterRef.current = null;
+
+    try {
+      ctx?.close();
     } catch {}
   };
 
-  const chalkTick = (intensity = 1) => {
-    // 連打しすぎ防止（50ms）
-    const now = performance.now();
-    if (now - lastTickRef.current < 50) return;
-    lastTickRef.current = now;
-
-    startNoise();
+  const chalkStart = () => {
+    startIfNeeded();
     const ctx = ctxRef.current;
-    const cg: GainNode | null = (gainRef as any).chalkGain ?? null;
-    if (!ctx || !cg) return;
+    const g = chalkGainRef.current;
+    if (!ctx || !g) return;
 
     const t = ctx.currentTime;
-    const target = Math.min(0.09, 0.02 + 0.04 * intensity);
+    g.gain.cancelScheduledValues(t);
+    g.gain.setTargetAtTime(0.03, t, 0.02);
+  };
 
-    cg.gain.cancelScheduledValues(t);
-    cg.gain.setTargetAtTime(target, t, 0.008);
-    cg.gain.setTargetAtTime(0.0, t + 0.05, 0.02);
+  const chalkMove = (speed01: number, pressure01: number) => {
+    startIfNeeded();
+    const ctx = ctxRef.current;
+    const g = chalkGainRef.current;
+    const bp = bpRef.current;
+    const lfoG = lfoGainRef.current;
+    if (!ctx || !g || !bp || !lfoG) return;
+
+    const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+    const s = clamp01(speed01);
+    const p = clamp01(pressure01);
+
+    const amp = 0.015 + 0.10 * s + 0.14 * p;
+    const f = 2100 + 2600 * s - 900 * p;
+    const gateDepth = 0.08 + 0.35 * p;
+
+    const t = ctx.currentTime;
+    bp.frequency.setTargetAtTime(f, t, 0.03);
+    lfoG.gain.setTargetAtTime(gateDepth, t, 0.05);
+    g.gain.setTargetAtTime(amp, t, 0.02);
+  };
+
+  // 通常は減衰（ただし「止まらない」が出たらdisposeで殺すのは呼び出し側）
+  const chalkEnd = () => {
+    const ctx = ctxRef.current;
+    const g = chalkGainRef.current;
+    if (!ctx || !g) return;
+
+    const t = ctx.currentTime;
+    g.gain.cancelScheduledValues(t);
+    g.gain.setTargetAtTime(0.0, t, 0.03);
   };
 
   const konkon = (strength = 1) => {
     ensure();
     const ctx = ctxRef.current;
-    const master = gainRef.current;
+    const master = masterRef.current;
     if (!ctx || !master) return;
     resumeIfNeeded();
 
     const t0 = ctx.currentTime;
 
-    // 低めの短い音 + 高めのクリック（2発合成）
     const o1 = ctx.createOscillator();
     const g1 = ctx.createGain();
     o1.type = "sine";
@@ -289,7 +364,7 @@ function useBoardSounds() {
     o2.stop(t0 + 0.04);
   };
 
-  return { chalkTick, stopNoise, konkon };
+  return { chalkStart, chalkMove, chalkEnd, konkon, dispose };
 }
 
 /** ===== 共有黒板 ===== */
@@ -304,8 +379,15 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
   const pointsRef = useRef<StrokePoint[]>([]);
   const lastPtRef = useRef<StrokePoint | null>(null);
 
+  const lastMoveRef = useRef<{ t: number; x: number; y: number } | null>(null);
+  const lastKonkonRef = useRef(0);
+
+  // watchdog（入力が無いのに鳴ってたらdisposeで殺す）
+  const watchdogRef = useRef<number | null>(null);
+  const lastInputAtRef = useRef(0);
+
   const [penWidth, setPenWidth] = useState(6);
-  const [penColor, setPenColor] = useState("#ffffff"); // ✅ 純白
+  const [penColor, setPenColor] = useState("#ffffff");
   const [info, setInfo] = useState("");
 
   const seedRef = useRef(0);
@@ -361,14 +443,12 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, w, h);
 
-    // 黒板（緑寄りを抑えて、深い黒板色に寄せる）
     const grad = ctx.createLinearGradient(0, 0, w, h);
     grad.addColorStop(0, "#0a3328");
     grad.addColorStop(1, "#06251d");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
-    // ムラ：seed固定で「毎回同じ」
     const rng = makeRng(seedRef.current);
     ctx.globalAlpha = 0.028;
     for (let i = 0; i < 900; i++) {
@@ -380,6 +460,19 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    const rng2 = makeRng(seedRef.current ^ 0x9e3779b9);
+    ctx.globalAlpha = 0.015;
+    for (let i = 0; i < 1200; i++) {
+      const x = rng2() * w;
+      const y = rng2() * h;
+      const r = 0.6 + rng2() * 2.2;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.restore();
   };
 
@@ -528,10 +621,44 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
     ctx.restore();
   };
 
-  // 入力イベント
+  // 入力イベント（“止まらない”最終対策：止める時はdisposeでAudioContextごと閉じる）
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    const forceEnd = () => {
+      drawingRef.current = false;
+      lastMoveRef.current = null;
+      lastPtRef.current = null;
+      pointsRef.current = [];
+      sounds.dispose(); // ✅ ここが最強
+    };
+
+    const finalizeAndSend = async () => {
+      drawingRef.current = false;
+      lastMoveRef.current = null;
+
+      const pts = pointsRef.current;
+      pointsRef.current = [];
+      lastPtRef.current = null;
+
+      sounds.dispose(); // ✅ 送信前に必ず殺す
+
+      if (!pts || pts.length < 2) return;
+
+      const { error } = await supabase.from("call_chalk_strokes").insert({
+        session_id: sessionId,
+        device_id: deviceIdRef.current,
+        display_name: displayNameRef.current || "You",
+        color: penColor,
+        width: penWidth,
+        points: pts,
+        kind: "stroke",
+      });
+
+      if (error) setInfo(`送信失敗: ${error.message}`);
+      else setInfo("");
+    };
 
     const onDown = (ev: PointerEvent) => {
       ev.preventDefault();
@@ -543,9 +670,18 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       drawingRef.current = true;
       pointsRef.current = [p];
       lastPtRef.current = p;
+      lastMoveRef.current = { t: performance.now(), x: p.x, y: p.y };
 
-      // 最初の一回でAudioを起こしつつ鳴らす
-      sounds.chalkTick(1);
+      lastInputAtRef.current = performance.now();
+
+      // 書き始めの“軽いコンコン”（ボタン無し）
+      const now = performance.now();
+      if (now - lastKonkonRef.current > 400) {
+        lastKonkonRef.current = now;
+        sounds.konkon(0.22);
+      }
+
+      sounds.chalkStart();
     };
 
     const onMove = (ev: PointerEvent) => {
@@ -565,56 +701,97 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       drawLocalSegment(last, p);
       lastPtRef.current = p;
 
-      // 速度に応じて音量変化（雑でOK）
-      const intensity = Math.min(1.2, Math.max(0.4, Math.sqrt(dist2) * 40));
-      sounds.chalkTick(intensity);
+      const prev = lastMoveRef.current;
+      const now = performance.now();
+      if (prev) {
+        const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
+        const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
+
+        const dt = Math.max(1, now - prev.t);
+        const dxPx = (p.x - prev.x) * w;
+        const dyPx = (p.y - prev.y) * h;
+        const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
+
+        const speed01 = Math.max(0, Math.min(1, (distPx / dt) / 1.8));
+        const pressure01 = Math.max(0, Math.min(1, 0.75 * (1 - speed01) + 0.02 * (penWidth - 2)));
+
+        sounds.chalkMove(speed01, pressure01);
+      }
+
+      lastMoveRef.current = { t: now, x: p.x, y: p.y };
+      lastInputAtRef.current = now;
     };
 
-    const onUp = async (ev: PointerEvent) => {
-      if (!drawingRef.current) return;
+    const onUp = (ev: PointerEvent) => {
       ev.preventDefault();
-      drawingRef.current = false;
-
-      sounds.stopNoise();
-
-      const pts = pointsRef.current;
-      pointsRef.current = [];
-      lastPtRef.current = null;
-
-      if (!pts || pts.length < 2) return;
-
-      const { error } = await supabase.from("call_chalk_strokes").insert({
-        session_id: sessionId,
-        device_id: deviceIdRef.current,
-        display_name: displayNameRef.current || "You",
-        color: penColor,
-        width: penWidth,
-        points: pts,
-        kind: "stroke",
-      });
-
-      if (error) setInfo(`送信失敗: ${error.message}`);
-      else setInfo("");
+      if (!drawingRef.current) {
+        forceEnd();
+        return;
+      }
+      void finalizeAndSend();
     };
 
-    const onDbl = (ev: MouseEvent) => {
-      ev.preventDefault();
-      // 黒板コンコン（強さは適当に）
-      sounds.konkon(1);
+    const onCancel = (ev: Event) => {
+      ev.preventDefault?.();
+      forceEnd();
     };
+
+    const onLeave = (ev: Event) => {
+      ev.preventDefault?.();
+      forceEnd();
+    };
+
+    const onCtx = (ev: Event) => {
+      ev.preventDefault?.();
+      forceEnd();
+    };
+
+    const onBlur = () => forceEnd();
+    const onVis = () => {
+      if (document.hidden) forceEnd();
+    };
+
+    // watchdog開始：入力止まってるのに音が残ったらdisposeで殺す
+    if (watchdogRef.current) window.clearInterval(watchdogRef.current);
+    watchdogRef.current = window.setInterval(() => {
+      const dt = performance.now() - lastInputAtRef.current;
+      if (dt > 220) sounds.dispose();
+    }, 140);
 
     canvas.addEventListener("pointerdown", onDown, { passive: false });
     canvas.addEventListener("pointermove", onMove, { passive: false });
+    canvas.addEventListener("pointerup", onUp, { passive: false });
+    canvas.addEventListener("pointercancel", onCancel as any, { passive: false });
+    canvas.addEventListener("lostpointercapture", onCancel as any, { passive: false });
+    canvas.addEventListener("pointerleave", onLeave as any, { passive: false });
+    canvas.addEventListener("contextmenu", onCtx as any, { passive: false });
+
     window.addEventListener("pointerup", onUp, { passive: false });
-    canvas.addEventListener("dblclick", onDbl, { passive: false });
+    window.addEventListener("pointercancel", onCancel as any, { passive: false });
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVis);
 
     return () => {
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onCancel as any);
+      canvas.removeEventListener("lostpointercapture", onCancel as any);
+      canvas.removeEventListener("pointerleave", onLeave as any);
+      canvas.removeEventListener("contextmenu", onCtx as any);
+
       window.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("dblclick", onDbl);
-      sounds.stopNoise();
+      window.removeEventListener("pointercancel", onCancel as any);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVis);
+
+      if (watchdogRef.current) window.clearInterval(watchdogRef.current);
+      watchdogRef.current = null;
+
+      forceEnd();
+      sounds.dispose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, penColor, penWidth]);
 
   const onClear = async () => {
@@ -660,22 +837,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
           </label>
 
           <button
-            onClick={() => sounds.konkon(1)}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-            title="黒板をコンコン"
-          >
-            コンコン
-          </button>
-
-          <button
             onClick={onClear}
             style={{
               padding: "8px 10px",
@@ -696,7 +857,7 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
         ref={wrapRef}
         style={{
           marginTop: 10,
-          height: 360,
+          height: 460,
           borderRadius: 16,
           border: "2px solid #073126",
           background: "#0b3b2e",
@@ -709,7 +870,7 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       </div>
 
       <div style={{ marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: 900 }}>
-        ※ タッチペン/指で書けます。みんなの線はリアルタイムで反映されます。（ダブルクリックでコンコン）
+        ※ タッチペン/指で書けます。みんなの線はリアルタイムで反映されます。
         {info ? `（${info}）` : ""}
       </div>
     </div>
@@ -757,7 +918,6 @@ export default function CallClient() {
       localStorage.getItem("display_name") ||
       "You";
 
-    // ★ join API は { sessionId, name } を見る（displayNameではない）
     fetch("/api/session/join", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -789,7 +949,7 @@ export default function CallClient() {
     }
   }
 
-  // ✅ ポーリングは軽め（通話中にログを増やさない）
+  // ✅ ポーリングは軽め
   useEffect(() => {
     if (!sessionId) return;
     fetchStatus(sessionId);
@@ -835,7 +995,7 @@ export default function CallClient() {
       localStreamRef.current = null;
       setMicReady(false);
     };
-  }, [sessionId]);
+  }, [sessionId, isMuted]);
 
   const names = useMemo(() => (members ?? []).map((m) => m.display_name).filter(Boolean), [members]);
   const filled = Math.min(names.length > 0 ? names.length : memberCount, capacity);

@@ -1,11 +1,11 @@
-// app/room/RoomClient.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
 import { getOrCreateDeviceId } from "@/lib/device";
+import { pushRecentClass } from "@/lib/recentClasses";
 
 type SessionStatusResult = {
   ok: boolean;
@@ -14,7 +14,7 @@ type SessionStatusResult = {
     topic: string;
     status: "forming" | "active" | "closed";
     capacity: number;
-    created_at: string;
+    created_at: string | null;
   };
   members?: { display_name: string; joined_at: string }[];
   memberCount?: number;
@@ -41,22 +41,9 @@ function randomUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function deriveSessionIdFromUrl(): string {
-  const sp = new URLSearchParams(window.location.search);
-  const direct =
-    (sp.get("sessionId") ?? "").trim() ||
-    (sp.get("session_id") ?? "").trim() ||
-    (sp.get("session") ?? "").trim();
-
-  if (direct) return direct;
-
-  const key = "classmate_room_session_uuid";
-  const saved = sessionStorage.getItem(key);
-  if (saved) return saved;
-
-  const sid = randomUuid();
-  sessionStorage.setItem(key, sid);
-  return sid;
+function shortId(id: string) {
+  const s = (id || "").replace(/-/g, "");
+  return s.length >= 6 ? s.slice(0, 6) : (id || "").slice(0, 6);
 }
 
 async function readJsonBestEffort(res: Response) {
@@ -68,13 +55,27 @@ async function readJsonBestEffort(res: Response) {
   }
 }
 
-function Bubble({ mine, name, text, time }: { mine: boolean; name: string; text: string; time: string }) {
+function Bubble({
+  mine,
+  name,
+  text,
+  time,
+}: {
+  mine: boolean;
+  name: string;
+  text: string;
+  time: string;
+}) {
   const bg = mine ? "#bff5a6" : "#ffffff";
   const border = mine ? "1px solid #7fdd6b" : "1px solid #e5e7eb";
+
   return (
     <div style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
       <div style={{ maxWidth: "78%", display: "grid", gap: 4 }}>
-        {!mine ? <div style={{ fontSize: 11, fontWeight: 900, color: "#6b7280" }}>{name}</div> : null}
+        {!mine ? (
+          <div style={{ fontSize: 11, fontWeight: 900, color: "#6b7280" }}>{name}</div>
+        ) : null}
+
         <div
           style={{
             padding: "10px 12px",
@@ -89,32 +90,71 @@ function Bubble({ mine, name, text, time }: { mine: boolean; name: string; text:
         >
           {text}
         </div>
-        <div style={{ fontSize: 10, color: "#9ca3af", textAlign: mine ? "right" : "left", fontWeight: 800 }}>{time}</div>
+
+        <div
+          style={{
+            fontSize: 10,
+            color: "#9ca3af",
+            textAlign: mine ? "right" : "left",
+            fontWeight: 800,
+          }}
+        >
+          {time}
+        </div>
       </div>
     </div>
   );
 }
 
+function getRecentLimit(): number {
+  try {
+    const plan = (localStorage.getItem("classmate_plan") || "free").toLowerCase();
+    if (plan === "pro") return 20;
+    if (plan === "plus" || plan === "premium") return 5;
+  } catch {}
+  return 1;
+}
+
 export default function RoomClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [sessionId, setSessionId] = useState("");
+  const classId = useMemo(() => {
+    return (searchParams.get("classId") ?? "").trim();
+  }, [searchParams]);
+
+  const sessionId = useMemo(() => {
+    const direct =
+      (searchParams.get("sessionId") ?? "").trim() ||
+      (searchParams.get("session_id") ?? "").trim() ||
+      (searchParams.get("session") ?? "").trim();
+
+    if (direct) return direct;
+
+    // classId があるなら sessionId = classId に固定
+    if (classId) return classId;
+
+    return "";
+  }, [searchParams, classId]);
+
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
   const [memberCount, setMemberCount] = useState(0);
   const [members, setMembers] = useState<{ display_name: string; joined_at: string }[]>([]);
   const [err, setErr] = useState("");
-
-  const deviceIdRef = useRef("");
-  const displayNameRef = useRef("");
-
-  const pollTimer = useRef<number | null>(null);
+  const [topicTitle, setTopicTitle] = useState<string>("");
 
   const [msgs, setMsgs] = useState<RoomMessage[]>([]);
   const [draft, setDraft] = useState("");
 
+  const deviceIdRef = useRef("");
+  const displayNameRef = useRef("");
+  const pollTimer = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const scrollToBottom = (smooth: boolean) => bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+
+  const scrollToBottom = (smooth: boolean) => {
+    bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+  };
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
@@ -129,17 +169,53 @@ export default function RoomClient() {
   }, []);
 
   useEffect(() => {
-    const sid = deriveSessionIdFromUrl();
-    setSessionId(sid);
-  }, []);
+    if (!sessionId) return;
 
-  // ✅ status polling（静かに）
-  async function fetchStatus(sid: string) {
+    const recentId = classId || sessionId;
+    const roomUrl = classId
+      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
+      : `/room?sessionId=${encodeURIComponent(sessionId)}`;
+
+    pushRecentClass(
+      {
+        id: recentId,
+        title: `クラス ${shortId(recentId)}`,
+        url: roomUrl,
+      },
+      getRecentLimit()
+    );
+  }, [sessionId, classId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const name =
+      localStorage.getItem("classmate_display_name") ||
+      localStorage.getItem("display_name") ||
+      "You";
+
+    fetch("/api/session/join", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId, classId, name }),
+    }).catch(() => {});
+  }, [sessionId, classId]);
+
+  async function fetchStatus(sid: string, cid: string) {
     try {
-      const res = await fetch(`/api/session/status?sessionId=${encodeURIComponent(sid)}`, { cache: "no-store" });
+      const qs = new URLSearchParams({ sessionId: sid });
+      if (cid) qs.set("classId", cid);
+
+      const res = await fetch(`/api/session/status?${qs.toString()}`, {
+        cache: "no-store",
+      });
       const r = await readJsonBestEffort(res);
       const j = (r.json ?? {}) as SessionStatusResult;
-      if (!r.ok || !j.ok) return;
+
+      if (!r.ok || !j.ok) {
+        if (j?.error) setErr(String(j.error));
+        return;
+      }
 
       const mc = Number(j.memberCount ?? (j.members?.length ?? 0));
       const cap = Number(j.session?.capacity ?? 5);
@@ -149,38 +225,70 @@ export default function RoomClient() {
       setMembers(j.members ?? []);
       setMemberCount(mc);
       setErr("");
-    } catch {}
+
+      const t = (j.session?.topic ?? "").trim();
+      if (t) setTopicTitle(t);
+      else if (classId) setTopicTitle(`クラス ${shortId(classId)}`);
+      else setTopicTitle("クラス");
+    } catch (e: any) {
+      setErr(e?.message ?? "status_failed");
+    }
   }
 
   useEffect(() => {
     if (!sessionId) return;
-    fetchStatus(sessionId);
+
+    fetchStatus(sessionId, classId);
 
     if (pollTimer.current) window.clearInterval(pollTimer.current);
-    pollTimer.current = window.setInterval(() => fetchStatus(sessionId), 5000);
+    pollTimer.current = window.setInterval(() => fetchStatus(sessionId, classId), 5000);
 
     return () => {
       if (pollTimer.current) window.clearInterval(pollTimer.current);
       pollTimer.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, classId]);
 
-  // 初回：メッセージ取得
   useEffect(() => {
     if (!sessionId) return;
+    if (!topicTitle) return;
+
+    const recentId = classId || sessionId;
+    const roomUrl = classId
+      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
+      : `/room?sessionId=${encodeURIComponent(sessionId)}`;
+
+    pushRecentClass(
+      {
+        id: recentId,
+        title: topicTitle,
+        url: roomUrl,
+      },
+      getRecentLimit()
+    );
+  }, [sessionId, classId, topicTitle]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
     (async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("room_messages")
         .select("id, session_id, device_id, display_name, message, created_at")
         .eq("session_id", sessionId)
         .order("created_at", { ascending: true })
         .limit(200);
+
+      if (error) {
+        setErr(`メッセージ取得失敗: ${error.message}`);
+        return;
+      }
+
       setMsgs((data ?? []) as any);
       queueMicrotask(() => scrollToBottom(false));
     })();
   }, [sessionId]);
 
-  // Realtime
   useEffect(() => {
     if (!sessionId) return;
 
@@ -188,7 +296,12 @@ export default function RoomClient() {
       .channel(`room_messages:${sessionId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "room_messages", filter: `session_id=eq.${sessionId}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "room_messages",
+          filter: `session_id=eq.${sessionId}`,
+        },
         (payload: any) => {
           const row = payload?.new as RoomMessage;
           if (!row?.id) return;
@@ -203,12 +316,12 @@ export default function RoomClient() {
     };
   }, [sessionId]);
 
-  const names = useMemo(() => (members ?? []).map((m) => m.display_name).filter(Boolean), [members]);
-  const filled = Math.min(names.length > 0 ? names.length : memberCount, capacity);
+  const filled = Math.min(members.length > 0 ? members.length : memberCount, capacity);
 
   async function sendMessage() {
     const text = draft.trim();
     if (!text || !sessionId) return;
+
     setDraft("");
 
     const optimisticId = randomUuid();
@@ -240,39 +353,81 @@ export default function RoomClient() {
 
   const goToCall = () => {
     if (!sessionId) return;
-    const returnTo = `/room?sessionId=${encodeURIComponent(sessionId)}`;
-    router.push(`/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(returnTo)}`);
+
+    const returnTo = classId
+      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
+      : `/room?sessionId=${encodeURIComponent(sessionId)}`;
+
+    router.push(
+      `/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(returnTo)}`
+    );
   };
 
   return (
     <ChalkboardRoomShell title="待機" subtitle={sessionId ? `セッション：${sessionId}` : undefined}>
       <div style={{ display: "grid", gap: 12 }}>
         {err ? (
-          <div style={{ padding: 10, border: "1px solid #f5c2c7", background: "#f8d7da", borderRadius: 10, color: "#842029" }}>
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid #f5c2c7",
+              background: "#f8d7da",
+              borderRadius: 10,
+              color: "#842029",
+            }}
+          >
             <p style={{ margin: 0, fontWeight: 900 }}>エラー/警告</p>
             <p style={{ margin: "6px 0 0 0" }}>{err}</p>
           </div>
         ) : null}
 
         <div style={{ border: "1px solid #ddd", borderRadius: 14, padding: 12, background: "#fff" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
             <div>
-              <div style={{ fontWeight: 900 }}>クラス</div>
+              <div style={{ fontWeight: 900 }}>{topicTitle ? topicTitle : "クラス"}</div>
               <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                参加者：<b>{memberCount}</b> / {capacity} ・ 状態：{status === "active" ? "通話中" : status === "closed" ? "終了" : "待機"}
+                参加者：<b>{memberCount}</b> / {capacity} ・ 状態：
+                {status === "active" ? "通話中" : status === "closed" ? "終了" : "待機"}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
+                枠：<b>{filled}</b> / {capacity}
               </div>
             </div>
 
             <button
               onClick={goToCall}
-              style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", background: "#111", color: "#fff", fontWeight: 900, cursor: "pointer" }}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #ddd",
+                background: "#111",
+                color: "#fff",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
             >
               通話へ
             </button>
           </div>
 
-          {/* メッセージ */}
-          <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 12, display: "flex", flexDirection: "column", minHeight: 420 }}>
+          <div
+            style={{
+              marginTop: 14,
+              borderTop: "1px solid #eee",
+              paddingTop: 12,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 420,
+            }}
+          >
             <div style={{ fontWeight: 900, marginBottom: 8 }}>メッセージ</div>
 
             <div
@@ -291,8 +446,18 @@ export default function RoomClient() {
               {msgs.map((m) => {
                 const mine = m.device_id === deviceIdRef.current;
                 const t = new Date(m.created_at);
-                const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-                return <Bubble key={m.id} mine={mine} name={m.display_name} text={m.message} time={time} />;
+                const time = `${String(t.getHours()).padStart(2, "0")}:${String(
+                  t.getMinutes()
+                ).padStart(2, "0")}`;
+                return (
+                  <Bubble
+                    key={m.id}
+                    mine={mine}
+                    name={m.display_name}
+                    text={m.message}
+                    time={time}
+                  />
+                );
               })}
               <div ref={bottomRef} />
             </div>
@@ -308,11 +473,27 @@ export default function RoomClient() {
                   }
                 }}
                 placeholder="メッセージを入力"
-                style={{ flex: 1, padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", fontWeight: 800, outline: "none" }}
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #ddd",
+                  fontWeight: 800,
+                  outline: "none",
+                }}
               />
               <button
                 onClick={sendMessage}
-                style={{ padding: "10px 12px", borderRadius: 12, border: "1px solid #ddd", background: "#111", color: "#fff", fontWeight: 900, cursor: "pointer", minWidth: 86 }}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #ddd",
+                  background: "#111",
+                  color: "#fff",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                  minWidth: 86,
+                }}
               >
                 送信
               </button>

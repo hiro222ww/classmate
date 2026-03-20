@@ -1,4 +1,3 @@
-// app/api/billing/create-checkout-session/route.ts
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -7,129 +6,125 @@ type Body =
   | { deviceId: string; kind: "slots"; slotsTotal: 3 | 5 }
   | { deviceId: string; kind: "topic_plan"; amount: 400 | 800 | 1200 };
 
+function pickDeviceId(req: Request, body: any) {
+  return req.headers.get("x-device-id") || body?.deviceId || "";
+}
+
 function mustEnv(name: string) {
   const v = process.env[name];
-  if (!v) throw new Error(`missing_env:${name}`);
+  if (!v) throw new Error(`${name}_missing`);
   return v;
 }
 
-const PRICE_SLOTS_3 = () => mustEnv("STRIPE_PRICE_SLOTS_3"); // price_...
-const PRICE_SLOTS_5 = () => mustEnv("STRIPE_PRICE_SLOTS_5"); // price_...
-const PRICE_TOPIC_400 = () => mustEnv("STRIPE_PRICE_TOPIC_400"); // price_...
-const PRICE_TOPIC_800 = () => mustEnv("STRIPE_PRICE_TOPIC_800"); // price_...
-const PRICE_TOPIC_1200 = () => mustEnv("STRIPE_PRICE_TOPIC_1200"); // price_...
+function priceIdFor(body: Body) {
+  if (body.kind === "slots") {
+    if (body.slotsTotal === 3) return mustEnv("STRIPE_PRICE_SLOTS_3");
+    if (body.slotsTotal === 5) return mustEnv("STRIPE_PRICE_SLOTS_5");
+    throw new Error("invalid_slotsTotal");
+  }
 
-async function getOrCreateCustomerId(deviceId: string): Promise<string> {
-  // 既存紐付け
-  const { data: row, error } = await supabaseAdmin
+  if (body.amount === 400) return mustEnv("STRIPE_PRICE_TOPIC_400");
+  if (body.amount === 800) return mustEnv("STRIPE_PRICE_TOPIC_800");
+  if (body.amount === 1200) return mustEnv("STRIPE_PRICE_TOPIC_1200");
+
+  throw new Error("invalid_amount");
+}
+
+async function ensureCustomerId(deviceId: string) {
+  const { data: billing, error: bErr } = await supabaseAdmin
     .from("user_billing_customers")
-    .select("stripe_customer_id")
+    .select("device_id, stripe_customer_id")
     .eq("device_id", deviceId)
     .maybeSingle();
 
-  if (error) throw error;
-  if (row?.stripe_customer_id) return row.stripe_customer_id;
+  if (bErr) throw new Error(`db_error:${bErr.message}`);
 
-  // 新規customer作成（deviceIdをmetadataに）
+  if (billing?.stripe_customer_id) {
+    return billing.stripe_customer_id;
+  }
+
   const customer = await stripe.customers.create({
-    metadata: { deviceId },
+    metadata: {
+      deviceId: deviceId,
+      app: "classmate",
+    },
   });
 
-  // DB保存
-  const { error: upErr } = await supabaseAdmin
+  const { error: uErr } = await supabaseAdmin
     .from("user_billing_customers")
-    .upsert({ device_id: deviceId, stripe_customer_id: customer.id }, { onConflict: "device_id" });
+    .upsert(
+      {
+        device_id: deviceId,
+        stripe_customer_id: customer.id,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "device_id" }
+    );
 
-  if (upErr) throw upErr;
+  if (uErr) throw new Error(`db_error:${uErr.message}`);
+
   return customer.id;
-}
-
-async function getCurrentEntitlements(deviceId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("user_entitlements")
-    .select("class_slots, topic_plan, theme_pass")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  if (error) throw error;
-
-  const classSlots = Number(data?.class_slots ?? 1);
-  const topicPlan = typeof data?.topic_plan === "number"
-    ? data.topic_plan
-    : data?.theme_pass
-      ? 1200
-      : 0;
-
-  return { classSlots, topicPlan };
-}
-
-function priceIdFor(body: Body): string {
-  if (body.kind === "slots") {
-    return body.slotsTotal === 3 ? PRICE_SLOTS_3() : PRICE_SLOTS_5();
-  }
-  // topic_plan
-  if (body.amount === 400) return PRICE_TOPIC_400();
-  if (body.amount === 800) return PRICE_TOPIC_800();
-  return PRICE_TOPIC_1200();
 }
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
+    const body = (await req.json().catch(() => ({}))) as Partial<Body>;
+    const deviceId = pickDeviceId(req, body);
 
-    if (!body?.deviceId) {
-      return NextResponse.json({ error: "missing_deviceId" }, { status: 400 });
+    if (!deviceId) {
+      return NextResponse.json(
+        { error: "device_id_missing" },
+        { status: 400 }
+      );
     }
+
     if (body.kind !== "slots" && body.kind !== "topic_plan") {
-      return NextResponse.json({ error: "invalid_kind" }, { status: 400 });
+      return NextResponse.json(
+        { error: "kind_missing" },
+        { status: 400 }
+      );
     }
 
-    // ✅ 逆方向（ダウングレード）防止：希望ならここで弾く
-    const ent = await getCurrentEntitlements(body.deviceId);
-    if (body.kind === "slots") {
-      if (body.slotsTotal <= ent.classSlots) {
-        return NextResponse.json({ error: "already_has_equal_or_higher_slots" }, { status: 400 });
-      }
-    } else {
-      if (body.amount <= ent.topicPlan) {
-        return NextResponse.json({ error: "already_has_equal_or_higher_topic_plan" }, { status: 400 });
-      }
-    }
+    const customerId = await ensureCustomerId(deviceId);
+    const priceId = priceIdFor(body as Body);
 
-    const customerId = await getOrCreateCustomerId(body.deviceId);
-    const priceId = priceIdFor(body);
-
-    // 成功/キャンセル戻り先
     const origin =
-      req.headers.get("origin") ??
-      process.env.NEXT_PUBLIC_APP_ORIGIN ??
+      req.headers.get("origin") ||
+      process.env.NEXT_PUBLIC_APP_URL ||
       "http://localhost:3000";
 
-    // 🔥 重要：metadataに deviceId / kind / amount を入れる（Webhookで確実に拾う）
+    const success_url = `${origin}/class/select?paid=1&session_id={CHECKOUT_SESSION_ID}`;
+    const cancel_url = `${origin}/class/select?canceled=1`;
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/class/select?billing=success`,
-      cancel_url: `${origin}/class/select?billing=cancel`,
-      metadata: {
-        deviceId: body.deviceId,
-        kind: body.kind,
-        ...(body.kind === "slots" ? { slotsTotal: String(body.slotsTotal) } : { amount: String(body.amount) }),
-      },
-      subscription_data: {
-        metadata: {
-          deviceId: body.deviceId,
-          kind: body.kind,
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
         },
-        // 後述：月途中の変更の扱い。まずはStripe標準の「日割り調整（クレジット）」が一番自然
-        proration_behavior: "create_prorations",
+      ],
+      success_url,
+      cancel_url,
+
+      metadata: {
+        deviceId: deviceId,
+        kind: (body as Body).kind,
       },
     });
 
-    return NextResponse.json({ url: session.url });
+    return NextResponse.json({
+      url: session.url,
+      customerId,
+      priceId,
+    });
   } catch (e: any) {
-    console.error("create-checkout-session error:", e);
-    return NextResponse.json({ error: e?.message ?? "server_error" }, { status: 500 });
+    console.error("[create-checkout-session] error", e);
+
+    return NextResponse.json(
+      { error: e?.message ?? "unknown_error" },
+      { status: 500 }
+    );
   }
 }

@@ -1,10 +1,17 @@
-// src/lib/device.ts
+// lib/device.ts
+export const DEVICE_ID_KEY = "classmate_device_id";
+
 export function getOrCreateDeviceId(): string {
-  const key = "device_id";
-  let id = localStorage.getItem(key);
+  if (typeof window === "undefined") return "";
+  let id = localStorage.getItem(DEVICE_ID_KEY);
   if (!id) {
     id = crypto.randomUUID();
-    localStorage.setItem(key, id);
+    localStorage.setItem(DEVICE_ID_KEY, id);
   }
   return id;
+}
+
+export function getDeviceId(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(DEVICE_ID_KEY) ?? "";
 }

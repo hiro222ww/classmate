@@ -1,22 +1,29 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
+
     const deviceId = String(body?.deviceId ?? "").trim();
     const classId = String(body?.classId ?? "").trim();
 
+    console.log("[class/leave] body =", body);
+    console.log("[class/leave] deviceId =", deviceId);
+    console.log("[class/leave] classId =", classId);
+
     if (!deviceId) {
       return NextResponse.json(
-        { error: "device_id_missing" },
+        { ok: false, error: "device_id_missing" },
         { status: 400 }
       );
     }
 
     if (!classId) {
       return NextResponse.json(
-        { error: "class_id_missing" },
+        { ok: false, error: "class_id_missing" },
         { status: 400 }
       );
     }
@@ -28,16 +35,26 @@ export async function POST(req: Request) {
       .eq("class_id", classId)
       .maybeSingle();
 
+    console.log("[class/leave] membership =", membership);
+    console.log("[class/leave] findErr =", findErr);
+
     if (findErr) {
       return NextResponse.json(
-        { error: "membership_lookup_failed", detail: findErr.message },
+        {
+          ok: false,
+          error: "membership_lookup_failed",
+          detail: findErr.message,
+        },
         { status: 500 }
       );
     }
 
     if (!membership) {
       return NextResponse.json(
-        { error: "not_member" },
+        {
+          ok: false,
+          error: "not_member",
+        },
         { status: 400 }
       );
     }
@@ -48,17 +65,31 @@ export async function POST(req: Request) {
       .eq("device_id", deviceId)
       .eq("class_id", classId);
 
+    console.log("[class/leave] delErr =", delErr);
+
     if (delErr) {
       return NextResponse.json(
-        { error: "leave_failed", detail: delErr.message },
+        {
+          ok: false,
+          error: "leave_failed",
+          detail: delErr.message,
+        },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      classId,
+    });
   } catch (e: any) {
+    console.error("[class/leave] internal error =", e);
     return NextResponse.json(
-      { error: "internal_error", detail: e?.message ?? "unknown_error" },
+      {
+        ok: false,
+        error: "internal_error",
+        detail: e?.message ?? "unknown_error",
+      },
       { status: 500 }
     );
   }

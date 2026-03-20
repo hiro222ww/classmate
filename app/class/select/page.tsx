@@ -1,9 +1,9 @@
-// app/class/select/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { getOrCreateDeviceId } from "@/lib/device";
-import AdminTopicEditor from "./AdminTopicEditor";
+import { pushRecentClass } from "@/lib/recentClasses";
 
 type World = {
   world_key: string;
@@ -47,22 +47,41 @@ type Entitlements = {
   theme_pass?: boolean; // 旧互換
 };
 
-async function readJsonOrThrow(r: Response) {
-  const ct = r.headers.get("content-type") ?? "";
+async function readJsonOrThrow(r: Response, label: string) {
   const raw = await r.text();
-  if (!ct.includes("application/json")) {
-    console.error("Non-JSON response:", raw);
+  let j: any = null;
+
+  try {
+    j = raw ? JSON.parse(raw) : null;
+  } catch {
+    console.error(`[${label}] non-json response`, {
+      status: r.status,
+      contentType: r.headers.get("content-type"),
+      rawPreview: raw.slice(0, 300),
+    });
     throw new Error("non_json_response");
   }
-  const j = JSON.parse(raw);
-  if (!r.ok) throw new Error(j?.error ?? "request_failed");
+
+  if (!r.ok) {
+    const err = j?.error ?? `${label}_failed_${r.status}`;
+    const detail = j?.detail ? ` / ${j.detail}` : "";
+
+    if (err === "billing_customer_missing") {
+      console.warn(`[${label}] billing_customer_missing (non-fatal)`);
+      return { ok: false, error: "billing_customer_missing" };
+    }
+
+    console.error(`[${label}] api error`, j);
+    throw new Error(`${err}${detail}`);
+  }
+
   return j;
 }
 
 function tierName(price: number) {
   if (price >= 1200) return "プレミアム";
-  if (price >= 800) return "ミドル";
-  if (price >= 400) return "ライト";
+  if (price >= 800) return "スタンダード";
+  if (price >= 400) return "ベーシック";
   return "無料";
 }
 
@@ -86,6 +105,10 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function ClassSelectPage() {
   const [deviceId, setDeviceId] = useState("");
 
@@ -104,44 +127,90 @@ export default function ClassSelectPage() {
   const [loading, setLoading] = useState(true);
 
   const [showNarrow, setShowNarrow] = useState(false);
+  const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
-  const [needSlotsOpen, setNeedSlotsOpen] = useState(false);
-  const [needTopicOpen, setNeedTopicOpen] = useState(false);
-  const [pendingClass, setPendingClass] = useState<ClassRow | null>(null);
-
-  // ✅ 管理UI：?admin=1 の時だけ表示
-  const [showAdminUI, setShowAdminUI] = useState(false);
-  useEffect(() => {
-    try {
-      const sp = new URLSearchParams(window.location.search);
-      setShowAdminUI(sp.get("admin") === "1");
-    } catch {
-      setShowAdminUI(false);
-    }
-  }, []);
-
-  // ✅ ここが座礁ポイントだった：
-  // topics を /api/class/list から読んでいたのをやめる
-  // ★ topics は常に /api/topics（管理画面が更新する正規ルート）を読む
   async function reloadCatalog() {
     try {
-      // 1) worlds / classes は従来通り
       const r = await fetch("/api/class/list", { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
+      const j = await readJsonOrThrow(r, "class_list");
       setWorlds(j.worlds ?? []);
       setClasses(j.classes ?? []);
 
-      // 2) topics は正規の /api/topics
       const tr = await fetch("/api/topics", { cache: "no-store" });
-      const tj = await tr.json().catch(() => ({}));
+      const tj = await readJsonOrThrow(tr, "topics");
       setTopics(tj.topics ?? []);
     } catch (e) {
       console.error(e);
-      // ここで落として真っ白にしない
       setWorlds([]);
       setClasses([]);
       setTopics([]);
     }
+  }
+
+  async function fetchEntitlements(id: string) {
+    const er = await fetch("/api/user/entitlements", {
+      method: "GET",
+      headers: { "x-device-id": id },
+      cache: "no-store",
+    });
+    const ej = await readJsonOrThrow(er, "entitlements");
+
+    const topicPlan =
+      typeof ej.topic_plan === "number"
+        ? ej.topic_plan
+        : Boolean(ej.theme_pass)
+          ? 1200
+          : 0;
+
+    const next: Entitlements = {
+      plan: ej.plan ?? "free",
+      class_slots: ej.class_slots ?? 1,
+      can_create_classes: ej.can_create_classes ?? false,
+      theme_pass: Boolean(ej.theme_pass),
+      topic_plan: topicPlan,
+    };
+
+    console.log("[class/select] entitlements =", next);
+    setEnt(next);
+    return next;
+  }
+
+  async function syncBilling(id: string) {
+    const sr = await fetch("/api/billing/sync", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-device-id": id,
+      },
+      body: JSON.stringify({ deviceId: id }),
+      cache: "no-store",
+    });
+
+    try {
+      const sj = await readJsonOrThrow(sr, "billing_sync");
+      if (sj?.error === "billing_customer_missing") return null;
+      console.log("[class/select] sync ok", sj);
+      return sj;
+    } catch (e) {
+      console.error("[class/select] sync failed", e);
+      return null;
+    }
+  }
+
+  async function finalizeFromSession(id: string, sessionId: string) {
+    const fr = await fetch("/api/billing/finalize", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-device-id": id,
+      },
+      body: JSON.stringify({ session_id: sessionId, deviceId: id }),
+      cache: "no-store",
+    });
+
+    const fj = await readJsonOrThrow(fr, "billing_finalize");
+    console.log("[class/select] finalize ok", fj);
+    return fj;
   }
 
   useEffect(() => {
@@ -150,98 +219,73 @@ export default function ClassSelectPage() {
 
     (async () => {
       try {
-        // entitlements
-        const er = await fetch("/api/user/entitlements", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ deviceId: id }),
-        });
-        const ej = await er.json();
-        if (!er.ok) {
-          if (ej?.error === "profile_not_found") {
-            window.location.href = "/profile";
-            return;
+        const sp = new URLSearchParams(window.location.search);
+        const paid = sp.get("paid");
+        const sessionId = sp.get("session_id");
+
+        console.log("[class/select] params", { paid, sessionId, deviceId: id });
+
+        await fetchEntitlements(id);
+
+        if (paid === "1" && sessionId) {
+          try {
+            await finalizeFromSession(id, sessionId);
+            await syncBilling(id);
+            await fetchEntitlements(id);
+
+            await sleep(1200);
+            await syncBilling(id);
+            await fetchEntitlements(id);
+
+            sp.delete("paid");
+            sp.delete("session_id");
+            const qs = sp.toString();
+            const newUrl = `${window.location.pathname}${qs ? `?${qs}` : ""}`;
+            window.history.replaceState({}, "", newUrl);
+          } catch (e) {
+            console.error("[class/select] finalize flow failed", e);
+
+            await syncBilling(id);
+            await sleep(800);
+            await fetchEntitlements(id);
           }
-          throw new Error(ej?.error ?? "entitlements_failed");
+        } else {
+          await syncBilling(id);
+          await fetchEntitlements(id);
         }
 
-        const topicPlan =
-          typeof ej.topic_plan === "number"
-            ? ej.topic_plan
-            : Boolean(ej.theme_pass)
-              ? 1200
-              : 0;
-
-        setEnt({
-          plan: ej.plan ?? "free",
-          class_slots: ej.class_slots ?? 1,
-          can_create_classes: ej.can_create_classes ?? false,
-          theme_pass: Boolean(ej.theme_pass),
-          topic_plan: topicPlan,
-        });
-
-        // prefs get
         const pr = await fetch("/api/user/match-prefs", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ deviceId: id, mode: "get" }),
+          cache: "no-store",
         });
-        const pj = await pr.json();
-        if (pr.ok && pj?.prefs) {
-          setPrefs({ min_age: pj.prefs.min_age, max_age: pj.prefs.max_age });
+
+        try {
+          const pj = await readJsonOrThrow(pr, "match_prefs_get");
+          if (pj?.prefs) {
+            setPrefs({ min_age: pj.prefs.min_age, max_age: pj.prefs.max_age });
+          }
+        } catch (e) {
+          console.warn("[class/select] match-prefs get failed (non-fatal)", e);
         }
 
         await reloadCatalog();
       } catch (e: any) {
         console.error(e);
+        if (e?.message === "profile_not_found") {
+          window.location.href = "/profile";
+          return;
+        }
         alert(e?.message ?? "load_failed");
       } finally {
         setLoading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- billing ----------
-  async function buySlots(slotsTotal: 3 | 5) {
-    if (!deviceId) return;
-    setBusy(true);
-    try {
-      const r = await fetch("/api/billing/create-checkout-session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deviceId, kind: "slots", slotsTotal }),
-      });
-      const j = await readJsonOrThrow(r);
-      if (j?.url) window.location.href = j.url;
-      else alert("checkout url missing");
-    } catch (e: any) {
-      alert(e?.message ?? "checkout_failed");
-    } finally {
-      setBusy(false);
-    }
-  }
 
-  async function buyTopicPlan(amount: 400 | 800 | 1200) {
-    if (!deviceId) return;
-    setBusy(true);
-    try {
-      const r = await fetch("/api/billing/create-checkout-session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deviceId, kind: "topic_plan", amount }),
-      });
-      const j = await readJsonOrThrow(r);
-      if (j?.url) window.location.href = j.url;
-      else alert("checkout url missing");
-    } catch (e: any) {
-      alert(e?.message ?? "checkout_failed");
-    } finally {
-      setBusy(false);
-    }
-  }
 
-  // ---------- prefs ----------
   async function savePrefs(next: MatchPrefs) {
     if (!deviceId) return;
     setSavingPrefs(true);
@@ -255,15 +299,18 @@ export default function ClassSelectPage() {
           maxAge: next.max_age,
         }),
       });
-      const j = await r.json();
-      if (!r.ok) return alert(j?.error ?? "failed");
-      setPrefs({ min_age: j.minAge, max_age: j.maxAge });
+
+      try {
+        const j = await readJsonOrThrow(r, "match_prefs_save");
+        setPrefs({ min_age: j.minAge, max_age: j.maxAge });
+      } catch (e: any) {
+        alert(e?.message ?? "failed");
+      }
     } finally {
       setSavingPrefs(false);
     }
   }
 
-  // ---------- topic price ----------
   const topicByKey = useMemo(() => {
     const m = new Map<string, Topic>();
     for (const t of topics) m.set(t.topic_key, t);
@@ -286,7 +333,6 @@ export default function ClassSelectPage() {
     return 0;
   }
 
-  // ---------- filtering ----------
   const filtered = useMemo(() => {
     const maxA = Math.max(prefs.min_age, prefs.max_age);
     return classes.filter((c) => {
@@ -297,15 +343,19 @@ export default function ClassSelectPage() {
     });
   }, [classes, prefs, wFilter, tFilter]);
 
-  const isDefaultClass = (c: ClassRow) =>
-    c.name === "ホームルーム" || c.name === "フリークラス";
+  const boards = useMemo(() => {
+    const map = new Map<string, ClassRow>();
 
-  const boards = useMemo(
-    () => filtered.filter((c) => !isDefaultClass(c)).sort((a, b) => a.name.localeCompare(b.name)),
-    [filtered]
-  );
+    for (const c of filtered) {
+      const key = `${c.world_key ?? "default"}::${c.topic_key ?? "free"}`;
+      if (!map.has(key)) {
+        map.set(key, c);
+      }
+    }
 
-  // ---------- access / transfer ----------
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [filtered]);
+
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
 
@@ -314,7 +364,14 @@ export default function ClassSelectPage() {
     return need <= topicPlan;
   }
 
-  // ✅ ボード参加用（課金チェックあり）
+  function setSlotsLimitUi(classSlots?: number) {
+    setJoinLimitMessage(
+      `クラス参加上限に達しています。現在のプランでは最大 ${
+        classSlots ?? slots
+      } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
+    );
+  }
+
   async function doTransfer(c: ClassRow) {
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
@@ -322,52 +379,123 @@ export default function ClassSelectPage() {
     }
 
     setBusy(true);
+    setJoinLimitMessage("");
+
     try {
       if (!hasTopicAccess(c)) {
-        setPendingClass(c);
-        setNeedTopicOpen(true);
-        alert(`このボードは ${tierName(requiredMonthlyPriceForClass(c))} 以上が必要です`);
+        const need = requiredMonthlyPriceForClass(c);
+        alert(`このボードは ${tierName(need)}（¥${need}/月）以上が必要です`);
         return;
       }
 
-      const r = await fetch("/api/class/transfer", {
+      const res = await fetch("/api/class/match-join", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deviceId, newClassId: c.id }),
+        body: JSON.stringify({
+          deviceId,
+          topicKey: c.topic_key,
+          worldKey: c.world_key ?? "default",
+          capacity: 5,
+          preferJoinedClass: c.topic_key ? true : false,
+        }),
+        cache: "no-store",
       });
-      const j = await r.json();
 
-      if (!r.ok) {
+      const raw = await res.text();
+      let j: any = {};
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error("non_json_response");
+      }
+
+      if (!res.ok || !j?.ok) {
         if (j?.error === "class_slots_limit") {
-          setPendingClass(c);
-          setNeedSlotsOpen(true);
-          alert("クラス枠が足りません");
+          setSlotsLimitUi(j?.classSlots);
           return;
         }
-        alert(j?.error ?? "failed");
+        alert(j?.error ?? "match_join_failed");
         return;
       }
 
-      // ✅ room 経由
-      window.location.href = "/room?autojoin=1";
+      if (!j?.classId) {
+        alert("match_join_failed");
+        return;
+      }
+
+      const roomUrl = `/room?autojoin=1&classId=${encodeURIComponent(j.classId)}`;
+
+      pushRecentClass(
+        {
+          id: j.classId,
+          title: j?.class?.name ?? c.name,
+          url: roomUrl,
+        },
+        20
+      );
+
+      window.location.href = roomUrl;
     } catch (e: any) {
       console.error(e);
-      alert(e?.message ?? "transfer_failed");
+      alert(e?.message ?? "join_failed");
     } finally {
       setBusy(false);
     }
   }
 
-  // ✅ 「今すぐ入る」＝無料テーマ（クラス/課金/transferに依存しない入口）
   async function enterQuickFreeTheme() {
     if (loading) return;
-
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
       return;
     }
 
-    window.location.href = "/room?autojoin=1&mode=quick&topic=free";
+    setBusy(true);
+    setJoinLimitMessage("");
+
+    try {
+      const res = await fetch("/api/class/match-join", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId,
+          topicKey: null,
+          worldKey: "default",
+          capacity: 5,
+          preferJoinedClass: false,
+        }),
+        cache: "no-store",
+      });
+
+      const raw = await res.text();
+      let json: any = {};
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error("non_json_response");
+      }
+
+      if (!res.ok || !json?.ok) {
+        if (json?.error === "class_slots_limit") {
+          setSlotsLimitUi(json?.classSlots);
+          return;
+        }
+        alert(json?.error || "match_join_failed");
+        return;
+      }
+
+      if (!json?.classId) {
+        alert("match_join_failed");
+        return;
+      }
+
+      window.location.href = `/room?autojoin=1&classId=${encodeURIComponent(json.classId)}`;
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "quick_join_failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function BoardCard({ c }: { c: ClassRow }) {
@@ -386,14 +514,30 @@ export default function ClassSelectPage() {
           filter: locked ? "grayscale(0.35)" : "none",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            alignItems: "baseline",
+          }}
+        >
           <strong style={{ fontSize: 15 }}>{c.name}</strong>
           <span style={{ fontSize: 12, opacity: 0.9 }}>
             {locked ? "🔒" : "🔓"} {c.is_sensitive ? "🔞" : "🟢"}
           </span>
         </div>
 
-        <p style={{ marginTop: 10, whiteSpace: "pre-wrap", color: "#222", lineHeight: 1.5 }}>
+        <p
+          style={{
+            marginTop: 10,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+            color: "#222",
+            lineHeight: 1.5,
+          }}
+        >
           {c.description || "（説明なし）"}
         </p>
 
@@ -415,7 +559,16 @@ export default function ClassSelectPage() {
         </button>
 
         {need > 0 ? (
-          <div style={{ marginTop: 8, fontSize: 11, color: "#666" }}>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 11,
+              color: "#666",
+              lineHeight: 1.6,
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+            }}
+          >
             ※ “1テーマごと課金”ではありません。あなたの<strong>テーマプラン</strong>額以上がまとめて解放されます。
           </div>
         ) : null}
@@ -425,16 +578,137 @@ export default function ClassSelectPage() {
 
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto", color: "#111" }}>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
         <div>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>世界観/テーマで絞って参加</div>
+          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
+            世界観/テーマで絞って参加
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          <Link
+            href="/premium"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            プランを見る
+          </Link>
+
+          <Link
+            href="/billing"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            お支払い・解約
+          </Link>
+
+          <Link
+            href="/"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            今のクラス
+          </Link>
         </div>
       </header>
 
-      <section style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+      {joinLimitMessage ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 12,
+            border: "1px solid #fecaca",
+            background: "#fef2f2",
+            color: "#991b1b",
+            fontWeight: 800,
+            lineHeight: 1.6,
+          }}
+        >
+          {joinLimitMessage}
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Link
+              href="/"
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #fca5a5",
+                background: "#fff",
+                color: "#991b1b",
+                textDecoration: "none",
+                fontWeight: 900,
+              }}
+            >
+              今のクラスを見る
+            </Link>
+            <Link
+              href="/premium"
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #fca5a5",
+                background: "#fff",
+                color: "#991b1b",
+                textDecoration: "none",
+                fontWeight: 900,
+              }}
+            >
+              プランを見る
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      <section
+        style={{
+          marginTop: 12,
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
         <Pill>クラス枠: {slots}</Pill>
-        <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
+        <Pill>
+          テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）
+        </Pill>
         {loading ? <Pill>読み込み中…</Pill> : null}
         <button
           onClick={() => reloadCatalog()}
@@ -452,16 +726,38 @@ export default function ClassSelectPage() {
         </button>
       </section>
 
-      {/* 年齢 */}
-      <section style={{ marginTop: 12, border: "1px solid #ddd", borderRadius: 18, padding: 16, background: "#fff" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+      <section
+        style={{
+          marginTop: 12,
+          border: "1px solid #ddd",
+          borderRadius: 18,
+          padding: 16,
+          background: "#fff",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
           <strong>年齢</strong>
           <span style={{ fontSize: 12, color: "#666" }}>
             {Math.min(prefs.min_age, prefs.max_age)}〜{Math.max(prefs.min_age, prefs.max_age)}歳
           </span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+            marginTop: 10,
+          }}
+        >
           <label style={{ fontSize: 12, color: "#666" }}>
             最小
             <input
@@ -491,12 +787,29 @@ export default function ClassSelectPage() {
         </button>
       </section>
 
-      {/* 通常の入口（無料テーマ） */}
-      <section style={{ marginTop: 14, border: "1px solid #ddd", borderRadius: 18, padding: 16, background: "#fff" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+      <section
+        style={{
+          marginTop: 14,
+          border: "1px solid #ddd",
+          borderRadius: 18,
+          padding: 16,
+          background: "#fff",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
           <div>
             <strong style={{ fontSize: 16 }}>今すぐ入る</strong>
-            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>無料テーマ（考えずに入れる入口）</div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+              無料テーマ（考えずに入れる入口）
+            </div>
           </div>
 
           <button
@@ -538,8 +851,20 @@ export default function ClassSelectPage() {
 
       {showNarrow && (
         <>
-          <section style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <select value={wFilter} onChange={(e) => setWFilter(e.target.value)} style={{ padding: 10, borderRadius: 10 }}>
+          <section
+            style={{
+              marginTop: 12,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <select
+              value={wFilter}
+              onChange={(e) => setWFilter(e.target.value)}
+              style={{ padding: 10, borderRadius: 10 }}
+            >
               <option value="all">世界観: すべて</option>
               {worlds.map((w) => (
                 <option key={w.world_key} value={w.world_key}>
@@ -548,7 +873,11 @@ export default function ClassSelectPage() {
               ))}
             </select>
 
-            <select value={tFilter} onChange={(e) => setTFilter(e.target.value)} style={{ padding: 10, borderRadius: 10 }}>
+            <select
+              value={tFilter}
+              onChange={(e) => setTFilter(e.target.value)}
+              style={{ padding: 10, borderRadius: 10 }}
+            >
               <option value="all">テーマ: すべて</option>
               {topics.map((t) => (
                 <option key={t.topic_key} value={t.topic_key}>
@@ -561,25 +890,27 @@ export default function ClassSelectPage() {
 
           <section style={{ marginTop: 14 }}>
             <h2 style={{ margin: "10px 0", fontSize: 16, fontWeight: 900 }}>ボード</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                gap: 12,
+              }}
+            >
               {boards.map((c) => (
                 <BoardCard key={c.id} c={c} />
               ))}
             </div>
 
             {boards.length === 0 && !loading ? (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>条件に合うボードがありません</div>
+              <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
+                条件に合うボードがありません
+              </div>
             ) : null}
           </section>
         </>
       )}
-
-      {/* ✅ 管理UI：?admin=1 の時だけ表示 */}
-      {showAdminUI ? (
-        <div style={{ marginTop: 18 }}>
-          <AdminTopicEditor onPatched={() => reloadCatalog()} />
-        </div>
-      ) : null}
+         
 
       <div style={{ height: 24 }} />
     </main>
