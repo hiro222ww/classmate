@@ -20,8 +20,8 @@ type Topic = {
   description: string;
   is_sensitive: boolean;
   min_age: number;
-  monthly_price?: number; // 0/400/800/1200
-  is_premium?: boolean; // 旧互換
+  monthly_price?: number;
+  is_premium?: boolean;
 };
 
 type ClassRow = {
@@ -32,7 +32,7 @@ type ClassRow = {
   topic_key: string | null;
   min_age: number;
   is_sensitive: boolean;
-  is_premium?: boolean; // 旧互換
+  is_premium?: boolean;
   is_user_created: boolean;
   created_at?: string;
 };
@@ -43,8 +43,16 @@ type Entitlements = {
   plan: string;
   class_slots: number;
   can_create_classes: boolean;
-  topic_plan?: number; // 0/400/800/1200
-  theme_pass?: boolean; // 旧互換
+  topic_plan?: number;
+  theme_pass?: boolean;
+};
+
+type Profile = {
+  device_id: string;
+  display_name: string;
+  birth_date: string;
+  gender: "male" | "female";
+  photo_path: string | null;
 };
 
 async function readJsonOrThrow(r: Response, label: string) {
@@ -129,6 +137,8 @@ export default function ClassSelectPage() {
   const [showNarrow, setShowNarrow] = useState(false);
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
+  const [hasProfile, setHasProfile] = useState<boolean | null>(null);
+
   async function reloadCatalog() {
     try {
       const r = await fetch("/api/class/list", { cache: "no-store" });
@@ -144,6 +154,29 @@ export default function ClassSelectPage() {
       setWorlds([]);
       setClasses([]);
       setTopics([]);
+    }
+  }
+
+  async function fetchProfile(id: string) {
+    try {
+      const r = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (!r.ok) {
+        setHasProfile(false);
+        return false;
+      }
+
+      const data: Profile | null = await r.json();
+      const exists = Boolean(data?.device_id);
+      setHasProfile(exists);
+      return exists;
+    } catch (e) {
+      console.error("[class/select] profile fetch failed", e);
+      setHasProfile(false);
+      return false;
     }
   }
 
@@ -225,6 +258,7 @@ export default function ClassSelectPage() {
 
         console.log("[class/select] params", { paid, sessionId, deviceId: id });
 
+        await fetchProfile(id);
         await fetchEntitlements(id);
 
         if (paid === "1" && sessionId) {
@@ -273,18 +307,12 @@ export default function ClassSelectPage() {
         await reloadCatalog();
       } catch (e: any) {
         console.error(e);
-        if (e?.message === "profile_not_found") {
-          window.location.href = "/profile";
-          return;
-        }
         alert(e?.message ?? "load_failed");
       } finally {
         setLoading(false);
       }
     })();
   }, []);
-
-
 
   async function savePrefs(next: MatchPrefs) {
     if (!deviceId) return;
@@ -372,8 +400,8 @@ export default function ClassSelectPage() {
     );
   }
 
-    function goProfileIfNeeded(error: string | undefined) {
-    if (error !== "profile_required") return false;
+  function goProfileIfNeeded(error?: string) {
+    if (error && error !== "profile_required") return false;
 
     const ok = window.confirm(
       "クラスに参加するにはプロフィール登録が必要です。\nプロフィール登録ページへ移動しますか？"
@@ -385,10 +413,15 @@ export default function ClassSelectPage() {
 
     return true;
   }
-  
+
   async function doTransfer(c: ClassRow) {
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
+      return;
+    }
+
+    if (hasProfile === false) {
+      goProfileIfNeeded();
       return;
     }
 
@@ -424,19 +457,19 @@ export default function ClassSelectPage() {
       }
 
       if (!res.ok || !j?.ok) {
-  if (j?.error === "profile_required") {
-    goProfileIfNeeded(j?.error);
-    return;
-  }
+        if (j?.error === "profile_required") {
+          goProfileIfNeeded(j?.error);
+          return;
+        }
 
-  if (j?.error === "class_slots_limit") {
-    setSlotsLimitUi(j?.classSlots);
-    return;
-  }
+        if (j?.error === "class_slots_limit") {
+          setSlotsLimitUi(j?.classSlots);
+          return;
+        }
 
-  alert(j?.error ?? "match_join_failed");
-  return;
-}
+        alert(j?.error ?? "match_join_failed");
+        return;
+      }
 
       if (!j?.classId) {
         alert("match_join_failed");
@@ -470,6 +503,11 @@ export default function ClassSelectPage() {
       return;
     }
 
+    if (hasProfile === false) {
+      goProfileIfNeeded();
+      return;
+    }
+
     setBusy(true);
     setJoinLimitMessage("");
 
@@ -496,21 +534,19 @@ export default function ClassSelectPage() {
       }
 
       if (!res.ok || !json?.ok) {
-  if (json?.error === "profile_required") {
-    goProfileIfNeeded(json?.error);
-    return;
-  }
+        if (json?.error === "profile_required") {
+          goProfileIfNeeded(json?.error);
+          return;
+        }
 
-  if (json?.error === "class_slots_limit") {
-    setSlotsLimitUi(json?.classSlots);
-    return;
-  }
+        if (json?.error === "class_slots_limit") {
+          setSlotsLimitUi(json?.classSlots);
+          return;
+        }
 
-  alert(json?.error || "match_join_failed");
-  return;
-}
-
-
+        alert(json?.error || "match_join_failed");
+        return;
+      }
 
       if (!json?.classId) {
         alert("match_join_failed");
@@ -529,6 +565,7 @@ export default function ClassSelectPage() {
   function BoardCard({ c }: { c: ClassRow }) {
     const need = requiredMonthlyPriceForClass(c);
     const locked = need > 0 && !hasTopicAccess(c);
+    const profileMissing = hasProfile === false;
 
     return (
       <div
@@ -552,6 +589,7 @@ export default function ClassSelectPage() {
         >
           <strong style={{ fontSize: 15 }}>{c.name}</strong>
           <span style={{ fontSize: 12, opacity: 0.9 }}>
+            {profileMissing && "🧑未登録 "}
             {locked ? "🔒" : "🔓"} {c.is_sensitive ? "🔞" : "🟢"}
           </span>
         </div>
@@ -571,19 +609,24 @@ export default function ClassSelectPage() {
 
         <button
           onClick={() => doTransfer(c)}
-          disabled={busy || loading || !deviceId}
+          disabled={busy || loading || !deviceId || profileMissing}
           style={{
             width: "100%",
             padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid #ccc",
-            background: locked ? "#f3f3f3" : "#111",
-            color: locked ? "#111" : "#fff",
+            background: profileMissing ? "#e5e5e5" : locked ? "#f3f3f3" : "#111",
+            color: profileMissing ? "#666" : locked ? "#111" : "#fff",
             fontWeight: 900,
-            cursor: busy || loading || !deviceId ? "not-allowed" : "pointer",
+            cursor:
+              busy || loading || !deviceId || profileMissing ? "not-allowed" : "pointer",
           }}
         >
-          {locked ? `参加（要：${tierName(need)}以上）` : "参加する"}
+          {profileMissing
+            ? "プロフィール登録が必要"
+            : locked
+              ? `参加（要：${tierName(need)}以上）`
+              : "参加する"}
         </button>
 
         {need > 0 ? (
@@ -607,91 +650,123 @@ export default function ClassSelectPage() {
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto", color: "#111" }}>
       <header
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  }}
->
-  <div>
-    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
-    <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
-      世界観/テーマで絞って参加
-    </div>
-  </div>
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
+          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
+            世界観/テーマで絞って参加
+          </div>
+        </div>
 
-  <div
-    style={{
-      display: "flex",
-      gap: 8,
-      alignItems: "center",
-      flexWrap: "wrap",
-      justifyContent: "flex-end",
-    }}
-  >
-    {/* 🟢 追加：プロフィール導線 */}
-    <Link
-      href="/profile"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #4ade80",
-        background: "#ecfdf5",
-        fontWeight: 900,
-        color: "#166534",
-        textDecoration: "none",
-      }}
-    >
-      プロフィール登録
-    </Link>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          <Link
+            href="/profile"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #4ade80",
+              background: "#ecfdf5",
+              fontWeight: 900,
+              color: "#166534",
+              textDecoration: "none",
+            }}
+          >
+            プロフィール登録
+          </Link>
 
-    <Link
-      href="/premium"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #ccc",
-        background: "#fff",
-        fontWeight: 900,
-        color: "#111",
-        textDecoration: "none",
-      }}
-    >
-      プランを見る
-    </Link>
+          <Link
+            href="/premium"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            プランを見る
+          </Link>
 
-    <Link
-      href="/billing"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #ccc",
-        background: "#fff",
-        fontWeight: 900,
-        color: "#111",
-        textDecoration: "none",
-      }}
-    >
-      お支払い・解約
-    </Link>
+          <Link
+            href="/billing"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            お支払い・解約
+          </Link>
 
-    <Link
-      href="/"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #ccc",
-        background: "#fff",
-        fontWeight: 900,
-        color: "#111",
-        textDecoration: "none",
-      }}
-    >
-      今のクラス
-    </Link>
-  </div>
-</header>
+          <Link
+            href="/"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            今のクラス
+          </Link>
+        </div>
+      </header>
+
+      {hasProfile === false && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 12,
+            border: "1px solid #fde68a",
+            background: "#fffbeb",
+            color: "#92400e",
+            fontWeight: 800,
+            lineHeight: 1.6,
+          }}
+        >
+          クラスに参加するにはプロフィール登録が必要です。
+          <div style={{ marginTop: 10 }}>
+            <Link
+              href="/profile"
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #facc15",
+                background: "#fff",
+                color: "#92400e",
+                textDecoration: "none",
+                fontWeight: 900,
+              }}
+            >
+              プロフィール登録へ
+            </Link>
+          </div>
+        </div>
+      )}
 
       {joinLimitMessage ? (
         <div
@@ -750,9 +825,7 @@ export default function ClassSelectPage() {
         }}
       >
         <Pill>クラス枠: {slots}</Pill>
-        <Pill>
-          テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）
-        </Pill>
+        <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
         {loading ? <Pill>読み込み中…</Pill> : null}
         <button
           onClick={() => reloadCatalog()}
@@ -858,20 +931,23 @@ export default function ClassSelectPage() {
 
           <button
             onClick={enterQuickFreeTheme}
-            disabled={busy || loading || !deviceId}
+            disabled={busy || loading || !deviceId || hasProfile === false}
             style={{
               padding: "12px 14px",
               borderRadius: 14,
               border: "none",
-              background: "#111",
-              color: "#fff",
+              background: hasProfile === false ? "#d4d4d4" : "#111",
+              color: hasProfile === false ? "#666" : "#fff",
               fontWeight: 900,
-              cursor: busy || loading || !deviceId ? "not-allowed" : "pointer",
+              cursor:
+                busy || loading || !deviceId || hasProfile === false
+                  ? "not-allowed"
+                  : "pointer",
               whiteSpace: "nowrap",
               opacity: busy || loading || !deviceId ? 0.6 : 1,
             }}
           >
-            入る
+            {hasProfile === false ? "プロフィール登録が必要" : "入る"}
           </button>
         </div>
 
@@ -954,7 +1030,6 @@ export default function ClassSelectPage() {
           </section>
         </>
       )}
-         
 
       <div style={{ height: 24 }} />
     </main>
