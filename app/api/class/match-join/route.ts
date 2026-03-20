@@ -57,6 +57,37 @@ export async function POST(req: Request) {
       );
     }
 
+    // 0) プロフィール存在チェック
+    const { data: profile, error: profileErr } = await supabase
+      .from("user_profiles")
+      .select("device_id")
+      .eq("device_id", deviceId)
+      .maybeSingle();
+
+    console.log("[class/match-join] profile =", profile);
+    console.log("[class/match-join] profile error =", profileErr);
+
+    if (profileErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "profile_lookup_failed",
+          detail: profileErr.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!profile) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "profile_required",
+        },
+        { status: 400 }
+      );
+    }
+
     // 1) entitlement
     const { data: ent, error: entErr } = await supabase
       .from("user_entitlements")
@@ -144,7 +175,6 @@ export async function POST(req: Request) {
     }
 
     // 5) 空きのある class を探す
-    // preferJoinedClass=false のときは、すでに所属済みの同テーマ class を候補から除外
     if (!targetClass) {
       for (const c of sameTopicClasses) {
         const cid = String(c.id);

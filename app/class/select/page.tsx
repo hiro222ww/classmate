@@ -372,6 +372,19 @@ export default function ClassSelectPage() {
     );
   }
 
+  function goProfileIfNeeded(error: string | undefined) {
+  if (error !== "profile_required") return false;
+
+  const ok = window.confirm(
+    "クラスに参加するにはプロフィール登録が必要です。\nプロフィール登録ページへ移動しますか？"
+  );
+
+  if (ok) {
+    window.location.href = "/profile";
+  }
+
+  return true;
+}
   async function doTransfer(c: ClassRow) {
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
@@ -410,13 +423,19 @@ export default function ClassSelectPage() {
       }
 
       if (!res.ok || !j?.ok) {
-        if (j?.error === "class_slots_limit") {
-          setSlotsLimitUi(j?.classSlots);
-          return;
-        }
-        alert(j?.error ?? "match_join_failed");
-        return;
-      }
+  if (j?.error === "profile_required") {
+    goProfileIfNeeded(j?.error);
+    return;
+  }
+
+  if (j?.error === "class_slots_limit") {
+    setSlotsLimitUi(j?.classSlots);
+    return;
+  }
+
+  alert(j?.error ?? "match_join_failed");
+  return;
+}
 
       if (!j?.classId) {
         alert("match_join_failed");
@@ -476,13 +495,19 @@ export default function ClassSelectPage() {
       }
 
       if (!res.ok || !json?.ok) {
-        if (json?.error === "class_slots_limit") {
-          setSlotsLimitUi(json?.classSlots);
-          return;
-        }
-        alert(json?.error || "match_join_failed");
-        return;
-      }
+  if (json?.error === "profile_required") {
+    goProfileIfNeeded(json?.error);
+    return;
+  }
+
+  if (json?.error === "class_slots_limit") {
+    setSlotsLimitUi(json?.classSlots);
+    return;
+  }
+
+  alert(json?.error || "match_join_failed");
+  return;
+}
 
       if (!json?.classId) {
         alert("match_join_failed");
