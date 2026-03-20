@@ -11,12 +11,10 @@ function isUuid(s: string) {
 function buildTopicLabelFromClass(cls: any) {
   const rawName = String(cls?.name ?? "").trim();
   const topicKey = String(cls?.topic_key ?? "").trim();
-  const worldKey = String(cls?.world_key ?? "").trim();
 
-  if (rawName && rawName.toLowerCase() !== "free") return rawName;
+  if (rawName) return rawName;
   if (!topicKey) return "フリークラス";
   if (topicKey === "free") return "フリークラス";
-  if (worldKey) return `${topicKey}`;
   return topicKey;
 }
 
@@ -40,6 +38,7 @@ async function ensureSessionRow(params: {
 }) {
   const { sessionId, topic, capacity } = params;
 
+  // まず既存確認
   const { data: existing, error: existingErr } = await supabaseAdmin
     .from("sessions")
     .select("id, topic, capacity, status")
@@ -52,7 +51,11 @@ async function ensureSessionRow(params: {
 
   if (existing) {
     const updates: Record<string, any> = {};
-    if (!existing.topic && topic) updates.topic = topic;
+
+    if ((!existing.topic || existing.topic === "free") && topic) {
+      updates.topic = topic;
+    }
+
     if ((!existing.capacity || Number(existing.capacity) <= 0) && capacity > 0) {
       updates.capacity = capacity;
     }
@@ -71,6 +74,7 @@ async function ensureSessionRow(params: {
     return { ok: true as const };
   }
 
+  // 無ければ insert を試す
   const { error: insertErr } = await supabaseAdmin.from("sessions").insert({
     id: sessionId,
     topic,
@@ -78,8 +82,51 @@ async function ensureSessionRow(params: {
     capacity: capacity > 0 ? capacity : 5,
   });
 
+  // 同時実行で既に作られていた場合は成功扱いにする
   if (insertErr) {
-    return { ok: false as const, error: insertErr };
+    const code = (insertErr as any)?.code ?? "";
+    if (code !== "23505") {
+      return { ok: false as const, error: insertErr };
+    }
+  }
+
+  // insert 成功 or 重複でも、必要なら topic/capacity を補正
+  const { data: after, error: afterErr } = await supabaseAdmin
+    .from("sessions")
+    .select("id, topic, capacity, status")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (afterErr) {
+    return { ok: false as const, error: afterErr };
+  }
+
+  if (!after) {
+    return {
+      ok: false as const,
+      error: { message: "session_not_found_after_insert" },
+    };
+  }
+
+  const updates: Record<string, any> = {};
+
+  if ((!after.topic || after.topic === "free") && topic) {
+    updates.topic = topic;
+  }
+
+  if ((!after.capacity || Number(after.capacity) <= 0) && capacity > 0) {
+    updates.capacity = capacity;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    const { error: updateErr } = await supabaseAdmin
+      .from("sessions")
+      .update(updates)
+      .eq("id", sessionId);
+
+    if (updateErr) {
+      return { ok: false as const, error: updateErr };
+    }
   }
 
   return { ok: true as const };
@@ -95,7 +142,7 @@ export async function POST(req: Request) {
     const name = String(body.name ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
 
-    // --- ① Room/Call 用：sessionId で参加 ---
+    // ① Room/Call 用：sessionId で参加
     if (sessionIdRaw) {
       if (!isUuid(sessionIdRaw)) {
         return NextResponse.json(
@@ -112,9 +159,9 @@ export async function POST(req: Request) {
       }
 
       let resolvedTopic = topic;
-      let resolvedCapacity = Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
+      const resolvedCapacity =
+        Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
 
-      // classId があるなら class 情報から session を整える
       if (classIdRaw) {
         const { data: cls, error: clsErr } = await supabaseAdmin
           .from("classes")
@@ -148,7 +195,7 @@ export async function POST(req: Request) {
       if (!ensured.ok) {
         console.error("[session/join] ensure session error:", ensured.error);
         return NextResponse.json(
-          { ok: false, error: ensured.error.message },
+          { ok: false, error: ensured.error.message ?? "ensure_session_failed" },
           { status: 500 }
         );
       }
@@ -170,7 +217,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- ② 既存用途：topic から join_or_create_session（RPC） ---
+    // ② 既存用途：topic から join_or_create_session（RPC）
     if (!topic || !name || !Number.isFinite(capacity) || capacity <= 0) {
       return new NextResponse("missing or invalid fields", { status: 400 });
     }
