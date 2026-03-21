@@ -28,7 +28,7 @@ export default function AboutPage() {
       </h2>
 
       <p>運営：classmate運営</p>
-      <p>お問い合わせ：your-email@gmail.com</p>
+      <p>お問い合わせ：classmate.app.team@gmail.com</p>
     </main>
   );
 }
