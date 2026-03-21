@@ -1,19 +1,47 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import type Stripe from "stripe";
 
-type Body =
-  | { deviceId: string; kind: "slots"; slotsTotal: 3 | 5 }
-  | { deviceId: string; kind: "topic_plan"; amount: 400 | 800 | 1200 };
+type SlotsBody = {
+  deviceId: string;
+  kind: "slots";
+  slotsTotal: 3 | 5;
+};
 
-function pickDeviceId(req: Request, body: any) {
-  return req.headers.get("x-device-id") || body?.deviceId || "";
+type TopicPlanBody = {
+  deviceId: string;
+  kind: "topic_plan";
+  amount: 400 | 800 | 1200;
+};
+
+type Body = SlotsBody | TopicPlanBody;
+
+function pickDeviceId(req: Request, body: unknown) {
+  const b = (body ?? {}) as Partial<Body>;
+  return req.headers.get("x-device-id") || b.deviceId || "";
 }
 
 function mustEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`${name}_missing`);
   return v;
+}
+
+function isSlotsBody(body: Partial<Body>): body is SlotsBody {
+  return (
+    body.kind === "slots" &&
+    (body.slotsTotal === 3 || body.slotsTotal === 5) &&
+    typeof body.deviceId === "string"
+  );
+}
+
+function isTopicPlanBody(body: Partial<Body>): body is TopicPlanBody {
+  return (
+    body.kind === "topic_plan" &&
+    (body.amount === 400 || body.amount === 800 || body.amount === 1200) &&
+    typeof body.deviceId === "string"
+  );
 }
 
 function priceIdFor(body: Body) {
@@ -30,46 +58,35 @@ function priceIdFor(body: Body) {
   throw new Error("invalid_amount");
 }
 
-async function ensureCustomerId(deviceId: string) {
-  const { data: billing, error: bErr } = await supabaseAdmin
-    .from("user_billing_customers")
-    .select("device_id, stripe_customer_id")
-    .eq("device_id", deviceId)
-    .maybeSingle();
+async function findProfileEmail(deviceId: string): Promise<string | undefined> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("user_profiles")
+      .select("email")
+      .eq("device_id", deviceId)
+      .maybeSingle();
 
-  if (bErr) throw new Error(`db_error:${bErr.message}`);
+    if (error) {
+      console.warn(
+        "[create-checkout-session] user_profiles lookup failed:",
+        error.message
+      );
+      return undefined;
+    }
 
-  if (billing?.stripe_customer_id) {
-    return billing.stripe_customer_id;
+    const email = String((data as { email?: string } | null)?.email ?? "").trim();
+    if (!email || !email.includes("@")) return undefined;
+    return email;
+  } catch (e) {
+    console.warn("[create-checkout-session] profile email lookup exception:", e);
+    return undefined;
   }
-
-  const customer = await stripe.customers.create({
-    metadata: {
-      deviceId: deviceId,
-      app: "classmate",
-    },
-  });
-
-  const { error: uErr } = await supabaseAdmin
-    .from("user_billing_customers")
-    .upsert(
-      {
-        device_id: deviceId,
-        stripe_customer_id: customer.id,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "device_id" }
-    );
-
-  if (uErr) throw new Error(`db_error:${uErr.message}`);
-
-  return customer.id;
 }
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Partial<Body>;
-    const deviceId = pickDeviceId(req, body);
+    const rawBody = (await req.json().catch(() => ({}))) as Partial<Body>;
+    const deviceId = pickDeviceId(req, rawBody);
 
     if (!deviceId) {
       return NextResponse.json(
@@ -78,15 +95,21 @@ export async function POST(req: Request) {
       );
     }
 
-    if (body.kind !== "slots" && body.kind !== "topic_plan") {
+    let body: Body;
+
+    if (isSlotsBody(rawBody)) {
+      body = rawBody;
+    } else if (isTopicPlanBody(rawBody)) {
+      body = rawBody;
+    } else {
       return NextResponse.json(
-        { error: "kind_missing" },
+        { error: "invalid_request_body" },
         { status: 400 }
       );
     }
 
-    const customerId = await ensureCustomerId(deviceId);
-    const priceId = priceIdFor(body as Body);
+    const priceId = priceIdFor(body);
+    const email = await findProfileEmail(deviceId);
 
     const origin =
       req.headers.get("origin") ||
@@ -96,9 +119,23 @@ export async function POST(req: Request) {
     const success_url = `${origin}/class/select?paid=1&session_id={CHECKOUT_SESSION_ID}`;
     const cancel_url = `${origin}/class/select?canceled=1`;
 
-    const session = await stripe.checkout.sessions.create({
+    let metadata: Stripe.MetadataParam;
+    if (body.kind === "slots") {
+      metadata = {
+        deviceId,
+        kind: "slots",
+        slotsTotal: String(body.slotsTotal),
+      };
+    } else {
+      metadata = {
+        deviceId,
+        kind: "topic_plan",
+        amount: String(body.amount),
+      };
+    }
+
+    const params: Stripe.Checkout.SessionCreateParams = {
       mode: "subscription",
-      customer: customerId,
       line_items: [
         {
           price: priceId,
@@ -107,16 +144,16 @@ export async function POST(req: Request) {
       ],
       success_url,
       cancel_url,
+      client_reference_id: deviceId,
+      metadata,
+      ...(email ? { customer_email: email } : {}),
+    };
 
-      metadata: {
-        deviceId: deviceId,
-        kind: (body as Body).kind,
-      },
-    });
+    const session = await stripe.checkout.sessions.create(params);
 
     return NextResponse.json({
       url: session.url,
-      customerId,
+      sessionId: session.id,
       priceId,
     });
   } catch (e: any) {
