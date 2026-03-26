@@ -1,7 +1,6 @@
-// app/call/CallClient.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChalkboardRoomShell } from "../room/ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
@@ -16,7 +15,11 @@ type SessionStatusResult = {
     capacity: number;
     created_at: string;
   };
-  members?: { display_name: string; joined_at: string }[];
+  members?: {
+    display_name: string;
+    joined_at: string;
+    photo_path?: string | null;
+  }[];
   memberCount?: number;
   error?: string;
 };
@@ -53,34 +56,58 @@ function stopStream(stream: MediaStream | null) {
   for (const t of stream.getTracks()) t.stop();
 }
 
-function AvatarChip({ name, filled }: { name: string; filled: boolean }) {
+function AvatarChip({
+  name,
+  filled,
+  photo,
+}: {
+  name: string;
+  filled: boolean;
+  photo?: string | null;
+}) {
   const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
+
   return (
     <div style={{ display: "grid", gap: 6, placeItems: "center" }}>
       <div
         style={{
-          width: 44,
-          height: 44,
+          width: 48,
+          height: 48,
           borderRadius: 999,
           border: "2px solid #111",
-          background: filled ? "#111" : "#f0f0f0",
-          color: filled ? "#fff" : "#aaa",
+          overflow: "hidden",
           display: "grid",
           placeItems: "center",
-          fontWeight: 900,
-          fontSize: 16,
-          boxShadow: filled ? "0 2px 10px rgba(0,0,0,0.18)" : "none",
+          background: filled ? "#fff" : "#f0f0f0",
+          color: "#111",
+          boxShadow: filled ? "0 2px 10px rgba(0,0,0,0.12)" : "none",
         }}
         title={filled ? name : "未参加"}
       >
-        {filled ? initial : "○"}
+        {filled && photo ? (
+          <img
+            src={photo}
+            alt={name}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ) : filled ? (
+          <span style={{ fontWeight: 900, fontSize: 16 }}>{initial}</span>
+        ) : (
+          <span style={{ color: "#aaa", fontWeight: 900 }}>○</span>
+        )}
       </div>
+
       <div
         style={{
           fontSize: 11,
           fontWeight: 900,
           color: filled ? "#111" : "#9ca3af",
-          width: 54,
+          width: 60,
           textAlign: "center",
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -189,7 +216,6 @@ function useBoardSounds() {
     resumeIfNeeded();
     if (srcRef.current) return;
 
-    // ループノイズ（2秒）
     const bufferSize = Math.floor(ctx.sampleRate * 2.0);
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
@@ -199,7 +225,6 @@ function useBoardSounds() {
     src.buffer = buffer;
     src.loop = true;
 
-    // フィルタでチョーク帯域を作る
     const hp = ctx.createBiquadFilter();
     hp.type = "highpass";
     hp.frequency.value = 650;
@@ -213,11 +238,9 @@ function useBoardSounds() {
     lp.type = "lowpass";
     lp.frequency.value = 9500;
 
-    // 出力ゲイン
     const chalkGain = ctx.createGain();
     chalkGain.gain.value = 0.0;
 
-    // ざらつき（微小ゲート）
     const lfo = ctx.createOscillator();
     lfo.type = "triangle";
     lfo.frequency.value = 16;
@@ -244,7 +267,6 @@ function useBoardSounds() {
     lfoGainRef.current = lfoGain;
   };
 
-  // ✅ 最強：AudioContextごと閉じる（鳴り止まない系の完全対策）
   const dispose = () => {
     try {
       srcRef.current?.stop();
@@ -317,7 +339,6 @@ function useBoardSounds() {
     g.gain.setTargetAtTime(amp, t, 0.02);
   };
 
-  // 通常は減衰（ただし「止まらない」が出たらdisposeで殺すのは呼び出し側）
   const chalkEnd = () => {
     const ctx = ctxRef.current;
     const g = chalkGainRef.current;
@@ -382,7 +403,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
   const lastMoveRef = useRef<{ t: number; x: number; y: number } | null>(null);
   const lastKonkonRef = useRef(0);
 
-  // watchdog（入力が無いのに鳴ってたらdisposeで殺す）
   const watchdogRef = useRef<number | null>(null);
   const lastInputAtRef = useRef(0);
 
@@ -478,7 +498,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
 
   const clearLocal = () => paintBoardBase();
 
-  // 初回ロード
   useEffect(() => {
     if (!sessionId) return;
 
@@ -518,7 +537,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
     boot();
   }, [sessionId]);
 
-  // リサイズ時：再描画
   useEffect(() => {
     const onResize = () => {
       (async () => {
@@ -553,7 +571,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
     return () => window.removeEventListener("resize", onResize);
   }, [sessionId]);
 
-  // realtime
   useEffect(() => {
     if (!sessionId) return;
 
@@ -621,7 +638,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
     ctx.restore();
   };
 
-  // 入力イベント（“止まらない”最終対策：止める時はdisposeでAudioContextごと閉じる）
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -631,7 +647,7 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       lastMoveRef.current = null;
       lastPtRef.current = null;
       pointsRef.current = [];
-      sounds.dispose(); // ✅ ここが最強
+      sounds.dispose();
     };
 
     const finalizeAndSend = async () => {
@@ -642,7 +658,7 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       pointsRef.current = [];
       lastPtRef.current = null;
 
-      sounds.dispose(); // ✅ 送信前に必ず殺す
+      sounds.dispose();
 
       if (!pts || pts.length < 2) return;
 
@@ -674,7 +690,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
 
       lastInputAtRef.current = performance.now();
 
-      // 書き始めの“軽いコンコン”（ボタン無し）
       const now = performance.now();
       if (now - lastKonkonRef.current > 400) {
         lastKonkonRef.current = now;
@@ -751,7 +766,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       if (document.hidden) forceEnd();
     };
 
-    // watchdog開始：入力止まってるのに音が残ったらdisposeで殺す
     if (watchdogRef.current) window.clearInterval(watchdogRef.current);
     watchdogRef.current = window.setInterval(() => {
       const dt = performance.now() - lastInputAtRef.current;
@@ -791,7 +805,6 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       forceEnd();
       sounds.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, penColor, penWidth]);
 
   const onClear = async () => {
@@ -886,7 +899,9 @@ export default function CallClient() {
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
   const [memberCount, setMemberCount] = useState(0);
-  const [members, setMembers] = useState<{ display_name: string; joined_at: string }[]>([]);
+  const [members, setMembers] = useState<
+    { display_name: string; joined_at: string; photo_path?: string | null }[]
+  >([]);
   const [err, setErr] = useState("");
 
   const pollTimer = useRef<number | null>(null);
@@ -909,7 +924,6 @@ export default function CallClient() {
     setReturnTo(rt ? rt : `/room?sessionId=${encodeURIComponent(sid)}`);
   }, []);
 
-  // ✅ 通話でも参加を記録（memberCount 0対策）
   useEffect(() => {
     if (!sessionId) return;
 
@@ -927,7 +941,9 @@ export default function CallClient() {
 
   async function fetchStatus(sid: string) {
     try {
-      const res = await fetch(`/api/session/status?sessionId=${encodeURIComponent(sid)}`, { cache: "no-store" });
+      const res = await fetch(`/api/session/status?sessionId=${encodeURIComponent(sid)}`, {
+        cache: "no-store",
+      });
       const r = await readJsonBestEffort(res);
       const j = (r.json ?? {}) as SessionStatusResult;
 
@@ -949,7 +965,6 @@ export default function CallClient() {
     }
   }
 
-  // ✅ ポーリングは軽め
   useEffect(() => {
     if (!sessionId) return;
     fetchStatus(sessionId);
@@ -961,7 +976,6 @@ export default function CallClient() {
     };
   }, [sessionId]);
 
-  // マイク取得
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -997,8 +1011,10 @@ export default function CallClient() {
     };
   }, [sessionId, isMuted]);
 
-  const names = useMemo(() => (members ?? []).map((m) => m.display_name).filter(Boolean), [members]);
-  const filled = Math.min(names.length > 0 ? names.length : memberCount, capacity);
+  const filled = Math.min(
+    (members?.length ?? 0) > 0 ? members.length : memberCount,
+    capacity
+  );
 
   const micStateLabel = isMuted ? "🔇 ミュート中" : "🎙 マイクON";
   const muteButtonLabel = isMuted ? "ミュート解除" : "ミュート";
@@ -1011,7 +1027,15 @@ export default function CallClient() {
     >
       <div style={{ display: "grid", gap: 12, color: "#111" }}>
         {err ? (
-          <div style={{ padding: 10, border: "1px solid #f5c2c7", background: "#f8d7da", borderRadius: 10, color: "#842029" }}>
+          <div
+            style={{
+              padding: 10,
+              border: "1px solid #f5c2c7",
+              background: "#f8d7da",
+              borderRadius: 10,
+              color: "#842029",
+            }}
+          >
             <p style={{ margin: 0, fontWeight: 900 }}>エラー</p>
             <p style={{ margin: "6px 0 0 0" }}>{err}</p>
           </div>
@@ -1027,9 +1051,17 @@ export default function CallClient() {
 
           <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
             {Array.from({ length: capacity }).map((_, i) => {
+              const m = members[i];
               const isFilled = i < filled;
-              const name = names[i] ?? (isFilled ? "参加者" : "未参加");
-              return <AvatarChip key={i} name={name} filled={isFilled} />;
+
+              return (
+                <AvatarChip
+                  key={i}
+                  name={m?.display_name ?? "参加者"}
+                  photo={m?.photo_path}
+                  filled={isFilled}
+                />
+              );
             })}
           </div>
 
