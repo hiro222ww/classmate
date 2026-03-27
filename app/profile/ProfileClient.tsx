@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getOrCreateDeviceId } from "@/lib/device";
@@ -9,7 +10,7 @@ type Gender = "male" | "female";
 type Profile = {
   device_id: string;
   display_name: string;
-  birth_date: string; // YYYY-MM-DD
+  birth_date: string;
   gender: Gender;
   photo_path: string | null;
 };
@@ -41,29 +42,29 @@ export default function ProfileClient() {
   const [loading, setLoading] = useState(true);
 
   const [displayName, setDisplayName] = useState("");
-  const [birthDate, setBirthDate] = useState(""); // YYYY-MM-DD
+  const [birthDate, setBirthDate] = useState("");
   const [gender, setGender] = useState<Gender>("male");
   const [guardianConsent, setGuardianConsent] = useState(false);
+
+  const [termsAgreed, setTermsAgreed] = useState(false);
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string>("");
+  const [errorMsg, setErrorMsg] = useState("");
 
   const age = useMemo(() => calcAge(birthDate), [birthDate]);
   const isMinor = age !== null && age < 18;
-
-  // ★今は成人のみ
   const isAdult = age !== null && age >= 18;
-
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   const canSubmit =
     displayName.trim().length > 0 &&
     isValidISODateString(birthDate) &&
     (gender === "male" || gender === "female") &&
-    isAdult && // ★成人のみ利用
+    isAdult &&
+    termsAgreed &&
     !submitting;
 
   useEffect(() => {
@@ -109,32 +110,36 @@ export default function ProfileClient() {
       return;
     }
     if (!isValidISODateString(birthDate)) {
-      setErrorMsg("生年月日は「YYYY-MM-DD」の形式で入力してください。");
+      setErrorMsg("生年月日を正しく入力してください。");
       return;
     }
     if (gender !== "male" && gender !== "female") {
       setErrorMsg("性別を選択してください。");
       return;
     }
-
-    // ★ここが成人限定の本体（UIは未成年表示を残すが、保存は不可）
     if (!isAdult) {
       setErrorMsg("現在は18歳以上の方のみご利用いただけます。");
       return;
     }
+    if (!termsAgreed) {
+      setErrorMsg("利用規約への同意が必要です。");
+      return;
+    }
 
     setSubmitting(true);
+
     try {
       const fd = new FormData();
       fd.append("device_id", deviceId);
       fd.append("display_name", displayName.trim());
       fd.append("birth_date", birthDate);
       fd.append("gender", gender);
-
-      // 未成年UIは残すため、値は送る（将来に備える）
+      fd.append("terms_agreed", termsAgreed ? "true" : "false");
       fd.append("guardian_consent", isMinor && guardianConsent ? "true" : "false");
 
-      if (photoFile) fd.append("photo", photoFile);
+      if (photoFile) {
+        fd.append("photo", photoFile);
+      }
 
       const res = await fetch("/api/profile", {
         method: "POST",
@@ -148,7 +153,6 @@ export default function ProfileClient() {
       }
 
       alert("プロフィールを保存しました");
-      // 次の導線：テーマ/転校に行かせたいならここを変更
       router.push("/class/select");
     } finally {
       setSubmitting(false);
@@ -160,7 +164,14 @@ export default function ProfileClient() {
   return (
     <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
       {errorMsg && (
-        <div style={{ padding: 10, border: "1px solid #f5c2c7", background: "#f8d7da", borderRadius: 10 }}>
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid #f5c2c7",
+            background: "#f8d7da",
+            borderRadius: 10,
+          }}
+        >
           <p style={{ margin: 0, color: "#842029" }}>{errorMsg}</p>
         </div>
       )}
@@ -193,23 +204,28 @@ export default function ProfileClient() {
 
         {age !== null && <p style={{ margin: 0, color: "#555" }}>年齢：{age}歳</p>}
 
-        {/* 未成年UIは残す */}
         {isMinor && (
-          <div style={{ display: "grid", gap: 8, padding: 10, borderRadius: 12, border: "1px solid #ffeeba", background: "#fff3cd" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid #ffeeba",
+              background: "#fff3cd",
+            }}
+          >
             <div style={{ fontWeight: 800, color: "#664d03" }}>
               現在は18歳以上のみ利用できます
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#664d’03" as any }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#664d03" }}>
               <input
                 type="checkbox"
                 checked={guardianConsent}
                 onChange={(e) => setGuardianConsent(e.target.checked)}
               />
-              保護者の同意を得ています（将来のためのUI）
+              保護者の同意を得ています（将来用）
             </label>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              ※ 未成年向け機能は準備中です。公開時は安全設計（年齢ゾーン分離等）を入れます。
-            </div>
           </div>
         )}
       </div>
@@ -229,7 +245,11 @@ export default function ProfileClient() {
 
       <div style={{ display: "grid", gap: 6 }}>
         <label style={{ fontWeight: 700 }}>プロフィール写真（任意）</label>
-        <input type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)} />
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+        />
         {photoPreviewUrl && (
           <img
             src={photoPreviewUrl}
@@ -243,6 +263,35 @@ export default function ProfileClient() {
             }}
           />
         )}
+      </div>
+
+      <div
+        style={{
+          padding: 12,
+          border: "1px solid #ddd",
+          borderRadius: 10,
+          background: "#fafafa",
+        }}
+      >
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, lineHeight: 1.6 }}>
+          <input
+            type="checkbox"
+            checked={termsAgreed}
+            onChange={(e) => setTermsAgreed(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <Link
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ textDecoration: "underline" }}
+            >
+              利用規約
+            </Link>
+            に同意します。
+          </span>
+        </label>
       </div>
 
       <button
