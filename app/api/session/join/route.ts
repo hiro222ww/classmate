@@ -1,6 +1,9 @@
-// app/api/session/join/route.ts
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 function isUuid(s: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -19,29 +22,28 @@ function buildTopicLabelFromClass(cls: any) {
 }
 
 async function upsertMember(sessionId: string, deviceId: string, name: string) {
-  return await supabaseAdmin
-    .from("session_members")
-    .upsert(
-      {
-        session_id: sessionId,
-        device_id: deviceId,
-        display_name: name,
-        joined_at: new Date().toISOString(),
-      },
-      { onConflict: "session_id,device_id" }
-    );
+  return await supabaseAdmin.from("session_members").upsert(
+    {
+      session_id: sessionId,
+      device_id: deviceId,
+      display_name: name,
+      joined_at: new Date().toISOString(),
+    },
+    { onConflict: "session_id,device_id" }
+  );
 }
 
 async function ensureSessionRow(params: {
   sessionId: string;
   topic: string;
   capacity: number;
+  classId?: string | null;
 }) {
-  const { sessionId, topic, capacity } = params;
+  const { sessionId, topic, capacity, classId } = params;
 
   const { data: existing, error: existingErr } = await supabaseAdmin
     .from("sessions")
-    .select("id, topic, capacity, status")
+    .select("id, topic, capacity, status, class_id")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -60,6 +62,10 @@ async function ensureSessionRow(params: {
       updates.capacity = capacity;
     }
 
+    if (!existing.class_id && classId) {
+      updates.class_id = classId;
+    }
+
     if (Object.keys(updates).length > 0) {
       const { error: updateErr } = await supabaseAdmin
         .from("sessions")
@@ -76,6 +82,7 @@ async function ensureSessionRow(params: {
 
   const { error: insertErr } = await supabaseAdmin.from("sessions").insert({
     id: sessionId,
+    class_id: classId ?? null,
     topic,
     status: "forming",
     capacity: capacity > 0 ? capacity : 5,
@@ -88,45 +95,60 @@ async function ensureSessionRow(params: {
     }
   }
 
-  const { data: after, error: afterErr } = await supabaseAdmin
+  return { ok: true as const };
+}
+
+async function findOrCreateFormingSession(params: {
+  classId: string;
+  topic: string;
+  capacity: number;
+}) {
+  const { classId, topic, capacity } = params;
+
+  const { data: existing, error: findErr } = await supabaseAdmin
     .from("sessions")
-    .select("id, topic, capacity, status")
-    .eq("id", sessionId)
+    .select("id, topic, capacity, status, class_id, created_at")
+    .eq("class_id", classId)
+    .eq("status", "forming")
+    .order("created_at", { ascending: true })
+    .limit(1)
     .maybeSingle();
 
-  if (afterErr) {
-    return { ok: false as const, error: afterErr };
+  if (findErr) {
+    return { ok: false as const, error: findErr };
   }
 
-  if (!after) {
+  if (existing?.id) {
+    const ensured = await ensureSessionRow({
+      sessionId: existing.id,
+      topic,
+      capacity,
+      classId,
+    });
+
+    if (!ensured.ok) return ensured;
+
     return {
-      ok: false as const,
-      error: { message: "session_not_found_after_insert" },
+      ok: true as const,
+      sessionId: existing.id,
     };
   }
 
-  const updates: Record<string, any> = {};
+  const sessionId = randomUUID();
 
-  if ((!after.topic || after.topic === "free") && topic) {
-    updates.topic = topic;
-  }
+  const ensured = await ensureSessionRow({
+    sessionId,
+    topic,
+    capacity,
+    classId,
+  });
 
-  if ((!after.capacity || Number(after.capacity) <= 0) && capacity > 0) {
-    updates.capacity = capacity;
-  }
+  if (!ensured.ok) return ensured;
 
-  if (Object.keys(updates).length > 0) {
-    const { error: updateErr } = await supabaseAdmin
-      .from("sessions")
-      .update(updates)
-      .eq("id", sessionId);
-
-    if (updateErr) {
-      return { ok: false as const, error: updateErr };
-    }
-  }
-
-  return { ok: true as const };
+  return {
+    ok: true as const,
+    sessionId,
+  };
 }
 
 export async function POST(req: Request) {
@@ -154,12 +176,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // ① classId があるときは class 単位で同じ箱に入れる
+    const resolvedCapacity =
+      Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
+
+    // ① classId 指定のときは、その class の forming session を再利用する
     if (classIdRaw) {
-      const sessionId = classIdRaw;
       let resolvedTopic = topic;
-      const resolvedCapacity =
-        Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
 
       const { data: cls, error: clsErr } = await supabaseAdmin
         .from("classes")
@@ -181,25 +203,30 @@ export async function POST(req: Request) {
         resolvedTopic = resolvedTopic || "クラス";
       }
 
-      const ensured = await ensureSessionRow({
-        sessionId,
+      const found = await findOrCreateFormingSession({
+        classId: classIdRaw,
         topic: resolvedTopic,
         capacity: resolvedCapacity,
       });
 
-      if (!ensured.ok) {
-        console.error("[session/join] ensure session error:", ensured.error);
+      if (!found.ok) {
+        console.error("[session/join] find/create session error:", found.error);
         return NextResponse.json(
-          { ok: false, error: ensured.error.message ?? "ensure_session_failed" },
+          {
+            ok: false,
+            error: found.error?.message ?? "find_or_create_session_failed",
+          },
           { status: 500 }
         );
       }
 
-      const { error } = await upsertMember(sessionId, deviceId, name);
-      if (error) {
-        console.error("[session/join] member upsert error:", error);
+      const sessionId = found.sessionId;
+
+      const { error: memberErr } = await upsertMember(sessionId, deviceId, name);
+      if (memberErr) {
+        console.error("[session/join] member upsert error:", memberErr);
         return NextResponse.json(
-          { ok: false, error: error.message },
+          { ok: false, error: memberErr.message },
           { status: 500 }
         );
       }
@@ -227,7 +254,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // ② sessionId 指定のときはその session に参加
+    // ② sessionId 指定のときは、その session に参加
     if (sessionIdRaw) {
       if (!isUuid(sessionIdRaw)) {
         return NextResponse.json(
@@ -236,14 +263,13 @@ export async function POST(req: Request) {
         );
       }
 
-      let resolvedTopic = topic;
-      const resolvedCapacity =
-        Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
+      const resolvedTopic = topic || "クラス";
 
       const ensured = await ensureSessionRow({
         sessionId: sessionIdRaw,
-        topic: resolvedTopic || "クラス",
+        topic: resolvedTopic,
         capacity: resolvedCapacity,
+        classId: null,
       });
 
       if (!ensured.ok) {
@@ -254,11 +280,16 @@ export async function POST(req: Request) {
         );
       }
 
-      const { error } = await upsertMember(sessionIdRaw, deviceId, name);
-      if (error) {
-        console.error("[session/join] member upsert error:", error);
+      const { error: memberErr } = await upsertMember(
+        sessionIdRaw,
+        deviceId,
+        name
+      );
+
+      if (memberErr) {
+        console.error("[session/join] member upsert error:", memberErr);
         return NextResponse.json(
-          { ok: false, error: error.message },
+          { ok: false, error: memberErr.message },
           { status: 500 }
         );
       }
@@ -279,16 +310,19 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ok: true,
         sessionId: sessionIdRaw,
-        topic: resolvedTopic || "クラス",
+        topic: resolvedTopic,
         capacity: resolvedCapacity,
         memberCount: Number(count ?? 0),
         status: "forming",
       });
     }
 
-    // ③ 既存用途：topic から join_or_create_session（RPC）
+    // ③ topic から直接入る旧用途
     if (!topic || !Number.isFinite(capacity) || capacity <= 0) {
-      return new NextResponse("missing or invalid fields", { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "missing or invalid fields" },
+        { status: 400 }
+      );
     }
 
     const { data, error } = await supabaseAdmin.rpc("join_or_create_session", {
@@ -299,11 +333,17 @@ export async function POST(req: Request) {
 
     if (error) {
       console.error("[session/join] RPC error:", error);
-      return new NextResponse(error.message, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: error.message },
+        { status: 500 }
+      );
     }
 
     if (!data || data.length === 0) {
-      return new NextResponse("no session returned", { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: "no session returned" },
+        { status: 500 }
+      );
     }
 
     const row = data[0] as any;
@@ -314,15 +354,19 @@ export async function POST(req: Request) {
     const cap = Number(row.capacity ?? capacity);
 
     if (!sessionId) {
-      return new NextResponse("session_id missing from rpc result", {
-        status: 500,
-      });
+      return NextResponse.json(
+        { ok: false, error: "session_id missing from rpc result" },
+        { status: 500 }
+      );
     }
 
     const { error: upsertErr } = await upsertMember(sessionId, deviceId, name);
     if (upsertErr) {
       console.error("[session/join] member upsert error after rpc:", upsertErr);
-      return new NextResponse(upsertErr.message, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: upsertErr.message },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
@@ -334,6 +378,9 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("[session/join] server error:", e);
-    return new NextResponse(e?.message ?? "server error", { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? "server error" },
+      { status: 500 }
+    );
   }
 }

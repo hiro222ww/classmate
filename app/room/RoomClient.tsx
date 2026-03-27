@@ -136,8 +136,7 @@ export default function RoomClient() {
     );
   }, [searchParams]);
 
-  const [resolvedSessionId, setResolvedSessionId] = useState<string>("");
-
+  const [resolvedSessionId, setResolvedSessionId] = useState("");
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
   const [memberCount, setMemberCount] = useState(0);
@@ -145,8 +144,7 @@ export default function RoomClient() {
     { device_id?: string; display_name: string; joined_at: string }[]
   >([]);
   const [err, setErr] = useState("");
-  const [topicTitle, setTopicTitle] = useState<string>("");
-
+  const [topicTitle, setTopicTitle] = useState("");
   const [msgs, setMsgs] = useState<RoomMessage[]>([]);
   const [draft, setDraft] = useState("");
 
@@ -155,44 +153,15 @@ export default function RoomClient() {
   const pollTimer = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  const joinedRef = useRef(false);
+  const currentSessionIdRef = useRef("");
+  const currentClassIdRef = useRef("");
+
   const sessionId = resolvedSessionId || directSessionId;
 
   const scrollToBottom = (smooth: boolean) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
   };
-
-  useEffect(() => {
-  if (!sessionId) return;
-
-  const deviceId = getOrCreateDeviceId();
-
-  const leave = () => {
-    navigator.sendBeacon(
-      "/api/session/leave",
-      new Blob(
-        [JSON.stringify({ sessionId, deviceId })],
-        { type: "application/json" }
-      )
-    );
-
-    if (classId) {
-      navigator.sendBeacon(
-        "/api/class/leave",
-        new Blob(
-          [JSON.stringify({ classId, deviceId })],
-          { type: "application/json" }
-        )
-      );
-    }
-  };
-
-  window.addEventListener("beforeunload", leave);
-
-  return () => {
-    window.removeEventListener("beforeunload", leave);
-    leave();
-  };
-}, [sessionId, classId]);
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
@@ -204,6 +173,42 @@ export default function RoomClient() {
     } catch {
       displayNameRef.current = "You";
     }
+  }, []);
+
+  useEffect(() => {
+    currentSessionIdRef.current = sessionId;
+    currentClassIdRef.current = classId;
+  }, [sessionId, classId]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const deviceId = deviceIdRef.current || getOrCreateDeviceId();
+      const sid = currentSessionIdRef.current;
+      const cid = currentClassIdRef.current;
+
+      if (sid) {
+        navigator.sendBeacon(
+          "/api/session/leave",
+          new Blob([JSON.stringify({ sessionId: sid, deviceId })], {
+            type: "application/json",
+          })
+        );
+      }
+
+      if (cid) {
+        navigator.sendBeacon(
+          "/api/class/leave",
+          new Blob([JSON.stringify({ classId: cid, deviceId })], {
+            type: "application/json",
+          })
+        );
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, []);
 
   useEffect(() => {
@@ -243,7 +248,10 @@ export default function RoomClient() {
     let cancelled = false;
 
     async function joinRoom() {
+      if (joinedRef.current) return;
       if (!classId && !directSessionId) return;
+
+      joinedRef.current = true;
 
       const body = classId
         ? { classId, name, deviceId, capacity: 5 }
@@ -259,11 +267,13 @@ export default function RoomClient() {
       const j = (r.json ?? {}) as SessionJoinResult;
 
       if (!r.ok) {
+        joinedRef.current = false;
         throw new Error(String(j?.error || r.text || "session_join_failed"));
       }
 
       const sid = String(j.sessionId ?? "").trim();
       if (!sid) {
+        joinedRef.current = false;
         throw new Error("sessionId missing from join response");
       }
 
@@ -291,9 +301,8 @@ export default function RoomClient() {
         const desired = `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(
           sid
         )}`;
-        const params = new URLSearchParams(window.location.search);
-        const current = `${window.location.pathname}?${params.toString()}`;
-        if (!window.location.search.includes(`sessionId=${sid}`)) {
+        const desiredSearch = desired.slice(desired.indexOf("?"));
+        if (window.location.search !== desiredSearch) {
           router.replace(desired);
         }
       }
@@ -361,10 +370,12 @@ export default function RoomClient() {
   useEffect(() => {
     if (!sessionId) return;
 
-    fetchStatus(sessionId, classId);
+    void fetchStatus(sessionId, classId);
 
     if (pollTimer.current) window.clearInterval(pollTimer.current);
-    pollTimer.current = window.setInterval(() => fetchStatus(sessionId, classId), 5000);
+    pollTimer.current = window.setInterval(() => {
+      void fetchStatus(sessionId, classId);
+    }, 5000);
 
     return () => {
       if (pollTimer.current) window.clearInterval(pollTimer.current);
@@ -416,7 +427,7 @@ export default function RoomClient() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ch);
+      void supabase.removeChannel(ch);
     };
   }, [sessionId]);
 
@@ -457,6 +468,32 @@ export default function RoomClient() {
     }
   }
 
+  async function handleExit() {
+    const deviceId = deviceIdRef.current || getOrCreateDeviceId();
+
+    try {
+      if (sessionId) {
+        await fetch("/api/session/leave", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, deviceId }),
+        });
+      }
+
+      if (classId) {
+        await fetch("/api/class/leave", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ classId, deviceId }),
+        });
+      }
+    } catch (e) {
+      console.error("leave failed", e);
+    }
+
+    router.push("/class/select");
+  }
+
   const filled = Math.min(
     members.length > 0 ? members.length : Math.max(memberCount, 1),
     capacity
@@ -466,31 +503,9 @@ export default function RoomClient() {
     <ChalkboardRoomShell
       title={topicTitle || "読み込み中..."}
       subtitle={`参加人数 ${filled}/${capacity}`}
-      onBack={async () => {
-  const deviceId = getOrCreateDeviceId();
-
-  if (classId) {
-    await fetch("/api/class/leave", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ classId, deviceId }),
-    }).catch(() => {});
-  }
-
-  if (sessionId) {
-    await fetch("/api/session/leave", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ sessionId, deviceId }),
-    }).catch(() => {});
-  }
-
-  router.push("/class/select");
-}}
+      onBack={() => {
+        void handleExit();
+      }}
       onStartCall={() =>
         router.push(
           `/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(
