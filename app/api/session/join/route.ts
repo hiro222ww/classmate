@@ -18,16 +18,17 @@ function buildTopicLabelFromClass(cls: any) {
   return topicKey;
 }
 
-async function upsertMember(sessionId: string, name: string) {
+async function upsertMember(sessionId: string, deviceId: string, name: string) {
   return await supabaseAdmin
     .from("session_members")
     .upsert(
       {
         session_id: sessionId,
+        device_id: deviceId,
         display_name: name,
         joined_at: new Date().toISOString(),
       },
-      { onConflict: "session_id,display_name" }
+      { onConflict: "session_id,device_id" }
     );
 }
 
@@ -38,7 +39,6 @@ async function ensureSessionRow(params: {
 }) {
   const { sessionId, topic, capacity } = params;
 
-  // まず既存確認
   const { data: existing, error: existingErr } = await supabaseAdmin
     .from("sessions")
     .select("id, topic, capacity, status")
@@ -74,7 +74,6 @@ async function ensureSessionRow(params: {
     return { ok: true as const };
   }
 
-  // 無ければ insert を試す
   const { error: insertErr } = await supabaseAdmin.from("sessions").insert({
     id: sessionId,
     topic,
@@ -82,7 +81,6 @@ async function ensureSessionRow(params: {
     capacity: capacity > 0 ? capacity : 5,
   });
 
-  // 同時実行で既に作られていた場合は成功扱いにする
   if (insertErr) {
     const code = (insertErr as any)?.code ?? "";
     if (code !== "23505") {
@@ -90,7 +88,6 @@ async function ensureSessionRow(params: {
     }
   }
 
-  // insert 成功 or 重複でも、必要なら topic/capacity を補正
   const { data: after, error: afterErr } = await supabaseAdmin
     .from("sessions")
     .select("id, topic, capacity, status")
@@ -140,6 +137,7 @@ export async function POST(req: Request) {
     const classIdRaw = String(body.classId ?? "").trim();
     const topic = String(body.topic ?? "").trim();
     const name = String(body.name ?? "").trim();
+    const deviceId = String(body.deviceId ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
 
     // ① Room/Call 用：sessionId で参加
@@ -154,6 +152,13 @@ export async function POST(req: Request) {
       if (!name) {
         return NextResponse.json(
           { ok: false, error: "name required" },
+          { status: 400 }
+        );
+      }
+
+      if (!deviceId) {
+        return NextResponse.json(
+          { ok: false, error: "deviceId required" },
           { status: 400 }
         );
       }
@@ -200,7 +205,7 @@ export async function POST(req: Request) {
         );
       }
 
-      const { error } = await upsertMember(sessionIdRaw, name);
+      const { error } = await upsertMember(sessionIdRaw, deviceId, name);
       if (error) {
         console.error("[session/join] member upsert error:", error);
         return NextResponse.json(
@@ -218,7 +223,7 @@ export async function POST(req: Request) {
     }
 
     // ② 既存用途：topic から join_or_create_session（RPC）
-    if (!topic || !name || !Number.isFinite(capacity) || capacity <= 0) {
+    if (!topic || !name || !deviceId || !Number.isFinite(capacity) || capacity <= 0) {
       return new NextResponse("missing or invalid fields", { status: 400 });
     }
 
@@ -251,7 +256,7 @@ export async function POST(req: Request) {
     }
 
     {
-      const { error: upsertErr } = await upsertMember(sessionId, name);
+      const { error: upsertErr } = await upsertMember(sessionId, deviceId, name);
       if (upsertErr) {
         console.error("[session/join] member upsert error after rpc:", upsertErr);
       }

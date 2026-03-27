@@ -925,19 +925,21 @@ export default function CallClient() {
   }, []);
 
   useEffect(() => {
-    if (!sessionId) return;
+  if (!sessionId) return;
 
-    const name =
-      localStorage.getItem("classmate_display_name") ||
-      localStorage.getItem("display_name") ||
-      "You";
+  const name =
+    localStorage.getItem("classmate_display_name") ||
+    localStorage.getItem("display_name") ||
+    "You";
 
-    fetch("/api/session/join", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId, name }),
-    }).catch(() => {});
-  }, [sessionId]);
+  const deviceId = getOrCreateDeviceId();
+
+  fetch("/api/session/join", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sessionId, name, deviceId }),
+  }).catch(() => {});
+}, [sessionId]);
 
   async function fetchStatus(sid: string) {
     try {

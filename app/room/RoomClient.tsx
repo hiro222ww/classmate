@@ -1,3 +1,4 @@
+// app/room/RoomClient.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,7 +17,7 @@ type SessionStatusResult = {
     capacity: number;
     created_at: string | null;
   };
-  members?: { display_name: string; joined_at: string }[];
+  members?: { device_id?: string; display_name: string; joined_at: string }[];
   memberCount?: number;
   error?: string;
 };
@@ -131,7 +132,6 @@ export default function RoomClient() {
 
     if (direct) return direct;
 
-    // classId があるなら sessionId = classId に固定
     if (classId) return classId;
 
     return "";
@@ -140,7 +140,9 @@ export default function RoomClient() {
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
   const [memberCount, setMemberCount] = useState(0);
-  const [members, setMembers] = useState<{ display_name: string; joined_at: string }[]>([]);
+  const [members, setMembers] = useState<
+    { device_id?: string; display_name: string; joined_at: string }[]
+  >([]);
   const [err, setErr] = useState("");
   const [topicTitle, setTopicTitle] = useState<string>("");
 
@@ -194,10 +196,12 @@ export default function RoomClient() {
       localStorage.getItem("display_name") ||
       "You";
 
+    const deviceId = getOrCreateDeviceId();
+
     fetch("/api/session/join", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId, classId, name }),
+      body: JSON.stringify({ sessionId, classId, name, deviceId }),
     }).catch(() => {});
   }, [sessionId, classId]);
 
@@ -316,188 +320,199 @@ export default function RoomClient() {
     };
   }, [sessionId]);
 
-  const filled = Math.min(members.length > 0 ? members.length : memberCount, capacity);
-
   async function sendMessage() {
     const text = draft.trim();
     if (!text || !sessionId) return;
 
+    const mineName = displayNameRef.current || "You";
+    const mineId = deviceIdRef.current || getOrCreateDeviceId();
+    const tempId = randomUuid();
+    const nowIso = new Date().toISOString();
+
     setDraft("");
-
-    const optimisticId = randomUuid();
-    const now = new Date().toISOString();
-
     setMsgs((prev) => [
       ...prev,
       {
-        id: optimisticId,
+        id: tempId,
         session_id: sessionId,
-        device_id: deviceIdRef.current,
-        display_name: displayNameRef.current || "You",
+        device_id: mineId,
+        display_name: mineName,
         message: text,
-        created_at: now,
+        created_at: nowIso,
       },
     ]);
     queueMicrotask(() => scrollToBottom(true));
 
     const { error } = await supabase.from("room_messages").insert({
-      id: optimisticId,
       session_id: sessionId,
-      device_id: deviceIdRef.current,
-      display_name: displayNameRef.current || "You",
+      device_id: mineId,
+      display_name: mineName,
       message: text,
     });
 
-    if (error) setErr(`送信に失敗: ${error.message}`);
+    if (error) {
+      setErr(`送信失敗: ${error.message}`);
+      setMsgs((prev) => prev.filter((m) => m.id !== tempId));
+      setDraft(text);
+    }
   }
 
-  const goToCall = () => {
-    if (!sessionId) return;
-
-    const returnTo = classId
-      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
-      : `/room?sessionId=${encodeURIComponent(sessionId)}`;
-
-    router.push(
-      `/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(returnTo)}`
-    );
-  };
+  const filled = Math.min(members.length > 0 ? members.length : memberCount, capacity);
 
   return (
-    <ChalkboardRoomShell title="待機" subtitle={sessionId ? `セッション：${sessionId}` : undefined}>
-      <div style={{ display: "grid", gap: 12 }}>
-        {err ? (
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid #f5c2c7",
-              background: "#f8d7da",
-              borderRadius: 10,
-              color: "#842029",
-            }}
-          >
-            <p style={{ margin: 0, fontWeight: 900 }}>エラー/警告</p>
-            <p style={{ margin: "6px 0 0 0" }}>{err}</p>
-          </div>
-        ) : null}
+    <ChalkboardRoomShell
+      title={topicTitle || "クラス"}
+      subtitle={`参加人数 ${filled}/${capacity}`}
+      onBack={() => router.push("/class/select")}
+      onStartCall={() =>
+        router.push(
+          `/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(
+            classId
+              ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
+              : `/room?sessionId=${encodeURIComponent(sessionId)}`
+          )}`
+        )
+      }
+      startDisabled={!sessionId}
+      startLabel={status === "active" ? "通話に戻る" : "通話を開始"}
+    >
+      <div style={{ display: "grid", gap: 14 }}>
+        <div
+          style={{
+            borderRadius: 18,
+            border: "1px solid #d9d9d9",
+            background: "#fff",
+            padding: 14,
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          <div style={{ fontWeight: 900, color: "#111" }}>参加メンバー</div>
 
-        <div style={{ border: "1px solid #ddd", borderRadius: 14, padding: 12, background: "#fff" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 900 }}>{topicTitle ? topicTitle : "クラス"}</div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                参加者：<b>{memberCount}</b> / {capacity} ・ 状態：
-                {status === "active" ? "通話中" : status === "closed" ? "終了" : "待機"}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-                枠：<b>{filled}</b> / {capacity}
-              </div>
+          {members.length === 0 ? (
+            <div style={{ color: "#6b7280", fontWeight: 700 }}>まだ参加者はいません</div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {members.map((m, i) => (
+                <div
+                  key={`${m.device_id ?? m.display_name}-${m.joined_at}-${i}`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    borderRadius: 12,
+                    border: "1px solid #ececec",
+                    padding: "10px 12px",
+                    background: "#fafafa",
+                  }}
+                >
+                  <div style={{ fontWeight: 800, color: "#111" }}>{m.display_name || "You"}</div>
+                  <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 700 }}>
+                    参加中
+                  </div>
+                </div>
+              ))}
             </div>
+          )}
 
-            <button
-              onClick={goToCall}
+          <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+            状態: {status} / 定員 {capacity} / 参加 {filled}
+          </div>
+
+          {err ? (
+            <div
               style={{
-                padding: "10px 12px",
                 borderRadius: 12,
-                border: "1px solid #ddd",
-                background: "#111",
+                background: "#fff1f2",
+                border: "1px solid #fecdd3",
+                color: "#be123c",
+                padding: "10px 12px",
+                fontWeight: 800,
+              }}
+            >
+              {err}
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          style={{
+            borderRadius: 18,
+            border: "1px solid #d9d9d9",
+            background: "#fff",
+            padding: 14,
+            display: "grid",
+            gap: 10,
+            minHeight: 320,
+          }}
+        >
+          <div style={{ fontWeight: 900, color: "#111" }}>チャット</div>
+
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              alignContent: "start",
+              minHeight: 180,
+              maxHeight: 360,
+              overflowY: "auto",
+              paddingRight: 4,
+            }}
+          >
+            {msgs.length === 0 ? (
+              <div style={{ color: "#6b7280", fontWeight: 700 }}>まだメッセージはありません</div>
+            ) : (
+              msgs.map((m) => (
+                <Bubble
+                  key={m.id}
+                  mine={m.device_id === deviceIdRef.current}
+                  name={m.display_name || "You"}
+                  text={m.message}
+                  time={new Date(m.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                />
+              ))
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void sendMessage();
+                }
+              }}
+              placeholder="メッセージを入力"
+              style={{
+                flex: 1,
+                borderRadius: 14,
+                border: "1px solid #d1d5db",
+                padding: "12px 14px",
+                fontSize: 14,
+                fontWeight: 700,
+                outline: "none",
+              }}
+            />
+            <button
+              onClick={() => void sendMessage()}
+              style={{
+                border: "none",
+                borderRadius: 14,
+                padding: "0 16px",
+                background: "#2563eb",
                 color: "#fff",
                 fontWeight: 900,
                 cursor: "pointer",
               }}
             >
-              通話へ
+              送信
             </button>
-          </div>
-
-          <div
-            style={{
-              marginTop: 14,
-              borderTop: "1px solid #eee",
-              paddingTop: 12,
-              display: "flex",
-              flexDirection: "column",
-              minHeight: 420,
-            }}
-          >
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>メッセージ</div>
-
-            <div
-              style={{
-                flex: 1,
-                minHeight: 240,
-                overflow: "auto",
-                background: "#f3f4f6",
-                border: "1px solid #e5e7eb",
-                borderRadius: 14,
-                padding: 10,
-                display: "grid",
-                gap: 10,
-              }}
-            >
-              {msgs.map((m) => {
-                const mine = m.device_id === deviceIdRef.current;
-                const t = new Date(m.created_at);
-                const time = `${String(t.getHours()).padStart(2, "0")}:${String(
-                  t.getMinutes()
-                ).padStart(2, "0")}`;
-                return (
-                  <Bubble
-                    key={m.id}
-                    mine={mine}
-                    name={m.display_name}
-                    text={m.message}
-                    time={time}
-                  />
-                );
-              })}
-              <div ref={bottomRef} />
-            </div>
-
-            <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder="メッセージを入力"
-                style={{
-                  flex: 1,
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #ddd",
-                  fontWeight: 800,
-                  outline: "none",
-                }}
-              />
-              <button
-                onClick={sendMessage}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #ddd",
-                  background: "#111",
-                  color: "#fff",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  minWidth: 86,
-                }}
-              >
-                送信
-              </button>
-            </div>
           </div>
         </div>
       </div>

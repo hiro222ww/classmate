@@ -10,6 +10,11 @@ type Props = {
   right?: React.ReactNode;
   children: React.ReactNode;
 
+  onBack?: () => void;
+  onStartCall?: () => void;
+  startDisabled?: boolean;
+  startLabel?: string;
+
   // 互換のため残すが、このコンポーネント内では使わない
   returnTo?: string;
 };
@@ -20,8 +25,11 @@ export function ChalkboardRoomShell({
   lines = ["無言でもOK", "合わなければ移動してOK"],
   right,
   children,
+  onBack,
+  onStartCall,
+  startDisabled = false,
+  startLabel = "通話を開始",
 }: Props) {
-  // DOM構造を固定
   const subtitleText = subtitle ?? "";
   const hasSubtitle = subtitleText.length > 0;
 
@@ -56,7 +64,51 @@ export function ChalkboardRoomShell({
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {onBack ? (
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                display: "inline-block",
+                padding: "8px 10px",
+                borderRadius: 10,
+                background: "#f2f2f2",
+                color: "#111",
+                textDecoration: "none",
+                fontWeight: 900,
+                fontSize: 13,
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              戻る
+            </button>
+          ) : null}
+
+          {onStartCall ? (
+            <button
+              type="button"
+              onClick={onStartCall}
+              disabled={startDisabled}
+              style={{
+                display: "inline-block",
+                padding: "8px 10px",
+                borderRadius: 10,
+                background: startDisabled ? "#d1d5db" : "#2563eb",
+                color: "#fff",
+                textDecoration: "none",
+                fontWeight: 900,
+                fontSize: 13,
+                border: "none",
+                cursor: startDisabled ? "not-allowed" : "pointer",
+                opacity: startDisabled ? 0.7 : 1,
+              }}
+            >
+              {startLabel}
+            </button>
+          ) : null}
+
           <Link
             href={moveHref}
             style={{
