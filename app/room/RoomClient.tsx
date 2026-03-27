@@ -21,6 +21,16 @@ type SessionStatusResult = {
   error?: string;
 };
 
+type SessionJoinResult = {
+  ok?: boolean;
+  sessionId?: string;
+  status?: "forming" | "active" | "closed" | string;
+  capacity?: number;
+  memberCount?: number;
+  topic?: string;
+  error?: string;
+};
+
 type RoomMessage = {
   id: string;
   session_id: string;
@@ -118,21 +128,15 @@ export default function RoomClient() {
     return (searchParams.get("classId") ?? "").trim();
   }, [searchParams]);
 
-  const autojoin = useMemo(() => {
-    return (searchParams.get("autojoin") ?? "").trim() === "1";
+  const directSessionId = useMemo(() => {
+    return (
+      (searchParams.get("sessionId") ?? "").trim() ||
+      (searchParams.get("session_id") ?? "").trim() ||
+      (searchParams.get("session") ?? "").trim()
+    );
   }, [searchParams]);
 
-  const sessionId = useMemo(() => {
-  const direct =
-    (searchParams.get("sessionId") ?? "").trim() ||
-    (searchParams.get("session_id") ?? "").trim() ||
-    (searchParams.get("session") ?? "").trim();
-
-  if (direct) return direct;
-  if (classId) return classId;
-
-  return "";
-}, [searchParams, classId]);
+  const [resolvedSessionId, setResolvedSessionId] = useState<string>("");
 
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
@@ -150,7 +154,8 @@ export default function RoomClient() {
   const displayNameRef = useRef("");
   const pollTimer = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const regeneratedRef = useRef(false);
+
+  const sessionId = resolvedSessionId || directSessionId;
 
   const scrollToBottom = (smooth: boolean) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
@@ -167,7 +172,6 @@ export default function RoomClient() {
       displayNameRef.current = "You";
     }
   }, []);
-
 
   useEffect(() => {
     setMsgs([]);
@@ -196,8 +200,6 @@ export default function RoomClient() {
   }, [sessionId, classId, topicTitle]);
 
   useEffect(() => {
-    if (!sessionId) return;
-
     const name =
       localStorage.getItem("classmate_display_name") ||
       localStorage.getItem("display_name") ||
@@ -205,33 +207,73 @@ export default function RoomClient() {
 
     const deviceId = getOrCreateDeviceId();
 
-    setMembers((prev) => {
-      if (prev.some((m) => m.device_id === deviceId)) return prev;
-      return [
-        ...prev,
-        {
-          device_id: deviceId,
-          display_name: name,
-          joined_at: new Date().toISOString(),
-        },
-      ];
-    });
-    setMemberCount((prev) => Math.max(prev, 1));
+    let cancelled = false;
 
-    fetch("/api/session/join", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId, classId, name, deviceId }),
-    })
-      .then(async (res) => {
-        const r = await readJsonBestEffort(res);
-        if (!r.ok) {
-          const message = (r.json as any)?.error || r.text || "session_join_failed";
-          setErr(String(message));
+    async function joinRoom() {
+      if (!classId && !directSessionId) return;
+
+      const body = classId
+        ? { classId, name, deviceId, capacity: 5 }
+        : { sessionId: directSessionId, name, deviceId, capacity: 5 };
+
+      const res = await fetch("/api/session/join", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const r = await readJsonBestEffort(res);
+      const j = (r.json ?? {}) as SessionJoinResult;
+
+      if (!r.ok) {
+        throw new Error(String(j?.error || r.text || "session_join_failed"));
+      }
+
+      const sid = String(j.sessionId ?? "").trim();
+      if (!sid) {
+        throw new Error("sessionId missing from join response");
+      }
+
+      if (cancelled) return;
+
+      setResolvedSessionId(sid);
+      setStatus((j.status as any) ?? "forming");
+      setCapacity(Number.isFinite(Number(j.capacity)) && Number(j.capacity) > 0 ? Number(j.capacity) : 5);
+      setMemberCount(Math.max(Number(j.memberCount ?? 0), 1));
+      if (j.topic) setTopicTitle(String(j.topic).trim());
+
+      setMembers((prev) => {
+        if (prev.some((m) => m.device_id === deviceId)) return prev;
+        return [
+          ...prev,
+          {
+            device_id: deviceId,
+            display_name: name,
+            joined_at: new Date().toISOString(),
+          },
+        ];
+      });
+
+      if (classId) {
+        const desired = `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(
+          sid
+        )}`;
+        const params = new URLSearchParams(window.location.search);
+        const current = `${window.location.pathname}?${params.toString()}`;
+        if (!window.location.search.includes(`sessionId=${sid}`)) {
+          router.replace(desired);
         }
-      })
-      .catch(() => {});
-  }, [sessionId, classId]);
+      }
+    }
+
+    joinRoom().catch((e: any) => {
+      if (!cancelled) setErr(e?.message ?? "session_join_failed");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [classId, directSessionId, router]);
 
   async function fetchStatus(sid: string, cid: string) {
     try {
