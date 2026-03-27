@@ -123,12 +123,16 @@ export default function RoomClient() {
   }, [searchParams]);
 
   const sessionId = useMemo(() => {
-    return (
-      (searchParams.get("sessionId") ?? "").trim() ||
-      (searchParams.get("session_id") ?? "").trim() ||
-      (searchParams.get("session") ?? "").trim()
-    );
-  }, [searchParams]);
+  const direct =
+    (searchParams.get("sessionId") ?? "").trim() ||
+    (searchParams.get("session_id") ?? "").trim() ||
+    (searchParams.get("session") ?? "").trim();
+
+  if (direct) return direct;
+  if (classId) return classId;
+
+  return "";
+}, [searchParams, classId]);
 
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
@@ -164,20 +168,6 @@ export default function RoomClient() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!classId) return;
-    if (!autojoin) return;
-    if (regeneratedRef.current) return;
-
-    regeneratedRef.current = true;
-
-    const newSessionId = randomUuid();
-    router.replace(
-      `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(
-        newSessionId
-      )}`
-    );
-  }, [classId, autojoin, router]);
 
   useEffect(() => {
     setMsgs([]);
