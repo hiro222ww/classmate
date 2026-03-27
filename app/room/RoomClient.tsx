@@ -1,4 +1,3 @@
-// app/room/RoomClient.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -40,11 +39,6 @@ function randomUuid(): string {
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-function shortId(id: string) {
-  const s = (id || "").replace(/-/g, "");
-  return s.length >= 6 ? s.slice(0, 6) : (id || "").slice(0, 6);
 }
 
 async function readJsonBestEffort(res: Response) {
@@ -124,13 +118,17 @@ export default function RoomClient() {
     return (searchParams.get("classId") ?? "").trim();
   }, [searchParams]);
 
+  const autojoin = useMemo(() => {
+    return (searchParams.get("autojoin") ?? "").trim() === "1";
+  }, [searchParams]);
+
   const sessionId = useMemo(() => {
-  return (
-    (searchParams.get("sessionId") ?? "").trim() ||
-    (searchParams.get("session_id") ?? "").trim() ||
-    (searchParams.get("session") ?? "").trim()
-  );
-}, [searchParams]);
+    return (
+      (searchParams.get("sessionId") ?? "").trim() ||
+      (searchParams.get("session_id") ?? "").trim() ||
+      (searchParams.get("session") ?? "").trim()
+    );
+  }, [searchParams]);
 
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
@@ -148,21 +146,11 @@ export default function RoomClient() {
   const displayNameRef = useRef("");
   const pollTimer = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const regeneratedRef = useRef(false);
 
   const scrollToBottom = (smooth: boolean) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
   };
-  
-
-  useEffect(() => {
-  if (sessionId) return;
-  if (!classId) return;
-
-  const newSessionId = randomUuid();
-  router.replace(
-    `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(newSessionId)}`
-  );
-}, [sessionId, classId, router]);
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
@@ -177,6 +165,29 @@ export default function RoomClient() {
   }, []);
 
   useEffect(() => {
+    if (!classId) return;
+    if (!autojoin) return;
+    if (regeneratedRef.current) return;
+
+    regeneratedRef.current = true;
+
+    const newSessionId = randomUuid();
+    router.replace(
+      `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(
+        newSessionId
+      )}`
+    );
+  }, [classId, autojoin, router]);
+
+  useEffect(() => {
+    setMsgs([]);
+    setMembers([]);
+    setMemberCount(0);
+    setErr("");
+    setTopicTitle("");
+  }, [sessionId]);
+
+  useEffect(() => {
     if (!sessionId) return;
 
     const recentId = classId || sessionId;
@@ -187,12 +198,12 @@ export default function RoomClient() {
     pushRecentClass(
       {
         id: recentId,
-        title: `クラス ${shortId(recentId)}`,
+        title: topicTitle || "クラス",
         url: roomUrl,
       },
       getRecentLimit()
     );
-  }, [sessionId, classId]);
+  }, [sessionId, classId, topicTitle]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -204,11 +215,32 @@ export default function RoomClient() {
 
     const deviceId = getOrCreateDeviceId();
 
+    setMembers((prev) => {
+      if (prev.some((m) => m.device_id === deviceId)) return prev;
+      return [
+        ...prev,
+        {
+          device_id: deviceId,
+          display_name: name,
+          joined_at: new Date().toISOString(),
+        },
+      ];
+    });
+    setMemberCount((prev) => Math.max(prev, 1));
+
     fetch("/api/session/join", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId, classId, name, deviceId }),
-    }).catch(() => {});
+    })
+      .then(async (res) => {
+        const r = await readJsonBestEffort(res);
+        if (!r.ok) {
+          const message = (r.json as any)?.error || r.text || "session_join_failed";
+          setErr(String(message));
+        }
+      })
+      .catch(() => {});
   }, [sessionId, classId]);
 
   async function fetchStatus(sid: string, cid: string) {
@@ -232,14 +264,30 @@ export default function RoomClient() {
 
       setStatus(j.session?.status ?? "forming");
       setCapacity(Number.isFinite(cap) && cap > 0 ? cap : 5);
-      setMembers(j.members ?? []);
-      setMemberCount(mc);
+
+      const incomingMembers = Array.isArray(j.members) ? j.members : [];
+      const myDeviceId = deviceIdRef.current || getOrCreateDeviceId();
+      const myName = displayNameRef.current || "You";
+      const hasSelf = incomingMembers.some((m) => m.device_id === myDeviceId);
+
+      setMembers(
+        hasSelf
+          ? incomingMembers
+          : [
+              ...incomingMembers,
+              {
+                device_id: myDeviceId,
+                display_name: myName,
+                joined_at: new Date().toISOString(),
+              },
+            ]
+      );
+
+      setMemberCount(Math.max(mc, 1));
       setErr("");
 
       const t = (j.session?.topic ?? "").trim();
-      if (t) setTopicTitle(t);
-      else if (classId) setTopicTitle(`クラス ${shortId(classId)}`);
-      else setTopicTitle("クラス");
+      setTopicTitle(t || "");
     } catch (e: any) {
       setErr(e?.message ?? "status_failed");
     }
@@ -261,25 +309,6 @@ export default function RoomClient() {
 
   useEffect(() => {
     if (!sessionId) return;
-    if (!topicTitle) return;
-
-    const recentId = classId || sessionId;
-    const roomUrl = classId
-      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
-      : `/room?sessionId=${encodeURIComponent(sessionId)}`;
-
-    pushRecentClass(
-      {
-        id: recentId,
-        title: topicTitle,
-        url: roomUrl,
-      },
-      getRecentLimit()
-    );
-  }, [sessionId, classId, topicTitle]);
-
-  useEffect(() => {
-    if (!sessionId) return;
 
     (async () => {
       const { data, error } = await supabase
@@ -294,7 +323,7 @@ export default function RoomClient() {
         return;
       }
 
-      setMsgs((data ?? []) as any);
+      setMsgs((data ?? []) as RoomMessage[]);
       queueMicrotask(() => scrollToBottom(false));
     })();
   }, [sessionId]);
@@ -363,11 +392,14 @@ export default function RoomClient() {
     }
   }
 
-  const filled = Math.min(members.length > 0 ? members.length : memberCount, capacity);
+  const filled = Math.min(
+    members.length > 0 ? members.length : Math.max(memberCount, 1),
+    capacity
+  );
 
   return (
     <ChalkboardRoomShell
-      title={topicTitle || "クラス"}
+      title={topicTitle || "読み込み中..."}
       subtitle={`参加人数 ${filled}/${capacity}`}
       onBack={() => router.push("/class/select")}
       onStartCall={() =>
@@ -396,7 +428,15 @@ export default function RoomClient() {
           <div style={{ fontWeight: 900, color: "#111" }}>参加メンバー</div>
 
           {members.length === 0 ? (
-            <div style={{ color: "#6b7280", fontWeight: 700 }}>まだ参加者はいません</div>
+            memberCount > 0 ? (
+              <div style={{ color: "#6b7280", fontWeight: 700 }}>
+                参加者を読み込み中です...
+              </div>
+            ) : (
+              <div style={{ color: "#6b7280", fontWeight: 700 }}>
+                まだ参加者はいません
+              </div>
+            )
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {members.map((m, i) => (
@@ -412,7 +452,9 @@ export default function RoomClient() {
                     background: "#fafafa",
                   }}
                 >
-                  <div style={{ fontWeight: 800, color: "#111" }}>{m.display_name || "You"}</div>
+                  <div style={{ fontWeight: 800, color: "#111" }}>
+                    {m.display_name || "You"}
+                  </div>
                   <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 700 }}>
                     参加中
                   </div>
@@ -466,7 +508,9 @@ export default function RoomClient() {
             }}
           >
             {msgs.length === 0 ? (
-              <div style={{ color: "#6b7280", fontWeight: 700 }}>まだメッセージはありません</div>
+              <div style={{ color: "#6b7280", fontWeight: 700 }}>
+                まだメッセージはありません
+              </div>
             ) : (
               msgs.map((m) => (
                 <Bubble
