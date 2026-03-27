@@ -328,23 +328,8 @@ export default function RoomClient() {
       setStatus(j.session?.status ?? "forming");
       setCapacity(Number.isFinite(cap) && cap > 0 ? cap : 5);
 
-      const incomingMembers = Array.isArray(j.members) ? j.members : [];
-      const myDeviceId = deviceIdRef.current || getOrCreateDeviceId();
-      const myName = displayNameRef.current || "You";
-      const hasSelf = incomingMembers.some((m) => m.device_id === myDeviceId);
-
-      setMembers(
-        hasSelf
-          ? incomingMembers
-          : [
-              ...incomingMembers,
-              {
-                device_id: myDeviceId,
-                display_name: myName,
-                joined_at: new Date().toISOString(),
-              },
-            ]
-      );
+     const incomingMembers = Array.isArray(j.members) ? j.members : [];
+setMembers(incomingMembers);
 
       setMemberCount(Math.max(mc, 1));
       setErr("");
@@ -483,11 +468,7 @@ export default function RoomClient() {
     router.push("/class/select");
   }
 
-  const filled = Math.min(
-    members.length > 0 ? members.length : Math.max(memberCount, 1),
-    capacity
-  );
-
+  const filled = Math.min(Math.max(memberCount, 0), capacity);
   return (
     <ChalkboardRoomShell
       title={topicTitle || "読み込み中..."}
