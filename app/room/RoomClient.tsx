@@ -125,17 +125,12 @@ export default function RoomClient() {
   }, [searchParams]);
 
   const sessionId = useMemo(() => {
-    const direct =
-      (searchParams.get("sessionId") ?? "").trim() ||
-      (searchParams.get("session_id") ?? "").trim() ||
-      (searchParams.get("session") ?? "").trim();
-
-    if (direct) return direct;
-
-    if (classId) return classId;
-
-    return "";
-  }, [searchParams, classId]);
+  return (
+    (searchParams.get("sessionId") ?? "").trim() ||
+    (searchParams.get("session_id") ?? "").trim() ||
+    (searchParams.get("session") ?? "").trim()
+  );
+}, [searchParams]);
 
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
@@ -157,6 +152,17 @@ export default function RoomClient() {
   const scrollToBottom = (smooth: boolean) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
   };
+  
+
+  useEffect(() => {
+  if (sessionId) return;
+  if (!classId) return;
+
+  const newSessionId = randomUuid();
+  router.replace(
+    `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(newSessionId)}`
+  );
+}, [sessionId, classId, router]);
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
