@@ -285,17 +285,6 @@ export default function RoomClient() {
       setMemberCount(Math.max(Number(j.memberCount ?? 0), 1));
       if (j.topic) setTopicTitle(String(j.topic).trim());
 
-      setMembers((prev) => {
-        if (prev.some((m) => m.device_id === deviceId)) return prev;
-        return [
-          ...prev,
-          {
-            device_id: deviceId,
-            display_name: name,
-            joined_at: new Date().toISOString(),
-          },
-        ];
-      });
 
       if (classId) {
         const desired = `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(
