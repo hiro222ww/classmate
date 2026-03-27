@@ -140,7 +140,94 @@ export async function POST(req: Request) {
     const deviceId = String(body.deviceId ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
 
-    // ① Room/Call 用：sessionId で参加
+    if (!name) {
+      return NextResponse.json(
+        { ok: false, error: "name required" },
+        { status: 400 }
+      );
+    }
+
+    if (!deviceId) {
+      return NextResponse.json(
+        { ok: false, error: "deviceId required" },
+        { status: 400 }
+      );
+    }
+
+    // ① classId があるときは class 単位で同じ箱に入れる
+    if (classIdRaw) {
+      const sessionId = classIdRaw;
+      let resolvedTopic = topic;
+      const resolvedCapacity =
+        Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
+
+      const { data: cls, error: clsErr } = await supabaseAdmin
+        .from("classes")
+        .select("id, name, topic_key, world_key")
+        .eq("id", classIdRaw)
+        .maybeSingle();
+
+      if (clsErr) {
+        console.error("[session/join] class lookup error:", clsErr);
+        return NextResponse.json(
+          { ok: false, error: clsErr.message },
+          { status: 500 }
+        );
+      }
+
+      if (cls) {
+        resolvedTopic = buildTopicLabelFromClass(cls);
+      } else {
+        resolvedTopic = resolvedTopic || "クラス";
+      }
+
+      const ensured = await ensureSessionRow({
+        sessionId,
+        topic: resolvedTopic,
+        capacity: resolvedCapacity,
+      });
+
+      if (!ensured.ok) {
+        console.error("[session/join] ensure session error:", ensured.error);
+        return NextResponse.json(
+          { ok: false, error: ensured.error.message ?? "ensure_session_failed" },
+          { status: 500 }
+        );
+      }
+
+      const { error } = await upsertMember(sessionId, deviceId, name);
+      if (error) {
+        console.error("[session/join] member upsert error:", error);
+        return NextResponse.json(
+          { ok: false, error: error.message },
+          { status: 500 }
+        );
+      }
+
+      const { count, error: countErr } = await supabaseAdmin
+        .from("session_members")
+        .select("*", { count: "exact", head: true })
+        .eq("session_id", sessionId);
+
+      if (countErr) {
+        console.error("[session/join] member count error:", countErr);
+        return NextResponse.json(
+          { ok: false, error: countErr.message },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        sessionId,
+        topic: resolvedTopic,
+        capacity: resolvedCapacity,
+        memberCount: Number(count ?? 0),
+        status: "forming",
+      });
+    }
+
+    // ② sessionId 指定のときはその session に参加
     if (sessionIdRaw) {
       if (!isUuid(sessionIdRaw)) {
         return NextResponse.json(
@@ -149,51 +236,13 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!name) {
-        return NextResponse.json(
-          { ok: false, error: "name required" },
-          { status: 400 }
-        );
-      }
-
-      if (!deviceId) {
-        return NextResponse.json(
-          { ok: false, error: "deviceId required" },
-          { status: 400 }
-        );
-      }
-
       let resolvedTopic = topic;
       const resolvedCapacity =
         Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
 
-      if (classIdRaw) {
-        const { data: cls, error: clsErr } = await supabaseAdmin
-          .from("classes")
-          .select("id, name, topic_key, world_key")
-          .eq("id", classIdRaw)
-          .maybeSingle();
-
-        if (clsErr) {
-          console.error("[session/join] class lookup error:", clsErr);
-          return NextResponse.json(
-            { ok: false, error: clsErr.message },
-            { status: 500 }
-          );
-        }
-
-        if (cls) {
-          resolvedTopic = buildTopicLabelFromClass(cls);
-        } else {
-          resolvedTopic = resolvedTopic || "クラス";
-        }
-      } else {
-        resolvedTopic = resolvedTopic || "クラス";
-      }
-
       const ensured = await ensureSessionRow({
         sessionId: sessionIdRaw,
-        topic: resolvedTopic,
+        topic: resolvedTopic || "クラス",
         capacity: resolvedCapacity,
       });
 
@@ -214,16 +263,31 @@ export async function POST(req: Request) {
         );
       }
 
+      const { count, error: countErr } = await supabaseAdmin
+        .from("session_members")
+        .select("*", { count: "exact", head: true })
+        .eq("session_id", sessionIdRaw);
+
+      if (countErr) {
+        console.error("[session/join] member count error:", countErr);
+        return NextResponse.json(
+          { ok: false, error: countErr.message },
+          { status: 500 }
+        );
+      }
+
       return NextResponse.json({
         ok: true,
         sessionId: sessionIdRaw,
-        topic: resolvedTopic,
+        topic: resolvedTopic || "クラス",
         capacity: resolvedCapacity,
+        memberCount: Number(count ?? 0),
+        status: "forming",
       });
     }
 
-    // ② 既存用途：topic から join_or_create_session（RPC）
-    if (!topic || !name || !deviceId || !Number.isFinite(capacity) || capacity <= 0) {
+    // ③ 既存用途：topic から join_or_create_session（RPC）
+    if (!topic || !Number.isFinite(capacity) || capacity <= 0) {
       return new NextResponse("missing or invalid fields", { status: 400 });
     }
 
@@ -255,11 +319,10 @@ export async function POST(req: Request) {
       });
     }
 
-    {
-      const { error: upsertErr } = await upsertMember(sessionId, deviceId, name);
-      if (upsertErr) {
-        console.error("[session/join] member upsert error after rpc:", upsertErr);
-      }
+    const { error: upsertErr } = await upsertMember(sessionId, deviceId, name);
+    if (upsertErr) {
+      console.error("[session/join] member upsert error after rpc:", upsertErr);
+      return new NextResponse(upsertErr.message, { status: 500 });
     }
 
     return NextResponse.json({
