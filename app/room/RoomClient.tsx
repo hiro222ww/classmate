@@ -162,6 +162,39 @@ export default function RoomClient() {
   };
 
   useEffect(() => {
+  if (!sessionId) return;
+
+  const deviceId = getOrCreateDeviceId();
+
+  const leave = () => {
+    navigator.sendBeacon(
+      "/api/session/leave",
+      new Blob(
+        [JSON.stringify({ sessionId, deviceId })],
+        { type: "application/json" }
+      )
+    );
+
+    if (classId) {
+      navigator.sendBeacon(
+        "/api/class/leave",
+        new Blob(
+          [JSON.stringify({ classId, deviceId })],
+          { type: "application/json" }
+        )
+      );
+    }
+  };
+
+  window.addEventListener("beforeunload", leave);
+
+  return () => {
+    window.removeEventListener("beforeunload", leave);
+    leave();
+  };
+}, [sessionId, classId]);
+
+  useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
     try {
       displayNameRef.current =
