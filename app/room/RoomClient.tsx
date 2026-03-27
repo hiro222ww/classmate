@@ -433,7 +433,31 @@ export default function RoomClient() {
     <ChalkboardRoomShell
       title={topicTitle || "読み込み中..."}
       subtitle={`参加人数 ${filled}/${capacity}`}
-      onBack={() => router.push("/class/select")}
+      onBack={async () => {
+  const deviceId = getOrCreateDeviceId();
+
+  if (classId) {
+    await fetch("/api/class/leave", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ classId, deviceId }),
+    }).catch(() => {});
+  }
+
+  if (sessionId) {
+    await fetch("/api/session/leave", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ sessionId, deviceId }),
+    }).catch(() => {});
+  }
+
+  router.push("/class/select");
+}}
       onStartCall={() =>
         router.push(
           `/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(
