@@ -17,20 +17,53 @@ export async function POST(req: Request) {
       );
     }
 
-    const { error } = await supabaseAdmin
+    const { error: deleteErr } = await supabaseAdmin
       .from("session_members")
       .delete()
       .eq("session_id", sessionId)
       .eq("device_id", deviceId);
 
-    if (error) {
+    if (deleteErr) {
       return NextResponse.json(
-        { ok: false, error: error.message },
+        { ok: false, error: deleteErr.message },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ ok: true });
+    const { count, error: countErr } = await supabaseAdmin
+      .from("session_members")
+      .select("*", { count: "exact", head: true })
+      .eq("session_id", sessionId);
+
+    if (countErr) {
+      return NextResponse.json(
+        { ok: false, error: countErr.message },
+        { status: 500 }
+      );
+    }
+
+    const remaining = Number(count ?? 0);
+
+    if (remaining <= 0) {
+      const { error: closeErr } = await supabaseAdmin
+        .from("sessions")
+        .update({ status: "closed" })
+        .eq("id", sessionId);
+
+      if (closeErr) {
+        return NextResponse.json(
+          { ok: false, error: closeErr.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      sessionId,
+      remaining,
+      closed: remaining <= 0,
+    });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message ?? "unknown_error" },
