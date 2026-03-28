@@ -427,14 +427,14 @@ export default function ClassSelectPage() {
       }
 
       const res = await fetch("/api/class/join", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId,
-          classId: c.id,
-        }),
-        cache: "no-store",
-      });
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    deviceId,
+    classId: c.id,
+  }),
+  cache: "no-store",
+});
 
       const raw = await res.text();
       let j: any = {};
