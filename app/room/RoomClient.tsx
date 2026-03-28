@@ -96,13 +96,13 @@ function dedupeMembers(
             display_name: normalizedMyName || name || "",
             joined_at: joinedAt || prevJoinedAt,
           };
-        } else if (!prevJoinedAt && joinedAt && me) {
-  me = {
-    device_id: me.device_id,
-    display_name: me.display_name,
-    joined_at: joinedAt,
-  };
-}
+        } else if (!prevJoinedAt && joinedAt) {
+          me = {
+            device_id: me.device_id,
+            display_name: me.display_name,
+            joined_at: joinedAt,
+          };
+        }
       }
       continue;
     }
@@ -144,6 +144,16 @@ async function readJsonBestEffort<T>(res: Response): Promise<T | null> {
   }
 }
 
+function formatTime(v: string) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export default function RoomClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -166,6 +176,12 @@ export default function RoomClient() {
   const deviceIdRef = useRef("");
   const displayNameRef = useRef("");
   const joinedSessionIdRef = useRef<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesBoxRef = useRef<HTMLDivElement | null>(null);
+
+  function scrollToBottom(behavior: ScrollBehavior = "smooth") {
+    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+  }
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
@@ -186,10 +202,11 @@ export default function RoomClient() {
 
         if (!res.ok) {
           if (!cancelled) {
-            displayNameRef.current =
+            const fallback =
               localStorage.getItem("classmate_display_name") ||
               localStorage.getItem("display_name") ||
               "参加者";
+            displayNameRef.current = fallback === "You" ? "参加者" : fallback;
           }
           return;
         }
@@ -202,16 +219,17 @@ export default function RoomClient() {
           "参加者";
 
         if (!cancelled) {
-          displayNameRef.current = canonical;
-          localStorage.setItem("classmate_display_name", canonical);
-          localStorage.setItem("display_name", canonical);
+          displayNameRef.current = canonical === "You" ? "参加者" : canonical;
+          localStorage.setItem("classmate_display_name", displayNameRef.current);
+          localStorage.setItem("display_name", displayNameRef.current);
         }
       } catch {
         if (!cancelled) {
-          displayNameRef.current =
+          const fallback =
             localStorage.getItem("classmate_display_name") ||
             localStorage.getItem("display_name") ||
             "参加者";
+          displayNameRef.current = fallback === "You" ? "参加者" : fallback;
         }
       }
     }
@@ -263,11 +281,7 @@ export default function RoomClient() {
     async function join() {
       const deviceId = deviceIdRef.current;
       const rawName = displayNameRef.current || "参加者";
-      const name =
-  displayNameRef.current &&
-  displayNameRef.current !== "You"
-    ? displayNameRef.current
-    : "参加者";
+      const name = rawName === "You" ? "参加者" : rawName;
 
       const res = await fetch("/api/session/join", {
         method: "POST",
@@ -313,7 +327,7 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, topicTitle]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -423,12 +437,25 @@ export default function RoomClient() {
     };
   }, [sessionId]);
 
+  useEffect(() => {
+    const box = messagesBoxRef.current;
+    if (!box) return;
+
+    const nearBottom =
+      box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+
+    if (nearBottom) {
+      scrollToBottom("smooth");
+    }
+  }, [msgs]);
+
   async function sendMessage() {
     const text = draft.trim();
     if (!text || !sessionId) return;
 
     const deviceId = deviceIdRef.current;
-    const name = displayNameRef.current || "参加者";
+    const rawName = displayNameRef.current || "参加者";
+    const name = rawName === "You" ? "参加者" : rawName;
 
     const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const optimisticRow: RoomMessage = {
@@ -442,6 +469,7 @@ export default function RoomClient() {
 
     setMsgs((prev) => dedupeMessages([...prev, optimisticRow]));
     setDraft("");
+    queueMicrotask(() => scrollToBottom("smooth"));
 
     const { error } = await supabase.from("room_messages").insert({
       session_id: sessionId,
@@ -456,8 +484,6 @@ export default function RoomClient() {
       setDraft(text);
       return;
     }
-
-    // Realtime or pollingで本物が入るので optimistic 行は次回取得で自然に押し流される
   }
 
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人 ・ ${status}`;
@@ -543,13 +569,17 @@ export default function RoomClient() {
           <div style={{ fontWeight: 900, marginBottom: 8 }}>チャット</div>
 
           <div
+            ref={messagesBoxRef}
             style={{
               display: "grid",
-              gap: 8,
-              minHeight: 160,
-              maxHeight: 320,
+              gap: 10,
+              minHeight: 220,
+              maxHeight: 360,
               overflowY: "auto",
-              marginBottom: 10,
+              marginBottom: 12,
+              padding: 12,
+              borderRadius: 12,
+              background: "#f3f4f6",
             }}
           >
             {msgs.length === 0 ? (
@@ -564,23 +594,74 @@ export default function RoomClient() {
                   <div
                     key={m.id}
                     style={{
-                      padding: "8px 10px",
-                      borderRadius: 10,
-                      border: "1px solid #e5e7eb",
-                      background: isMe ? "#eff6ff" : "#fafafa",
+                      display: "flex",
+                      justifyContent: isMe ? "flex-end" : "flex-start",
                     }}
                   >
-                    <div style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
-                      {isMe ? "You" : m.display_name || "参加者"}
+                    <div
+                      style={{
+                        maxWidth: "78%",
+                        display: "grid",
+                        gap: 4,
+                        justifyItems: isMe ? "end" : "start",
+                      }}
+                    >
+                      {!isMe ? (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: "#6b7280",
+                            fontWeight: 800,
+                            paddingLeft: 4,
+                          }}
+                        >
+                          {m.display_name || "参加者"}
+                        </div>
+                      ) : null}
+
+                      <div
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 18,
+                          background: isMe ? "#86efac" : "#ffffff",
+                          border: isMe ? "none" : "1px solid #e5e7eb",
+                          color: "#111827",
+                          lineHeight: 1.5,
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
+                          wordBreak: "break-word",
+                          borderBottomRightRadius: isMe ? 6 : 18,
+                          borderBottomLeftRadius: isMe ? 18 : 6,
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                        }}
+                      >
+                        {m.message}
+                      </div>
+
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "#9ca3af",
+                          padding: isMe ? "0 4px 0 0" : "0 0 0 4px",
+                        }}
+                      >
+                        {formatTime(m.created_at)}
+                      </div>
                     </div>
-                    <div style={{ marginTop: 4 }}>{m.message}</div>
                   </div>
                 );
               })
             )}
+            <div ref={messagesEndRef} />
           </div>
 
-          <div style={{ display: "flex", gap: 8 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -594,8 +675,9 @@ export default function RoomClient() {
               style={{
                 flex: 1,
                 border: "1px solid #d1d5db",
-                borderRadius: 10,
-                padding: "10px 12px",
+                borderRadius: 999,
+                padding: "12px 14px",
+                background: "#fff",
               }}
             />
 
@@ -603,12 +685,13 @@ export default function RoomClient() {
               onClick={() => void sendMessage()}
               style={{
                 border: "none",
-                borderRadius: 10,
-                padding: "0 16px",
-                background: "#2563eb",
+                borderRadius: 999,
+                padding: "10px 16px",
+                background: "#22c55e",
                 color: "#fff",
                 fontWeight: 900,
                 cursor: "pointer",
+                whiteSpace: "nowrap",
               }}
             >
               送信
