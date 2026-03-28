@@ -211,14 +211,28 @@ export default function RoomClient() {
     };
   }, []);
 
+  // classId / directSessionId が変わったら、部屋状態を完全に初期化
   useEffect(() => {
-    setMsgs([]);
-    setMembers([]);
+    console.log("[room] reset for route change", {
+      classId,
+      directSessionId,
+      prevResolvedSessionId: resolvedSessionId,
+    });
+
+    setResolvedSessionId("");
+    setStatus("forming");
+    setCapacity(5);
     setMemberCount(0);
+    setMembers([]);
     setErr("");
     setTopicTitle("");
+    setMsgs([]);
+    setDraft("");
+
     joinedRef.current = false;
-  }, [sessionId]);
+    currentSessionIdRef.current = "";
+    currentClassIdRef.current = classId;
+  }, [classId, directSessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -248,6 +262,13 @@ export default function RoomClient() {
     let cancelled = false;
 
     async function joinRoom() {
+      console.log("[room] joinRoom start", {
+        classId,
+        directSessionId,
+        resolvedSessionId,
+        joined: joinedRef.current,
+      });
+
       if (joinedRef.current) return;
       if (!classId && !directSessionId) return;
 
@@ -257,14 +278,24 @@ export default function RoomClient() {
         ? { classId, name, deviceId, capacity: 5 }
         : { sessionId: directSessionId, name, deviceId, capacity: 5 };
 
+      console.log("[room] session/join request body =", body);
+
       const res = await fetch("/api/session/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
+        cache: "no-store",
       });
 
       const r = await readJsonBestEffort(res);
       const j = (r.json ?? {}) as SessionJoinResult;
+
+      console.log("[room] session/join response =", {
+        ok: r.ok,
+        status: r.status,
+        json: j,
+        rawText: r.text,
+      });
 
       if (!r.ok) {
         joinedRef.current = false;
@@ -280,6 +311,8 @@ export default function RoomClient() {
       if (cancelled) return;
 
       setResolvedSessionId(sid);
+      currentSessionIdRef.current = sid;
+
       setStatus((j.status as any) ?? "forming");
       setCapacity(
         Number.isFinite(Number(j.capacity)) && Number(j.capacity) > 0
@@ -303,7 +336,10 @@ export default function RoomClient() {
     }
 
     void joinRoom().catch((e: any) => {
-      if (!cancelled) setErr(e?.message ?? "session_join_failed");
+      if (!cancelled) {
+        console.error("[room] joinRoom failed", e);
+        setErr(e?.message ?? "session_join_failed");
+      }
     });
 
     return () => {
@@ -321,6 +357,14 @@ export default function RoomClient() {
       });
       const r = await readJsonBestEffort(res);
       const j = (r.json ?? {}) as SessionStatusResult;
+
+      console.log("[room] session/status response =", {
+        sid,
+        cid,
+        ok: r.ok,
+        status: r.status,
+        json: j,
+      });
 
       if (!r.ok || !j.ok) {
         if (j?.error) setErr(String(j.error));
@@ -342,6 +386,7 @@ export default function RoomClient() {
       const t = (j.session?.topic ?? "").trim();
       setTopicTitle(t || "");
     } catch (e: any) {
+      console.error("[room] fetchStatus failed", e);
       setErr(e?.message ?? "status_failed");
     }
   }
