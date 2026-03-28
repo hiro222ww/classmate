@@ -10,8 +10,14 @@ function isUuid(s: string) {
   );
 }
 
+function sanitizeDisplayName(v: string | null | undefined) {
+  const s = String(v ?? "").trim();
+  if (!s || s === "You") return "参加者";
+  return s;
+}
+
 // -------------------------------
-// 🔥 ゴースト削除（device_idなし）
+// ゴースト削除（device_idなし）
 // -------------------------------
 async function cleanupGhostMembers(sessionId: string) {
   const { error } = await supabaseAdmin
@@ -28,14 +34,14 @@ async function cleanupGhostMembers(sessionId: string) {
 }
 
 // -------------------------------
-// 🔥 古い自分削除（display_name一致）
+// 古い自分削除（display_name一致）
 // -------------------------------
 async function cleanupOldSelfRows(
   sessionId: string,
   deviceId: string,
   name: string
 ) {
-  const trimmedName = String(name ?? "").trim();
+  const trimmedName = sanitizeDisplayName(name);
   if (!trimmedName) return { ok: true as const };
 
   const { error } = await supabaseAdmin
@@ -88,11 +94,13 @@ async function upsertMember(
   deviceId: string,
   name: string
 ) {
+  const safeName = sanitizeDisplayName(name);
+
   return await supabaseAdmin.from("session_members").upsert(
     {
       session_id: sessionId,
       device_id: deviceId,
-      display_name: name,
+      display_name: safeName,
       joined_at: new Date().toISOString(),
     },
     { onConflict: "session_id,device_id" }
@@ -166,14 +174,15 @@ async function ensureJoinableSession(params: {
 }
 
 // ===============================
-// 🚀 メイン
+// メイン
 // ===============================
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
     const sessionIdRaw = String(body.sessionId ?? "").trim();
-    const name = String(body.name ?? "").trim();
+    const rawName = String(body.name ?? "").trim();
+    const name = sanitizeDisplayName(rawName);
     const deviceId = String(body.deviceId ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
 
@@ -227,17 +236,11 @@ export async function POST(req: Request) {
 
     const session = ensured.session;
 
-    // -------------------------------
-    // 🔥 ここが今回の核心
-    // -------------------------------
-
     // 1. ゴースト削除
     await cleanupGhostMembers(sessionIdRaw);
 
     // 2. 古い自分削除（device違い）
     await cleanupOldSelfRows(sessionIdRaw, deviceId, name);
-
-    // -------------------------------
 
     const countedBefore = await countValidMembers(sessionIdRaw);
     if (!countedBefore.ok) {

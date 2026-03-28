@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 function isUuid(v: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    v
+  );
 }
 
 function admin() {
@@ -24,6 +26,12 @@ type MemberRow = {
   joined_at?: string | null;
 };
 
+function sanitizeDisplayName(v: string | null | undefined) {
+  const s = String(v ?? "").trim();
+  if (!s || s === "You") return "参加者";
+  return s;
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -38,7 +46,10 @@ export async function GET(req: Request) {
 
     if (!isUuid(sessionIdRaw)) {
       return NextResponse.json(
-        { ok: false, error: `invalid_sessionId (uuid required): ${sessionIdRaw}` },
+        {
+          ok: false,
+          error: `invalid_sessionId (uuid required): ${sessionIdRaw}`,
+        },
         { status: 400 }
       );
     }
@@ -99,12 +110,14 @@ export async function GET(req: Request) {
       const deviceId = String(row.device_id ?? "").trim();
       if (!deviceId) continue;
 
-      const displayName = String(row.display_name ?? "").trim();
+      const displayName = sanitizeDisplayName(row.display_name);
       const joinedAt =
         String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
       const prev = byDevice.get(deviceId);
-      if (!prev || joinedAt > prev.joined_at) {
+
+      // 最初に入った時刻を優先して保持
+      if (!prev || joinedAt < prev.joined_at) {
         byDevice.set(deviceId, {
           device_id: deviceId,
           display_name: displayName,
@@ -119,7 +132,13 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      session: s.data,
+      session: {
+        id: String(s.data.id),
+        topic: String(s.data.topic ?? "").trim(),
+        status: String(s.data.status ?? "forming"),
+        capacity: Number(s.data.capacity ?? 5),
+        created_at: s.data.created_at ?? null,
+      },
       members,
       memberCount: members.length,
     });

@@ -37,6 +37,12 @@ type ChalkStrokeRow = {
   created_at: string;
 };
 
+function sanitizeDisplayName(v: string | null | undefined) {
+  const s = String(v ?? "").trim();
+  if (!s || s === "You") return "参加者";
+  return s;
+}
+
 async function readJsonBestEffort(res: Response) {
   const text = await res.text().catch(() => "");
   try {
@@ -172,9 +178,7 @@ function makeRng(seed: number) {
   };
 }
 
-/** ===== 音（リアル寄りチョーク + コンコン） : WebAudio、ファイル不要 =====
- * 重要：止まらない系は「AudioContextごと閉じる dispose()」で確実に止める
- */
+/** ===== 音（リアル寄りチョーク + コンコン） ===== */
 function useBoardSounds() {
   const ctxRef = useRef<AudioContext | null>(null);
   const masterRef = useRef<GainNode | null>(null);
@@ -416,12 +420,13 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
     try {
-      displayNameRef.current =
+      displayNameRef.current = sanitizeDisplayName(
         localStorage.getItem("classmate_display_name") ||
-        localStorage.getItem("display_name") ||
-        "You";
+          localStorage.getItem("display_name") ||
+          "参加者"
+      );
     } catch {
-      displayNameRef.current = "You";
+      displayNameRef.current = "参加者";
     }
   }, []);
 
@@ -530,16 +535,21 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
           clearLocal();
           continue;
         }
-        drawStroke(ctx, { color: row.color, width: row.width, points: row.points as any }, w, h);
+        drawStroke(
+          ctx,
+          { color: row.color, width: row.width, points: row.points as any },
+          w,
+          h
+        );
       }
     };
 
-    boot();
+    void boot();
   }, [sessionId]);
 
   useEffect(() => {
     const onResize = () => {
-      (async () => {
+      void (async () => {
         resizeCanvas();
         paintBoardBase();
 
@@ -562,7 +572,16 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
             clearLocal();
             continue;
           }
-          drawStroke(ctx, { color: (row as any).color, width: (row as any).width, points: (row as any).points }, w, h);
+          drawStroke(
+            ctx,
+            {
+              color: (row as any).color,
+              width: (row as any).width,
+              points: (row as any).points,
+            },
+            w,
+            h
+          );
         }
       })();
     };
@@ -578,7 +597,12 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
       .channel(`chalk_strokes:${sessionId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "call_chalk_strokes", filter: `session_id=eq.${sessionId}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "call_chalk_strokes",
+          filter: `session_id=eq.${sessionId}`,
+        },
         (payload: any) => {
           const row = payload?.new as ChalkStrokeRow;
           if (!row?.id) return;
@@ -595,13 +619,18 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
             clearLocal();
             return;
           }
-          drawStroke(ctx, { color: row.color, width: row.width, points: row.points as any }, w, h);
+          drawStroke(
+            ctx,
+            { color: row.color, width: row.width, points: row.points as any },
+            w,
+            h
+          );
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ch);
+      void supabase.removeChannel(ch);
     };
   }, [sessionId]);
 
@@ -662,10 +691,12 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
 
       if (!pts || pts.length < 2) return;
 
+      const safeName = sanitizeDisplayName(displayNameRef.current);
+
       const { error } = await supabase.from("call_chalk_strokes").insert({
         session_id: sessionId,
         device_id: deviceIdRef.current,
-        display_name: displayNameRef.current || "You",
+        display_name: safeName,
         color: penColor,
         width: penWidth,
         points: pts,
@@ -728,7 +759,10 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
         const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
 
         const speed01 = Math.max(0, Math.min(1, (distPx / dt) / 1.8));
-        const pressure01 = Math.max(0, Math.min(1, 0.75 * (1 - speed01) + 0.02 * (penWidth - 2)));
+        const pressure01 = Math.max(
+          0,
+          Math.min(1, 0.75 * (1 - speed01) + 0.02 * (penWidth - 2))
+        );
 
         sounds.chalkMove(speed01, pressure01);
       }
@@ -776,7 +810,9 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
     canvas.addEventListener("pointermove", onMove, { passive: false });
     canvas.addEventListener("pointerup", onUp, { passive: false });
     canvas.addEventListener("pointercancel", onCancel as any, { passive: false });
-    canvas.addEventListener("lostpointercapture", onCancel as any, { passive: false });
+    canvas.addEventListener("lostpointercapture", onCancel as any, {
+      passive: false,
+    });
     canvas.addEventListener("pointerleave", onLeave as any, { passive: false });
     canvas.addEventListener("contextmenu", onCtx as any, { passive: false });
 
@@ -809,25 +845,46 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
 
   const onClear = async () => {
     clearLocal();
+
+    const safeName = sanitizeDisplayName(displayNameRef.current);
+
     const { error } = await supabase.from("call_chalk_strokes").insert({
       session_id: sessionId,
       device_id: deviceIdRef.current,
-      display_name: displayNameRef.current || "You",
+      display_name: safeName,
       color: penColor,
       width: penWidth,
       points: [],
       kind: "clear",
     });
+
     if (error) setInfo(`クリア送信失敗: ${error.message}`);
     else setInfo("");
   };
 
   return (
     <div style={{ marginTop: 10 }}>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <div style={{ fontWeight: 900 }}>黒板（ペン対応・共有）</div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <label
+            style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}
+          >
             太さ
             <input
               type="range"
@@ -839,13 +896,21 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
             />
           </label>
 
-          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
+          <label
+            style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}
+          >
             色
             <input
               type="color"
               value={penColor}
               onChange={(e) => setPenColor(e.target.value)}
-              style={{ marginLeft: 8, width: 34, height: 28, border: "none", background: "transparent" }}
+              style={{
+                marginLeft: 8,
+                width: 34,
+                height: 28,
+                border: "none",
+                background: "transparent",
+              }}
             />
           </label>
 
@@ -879,10 +944,15 @@ function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
           touchAction: "none",
         }}
       >
-        <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "100%" }} />
+        <canvas
+          ref={canvasRef}
+          style={{ display: "block", width: "100%", height: "100%" }}
+        />
       </div>
 
-      <div style={{ marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: 900 }}>
+      <div
+        style={{ marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: 900 }}
+      >
         ※ タッチペン/指で書けます。みんなの線はリアルタイムで反映されます。
         {info ? `（${info}）` : ""}
       </div>
@@ -896,7 +966,9 @@ export default function CallClient() {
   const [sessionId, setSessionId] = useState<string>("");
   const [returnTo, setReturnTo] = useState<string>("/class/select");
 
-  const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
+  const [status, setStatus] = useState<"forming" | "active" | "closed">(
+    "forming"
+  );
   const [capacity, setCapacity] = useState(5);
   const [memberCount, setMemberCount] = useState(0);
   const [members, setMembers] = useState<
@@ -925,27 +997,31 @@ export default function CallClient() {
   }, []);
 
   useEffect(() => {
-  if (!sessionId) return;
+    if (!sessionId) return;
 
-  const name =
-    localStorage.getItem("classmate_display_name") ||
-    localStorage.getItem("display_name") ||
-    "You";
+    const rawName =
+      localStorage.getItem("classmate_display_name") ||
+      localStorage.getItem("display_name") ||
+      "参加者";
 
-  const deviceId = getOrCreateDeviceId();
+    const name = sanitizeDisplayName(rawName);
+    const deviceId = getOrCreateDeviceId();
 
-  fetch("/api/session/join", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId, name, deviceId }),
-  }).catch(() => {});
-}, [sessionId]);
+    fetch("/api/session/join", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId, name, deviceId }),
+    }).catch(() => {});
+  }, [sessionId]);
 
   async function fetchStatus(sid: string) {
     try {
-      const res = await fetch(`/api/session/status?sessionId=${encodeURIComponent(sid)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/session/status?sessionId=${encodeURIComponent(sid)}`,
+        {
+          cache: "no-store",
+        }
+      );
       const r = await readJsonBestEffort(res);
       const j = (r.json ?? {}) as SessionStatusResult;
 
@@ -969,9 +1045,11 @@ export default function CallClient() {
 
   useEffect(() => {
     if (!sessionId) return;
-    fetchStatus(sessionId);
+    void fetchStatus(sessionId);
+
     if (pollTimer.current) window.clearInterval(pollTimer.current);
-    pollTimer.current = window.setInterval(() => fetchStatus(sessionId), 5000);
+    pollTimer.current = window.setInterval(() => void fetchStatus(sessionId), 5000);
+
     return () => {
       if (pollTimer.current) window.clearInterval(pollTimer.current);
       pollTimer.current = null;
@@ -980,14 +1058,18 @@ export default function CallClient() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       if (!sessionId) return;
       if (localStreamRef.current) return;
 
       try {
         setMicReady(false);
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
           video: false,
         });
 
@@ -1043,15 +1125,28 @@ export default function CallClient() {
           </div>
         ) : null}
 
-        <div style={{ border: "1px solid #ddd", borderRadius: 14, padding: 12, background: "#fff" }}>
+        <div
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 14,
+            padding: 12,
+            background: "#fff",
+          }}
+        >
           <div style={{ fontWeight: 900 }}>クラス</div>
           <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
             参加者：<b>{memberCount}</b> / {capacity} ・ 状態：
-            {status === "active" ? "通話中" : status === "closed" ? "終了" : "待機"} ・ マイク：
-            {micReady ? micStateLabel : "未許可/準備中"}
+            {status === "active"
+              ? "通話中"
+              : status === "closed"
+              ? "終了"
+              : "待機"}{" "}
+            ・ マイク：{micReady ? micStateLabel : "未許可/準備中"}
           </div>
 
-          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div
+            style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}
+          >
             {Array.from({ length: capacity }).map((_, i) => {
               const m = members[i];
               const isFilled = i < filled;
