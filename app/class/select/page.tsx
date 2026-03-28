@@ -372,17 +372,8 @@ export default function ClassSelectPage() {
   }, [classes, prefs, wFilter, tFilter]);
 
   const boards = useMemo(() => {
-    const map = new Map<string, ClassRow>();
-
-    for (const c of filtered) {
-      const key = `${c.world_key ?? "default"}::${c.topic_key ?? "free"}`;
-      if (!map.has(key)) {
-        map.set(key, c);
-      }
-    }
-
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [filtered]);
+  return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+}, [filtered]);
 
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
