@@ -18,6 +18,12 @@ function admin() {
 
 export const dynamic = "force-dynamic";
 
+type MemberRow = {
+  device_id?: string | null;
+  display_name?: string | null;
+  joined_at?: string | null;
+};
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -80,30 +86,63 @@ export async function GET(req: Request) {
       );
     }
 
-    const rawMembers = Array.isArray(m.data) ? m.data : [];
+    const rawMembers = (Array.isArray(m.data) ? m.data : []) as MemberRow[];
 
-    const dedupedMap = new Map<
+    // device_id があるものを最優先で一意化
+    const byDevice = new Map<
+      string,
+      { device_id?: string; display_name: string; joined_at: string }
+    >();
+
+    // device_id がない古いゴミ行は display_name 単位で1件だけ残す
+    const byNameWithoutDevice = new Map<
       string,
       { device_id?: string; display_name: string; joined_at: string }
     >();
 
     for (const row of rawMembers) {
-      const deviceId = String((row as any)?.device_id ?? "").trim();
-      const displayName = String((row as any)?.display_name ?? "").trim() || "You";
-      const joinedAt = String((row as any)?.joined_at ?? "").trim();
+      const deviceId = String(row.device_id ?? "").trim();
+      const displayName = String(row.display_name ?? "").trim() || "You";
+      const joinedAt = String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
-      const key = deviceId || `${displayName}:${joinedAt}`;
+      if (deviceId) {
+        const prev = byDevice.get(deviceId);
 
-      if (!dedupedMap.has(key)) {
-        dedupedMap.set(key, {
-          device_id: deviceId || undefined,
-          display_name: displayName,
-          joined_at: joinedAt,
-        });
+        // 同じ device_id が複数あったら joined_at が新しい方を残す
+        if (!prev || joinedAt > prev.joined_at) {
+          byDevice.set(deviceId, {
+            device_id: deviceId,
+            display_name: displayName,
+            joined_at: joinedAt,
+          });
+        }
+      } else {
+        const key = displayName.toLowerCase();
+        const prev = byNameWithoutDevice.get(key);
+
+        // device_id なし行は display_name ごとに1件だけ
+        if (!prev || joinedAt > prev.joined_at) {
+          byNameWithoutDevice.set(key, {
+            device_id: undefined,
+            display_name: displayName,
+            joined_at: joinedAt,
+          });
+        }
       }
     }
 
-    const members = Array.from(dedupedMap.values());
+    const members = [
+      ...Array.from(byDevice.values()),
+      ...Array.from(byNameWithoutDevice.values()).filter((ghost) => {
+        // 既に同名の device_id ありメンバーがいるなら、ghost は捨てる
+        return !Array.from(byDevice.values()).some(
+          (real) =>
+            real.display_name.trim().toLowerCase() ===
+            ghost.display_name.trim().toLowerCase()
+        );
+      }),
+    ].sort((a, b) => a.joined_at.localeCompare(b.joined_at));
+
     const memberCount = members.length;
 
     return NextResponse.json({
