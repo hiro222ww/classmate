@@ -1,5 +1,6 @@
 "use client";
 
+console.log("🔥 NEW VERSION LOADED");
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getOrCreateDeviceId } from "@/lib/device";
