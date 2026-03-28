@@ -37,6 +37,24 @@ function formatClassTitle(c: MineClass): string {
   return `${topicKey}クラス`;
 }
 
+function buildRoomUrl(classId: string, sessionId: string) {
+  const qs = new URLSearchParams({
+    autojoin: "1",
+    classId,
+    sessionId,
+  });
+  return `/room?${qs.toString()}`;
+}
+
+async function readJsonSafe(res: Response) {
+  const raw = await res.text().catch(() => "");
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function HomeClient() {
   const router = useRouter();
 
@@ -45,6 +63,7 @@ export default function HomeClient() {
   const [classes, setClasses] = useState<MineClass[]>([]);
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
+  const [openingClassId, setOpeningClassId] = useState<string | null>(null);
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -112,8 +131,48 @@ export default function HomeClient() {
     return arr;
   }, [classes]);
 
-  function openClass(classId: string) {
-    router.push(`/room?autojoin=1&classId=${encodeURIComponent(classId)}`);
+  async function openClass(target: MineClass) {
+    try {
+      setOpeningClassId(target.id);
+
+      const deviceId = getOrCreateDeviceId();
+
+      const res = await fetch("/api/class/match-join", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId,
+          topicKey: target.topic_key,
+          worldKey: target.world_key ?? "default",
+          capacity: 5,
+          preferJoinedClass: true,
+        }),
+        cache: "no-store",
+      });
+
+      const json = await readJsonSafe(res);
+      console.log("[home openClass] match-join response =", json);
+
+      if (!res.ok || !json?.ok) {
+        alert(json?.error || "open_class_failed");
+        return;
+      }
+
+      const classId = String(json?.classId ?? "").trim();
+      const sessionId = String(json?.sessionId ?? "").trim();
+
+      if (!classId || !sessionId) {
+        alert("open_class_missing_ids");
+        return;
+      }
+
+      router.push(buildRoomUrl(classId, sessionId));
+    } catch (e: any) {
+      console.error("[home openClass] error =", e);
+      alert(e?.message || "open_class_failed");
+    } finally {
+      setOpeningClassId(null);
+    }
   }
 
   async function quickJoinFreeAndOpen() {
@@ -122,26 +181,36 @@ export default function HomeClient() {
 
       const deviceId = getOrCreateDeviceId();
 
-      const res = await fetch("/api/class/quick-join", {
+      const res = await fetch("/api/class/match-join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           deviceId,
-          topicKey: "free",
+          topicKey: null,
           worldKey: "default",
+          capacity: 5,
+          preferJoinedClass: false,
         }),
         cache: "no-store",
       });
 
-      const json = await res.json().catch(() => ({}));
+      const json = await readJsonSafe(res);
       console.log("[home quick free] response =", json);
 
-      if (!res.ok || !json?.ok || !json?.classId) {
+      if (!res.ok || !json?.ok) {
         alert(json?.error || "quick_join_failed");
         return;
       }
 
-      router.push(`/room?autojoin=1&classId=${encodeURIComponent(json.classId)}`);
+      const classId = String(json?.classId ?? "").trim();
+      const sessionId = String(json?.sessionId ?? "").trim();
+
+      if (!classId || !sessionId) {
+        alert("quick_join_missing_ids");
+        return;
+      }
+
+      router.push(buildRoomUrl(classId, sessionId));
     } catch (e: any) {
       console.error("[home quick free] error =", e);
       alert(e?.message || "quick_join_failed");
@@ -150,54 +219,54 @@ export default function HomeClient() {
     }
   }
 
- async function leaveClass(target: MineClass) {
-  const title = formatClassTitle(target);
+  async function leaveClass(target: MineClass) {
+    const title = formatClassTitle(target);
 
-  if (!confirm(`「${title}」を抜けますか？`)) {
-    return;
-  }
-
-  try {
-    setLeavingClassId(target.id);
-
-    const deviceId = getOrCreateDeviceId();
-
-    const res = await fetch("/api/class/leave", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        deviceId,
-        classId: target.class_id || target.id,
-      }),
-      cache: "no-store",
-    });
-
-    const raw = await res.text().catch(() => "");
-    let json: any = {};
-    try {
-      json = raw ? JSON.parse(raw) : {};
-    } catch {
-      json = { raw };
-    }
-
-    console.log("[home leave] status =", res.status);
-    console.log("[home leave] json =", json);
-
-    if (!res.ok || !json?.ok) {
-      alert(json?.error || `leave_failed (${res.status})`);
+    if (!confirm(`「${title}」を抜けますか？`)) {
       return;
     }
 
-    setClasses((prev) =>
-      prev.filter((c) => String(c.class_id) !== String(target.class_id))
-    );
-  } catch (e: any) {
-    console.error("[home leave] error =", e);
-    alert(e?.message || "leave_failed");
-  } finally {
-    setLeavingClassId(null);
+    try {
+      setLeavingClassId(target.id);
+
+      const deviceId = getOrCreateDeviceId();
+
+      const res = await fetch("/api/class/leave", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId,
+          classId: target.class_id || target.id,
+        }),
+        cache: "no-store",
+      });
+
+      const raw = await res.text().catch(() => "");
+      let json: any = {};
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch {
+        json = { raw };
+      }
+
+      console.log("[home leave] status =", res.status);
+      console.log("[home leave] json =", json);
+
+      if (!res.ok || !json?.ok) {
+        alert(json?.error || `leave_failed (${res.status})`);
+        return;
+      }
+
+      setClasses((prev) =>
+        prev.filter((c) => String(c.class_id) !== String(target.class_id))
+      );
+    } catch (e: any) {
+      console.error("[home leave] error =", e);
+      alert(e?.message || "leave_failed");
+    } finally {
+      setLeavingClassId(null);
+    }
   }
-}
 
   if (loading) return <p style={{ margin: 0 }}>読み込み中...</p>;
 
@@ -277,6 +346,7 @@ export default function HomeClient() {
           <div style={{ display: "grid", gap: 10 }}>
             {visible.map((c) => {
               const leaving = leavingClassId === c.id;
+              const opening = openingClassId === c.id;
 
               return (
                 <div
@@ -291,7 +361,7 @@ export default function HomeClient() {
                 >
                   <div style={{ fontWeight: 900, color: "#111" }}>
                     {formatClassTitle(c)}
-                   </div>
+                  </div>
 
                   <div
                     style={{
@@ -326,7 +396,8 @@ export default function HomeClient() {
                     }}
                   >
                     <button
-                      onClick={() => openClass(c.id)}
+                      onClick={() => void openClass(c)}
+                      disabled={opening}
                       style={{
                         padding: "10px 12px",
                         borderRadius: 10,
@@ -334,14 +405,15 @@ export default function HomeClient() {
                         background: "#111",
                         color: "#fff",
                         fontWeight: 900,
-                        cursor: "pointer",
+                        cursor: opening ? "default" : "pointer",
+                        opacity: opening ? 0.7 : 1,
                       }}
                     >
-                      開く
+                      {opening ? "開いています…" : "開く"}
                     </button>
 
                     <button
-                      onClick={() => leaveClass(c)}
+                      onClick={() => void leaveClass(c)}
                       disabled={leaving}
                       style={{
                         padding: "10px 12px",

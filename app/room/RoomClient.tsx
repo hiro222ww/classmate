@@ -9,8 +9,8 @@ import { pushRecentClass } from "@/lib/recentClasses";
 
 type MemberRow = {
   device_id?: string;
-  display_name: string;
-  joined_at: string;
+  display_name?: string;
+  joined_at?: string;
 };
 
 type RoomMessage = {
@@ -30,6 +30,7 @@ type SessionJoinResponse = {
   status?: string;
   capacity?: number;
   memberCount?: number;
+  alreadyInSession?: boolean;
   error?: string;
 };
 
@@ -47,78 +48,25 @@ type SessionStatusResponse = {
   error?: string;
 };
 
-function dedupeMembers(
-  list: MemberRow[],
-  myDeviceId: string,
-  myDisplayName: string
-): MemberRow[] {
-  const normalizedMyDeviceId = String(myDeviceId ?? "").trim();
-  const normalizedMyName = String(myDisplayName ?? "").trim();
-
-  const result: MemberRow[] = [];
-  const byDevice = new Map<string, MemberRow>();
-
-  let bestMe: MemberRow | null = null;
+function dedupeMembers(list: MemberRow[]): MemberRow[] {
+  const map = new Map<string, MemberRow>();
 
   for (const m of list) {
     const did = String(m.device_id ?? "").trim();
-    const name = String(m.display_name ?? "").trim();
+    if (!did) continue;
 
-    const isMe =
-      (did && normalizedMyDeviceId && did === normalizedMyDeviceId) ||
-      (!did && (name === "You" || (normalizedMyName && name === normalizedMyName)));
-
-    if (isMe) {
-      if (!bestMe) {
-        bestMe = {
-          device_id: did || normalizedMyDeviceId || undefined,
-          display_name: name && name !== "You" ? name : normalizedMyName || "You",
-          joined_at: m.joined_at,
-        };
-      } else {
-        const prevName = String(bestMe.display_name ?? "").trim();
-
-        if ((!prevName || prevName === "You") && name && name !== "You") {
-          bestMe = {
-            device_id: did || normalizedMyDeviceId || undefined,
-            display_name: name,
-            joined_at: m.joined_at,
-          };
-        } else if (!String(bestMe.device_id ?? "").trim() && did) {
-          bestMe = {
-            device_id: did,
-            display_name: bestMe.display_name,
-            joined_at: bestMe.joined_at,
-          };
-        }
-      }
-      continue;
-    }
-
-    if (did) {
-      const prev = byDevice.get(did);
-
-      if (!prev) {
-        byDevice.set(did, m);
-      } else {
-        const prevName = String(prev.display_name ?? "").trim();
-        if ((!prevName || prevName === "You") && name && name !== "You") {
-          byDevice.set(did, m);
-        }
-      }
-      continue;
-    }
-
-    const key = `fallback:${name}:${m.joined_at}`;
-    if (!byDevice.has(key)) {
-      byDevice.set(key, m);
+    if (!map.has(did)) {
+      map.set(did, {
+        device_id: did,
+        display_name: String(m.display_name ?? "").trim(),
+        joined_at: String(m.joined_at ?? "").trim(),
+      });
     }
   }
 
-  if (bestMe) result.push(bestMe);
-  result.push(...Array.from(byDevice.values()));
-
-  return result;
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.joined_at ?? "").localeCompare(String(b.joined_at ?? ""))
+  );
 }
 
 async function readJsonBestEffort<T>(res: Response): Promise<T | null> {
@@ -151,18 +99,18 @@ export default function RoomClient() {
 
   const deviceIdRef = useRef("");
   const displayNameRef = useRef("");
-  const joinedRef = useRef(false);
+  const joinedSessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
     displayNameRef.current =
       localStorage.getItem("classmate_display_name") ||
       localStorage.getItem("display_name") ||
-      "You";
+      "";
   }, []);
 
   const visibleMembers = useMemo(() => {
-    return dedupeMembers(members, deviceIdRef.current, displayNameRef.current);
+    return dedupeMembers(members);
   }, [members]);
 
   useEffect(() => {
@@ -187,14 +135,14 @@ export default function RoomClient() {
 
   useEffect(() => {
     if (!sessionId) return;
-    if (joinedRef.current) return;
+    if (joinedSessionIdRef.current === sessionId) return;
 
-    joinedRef.current = true;
+    joinedSessionIdRef.current = sessionId;
     let cancelled = false;
 
     async function join() {
       const deviceId = deviceIdRef.current;
-      const name = displayNameRef.current;
+      const name = displayNameRef.current || "参加者";
 
       const res = await fetch("/api/session/join", {
         method: "POST",
@@ -207,12 +155,13 @@ export default function RoomClient() {
           name,
           capacity: 5,
         }),
+        cache: "no-store",
       });
 
       const json = await readJsonBestEffort<SessionJoinResponse>(res);
 
       if (!res.ok || !json?.ok) {
-        joinedRef.current = false;
+        joinedSessionIdRef.current = null;
         throw new Error(json?.error || "session_join_failed");
       }
 
@@ -226,6 +175,8 @@ export default function RoomClient() {
       if (Number.isFinite(Number(json.memberCount))) {
         setMemberCount(Number(json.memberCount));
       }
+
+      setErr("");
     }
 
     void join().catch((e: any) => {
@@ -246,7 +197,6 @@ export default function RoomClient() {
 
     async function fetchStatus() {
       const qs = new URLSearchParams({ sessionId });
-      if (classId) qs.set("classId", classId);
 
       const res = await fetch(`/api/session/status?${qs.toString()}`, {
         cache: "no-store",
@@ -264,13 +214,7 @@ export default function RoomClient() {
       if (cancelled) return;
 
       const incomingMembers = Array.isArray(json.members) ? json.members : [];
-      setMembers(
-        dedupeMembers(
-          incomingMembers,
-          deviceIdRef.current,
-          displayNameRef.current
-        )
-      );
+      setMembers(incomingMembers);
 
       if (json.session?.topic) {
         setTopicTitle(String(json.session.topic).trim() || "ルーム");
@@ -288,6 +232,7 @@ export default function RoomClient() {
     }
 
     void fetchStatus();
+
     const interval = window.setInterval(() => {
       void fetchStatus();
     }, 3000);
@@ -296,7 +241,7 @@ export default function RoomClient() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [classId, sessionId]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -356,7 +301,7 @@ export default function RoomClient() {
     if (!text || !sessionId) return;
 
     const deviceId = deviceIdRef.current;
-    const name = displayNameRef.current;
+    const name = displayNameRef.current || "参加者";
 
     const { error } = await supabase.from("room_messages").insert({
       session_id: sessionId,
@@ -380,7 +325,9 @@ export default function RoomClient() {
       title={topicTitle || "ルーム"}
       subtitle={subtitle}
       onBack={() => router.push("/class/select")}
-      onStartCall={() => router.push(`/call?sessionId=${encodeURIComponent(sessionId)}`)}
+      onStartCall={() =>
+        router.push(`/call?sessionId=${encodeURIComponent(sessionId)}`)
+      }
       startDisabled={!sessionId}
       startLabel="通話開始"
     >
@@ -414,20 +361,26 @@ export default function RoomClient() {
             <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {visibleMembers.map((m, i) => (
-                <div
-                  key={`${m.device_id ?? "noid"}-${m.joined_at}-${i}`}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #e5e7eb",
-                    background: "#fafafa",
-                    fontWeight: 700,
-                  }}
-                >
-                  {m.display_name || "You"}
-                </div>
-              ))}
+              {visibleMembers.map((m, i) => {
+                const isMe =
+                  String(m.device_id ?? "").trim() ===
+                  String(deviceIdRef.current ?? "").trim();
+
+                return (
+                  <div
+                    key={`${m.device_id ?? "noid"}-${m.joined_at ?? ""}-${i}`}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid #e5e7eb",
+                      background: "#fafafa",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {isMe ? "You" : m.display_name || "参加者"}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -455,22 +408,28 @@ export default function RoomClient() {
             {msgs.length === 0 ? (
               <div style={{ color: "#6b7280" }}>まだメッセージはありません</div>
             ) : (
-              msgs.map((m) => (
-                <div
-                  key={m.id}
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    border: "1px solid #e5e7eb",
-                    background: m.device_id === deviceIdRef.current ? "#eff6ff" : "#fafafa",
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
-                    {m.display_name}
+              msgs.map((m) => {
+                const isMe =
+                  String(m.device_id ?? "").trim() ===
+                  String(deviceIdRef.current ?? "").trim();
+
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid #e5e7eb",
+                      background: isMe ? "#eff6ff" : "#fafafa",
+                    }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
+                      {isMe ? "You" : m.display_name || "参加者"}
+                    </div>
+                    <div style={{ marginTop: 4 }}>{m.message}</div>
                   </div>
-                  <div style={{ marginTop: 4 }}>{m.message}</div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 

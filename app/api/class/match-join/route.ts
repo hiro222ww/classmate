@@ -39,6 +39,26 @@ function buildIndexedClassLabel(n: number) {
   return `クラス${String(block).padStart(4, "0")}${letter}`;
 }
 
+// クラス0001A -> 1
+// クラス0001B -> 2
+// ...
+// クラス0002A -> 27
+function extractIndexedClassNumber(name: string | null | undefined): number {
+  const s = String(name ?? "").trim();
+  const m = s.match(/^クラス(\d{4})([A-Z])$/);
+  if (!m) return 0;
+
+  const block = parseInt(m[1], 10);
+  const letterIndex = m[2].charCodeAt(0) - 65;
+
+  if (!Number.isFinite(block) || block <= 0) return 0;
+  if (!Number.isFinite(letterIndex) || letterIndex < 0 || letterIndex > 25) {
+    return 0;
+  }
+
+  return (block - 1) * 26 + letterIndex + 1;
+}
+
 type ClassRow = {
   id: string;
   name: string;
@@ -298,8 +318,12 @@ export async function POST(req: Request) {
 
     // 6) 空き session がなければ、既存 class に追加せず新規 class を作る
     if (!targetClass) {
-      const classNumber = sameTopicClasses.length + 1;
-      const numberedName = buildIndexedClassLabel(classNumber);
+      const maxIndex = sameTopicClasses.reduce((max, c) => {
+        return Math.max(max, extractIndexedClassNumber(c.name));
+      }, 0);
+
+      const nextIndex = maxIndex + 1;
+      const numberedName = buildIndexedClassLabel(nextIndex);
 
       const { data: createdClass, error: createErr } = await supabase
         .from("classes")

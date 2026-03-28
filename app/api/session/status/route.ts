@@ -99,8 +99,9 @@ export async function GET(req: Request) {
       const deviceId = String(row.device_id ?? "").trim();
       if (!deviceId) continue;
 
-      const displayName = String(row.display_name ?? "").trim() || "You";
-      const joinedAt = String(row.joined_at ?? "").trim() || new Date(0).toISOString();
+      const displayName = String(row.display_name ?? "").trim();
+      const joinedAt =
+        String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
       const prev = byDevice.get(deviceId);
       if (!prev || joinedAt > prev.joined_at) {

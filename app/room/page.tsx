@@ -21,7 +21,7 @@ export default async function RoomPage({ searchParams }: Props) {
     String(sp.session_id ?? "").trim() ||
     String(sp.session ?? "").trim();
 
-  const remountKey = classId || sessionId || "room";
+  const remountKey = sessionId || classId || "room";
 
   return <RoomClient key={remountKey} />;
 }
