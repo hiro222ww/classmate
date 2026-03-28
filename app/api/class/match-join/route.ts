@@ -8,29 +8,34 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const LEGACY_ENTRY_NAMES = new Set([
-  "女子校",
-  "男子校",
-  "フリークラス",
-  "ホームルーム",
-]);
-
 function normalizeTopicKey(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "free") return null;
   return s;
 }
 
+// 旧入口系の名前は完全除外
 function isLegacyEntryClassName(name: string | null | undefined) {
   const s = String(name ?? "").trim();
-  return LEGACY_ENTRY_NAMES.has(s);
+  if (!s) return false;
+
+  return (
+    s === "女子校" ||
+    s === "男子校" ||
+    s === "フリークラス" ||
+    s === "ホームルーム" ||
+    s.startsWith("フリークラス") ||
+    s.startsWith("女子校") ||
+    s.startsWith("男子校") ||
+    s.startsWith("ホームルーム")
+  );
 }
 
 function buildIndexedClassLabel(n: number) {
   const safe = Math.max(1, Math.floor(n));
-  const block = Math.floor((safe - 1) / 26) + 1; // 1,2,3...
-  const letterIndex = (safe - 1) % 26; // 0..25
-  const letter = String.fromCharCode(65 + letterIndex); // A..Z
+  const block = Math.floor((safe - 1) / 26) + 1;
+  const letterIndex = (safe - 1) % 26;
+  const letter = String.fromCharCode(65 + letterIndex);
   return `クラス${String(block).padStart(4, "0")}${letter}`;
 }
 
@@ -50,21 +55,28 @@ type SessionRow = {
 };
 
 async function countSessionMembers(sessionId: string) {
-  const { count, error } = await supabase
+  const { data, error } = await supabase
     .from("session_members")
-    .select("*", { count: "exact", head: true })
-    .eq("session_id", sessionId);
+    .select("device_id")
+    .eq("session_id", sessionId)
+    .not("device_id", "is", null)
+    .neq("device_id", "");
 
   if (error) throw error;
-  return Number(count ?? 0);
+
+  const uniqueIds = new Set(
+    (data ?? [])
+      .map((r: any) => String(r.device_id ?? "").trim())
+      .filter(Boolean)
+  );
+
+  return uniqueIds.size;
 }
 
 async function findAvailableFormingSession(
   classId: string,
   requestedCapacity: number
 ): Promise<SessionRow | null> {
-  // status は環境によって "forming" / "waiting" など揺れる可能性があるので、
-  // ひとまず forming を優先し、なければ waiting も見る。
   const { data: sessions, error } = await supabase
     .from("sessions")
     .select("id,class_id,status,created_at")
@@ -76,8 +88,6 @@ async function findAvailableFormingSession(
 
   const rows = (sessions ?? []) as SessionRow[];
 
-  // なるべく人がいる session を埋めるため、
-  // 「空いてる中で memberCount が最大」のものを採用
   let best: SessionRow | null = null;
   let bestCount = -1;
 
@@ -107,6 +117,7 @@ async function createSession(classId: string): Promise<SessionRow> {
     .insert({
       class_id: classId,
       status: "forming",
+      capacity: 5,
     })
     .select("id,class_id,status,created_at")
     .single();
@@ -233,7 +244,7 @@ export async function POST(req: Request) {
 
     const allSameTopicClasses = (classesResult.data ?? []) as ClassRow[];
 
-    // 旧エントリ名は除外
+    // 旧入口名クラスを除外
     const sameTopicClasses = allSameTopicClasses.filter((c) => {
       return !isLegacyEntryClassName(c?.name);
     });
@@ -242,29 +253,25 @@ export async function POST(req: Request) {
     console.log("[class/match-join] filtered instance classes =", sameTopicClasses);
     console.log("[class/match-join] currentIds =", currentIds);
 
-    // 4) class探索順を決める
-    // preferJoinedClass=true の時だけ「すでに joined 済み class」を前に出す
+    // 4) 探索順
     const orderedClasses = [...sameTopicClasses].sort((a, b) => {
       const aJoined = currentIds.includes(String(a.id)) ? 1 : 0;
       const bJoined = currentIds.includes(String(b.id)) ? 1 : 0;
 
       if (preferJoinedClass) {
-        return bJoined - aJoined; // joined済みを優先
+        return bJoined - aJoined;
       }
 
-      return aJoined - bJoined; // joined済みは後ろ
+      return aJoined - bJoined;
     });
 
     let targetClass: ClassRow | null = null;
     let targetSession: SessionRow | null = null;
 
-    // 5) まず、既存 class の中から「空いてる forming session」を探す
+    // 5) まず既存 class の中から空いてる forming session を探す
     for (const c of orderedClasses) {
       const cid = String(c.id);
 
-      // preferJoinedClass=false のときは joined済み class は後ろに回してるだけで、
-      // 完全に除外はしない。
-      // ただし slots 制限に引っかかるケースでは、後段の membership 判定で守る。
       try {
         const found = await findAvailableFormingSession(cid, requestedCapacity);
         if (found) {
@@ -289,38 +296,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 6) 空きforming sessionがなければ、既存 class に新しい session を作る
-    // まずは joined 済みでない class を優先。なければ joined 済み class でも可。
-    if (!targetClass) {
-      const classForNewSession =
-        orderedClasses.find((c) => !currentIds.includes(String(c.id))) ??
-        orderedClasses[0] ??
-        null;
-
-      if (classForNewSession) {
-        try {
-          targetClass = classForNewSession;
-          targetSession = await createSession(String(classForNewSession.id));
-
-          console.log("[class/match-join] created new session on existing class =", {
-            classId: targetClass.id,
-            className: targetClass.name,
-            sessionId: targetSession.id,
-          });
-        } catch (e: any) {
-          return NextResponse.json(
-            {
-              ok: false,
-              error: "session_create_failed",
-              detail: e?.message ?? String(e),
-            },
-            { status: 500 }
-          );
-        }
-      }
-    }
-
-    // 7) それでも class が無ければ新規 class 作成 + session 作成
+    // 6) 空き session がなければ、既存 class に追加せず新規 class を作る
     if (!targetClass) {
       const classNumber = sameTopicClasses.length + 1;
       const numberedName = buildIndexedClassLabel(classNumber);
@@ -393,7 +369,7 @@ export async function POST(req: Request) {
     const classId = String(targetClass.id);
     const sessionId = String(targetSession.id);
 
-    // 8) 既にその class に所属済みなら membership は追加せずそのまま返す
+    // 7) 既にその class に所属済みなら membership は追加せず返す
     if (currentIds.includes(classId)) {
       return NextResponse.json({
         ok: true,
@@ -405,7 +381,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // 9) 新規 membership を足すときだけ slots 判定
+    // 8) 新規 membership を足すときだけ slots 判定
     if (currentIds.length >= classSlots) {
       return NextResponse.json(
         {
@@ -418,7 +394,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 10) membership 追加
+    // 9) membership 追加
     const { data: inserted, error: insErr } = await supabase
       .from("class_memberships")
       .insert({

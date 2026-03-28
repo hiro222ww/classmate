@@ -24,11 +24,13 @@ type SessionStatusResult = {
 type SessionJoinResult = {
   ok?: boolean;
   sessionId?: string;
+  classId?: string | null;
   status?: "forming" | "active" | "closed" | string;
   capacity?: number;
   memberCount?: number;
   topic?: string;
   error?: string;
+  alreadyInSession?: boolean;
 };
 
 type RoomMessage = {
@@ -38,6 +40,12 @@ type RoomMessage = {
   display_name: string;
   message: string;
   created_at: string;
+};
+
+type MemberRow = {
+  device_id?: string;
+  display_name: string;
+  joined_at: string;
 };
 
 function randomUuid(): string {
@@ -58,6 +66,41 @@ async function readJsonBestEffort(res: Response) {
   } catch {
     return { ok: res.ok, status: res.status, json: null as any, text };
   }
+}
+
+function dedupeMembers(list: MemberRow[]) {
+  const map = new Map<string, MemberRow>();
+
+  for (const m of list) {
+    const deviceId = String(m.device_id ?? "").trim();
+    const name = String(m.display_name ?? "").trim();
+
+    if (deviceId) {
+      const prev = map.get(deviceId);
+
+      if (!prev) {
+        map.set(deviceId, m);
+        continue;
+      }
+
+      const prevName = String(prev.display_name ?? "").trim();
+
+      // "You" よりプロフィール名を優先
+      if ((!prevName || prevName === "You") && name && name !== "You") {
+        map.set(deviceId, m);
+      }
+
+      continue;
+    }
+
+    // device_id が無い場合の保険
+    const fallbackKey = `fallback:${name}:${String(m.joined_at ?? "")}`;
+    if (!map.has(fallbackKey)) {
+      map.set(fallbackKey, m);
+    }
+  }
+
+  return Array.from(map.values());
 }
 
 function Bubble({
@@ -137,12 +180,11 @@ export default function RoomClient() {
   }, [searchParams]);
 
   const [resolvedSessionId, setResolvedSessionId] = useState("");
+  const [resolvedClassId, setResolvedClassId] = useState("");
   const [status, setStatus] = useState<"forming" | "active" | "closed">("forming");
   const [capacity, setCapacity] = useState(5);
   const [memberCount, setMemberCount] = useState(0);
-  const [members, setMembers] = useState<
-    { device_id?: string; display_name: string; joined_at: string }[]
-  >([]);
+  const [members, setMembers] = useState<MemberRow[]>([]);
   const [err, setErr] = useState("");
   const [topicTitle, setTopicTitle] = useState("");
   const [msgs, setMsgs] = useState<RoomMessage[]>([]);
@@ -158,6 +200,11 @@ export default function RoomClient() {
   const currentClassIdRef = useRef("");
 
   const sessionId = resolvedSessionId || directSessionId;
+  const effectiveClassId = resolvedClassId || classId;
+
+  const visibleMembers = useMemo(() => {
+    return dedupeMembers(members);
+  }, [members]);
 
   const scrollToBottom = (smooth: boolean) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
@@ -177,8 +224,8 @@ export default function RoomClient() {
 
   useEffect(() => {
     currentSessionIdRef.current = sessionId;
-    currentClassIdRef.current = classId;
-  }, [sessionId, classId]);
+    currentClassIdRef.current = effectiveClassId;
+  }, [sessionId, effectiveClassId]);
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -211,7 +258,7 @@ export default function RoomClient() {
     };
   }, []);
 
-  // classId / directSessionId が変わったら、部屋状態を完全に初期化
+  // ルート変更時は状態を初期化
   useEffect(() => {
     console.log("[room] reset for route change", {
       classId,
@@ -220,6 +267,7 @@ export default function RoomClient() {
     });
 
     setResolvedSessionId("");
+    setResolvedClassId("");
     setStatus("forming");
     setCapacity(5);
     setMemberCount(0);
@@ -237,9 +285,11 @@ export default function RoomClient() {
   useEffect(() => {
     if (!sessionId) return;
 
-    const recentId = classId || sessionId;
-    const roomUrl = classId
-      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
+    const recentId = effectiveClassId || sessionId;
+    const roomUrl = effectiveClassId
+      ? `/room?autojoin=1&classId=${encodeURIComponent(
+          effectiveClassId
+        )}&sessionId=${encodeURIComponent(sessionId)}`
       : `/room?sessionId=${encodeURIComponent(sessionId)}`;
 
     pushRecentClass(
@@ -250,7 +300,7 @@ export default function RoomClient() {
       },
       getRecentLimit()
     );
-  }, [sessionId, classId, topicTitle]);
+  }, [sessionId, effectiveClassId, topicTitle]);
 
   useEffect(() => {
     const name =
@@ -270,13 +320,18 @@ export default function RoomClient() {
       });
 
       if (joinedRef.current) return;
-      if (!classId && !directSessionId) return;
+      if (!directSessionId) {
+        throw new Error("sessionId required");
+      }
 
       joinedRef.current = true;
 
-      const body = classId
-        ? { classId, name, deviceId, capacity: 5 }
-        : { sessionId: directSessionId, name, deviceId, capacity: 5 };
+      const body = {
+        sessionId: directSessionId,
+        name,
+        deviceId,
+        capacity: 5,
+      };
 
       console.log("[room] session/join request body =", body);
 
@@ -313,6 +368,10 @@ export default function RoomClient() {
       setResolvedSessionId(sid);
       currentSessionIdRef.current = sid;
 
+      const nextClassId = String(j.classId ?? classId ?? "").trim();
+      setResolvedClassId(nextClassId);
+      currentClassIdRef.current = nextClassId;
+
       setStatus((j.status as any) ?? "forming");
       setCapacity(
         Number.isFinite(Number(j.capacity)) && Number(j.capacity) > 0
@@ -323,15 +382,17 @@ export default function RoomClient() {
 
       if (j.topic) setTopicTitle(String(j.topic).trim());
 
-      if (classId) {
-        const desired = `/room?autojoin=1&classId=${encodeURIComponent(
-          classId
-        )}&sessionId=${encodeURIComponent(sid)}`;
-        const desiredSearch = desired.slice(desired.indexOf("?"));
+      const desired =
+        nextClassId
+          ? `/room?autojoin=1&classId=${encodeURIComponent(
+              nextClassId
+            )}&sessionId=${encodeURIComponent(sid)}`
+          : `/room?sessionId=${encodeURIComponent(sid)}`;
 
-        if (window.location.search !== desiredSearch) {
-          router.replace(desired);
-        }
+      const desiredSearch = desired.includes("?") ? desired.slice(desired.indexOf("?")) : "";
+
+      if (window.location.search !== desiredSearch) {
+        router.replace(desired);
       }
     }
 
@@ -378,7 +439,7 @@ export default function RoomClient() {
       setCapacity(Number.isFinite(cap) && cap > 0 ? cap : 5);
 
       const incomingMembers = Array.isArray(j.members) ? j.members : [];
-      setMembers(incomingMembers);
+      setMembers(dedupeMembers(incomingMembers));
 
       setMemberCount(Math.max(mc, 0));
       setErr("");
@@ -394,18 +455,18 @@ export default function RoomClient() {
   useEffect(() => {
     if (!sessionId) return;
 
-    void fetchStatus(sessionId, classId);
+    void fetchStatus(sessionId, effectiveClassId);
 
     if (pollTimer.current) window.clearInterval(pollTimer.current);
     pollTimer.current = window.setInterval(() => {
-      void fetchStatus(sessionId, classId);
+      void fetchStatus(sessionId, effectiveClassId);
     }, 5000);
 
     return () => {
       if (pollTimer.current) window.clearInterval(pollTimer.current);
       pollTimer.current = null;
     };
-  }, [sessionId, classId]);
+  }, [sessionId, effectiveClassId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -505,11 +566,11 @@ export default function RoomClient() {
         });
       }
 
-      if (classId) {
+      if (effectiveClassId) {
         await fetch("/api/class/leave", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ classId, deviceId }),
+          body: JSON.stringify({ classId: effectiveClassId, deviceId }),
         });
       }
     } catch (e) {
@@ -531,8 +592,10 @@ export default function RoomClient() {
       onStartCall={() =>
         router.push(
           `/call?sessionId=${encodeURIComponent(sessionId)}&returnTo=${encodeURIComponent(
-            classId
-              ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}`
+            effectiveClassId
+              ? `/room?autojoin=1&classId=${encodeURIComponent(
+                  effectiveClassId
+                )}&sessionId=${encodeURIComponent(sessionId)}`
               : `/room?sessionId=${encodeURIComponent(sessionId)}`
           )}`
         )
@@ -553,7 +616,7 @@ export default function RoomClient() {
         >
           <div style={{ fontWeight: 900, color: "#111" }}>参加メンバー</div>
 
-          {members.length === 0 ? (
+          {visibleMembers.length === 0 ? (
             memberCount > 0 ? (
               <div style={{ color: "#6b7280", fontWeight: 700 }}>
                 参加者を読み込み中です...
@@ -565,7 +628,7 @@ export default function RoomClient() {
             )
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {members.map((m, i) => (
+              {visibleMembers.map((m, i) => (
                 <div
                   key={`${m.device_id ?? m.display_name}-${m.joined_at}-${i}`}
                   style={{
