@@ -55,6 +55,16 @@ type Profile = {
   photo_path: string | null;
 };
 
+type EntryBoard = {
+  key: string;
+  title: string;
+  description: string;
+  world_key: string | null;
+  topic_key: string | null;
+  is_sensitive: boolean;
+  monthly_price: number;
+};
+
 async function readJsonOrThrow(r: Response, label: string) {
   const raw = await r.text();
   let j: any = null;
@@ -124,7 +134,7 @@ export default function ClassSelectPage() {
 
   const [worlds, setWorlds] = useState<World[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
-  const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [, setClasses] = useState<ClassRow[]>([]);
 
   const [prefs, setPrefs] = useState<MatchPrefs>({ min_age: 18, max_age: 25 });
   const [savingPrefs, setSavingPrefs] = useState(false);
@@ -140,6 +150,7 @@ export default function ClassSelectPage() {
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   async function reloadCatalog() {
     try {
@@ -168,17 +179,20 @@ export default function ClassSelectPage() {
 
       if (!r.ok) {
         setHasProfile(false);
-        return false;
+        setProfile(null);
+        return null;
       }
 
       const data: Profile | null = await r.json();
       const exists = Boolean(data?.device_id);
       setHasProfile(exists);
-      return exists;
+      setProfile(data ?? null);
+      return data ?? null;
     } catch (e) {
       console.error("[class/select] profile fetch failed", e);
       setHasProfile(false);
-      return false;
+      setProfile(null);
+      return null;
     }
   }
 
@@ -347,42 +361,56 @@ export default function ClassSelectPage() {
     return m;
   }, [topics]);
 
-  function topicMonthlyPrice(topicKey: string | null): number {
-    if (!topicKey) return 0;
-    const t = topicByKey.get(topicKey);
-    if (!t) return 0;
-    if (typeof t.monthly_price === "number") return t.monthly_price;
-    if (t.is_premium) return 1200;
-    return 0;
-  }
-
-  function requiredMonthlyPriceForClass(c: ClassRow): number {
-    const byTopic = topicMonthlyPrice(c.topic_key);
-    if (byTopic > 0) return byTopic;
-    if (c.is_premium) return 1200;
-    return 0;
-  }
-
-  const filtered = useMemo(() => {
-    const maxA = Math.max(prefs.min_age, prefs.max_age);
-    return classes.filter((c) => {
-      if (c.is_sensitive && maxA < 18) return false;
-      if (wFilter !== "all" && c.world_key !== wFilter) return false;
-      if (tFilter !== "all" && c.topic_key !== tFilter) return false;
-      return true;
-    });
-  }, [classes, prefs, wFilter, tFilter]);
-
-  const boards = useMemo(() => {
-    return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-  }, [filtered]);
-
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
 
-  function hasTopicAccess(c: ClassRow): boolean {
-    const need = requiredMonthlyPriceForClass(c);
-    return need <= topicPlan;
+  const boards = useMemo<EntryBoard[]>(() => {
+    const maxA = Math.max(prefs.min_age, prefs.max_age);
+    const result: EntryBoard[] = [];
+
+    if ((wFilter === "all" || wFilter === "default") && tFilter === "all") {
+      result.push({
+        key: "free",
+        title: "フリー",
+        description: "まずは気軽に入れる無料テーマ",
+        world_key: "default",
+        topic_key: null,
+        is_sensitive: false,
+        monthly_price: 0,
+      });
+    }
+
+    for (const t of topics) {
+      if (t.is_sensitive && maxA < 18) continue;
+      if (wFilter !== "all" && wFilter !== "default") continue;
+      if (tFilter !== "all" && t.topic_key !== tFilter) continue;
+
+      result.push({
+        key: t.topic_key,
+        title: t.title,
+        description: t.description || "このテーマで話せる入口",
+        world_key: "default",
+        topic_key: t.topic_key,
+        is_sensitive: t.is_sensitive,
+        monthly_price:
+          typeof t.monthly_price === "number"
+            ? t.monthly_price
+            : t.is_premium
+              ? 1200
+              : 0,
+      });
+    }
+
+    return result.sort((a, b) => {
+      if (a.monthly_price !== b.monthly_price) {
+        return a.monthly_price - b.monthly_price;
+      }
+      return a.title.localeCompare(b.title);
+    });
+  }, [topics, prefs, wFilter, tFilter]);
+
+  function hasBoardAccess(b: EntryBoard): boolean {
+    return b.monthly_price <= topicPlan;
   }
 
   function setSlotsLimitUi(classSlots?: number) {
@@ -407,8 +435,8 @@ export default function ClassSelectPage() {
     return true;
   }
 
-  async function doTransfer(c: ClassRow) {
-    console.log("[select] clicked class =", c);
+  async function joinMatchedBoard(b: EntryBoard) {
+    console.log("[select] clicked board =", b);
 
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
@@ -424,54 +452,98 @@ export default function ClassSelectPage() {
     setJoinLimitMessage("");
 
     try {
-      if (!hasTopicAccess(c)) {
-        const need = requiredMonthlyPriceForClass(c);
-        alert(`このボードは ${tierName(need)}（¥${need}/月）以上が必要です`);
+      if (!hasBoardAccess(b)) {
+        alert(`このボードは ${tierName(b.monthly_price)}（¥${b.monthly_price}/月）以上が必要です`);
         return;
       }
 
-      const res = await fetch("/api/class/join", {
+      const displayName = String(profile?.display_name ?? "").trim();
+
+      if (!displayName) {
+        goProfileIfNeeded("profile_required");
+        return;
+      }
+
+      const matchRes = await fetch("/api/class/match-join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           deviceId,
-          classId: c.id,
+          topicKey: b.topic_key,
+          worldKey: b.world_key ?? "default",
+          capacity: 5,
+          preferJoinedClass: false,
         }),
         cache: "no-store",
       });
 
-      const raw = await res.text();
-      let j: any = {};
+      const matchRaw = await matchRes.text();
+      let matchJson: any = {};
       try {
-        j = raw ? JSON.parse(raw) : {};
+        matchJson = matchRaw ? JSON.parse(matchRaw) : {};
       } catch {
         throw new Error("non_json_response");
       }
 
-      console.log("[select] join response =", j);
+      console.log("[select] match-join response =", matchJson);
 
-      if (!res.ok || !j?.ok) {
-        if (j?.error === "profile_required") {
-          goProfileIfNeeded(j?.error);
+      if (!matchRes.ok || !matchJson?.ok) {
+        if (matchJson?.error === "profile_required") {
+          goProfileIfNeeded(matchJson?.error);
           return;
         }
 
-        if (j?.error === "class_slots_limit") {
-          setSlotsLimitUi(j?.classSlots);
+        if (matchJson?.error === "class_slots_limit") {
+          setSlotsLimitUi(matchJson?.classSlots);
           return;
         }
 
-        alert(j?.error ?? "class_join_failed");
+        alert(matchJson?.error ?? "match_join_failed");
         return;
       }
 
-      const joinedClassId = j?.class?.id ?? j?.classId ?? c.id;
-      const roomUrl = `/room?autojoin=1&classId=${encodeURIComponent(joinedClassId)}`;
+      const classId = String(matchJson?.classId ?? "").trim();
+      const sessionId = String(matchJson?.sessionId ?? "").trim();
+
+      if (!classId || !sessionId) {
+        throw new Error("match_join_missing_ids");
+      }
+
+      const joinRes = await fetch("/api/session/join", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          deviceId,
+          name: displayName,
+          capacity: 5,
+        }),
+        cache: "no-store",
+      });
+
+      const joinRaw = await joinRes.text();
+      let joinJson: any = {};
+      try {
+        joinJson = joinRaw ? JSON.parse(joinRaw) : {};
+      } catch {
+        throw new Error("non_json_response");
+      }
+
+      console.log("[select] session/join response =", joinJson);
+
+      if (!joinRes.ok || !joinJson?.ok) {
+        alert(joinJson?.error ?? "session_join_failed");
+        return;
+      }
+
+      const roomUrl =
+        `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
+        `&sessionId=${encodeURIComponent(sessionId)}`;
 
       pushRecentClass(
         {
-          id: joinedClassId,
-          title: j?.class?.name ?? c.name,
+          id: classId,
+          title: b.title,
           url: roomUrl,
         },
         20
@@ -480,81 +552,28 @@ export default function ClassSelectPage() {
       window.location.href = roomUrl;
     } catch (e: any) {
       console.error(e);
-      alert(e?.message ?? "join_failed");
+      alert(e?.message ?? "enter_board_failed");
     } finally {
       setBusy(false);
     }
   }
 
   async function enterQuickFreeTheme() {
-    if (loading) return;
-    if (!deviceId) {
-      alert("deviceId の取得中です。数秒後にもう一度押してください。");
-      return;
-    }
+    const freeBoard: EntryBoard = {
+      key: "free",
+      title: "フリー",
+      description: "まずは気軽に入れる無料テーマ",
+      world_key: "default",
+      topic_key: null,
+      is_sensitive: false,
+      monthly_price: 0,
+    };
 
-    if (hasProfile === false) {
-      goProfileIfNeeded();
-      return;
-    }
-
-    setBusy(true);
-    setJoinLimitMessage("");
-
-    try {
-      const res = await fetch("/api/class/match-join", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId,
-          topicKey: null,
-          worldKey: "default",
-          capacity: 5,
-          preferJoinedClass: false,
-        }),
-        cache: "no-store",
-      });
-
-      const raw = await res.text();
-      let json: any = {};
-      try {
-        json = raw ? JSON.parse(raw) : {};
-      } catch {
-        throw new Error("non_json_response");
-      }
-
-      if (!res.ok || !json?.ok) {
-        if (json?.error === "profile_required") {
-          goProfileIfNeeded(json?.error);
-          return;
-        }
-
-        if (json?.error === "class_slots_limit") {
-          setSlotsLimitUi(json?.classSlots);
-          return;
-        }
-
-        alert(json?.error || "match_join_failed");
-        return;
-      }
-
-      if (!json?.classId) {
-        alert("match_join_failed");
-        return;
-      }
-
-      window.location.href = `/room?autojoin=1&classId=${encodeURIComponent(json.classId)}`;
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "quick_join_failed");
-    } finally {
-      setBusy(false);
-    }
+    await joinMatchedBoard(freeBoard);
   }
 
-  function BoardCard({ c }: { c: ClassRow }) {
-    const need = requiredMonthlyPriceForClass(c);
-    const locked = need > 0 && !hasTopicAccess(c);
+  function BoardCard({ b }: { b: EntryBoard }) {
+    const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
 
     return (
@@ -577,10 +596,10 @@ export default function ClassSelectPage() {
             alignItems: "baseline",
           }}
         >
-          <strong style={{ fontSize: 15 }}>{c.name}</strong>
+          <strong style={{ fontSize: 15 }}>{b.title}</strong>
           <span style={{ fontSize: 12, opacity: 0.9 }}>
             {profileMissing && "🧑未登録 "}
-            {locked ? "🔒" : "🔓"} {c.is_sensitive ? "🔞" : "🟢"}
+            {locked ? "🔒" : "🔓"} {b.is_sensitive ? "🔞" : "🟢"}
           </span>
         </div>
 
@@ -594,11 +613,11 @@ export default function ClassSelectPage() {
             lineHeight: 1.5,
           }}
         >
-          {c.description || "（説明なし）"}
+          {b.description || "（説明なし）"}
         </p>
 
         <button
-          onClick={() => doTransfer(c)}
+          onClick={() => joinMatchedBoard(b)}
           disabled={busy || loading || !deviceId || profileMissing}
           style={{
             width: "100%",
@@ -615,11 +634,11 @@ export default function ClassSelectPage() {
           {profileMissing
             ? "プロフィール登録が必要"
             : locked
-              ? `参加（要：${tierName(need)}以上）`
+              ? `参加（要：${tierName(b.monthly_price)}以上）`
               : "参加する"}
         </button>
 
-        {need > 0 ? (
+        {b.monthly_price > 0 ? (
           <div
             style={{
               marginTop: 8,
@@ -1004,8 +1023,8 @@ export default function ClassSelectPage() {
                 gap: 12,
               }}
             >
-              {boards.map((c) => (
-                <BoardCard key={c.id} c={c} />
+              {boards.map((b) => (
+                <BoardCard key={b.key} b={b} />
               ))}
             </div>
 
