@@ -21,16 +21,17 @@ function normalizeTopicKey(v: string | null | undefined) {
   return s;
 }
 
-function buildBaseName(topicKey: string | null) {
-  if (!topicKey) return "フリークラス";
-  if (topicKey === "woman") return "女子校";
-  if (topicKey === "man") return "男子校";
-  return `${topicKey}ルーム`;
-}
-
 function isLegacyEntryClassName(name: string | null | undefined) {
   const s = String(name ?? "").trim();
   return LEGACY_ENTRY_NAMES.has(s);
+}
+
+function buildIndexedClassLabel(n: number) {
+  const safe = Math.max(1, Math.floor(n));
+  const block = Math.floor((safe - 1) / 26) + 1; // 1,2,3...
+  const letterIndex = (safe - 1) % 26; // 0..25
+  const letter = String.fromCharCode(65 + letterIndex); // A..Z
+  return `クラス${String(block).padStart(4, "0")}${letter}`;
 }
 
 export async function POST(req: Request) {
@@ -41,7 +42,9 @@ export async function POST(req: Request) {
     const worldKey = String(body.worldKey ?? "default").trim() || "default";
     const topicKey = normalizeTopicKey(body.topicKey);
     const requestedCapacity = Math.max(2, Number(body.capacity ?? 5) || 5);
-    const preferJoinedClass = Boolean(body.preferJoinedClass ?? true);
+
+    // 既定値を false に変更
+    const preferJoinedClass = Boolean(body.preferJoinedClass ?? false);
 
     console.log("[class/match-join] body =", body);
     console.log("[class/match-join] deviceId =", deviceId);
@@ -63,9 +66,6 @@ export async function POST(req: Request) {
       .select("device_id")
       .eq("device_id", deviceId)
       .maybeSingle();
-
-    console.log("[class/match-join] profile =", profile);
-    console.log("[class/match-join] profile error =", profileErr);
 
     if (profileErr) {
       return NextResponse.json(
@@ -152,6 +152,8 @@ export async function POST(req: Request) {
     }
 
     const allSameTopicClasses = classesResult.data ?? [];
+
+    // 旧エントリ名は除外
     const sameTopicClasses = allSameTopicClasses.filter((c: any) => {
       return !isLegacyEntryClassName(c?.name);
     });
@@ -162,7 +164,7 @@ export async function POST(req: Request) {
 
     let targetClass: any = null;
 
-    // 4) preferJoinedClass=true のときだけ、既存所属の同テーマ class を優先
+    // 4) 明示的に preferJoinedClass=true の時だけ既存所属を再利用
     if (preferJoinedClass) {
       for (const c of sameTopicClasses) {
         const cid = String(c.id);
@@ -179,7 +181,8 @@ export async function POST(req: Request) {
       for (const c of sameTopicClasses) {
         const cid = String(c.id);
 
-        if (!preferJoinedClass && currentIds.includes(cid)) {
+        // 既定では既に所属してる class をスキップ
+        if (currentIds.includes(cid)) {
           console.log("[class/match-join] skip already joined class =", c);
           continue;
         }
@@ -218,13 +221,8 @@ export async function POST(req: Request) {
 
     // 6) 無ければ新規作成
     if (!targetClass) {
-      const baseName = buildBaseName(topicKey);
       const classNumber = sameTopicClasses.length + 1;
-
-      const numberedName =
-        topicKey === "woman" || topicKey === "man" || topicKey === null
-          ? `${baseName} ${classNumber}組`
-          : `${baseName} ${classNumber}`;
+      const numberedName = buildIndexedClassLabel(classNumber);
 
       const { data: created, error: createErr } = await supabase
         .from("classes")
@@ -279,7 +277,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // 8) 新規 membership を足すときだけ slots を判定
+    // 8) 新規 membership を足すときだけ slots 判定
     if (currentIds.length >= classSlots) {
       return NextResponse.json(
         {
