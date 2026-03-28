@@ -54,12 +54,19 @@ export async function GET() {
 
     if (cErr) return bad(500, `classes: ${cErr.message}`);
 
-    return NextResponse.json({
-      ok: true,
-      worlds: worlds ?? [],
-      topics: topics ?? [],
-      classes: classes ?? [],
-    });
+    return new NextResponse(
+  JSON.stringify({
+    ok: true,
+    worlds: worlds ?? [],
+    topics: topics ?? [],
+    classes: classes ?? [],
+  }),
+  {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  }
+);
   } catch (e: any) {
     return bad(500, e?.message ?? "class list failed");
   }
