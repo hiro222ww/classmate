@@ -372,8 +372,8 @@ export default function ClassSelectPage() {
   }, [classes, prefs, wFilter, tFilter]);
 
   const boards = useMemo(() => {
-  return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-}, [filtered]);
+    return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+  }, [filtered]);
 
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
@@ -426,15 +426,12 @@ export default function ClassSelectPage() {
         return;
       }
 
-      const res = await fetch("/api/class/match-join", {
+      const res = await fetch("/api/class/join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           deviceId,
-          topicKey: c.topic_key,
-          worldKey: c.world_key ?? "default",
-          capacity: 5,
-          preferJoinedClass: false,
+          classId: c.id,
         }),
         cache: "no-store",
       });
@@ -458,21 +455,17 @@ export default function ClassSelectPage() {
           return;
         }
 
-        alert(j?.error ?? "match_join_failed");
+        alert(j?.error ?? "class_join_failed");
         return;
       }
 
-      if (!j?.classId) {
-        alert("match_join_failed");
-        return;
-      }
-
-      const roomUrl = `/room?autojoin=1&classId=${encodeURIComponent(j.classId)}`;
+      const joinedClassId = j?.classId ?? c.id;
+      const roomUrl = `/room?autojoin=1&classId=${encodeURIComponent(joinedClassId)}`;
 
       pushRecentClass(
         {
-          id: j.classId,
-          title: j?.class?.name ?? c.name,
+          id: joinedClassId,
+          title: c.name,
           url: roomUrl,
         },
         20
