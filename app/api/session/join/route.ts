@@ -21,6 +21,45 @@ function buildTopicLabelFromClass(cls: any) {
   return topicKey;
 }
 
+async function cleanupGhostMembers(sessionId: string) {
+  // 古い空 device_id 行を掃除
+  const { error } = await supabaseAdmin
+    .from("session_members")
+    .delete()
+    .eq("session_id", sessionId)
+    .or("device_id.is.null,device_id.eq.");
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  return { ok: true as const };
+}
+
+async function countValidMembers(sessionId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("session_members")
+    .select("device_id")
+    .eq("session_id", sessionId)
+    .not("device_id", "is", null)
+    .neq("device_id", "");
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  const uniqueIds = new Set(
+    (data ?? [])
+      .map((r: any) => String(r.device_id ?? "").trim())
+      .filter(Boolean)
+  );
+
+  return {
+    ok: true as const,
+    count: uniqueIds.size,
+  };
+}
+
 async function upsertMember(sessionId: string, deviceId: string, name: string) {
   return await supabaseAdmin.from("session_members").upsert(
     {
@@ -66,6 +105,11 @@ async function ensureSessionRow(params: {
       updates.class_id = classId;
     }
 
+    // closed を再利用する場合は forming に戻す
+    if (existing.status === "closed") {
+      updates.status = "forming";
+    }
+
     if (Object.keys(updates).length > 0) {
       const { error: updateErr } = await supabaseAdmin
         .from("sessions")
@@ -98,6 +142,19 @@ async function ensureSessionRow(params: {
   return { ok: true as const };
 }
 
+async function closeSession(sessionId: string) {
+  const { error } = await supabaseAdmin
+    .from("sessions")
+    .update({ status: "closed" })
+    .eq("id", sessionId);
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  return { ok: true as const };
+}
+
 async function findOrCreateFormingSession(params: {
   classId: string;
   topic: string;
@@ -105,22 +162,47 @@ async function findOrCreateFormingSession(params: {
 }) {
   const { classId, topic, capacity } = params;
 
-  const { data: existing, error: findErr } = await supabaseAdmin
+  const { data: existingRows, error: findErr } = await supabaseAdmin
     .from("sessions")
     .select("id, topic, capacity, status, class_id, created_at")
     .eq("class_id", classId)
     .eq("status", "forming")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: true });
 
   if (findErr) {
     return { ok: false as const, error: findErr };
   }
 
-  if (existing?.id) {
+  const existingList = Array.isArray(existingRows) ? existingRows : [];
+
+  for (const existing of existingList) {
+    const existingId = String(existing?.id ?? "").trim();
+    if (!existingId) continue;
+
+    // まず ghost を掃除
+    const cleaned = await cleanupGhostMembers(existingId);
+    if (!cleaned.ok) {
+      return cleaned;
+    }
+
+    // 有効メンバー数を確認
+    const counted = await countValidMembers(existingId);
+    if (!counted.ok) {
+      return counted;
+    }
+
+    // 誰もいない古い forming session は closed にする
+    if (counted.count <= 0) {
+      const closed = await closeSession(existingId);
+      if (!closed.ok) {
+        return closed;
+      }
+      continue;
+    }
+
+    // 生きている forming session だけ再利用
     const ensured = await ensureSessionRow({
-      sessionId: existing.id,
+      sessionId: existingId,
       topic,
       capacity,
       classId,
@@ -130,10 +212,11 @@ async function findOrCreateFormingSession(params: {
 
     return {
       ok: true as const,
-      sessionId: existing.id,
+      sessionId: existingId,
     };
   }
 
+  // 使える forming がなければ新規作成
   const sessionId = randomUUID();
 
   const ensured = await ensureSessionRow({
@@ -179,7 +262,7 @@ export async function POST(req: Request) {
     const resolvedCapacity =
       Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
 
-    // ① classId 指定のときは、その class の forming session を再利用する
+    // ① classId 指定のときは、その class の有効な forming session を探す
     if (classIdRaw) {
       let resolvedTopic = topic;
 
@@ -214,13 +297,22 @@ export async function POST(req: Request) {
         return NextResponse.json(
           {
             ok: false,
-            error: found.error?.message ?? "find_or_create_session_failed",
+            error: (found.error as any)?.message ?? "find_or_create_session_failed",
           },
           { status: 500 }
         );
       }
 
       const sessionId = found.sessionId;
+
+      // 念のため join 先でも ghost 掃除
+      const cleaned = await cleanupGhostMembers(sessionId);
+      if (!cleaned.ok) {
+        return NextResponse.json(
+          { ok: false, error: cleaned.error.message },
+          { status: 500 }
+        );
+      }
 
       const { error: memberErr } = await upsertMember(sessionId, deviceId, name);
       if (memberErr) {
@@ -231,15 +323,11 @@ export async function POST(req: Request) {
         );
       }
 
-      const { count, error: countErr } = await supabaseAdmin
-        .from("session_members")
-        .select("*", { count: "exact", head: true })
-        .eq("session_id", sessionId);
-
-      if (countErr) {
-        console.error("[session/join] member count error:", countErr);
+      const counted = await countValidMembers(sessionId);
+      if (!counted.ok) {
+        console.error("[session/join] member count error:", counted.error);
         return NextResponse.json(
-          { ok: false, error: countErr.message },
+          { ok: false, error: counted.error.message },
           { status: 500 }
         );
       }
@@ -249,7 +337,7 @@ export async function POST(req: Request) {
         sessionId,
         topic: resolvedTopic,
         capacity: resolvedCapacity,
-        memberCount: Number(count ?? 0),
+        memberCount: counted.count,
         status: "forming",
       });
     }
@@ -280,6 +368,14 @@ export async function POST(req: Request) {
         );
       }
 
+      const cleaned = await cleanupGhostMembers(sessionIdRaw);
+      if (!cleaned.ok) {
+        return NextResponse.json(
+          { ok: false, error: cleaned.error.message },
+          { status: 500 }
+        );
+      }
+
       const { error: memberErr } = await upsertMember(
         sessionIdRaw,
         deviceId,
@@ -294,15 +390,11 @@ export async function POST(req: Request) {
         );
       }
 
-      const { count, error: countErr } = await supabaseAdmin
-        .from("session_members")
-        .select("*", { count: "exact", head: true })
-        .eq("session_id", sessionIdRaw);
-
-      if (countErr) {
-        console.error("[session/join] member count error:", countErr);
+      const counted = await countValidMembers(sessionIdRaw);
+      if (!counted.ok) {
+        console.error("[session/join] member count error:", counted.error);
         return NextResponse.json(
-          { ok: false, error: countErr.message },
+          { ok: false, error: counted.error.message },
           { status: 500 }
         );
       }
@@ -312,7 +404,7 @@ export async function POST(req: Request) {
         sessionId: sessionIdRaw,
         topic: resolvedTopic,
         capacity: resolvedCapacity,
-        memberCount: Number(count ?? 0),
+        memberCount: counted.count,
         status: "forming",
       });
     }
@@ -350,12 +442,19 @@ export async function POST(req: Request) {
 
     const sessionId = String(row.session_id ?? "");
     const status = String(row.status ?? "forming");
-    const memberCount = Number(row.member_count ?? 0);
     const cap = Number(row.capacity ?? capacity);
 
     if (!sessionId) {
       return NextResponse.json(
         { ok: false, error: "session_id missing from rpc result" },
+        { status: 500 }
+      );
+    }
+
+    const cleaned = await cleanupGhostMembers(sessionId);
+    if (!cleaned.ok) {
+      return NextResponse.json(
+        { ok: false, error: cleaned.error.message },
         { status: 500 }
       );
     }
@@ -369,11 +468,19 @@ export async function POST(req: Request) {
       );
     }
 
+    const counted = await countValidMembers(sessionId);
+    if (!counted.ok) {
+      return NextResponse.json(
+        { ok: false, error: counted.error.message },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       sessionId,
       status,
-      memberCount,
+      memberCount: counted.count,
       capacity: cap,
     });
   } catch (e: any) {

@@ -17,6 +17,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 自分を削除
     const { error: deleteErr } = await supabaseAdmin
       .from("session_members")
       .delete()
@@ -30,10 +31,27 @@ export async function POST(req: Request) {
       );
     }
 
-    const { count, error: countErr } = await supabaseAdmin
+    // 空 device_id のゴミ行を掃除
+    const { error: ghostDeleteErr } = await supabaseAdmin
       .from("session_members")
-      .select("*", { count: "exact", head: true })
-      .eq("session_id", sessionId);
+      .delete()
+      .eq("session_id", sessionId)
+      .or("device_id.is.null,device_id.eq.");
+
+    if (ghostDeleteErr) {
+      return NextResponse.json(
+        { ok: false, error: ghostDeleteErr.message },
+        { status: 500 }
+      );
+    }
+
+    // 有効メンバーだけ数える
+    const { data: remainingRows, error: countErr } = await supabaseAdmin
+      .from("session_members")
+      .select("device_id")
+      .eq("session_id", sessionId)
+      .not("device_id", "is", null)
+      .neq("device_id", "");
 
     if (countErr) {
       return NextResponse.json(
@@ -42,7 +60,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const remaining = Number(count ?? 0);
+    const uniqueIds = new Set(
+      (remainingRows ?? [])
+        .map((r: any) => String(r.device_id ?? "").trim())
+        .filter(Boolean)
+    );
+
+    const remaining = uniqueIds.size;
 
     if (remaining <= 0) {
       const { error: closeErr } = await supabaseAdmin

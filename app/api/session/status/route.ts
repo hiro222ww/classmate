@@ -77,6 +77,8 @@ export async function GET(req: Request) {
       .from("session_members")
       .select("device_id, display_name, joined_at")
       .eq("session_id", sessionIdRaw)
+      .not("device_id", "is", null)
+      .neq("device_id", "")
       .order("joined_at", { ascending: true });
 
     if (m.error) {
@@ -88,68 +90,37 @@ export async function GET(req: Request) {
 
     const rawMembers = (Array.isArray(m.data) ? m.data : []) as MemberRow[];
 
-    // device_id があるものを最優先で一意化
     const byDevice = new Map<
-      string,
-      { device_id?: string; display_name: string; joined_at: string }
-    >();
-
-    // device_id がない古いゴミ行は display_name 単位で1件だけ残す
-    const byNameWithoutDevice = new Map<
       string,
       { device_id?: string; display_name: string; joined_at: string }
     >();
 
     for (const row of rawMembers) {
       const deviceId = String(row.device_id ?? "").trim();
+      if (!deviceId) continue;
+
       const displayName = String(row.display_name ?? "").trim() || "You";
       const joinedAt = String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
-      if (deviceId) {
-        const prev = byDevice.get(deviceId);
-
-        // 同じ device_id が複数あったら joined_at が新しい方を残す
-        if (!prev || joinedAt > prev.joined_at) {
-          byDevice.set(deviceId, {
-            device_id: deviceId,
-            display_name: displayName,
-            joined_at: joinedAt,
-          });
-        }
-      } else {
-        const key = displayName.toLowerCase();
-        const prev = byNameWithoutDevice.get(key);
-
-        // device_id なし行は display_name ごとに1件だけ
-        if (!prev || joinedAt > prev.joined_at) {
-          byNameWithoutDevice.set(key, {
-            device_id: undefined,
-            display_name: displayName,
-            joined_at: joinedAt,
-          });
-        }
+      const prev = byDevice.get(deviceId);
+      if (!prev || joinedAt > prev.joined_at) {
+        byDevice.set(deviceId, {
+          device_id: deviceId,
+          display_name: displayName,
+          joined_at: joinedAt,
+        });
       }
     }
 
-    const members = [
-      ...Array.from(byDevice.values()),
-      ...Array.from(byNameWithoutDevice.values()).filter((ghost) => {
-        // 既に同名の device_id ありメンバーがいるなら、ghost は捨てる
-        return !Array.from(byDevice.values()).some(
-          (real) =>
-            real.display_name.trim().toLowerCase() ===
-            ghost.display_name.trim().toLowerCase()
-        );
-      }),
-    ].sort((a, b) => a.joined_at.localeCompare(b.joined_at));
-
-    const memberCount = members.length;
+    const members = Array.from(byDevice.values()).sort((a, b) =>
+      a.joined_at.localeCompare(b.joined_at)
+    );
 
     return NextResponse.json({
       ok: true,
       session: s.data,
       members,
-      memberCount,
+      memberCount: members.length,
     });
   } catch (e: any) {
     return NextResponse.json(
