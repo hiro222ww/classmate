@@ -34,6 +34,87 @@ function buildIndexedClassLabel(n: number) {
   return `クラス${String(block).padStart(4, "0")}${letter}`;
 }
 
+type ClassRow = {
+  id: string;
+  name: string;
+  topic_key: string | null;
+  world_key: string | null;
+  created_at?: string | null;
+};
+
+type SessionRow = {
+  id: string;
+  class_id: string;
+  status?: string | null;
+  created_at?: string | null;
+};
+
+async function countSessionMembers(sessionId: string) {
+  const { count, error } = await supabase
+    .from("session_members")
+    .select("*", { count: "exact", head: true })
+    .eq("session_id", sessionId);
+
+  if (error) throw error;
+  return Number(count ?? 0);
+}
+
+async function findAvailableFormingSession(
+  classId: string,
+  requestedCapacity: number
+): Promise<SessionRow | null> {
+  // status は環境によって "forming" / "waiting" など揺れる可能性があるので、
+  // ひとまず forming を優先し、なければ waiting も見る。
+  const { data: sessions, error } = await supabase
+    .from("sessions")
+    .select("id,class_id,status,created_at")
+    .eq("class_id", classId)
+    .in("status", ["forming", "waiting"])
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  const rows = (sessions ?? []) as SessionRow[];
+
+  // なるべく人がいる session を埋めるため、
+  // 「空いてる中で memberCount が最大」のものを採用
+  let best: SessionRow | null = null;
+  let bestCount = -1;
+
+  for (const s of rows) {
+    const memberCount = await countSessionMembers(s.id);
+
+    console.log("[class/match-join] session memberCount =", {
+      classId,
+      sessionId: s.id,
+      status: s.status,
+      memberCount,
+      requestedCapacity,
+    });
+
+    if (memberCount < requestedCapacity && memberCount > bestCount) {
+      best = s;
+      bestCount = memberCount;
+    }
+  }
+
+  return best;
+}
+
+async function createSession(classId: string): Promise<SessionRow> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .insert({
+      class_id: classId,
+      status: "forming",
+    })
+    .select("id,class_id,status,created_at")
+    .single();
+
+  if (error) throw error;
+  return data as SessionRow;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -42,8 +123,6 @@ export async function POST(req: Request) {
     const worldKey = String(body.worldKey ?? "default").trim() || "default";
     const topicKey = normalizeTopicKey(body.topicKey);
     const requestedCapacity = Math.max(2, Number(body.capacity ?? 5) || 5);
-
-    // 既定値を false に変更
     const preferJoinedClass = Boolean(body.preferJoinedClass ?? false);
 
     console.log("[class/match-join] body =", body);
@@ -134,6 +213,7 @@ export async function POST(req: Request) {
       .from("classes")
       .select("id,name,topic_key,world_key,created_at")
       .eq("world_key", worldKey)
+      .eq("is_user_created", false)
       .order("created_at", { ascending: true });
 
     const classesResult = topicKey
@@ -151,10 +231,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const allSameTopicClasses = classesResult.data ?? [];
+    const allSameTopicClasses = (classesResult.data ?? []) as ClassRow[];
 
     // 旧エントリ名は除外
-    const sameTopicClasses = allSameTopicClasses.filter((c: any) => {
+    const sameTopicClasses = allSameTopicClasses.filter((c) => {
       return !isLegacyEntryClassName(c?.name);
     });
 
@@ -162,69 +242,90 @@ export async function POST(req: Request) {
     console.log("[class/match-join] filtered instance classes =", sameTopicClasses);
     console.log("[class/match-join] currentIds =", currentIds);
 
-    let targetClass: any = null;
+    // 4) class探索順を決める
+    // preferJoinedClass=true の時だけ「すでに joined 済み class」を前に出す
+    const orderedClasses = [...sameTopicClasses].sort((a, b) => {
+      const aJoined = currentIds.includes(String(a.id)) ? 1 : 0;
+      const bJoined = currentIds.includes(String(b.id)) ? 1 : 0;
 
-    // 4) 明示的に preferJoinedClass=true の時だけ既存所属を再利用
-    if (preferJoinedClass) {
-      for (const c of sameTopicClasses) {
-        const cid = String(c.id);
-        if (currentIds.includes(cid)) {
+      if (preferJoinedClass) {
+        return bJoined - aJoined; // joined済みを優先
+      }
+
+      return aJoined - bJoined; // joined済みは後ろ
+    });
+
+    let targetClass: ClassRow | null = null;
+    let targetSession: SessionRow | null = null;
+
+    // 5) まず、既存 class の中から「空いてる forming session」を探す
+    for (const c of orderedClasses) {
+      const cid = String(c.id);
+
+      // preferJoinedClass=false のときは joined済み class は後ろに回してるだけで、
+      // 完全に除外はしない。
+      // ただし slots 制限に引っかかるケースでは、後段の membership 判定で守る。
+      try {
+        const found = await findAvailableFormingSession(cid, requestedCapacity);
+        if (found) {
           targetClass = c;
-          console.log("[class/match-join] reusing joined class =", c);
+          targetSession = found;
+          console.log("[class/match-join] using existing session =", {
+            classId: cid,
+            className: c.name,
+            sessionId: found.id,
+          });
           break;
         }
+      } catch (e: any) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "session_lookup_failed",
+            detail: e?.message ?? String(e),
+          },
+          { status: 500 }
+        );
       }
     }
 
-    // 5) 空きのある class を探す
+    // 6) 空きforming sessionがなければ、既存 class に新しい session を作る
+    // まずは joined 済みでない class を優先。なければ joined 済み class でも可。
     if (!targetClass) {
-      for (const c of sameTopicClasses) {
-        const cid = String(c.id);
+      const classForNewSession =
+        orderedClasses.find((c) => !currentIds.includes(String(c.id))) ??
+        orderedClasses[0] ??
+        null;
 
-        // 既定では既に所属してる class をスキップ
-        if (currentIds.includes(cid)) {
-          console.log("[class/match-join] skip already joined class =", c);
-          continue;
-        }
+      if (classForNewSession) {
+        try {
+          targetClass = classForNewSession;
+          targetSession = await createSession(String(classForNewSession.id));
 
-        const { count, error: countErr } = await supabase
-          .from("class_memberships")
-          .select("*", { count: "exact", head: true })
-          .eq("class_id", c.id);
-
-        if (countErr) {
+          console.log("[class/match-join] created new session on existing class =", {
+            classId: targetClass.id,
+            className: targetClass.name,
+            sessionId: targetSession.id,
+          });
+        } catch (e: any) {
           return NextResponse.json(
             {
               ok: false,
-              error: "member_count_failed",
-              detail: countErr.message,
+              error: "session_create_failed",
+              detail: e?.message ?? String(e),
             },
             { status: 500 }
           );
         }
-
-        const memberCount = Number(count ?? 0);
-        console.log("[class/match-join] class memberCount =", {
-          classId: cid,
-          name: c.name,
-          memberCount,
-          requestedCapacity,
-        });
-
-        if (memberCount < requestedCapacity) {
-          targetClass = c;
-          console.log("[class/match-join] using existing class =", c);
-          break;
-        }
       }
     }
 
-    // 6) 無ければ新規作成
+    // 7) それでも class が無ければ新規 class 作成 + session 作成
     if (!targetClass) {
       const classNumber = sameTopicClasses.length + 1;
       const numberedName = buildIndexedClassLabel(classNumber);
 
-      const { data: created, error: createErr } = await supabase
+      const { data: createdClass, error: createErr } = await supabase
         .from("classes")
         .insert({
           name: numberedName,
@@ -236,9 +337,9 @@ export async function POST(req: Request) {
           is_user_created: false,
         })
         .select("id,name,topic_key,world_key,created_at")
-        .maybeSingle();
+        .single();
 
-      console.log("[class/match-join] created class =", created);
+      console.log("[class/match-join] created class =", createdClass);
       console.log("[class/match-join] create error =", createErr);
 
       if (createErr) {
@@ -255,7 +356,24 @@ export async function POST(req: Request) {
         );
       }
 
-      targetClass = created;
+      targetClass = createdClass as ClassRow;
+
+      try {
+        targetSession = await createSession(String(targetClass.id));
+        console.log("[class/match-join] created session on new class =", {
+          classId: targetClass.id,
+          sessionId: targetSession.id,
+        });
+      } catch (e: any) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "session_create_failed",
+            detail: e?.message ?? String(e),
+          },
+          { status: 500 }
+        );
+      }
     }
 
     if (!targetClass?.id) {
@@ -265,19 +383,29 @@ export async function POST(req: Request) {
       );
     }
 
-    const classId = String(targetClass.id);
+    if (!targetSession?.id) {
+      return NextResponse.json(
+        { ok: false, error: "session_resolve_failed" },
+        { status: 500 }
+      );
+    }
 
-    // 7) 既にその class に所属済みなら、そのまま返す
+    const classId = String(targetClass.id);
+    const sessionId = String(targetSession.id);
+
+    // 8) 既にその class に所属済みなら membership は追加せずそのまま返す
     if (currentIds.includes(classId)) {
       return NextResponse.json({
         ok: true,
         alreadyJoined: true,
         classId,
+        sessionId,
         class: targetClass,
+        session: targetSession,
       });
     }
 
-    // 8) 新規 membership を足すときだけ slots 判定
+    // 9) 新規 membership を足すときだけ slots 判定
     if (currentIds.length >= classSlots) {
       return NextResponse.json(
         {
@@ -290,7 +418,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 9) membership 追加
+    // 10) membership 追加
     const { data: inserted, error: insErr } = await supabase
       .from("class_memberships")
       .insert({
@@ -319,7 +447,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       classId,
+      sessionId,
       class: targetClass,
+      session: targetSession,
       inserted: inserted ?? [],
     });
   } catch (e: any) {
