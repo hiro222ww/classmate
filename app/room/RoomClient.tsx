@@ -217,6 +217,7 @@ export default function RoomClient() {
     setMemberCount(0);
     setErr("");
     setTopicTitle("");
+    joinedRef.current = false;
   }, [sessionId]);
 
   useEffect(() => {
@@ -244,7 +245,6 @@ export default function RoomClient() {
       "You";
 
     const deviceId = getOrCreateDeviceId();
-
     let cancelled = false;
 
     async function joinRoom() {
@@ -281,23 +281,28 @@ export default function RoomClient() {
 
       setResolvedSessionId(sid);
       setStatus((j.status as any) ?? "forming");
-      setCapacity(Number.isFinite(Number(j.capacity)) && Number(j.capacity) > 0 ? Number(j.capacity) : 5);
-      setMemberCount(Math.max(Number(j.memberCount ?? 0), 1));
+      setCapacity(
+        Number.isFinite(Number(j.capacity)) && Number(j.capacity) > 0
+          ? Number(j.capacity)
+          : 5
+      );
+      setMemberCount(Math.max(Number(j.memberCount ?? 0), 0));
+
       if (j.topic) setTopicTitle(String(j.topic).trim());
 
-
       if (classId) {
-        const desired = `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(
-          sid
-        )}`;
+        const desired = `/room?autojoin=1&classId=${encodeURIComponent(
+          classId
+        )}&sessionId=${encodeURIComponent(sid)}`;
         const desiredSearch = desired.slice(desired.indexOf("?"));
+
         if (window.location.search !== desiredSearch) {
           router.replace(desired);
         }
       }
     }
 
-    joinRoom().catch((e: any) => {
+    void joinRoom().catch((e: any) => {
       if (!cancelled) setErr(e?.message ?? "session_join_failed");
     });
 
@@ -328,10 +333,10 @@ export default function RoomClient() {
       setStatus(j.session?.status ?? "forming");
       setCapacity(Number.isFinite(cap) && cap > 0 ? cap : 5);
 
-     const incomingMembers = Array.isArray(j.members) ? j.members : [];
-setMembers(incomingMembers);
+      const incomingMembers = Array.isArray(j.members) ? j.members : [];
+      setMembers(incomingMembers);
 
-      setMemberCount(Math.max(mc, 1));
+      setMemberCount(Math.max(mc, 0));
       setErr("");
 
       const t = (j.session?.topic ?? "").trim();
@@ -394,6 +399,7 @@ setMembers(incomingMembers);
         (payload: any) => {
           const row = payload?.new as RoomMessage;
           if (!row?.id) return;
+
           setMsgs((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
           queueMicrotask(() => scrollToBottom(true));
         }
@@ -469,6 +475,7 @@ setMembers(incomingMembers);
   }
 
   const filled = Math.min(Math.max(memberCount, 0), capacity);
+
   return (
     <ChalkboardRoomShell
       title={topicTitle || "読み込み中..."}

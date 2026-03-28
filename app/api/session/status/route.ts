@@ -16,13 +16,18 @@ function admin() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const sessionIdRaw = (searchParams.get("sessionId") ?? "").trim();
 
     if (!sessionIdRaw) {
-      return NextResponse.json({ ok: false, error: "missing_sessionId" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "missing_sessionId" },
+        { status: 400 }
+      );
     }
 
     if (!isUuid(sessionIdRaw)) {
@@ -41,10 +46,12 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (s.error) {
-      return NextResponse.json({ ok: false, error: s.error.message }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: s.error.message },
+        { status: 500 }
+      );
     }
 
-    // 勝手に free session を作らない
     if (!s.data) {
       return NextResponse.json({
         ok: true,
@@ -62,15 +69,41 @@ export async function GET(req: Request) {
 
     const m = await sb
       .from("session_members")
-      .select("display_name, joined_at")
+      .select("device_id, display_name, joined_at")
       .eq("session_id", sessionIdRaw)
       .order("joined_at", { ascending: true });
 
     if (m.error) {
-      return NextResponse.json({ ok: false, error: m.error.message }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: m.error.message },
+        { status: 500 }
+      );
     }
 
-    const members = Array.isArray(m.data) ? m.data : [];
+    const rawMembers = Array.isArray(m.data) ? m.data : [];
+
+    const dedupedMap = new Map<
+      string,
+      { device_id?: string; display_name: string; joined_at: string }
+    >();
+
+    for (const row of rawMembers) {
+      const deviceId = String((row as any)?.device_id ?? "").trim();
+      const displayName = String((row as any)?.display_name ?? "").trim() || "You";
+      const joinedAt = String((row as any)?.joined_at ?? "").trim();
+
+      const key = deviceId || `${displayName}:${joinedAt}`;
+
+      if (!dedupedMap.has(key)) {
+        dedupedMap.set(key, {
+          device_id: deviceId || undefined,
+          display_name: displayName,
+          joined_at: joinedAt,
+        });
+      }
+    }
+
+    const members = Array.from(dedupedMap.values());
     const memberCount = members.length;
 
     return NextResponse.json({
