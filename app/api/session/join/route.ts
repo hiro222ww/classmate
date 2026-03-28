@@ -10,6 +10,9 @@ function isUuid(s: string) {
   );
 }
 
+// -------------------------------
+// 🔥 ゴースト削除（device_idなし）
+// -------------------------------
 async function cleanupGhostMembers(sessionId: string) {
   const { error } = await supabaseAdmin
     .from("session_members")
@@ -24,6 +27,35 @@ async function cleanupGhostMembers(sessionId: string) {
   return { ok: true as const };
 }
 
+// -------------------------------
+// 🔥 古い自分削除（display_name一致）
+// -------------------------------
+async function cleanupOldSelfRows(
+  sessionId: string,
+  deviceId: string,
+  name: string
+) {
+  const trimmedName = String(name ?? "").trim();
+  if (!trimmedName) return { ok: true as const };
+
+  const { error } = await supabaseAdmin
+    .from("session_members")
+    .delete()
+    .eq("session_id", sessionId)
+    .eq("display_name", trimmedName)
+    .neq("device_id", deviceId);
+
+  if (error) {
+    console.error("[session/join] cleanup old self rows error:", error);
+    return { ok: false as const, error };
+  }
+
+  return { ok: true as const };
+}
+
+// -------------------------------
+// メンバー数（device_id単位）
+// -------------------------------
 async function countValidMembers(sessionId: string) {
   const { data, error } = await supabaseAdmin
     .from("session_members")
@@ -48,7 +80,14 @@ async function countValidMembers(sessionId: string) {
   };
 }
 
-async function upsertMember(sessionId: string, deviceId: string, name: string) {
+// -------------------------------
+// upsert（device_id一意）
+// -------------------------------
+async function upsertMember(
+  sessionId: string,
+  deviceId: string,
+  name: string
+) {
   return await supabaseAdmin.from("session_members").upsert(
     {
       session_id: sessionId,
@@ -60,6 +99,9 @@ async function upsertMember(sessionId: string, deviceId: string, name: string) {
   );
 }
 
+// -------------------------------
+// session存在確認
+// -------------------------------
 async function ensureJoinableSession(params: {
   sessionId: string;
   capacity: number;
@@ -89,7 +131,6 @@ async function ensureJoinableSession(params: {
     updates.capacity = capacity;
   }
 
-  // closed の session には参加させない
   if (existing.status === "closed") {
     return {
       ok: false as const,
@@ -97,7 +138,6 @@ async function ensureJoinableSession(params: {
     };
   }
 
-  // status が空なら forming を補う
   if (!existing.status) {
     updates.status = "forming";
   }
@@ -125,13 +165,14 @@ async function ensureJoinableSession(params: {
   };
 }
 
+// ===============================
+// 🚀 メイン
+// ===============================
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
     const sessionIdRaw = String(body.sessionId ?? "").trim();
-    const classIdRaw = String(body.classId ?? "").trim();
-    const topic = String(body.topic ?? "").trim();
     const name = String(body.name ?? "").trim();
     const deviceId = String(body.deviceId ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
@@ -150,17 +191,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const resolvedCapacity =
-      Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
-
-    // session/join は join only
-    // classId だけで再マッチングするのは禁止
     if (!sessionIdRaw) {
       return NextResponse.json(
         {
           ok: false,
           error: "sessionId required",
-          detail: "match-join で決定した sessionId を渡してください",
         },
         { status: 400 }
       );
@@ -173,9 +208,8 @@ export async function POST(req: Request) {
       );
     }
 
-    if (classIdRaw) {
-      console.log("[session/join] classId was provided but ignored =", classIdRaw);
-    }
+    const resolvedCapacity =
+      Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
 
     const ensured = await ensureJoinableSession({
       sessionId: sessionIdRaw,
@@ -183,7 +217,6 @@ export async function POST(req: Request) {
     });
 
     if (!ensured.ok) {
-      console.error("[session/join] ensure session error:", ensured.error);
       const msg = ensured.error?.message ?? "ensure_session_failed";
 
       return NextResponse.json(
@@ -194,17 +227,20 @@ export async function POST(req: Request) {
 
     const session = ensured.session;
 
-    const cleaned = await cleanupGhostMembers(sessionIdRaw);
-    if (!cleaned.ok) {
-      return NextResponse.json(
-        { ok: false, error: cleaned.error.message },
-        { status: 500 }
-      );
-    }
+    // -------------------------------
+    // 🔥 ここが今回の核心
+    // -------------------------------
+
+    // 1. ゴースト削除
+    await cleanupGhostMembers(sessionIdRaw);
+
+    // 2. 古い自分削除（device違い）
+    await cleanupOldSelfRows(sessionIdRaw, deviceId, name);
+
+    // -------------------------------
 
     const countedBefore = await countValidMembers(sessionIdRaw);
     if (!countedBefore.ok) {
-      console.error("[session/join] member count before join error:", countedBefore.error);
       return NextResponse.json(
         { ok: false, error: countedBefore.error.message },
         { status: 500 }
@@ -216,21 +252,12 @@ export async function POST(req: Request) {
         ? session.capacity
         : resolvedCapacity;
 
-    // 既存人数が満員で、まだ本人が未参加なら弾く
-    const { data: existingMine, error: mineErr } = await supabaseAdmin
+    const { data: existingMine } = await supabaseAdmin
       .from("session_members")
       .select("device_id")
       .eq("session_id", sessionIdRaw)
       .eq("device_id", deviceId)
       .maybeSingle();
-
-    if (mineErr) {
-      console.error("[session/join] existing member lookup error:", mineErr);
-      return NextResponse.json(
-        { ok: false, error: mineErr.message },
-        { status: 500 }
-      );
-    }
 
     const alreadyInSession = !!existingMine;
 
@@ -239,16 +266,18 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: "session_full",
-          memberCount: countedBefore.count,
-          capacity: actualCapacity,
         },
         { status: 400 }
       );
     }
 
-    const { error: memberErr } = await upsertMember(sessionIdRaw, deviceId, name);
+    const { error: memberErr } = await upsertMember(
+      sessionIdRaw,
+      deviceId,
+      name
+    );
+
     if (memberErr) {
-      console.error("[session/join] member upsert error:", memberErr);
       return NextResponse.json(
         { ok: false, error: memberErr.message },
         { status: 500 }
@@ -256,21 +285,14 @@ export async function POST(req: Request) {
     }
 
     const countedAfter = await countValidMembers(sessionIdRaw);
-    if (!countedAfter.ok) {
-      console.error("[session/join] member count after join error:", countedAfter.error);
-      return NextResponse.json(
-        { ok: false, error: countedAfter.error.message },
-        { status: 500 }
-      );
-    }
 
     return NextResponse.json({
       ok: true,
       sessionId: sessionIdRaw,
       classId: session.class_id,
-      topic: session.topic || topic || "クラス",
+      topic: session.topic || "クラス",
       capacity: actualCapacity,
-      memberCount: countedAfter.count,
+      memberCount: countedAfter.ok ? countedAfter.count : 1,
       status: session.status || "forming",
       alreadyInSession,
     });
