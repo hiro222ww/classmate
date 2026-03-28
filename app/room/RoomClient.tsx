@@ -262,7 +262,12 @@ export default function RoomClient() {
 
     async function join() {
       const deviceId = deviceIdRef.current;
-      const name = displayNameRef.current || "参加者";
+      const rawName = displayNameRef.current || "参加者";
+      const name =
+  displayNameRef.current &&
+  displayNameRef.current !== "You"
+    ? displayNameRef.current
+    : "参加者";
 
       const res = await fetch("/api/session/join", {
         method: "POST",
