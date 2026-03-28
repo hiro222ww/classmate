@@ -22,6 +22,11 @@ type RoomMessage = {
   created_at: string;
 };
 
+type ProfileResponse = {
+  device_id?: string;
+  display_name?: string;
+};
+
 type SessionJoinResponse = {
   ok?: boolean;
   sessionId?: string;
@@ -48,24 +53,85 @@ type SessionStatusResponse = {
   error?: string;
 };
 
-function dedupeMembers(list: MemberRow[]): MemberRow[] {
-  const map = new Map<string, MemberRow>();
+function normalizeName(v: string | undefined) {
+  return String(v ?? "").trim();
+}
 
-  for (const m of list) {
-    const did = String(m.device_id ?? "").trim();
+function dedupeMembers(
+  list: MemberRow[],
+  myDeviceId: string,
+  myDisplayName: string
+): MemberRow[] {
+  const normalizedMyDeviceId = String(myDeviceId ?? "").trim();
+  const normalizedMyName = normalizeName(myDisplayName);
+
+  const others = new Map<string, MemberRow>();
+  let me: MemberRow | null = null;
+
+  for (const row of list) {
+    const did = String(row.device_id ?? "").trim();
+    const name = normalizeName(row.display_name);
+    const joinedAt = String(row.joined_at ?? "").trim();
+
+    const isMeByDevice =
+      !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
+
+    const isMeByName =
+      !!name && !!normalizedMyName && name === normalizedMyName;
+
+    if (isMeByDevice || isMeByName) {
+      if (!me) {
+        me = {
+          device_id: did || normalizedMyDeviceId,
+          display_name: normalizedMyName || name || "",
+          joined_at: joinedAt,
+        };
+      } else {
+        const prevDid = String(me.device_id ?? "").trim();
+        const prevJoinedAt = String(me.joined_at ?? "").trim();
+
+        if (!prevDid && did) {
+          me = {
+            device_id: did,
+            display_name: normalizedMyName || name || "",
+            joined_at: joinedAt || prevJoinedAt,
+          };
+        } else if (!prevJoinedAt && joinedAt && me) {
+  me = {
+    device_id: me.device_id,
+    display_name: me.display_name,
+    joined_at: joinedAt,
+  };
+}
+      }
+      continue;
+    }
+
     if (!did) continue;
-
-    if (!map.has(did)) {
-      map.set(did, {
+    if (!others.has(did)) {
+      others.set(did, {
         device_id: did,
-        display_name: String(m.display_name ?? "").trim(),
-        joined_at: String(m.joined_at ?? "").trim(),
+        display_name: name,
+        joined_at: joinedAt,
       });
     }
   }
 
-  return Array.from(map.values()).sort((a, b) =>
+  const sortedOthers = Array.from(others.values()).sort((a, b) =>
     String(a.joined_at ?? "").localeCompare(String(b.joined_at ?? ""))
+  );
+
+  return me ? [me, ...sortedOthers] : sortedOthers;
+}
+
+function dedupeMessages(list: RoomMessage[]): RoomMessage[] {
+  const map = new Map<string, RoomMessage>();
+  for (const m of list) {
+    if (!m?.id) continue;
+    map.set(m.id, m);
+  }
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
   );
 }
 
@@ -103,14 +169,66 @@ export default function RoomClient() {
 
   useEffect(() => {
     deviceIdRef.current = getOrCreateDeviceId();
-    displayNameRef.current =
-      localStorage.getItem("classmate_display_name") ||
-      localStorage.getItem("display_name") ||
-      "";
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfileName() {
+      const deviceId = deviceIdRef.current;
+      if (!deviceId) return;
+
+      try {
+        const res = await fetch(
+          `/api/profile?device_id=${encodeURIComponent(deviceId)}`,
+          { cache: "no-store" }
+        );
+
+        if (!res.ok) {
+          if (!cancelled) {
+            displayNameRef.current =
+              localStorage.getItem("classmate_display_name") ||
+              localStorage.getItem("display_name") ||
+              "参加者";
+          }
+          return;
+        }
+
+        const json = (await res.json()) as ProfileResponse | null;
+        const canonical =
+          normalizeName(json?.display_name) ||
+          localStorage.getItem("classmate_display_name") ||
+          localStorage.getItem("display_name") ||
+          "参加者";
+
+        if (!cancelled) {
+          displayNameRef.current = canonical;
+          localStorage.setItem("classmate_display_name", canonical);
+          localStorage.setItem("display_name", canonical);
+        }
+      } catch {
+        if (!cancelled) {
+          displayNameRef.current =
+            localStorage.getItem("classmate_display_name") ||
+            localStorage.getItem("display_name") ||
+            "参加者";
+        }
+      }
+    }
+
+    void loadProfileName();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const visibleMembers = useMemo(() => {
-    return dedupeMembers(members);
+    return dedupeMembers(
+      members,
+      deviceIdRef.current,
+      displayNameRef.current
+    );
   }, [members]);
 
   useEffect(() => {
@@ -135,6 +253,8 @@ export default function RoomClient() {
 
   useEffect(() => {
     if (!sessionId) return;
+    if (!deviceIdRef.current) return;
+    if (!displayNameRef.current) return;
     if (joinedSessionIdRef.current === sessionId) return;
 
     joinedSessionIdRef.current = sessionId;
@@ -188,7 +308,7 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, topicTitle]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -235,7 +355,7 @@ export default function RoomClient() {
 
     const interval = window.setInterval(() => {
       void fetchStatus();
-    }, 3000);
+    }, 2000);
 
     return () => {
       cancelled = true;
@@ -263,10 +383,14 @@ export default function RoomClient() {
         return;
       }
 
-      setMsgs((data ?? []) as RoomMessage[]);
+      setMsgs(dedupeMessages((data ?? []) as RoomMessage[]));
     }
 
     void loadMessages();
+
+    const poll = window.setInterval(() => {
+      void loadMessages();
+    }, 2000);
 
     const channel = supabase
       .channel(`room_messages:${sessionId}`)
@@ -282,16 +406,14 @@ export default function RoomClient() {
           const row = payload?.new as RoomMessage;
           if (!row?.id) return;
 
-          setMsgs((prev) => {
-            if (prev.some((m) => m.id === row.id)) return prev;
-            return [...prev, row];
-          });
+          setMsgs((prev) => dedupeMessages([...prev, row]));
         }
       )
       .subscribe();
 
     return () => {
       cancelled = true;
+      window.clearInterval(poll);
       void supabase.removeChannel(channel);
     };
   }, [sessionId]);
@@ -303,6 +425,19 @@ export default function RoomClient() {
     const deviceId = deviceIdRef.current;
     const name = displayNameRef.current || "参加者";
 
+    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimisticRow: RoomMessage = {
+      id: optimisticId,
+      session_id: sessionId,
+      device_id: deviceId,
+      display_name: name,
+      message: text,
+      created_at: new Date().toISOString(),
+    };
+
+    setMsgs((prev) => dedupeMessages([...prev, optimisticRow]));
+    setDraft("");
+
     const { error } = await supabase.from("room_messages").insert({
       session_id: sessionId,
       device_id: deviceId,
@@ -312,10 +447,12 @@ export default function RoomClient() {
 
     if (error) {
       setErr(`送信失敗: ${error.message}`);
+      setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
+      setDraft(text);
       return;
     }
 
-    setDraft("");
+    // Realtime or pollingで本物が入るので optimistic 行は次回取得で自然に押し流される
   }
 
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人 ・ ${status}`;
@@ -364,7 +501,12 @@ export default function RoomClient() {
               {visibleMembers.map((m, i) => {
                 const isMe =
                   String(m.device_id ?? "").trim() ===
-                  String(deviceIdRef.current ?? "").trim();
+                    String(deviceIdRef.current ?? "").trim() ||
+                  (
+                    !!displayNameRef.current &&
+                    normalizeName(m.display_name) ===
+                      normalizeName(displayNameRef.current)
+                  );
 
                 return (
                   <div
