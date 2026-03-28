@@ -10,6 +10,10 @@ export async function POST(req: Request) {
     const sessionId = String(body?.sessionId ?? "").trim();
     const deviceId = String(body?.deviceId ?? "").trim();
 
+    console.log("[session/leave] body =", body);
+    console.log("[session/leave] sessionId =", sessionId);
+    console.log("[session/leave] deviceId =", deviceId);
+
     if (!sessionId || !deviceId) {
       return NextResponse.json(
         { ok: false, error: "missing_session_or_device" },
@@ -17,12 +21,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // 自分を削除
     const { error: deleteErr } = await supabaseAdmin
       .from("session_members")
       .delete()
       .eq("session_id", sessionId)
       .eq("device_id", deviceId);
+
+    console.log("[session/leave] deleteErr =", deleteErr);
 
     if (deleteErr) {
       return NextResponse.json(
@@ -31,12 +36,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // 空 device_id のゴミ行を掃除
     const { error: ghostDeleteErr } = await supabaseAdmin
       .from("session_members")
       .delete()
       .eq("session_id", sessionId)
       .or("device_id.is.null,device_id.eq.");
+
+    console.log("[session/leave] ghostDeleteErr =", ghostDeleteErr);
 
     if (ghostDeleteErr) {
       return NextResponse.json(
@@ -45,13 +51,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // 有効メンバーだけ数える
     const { data: remainingRows, error: countErr } = await supabaseAdmin
       .from("session_members")
       .select("device_id")
       .eq("session_id", sessionId)
       .not("device_id", "is", null)
       .neq("device_id", "");
+
+    console.log("[session/leave] remainingRows =", remainingRows);
+    console.log("[session/leave] countErr =", countErr);
 
     if (countErr) {
       return NextResponse.json(
@@ -68,11 +76,15 @@ export async function POST(req: Request) {
 
     const remaining = uniqueIds.size;
 
+    console.log("[session/leave] remaining =", remaining);
+
     if (remaining <= 0) {
       const { error: closeErr } = await supabaseAdmin
         .from("sessions")
         .update({ status: "closed" })
         .eq("id", sessionId);
+
+      console.log("[session/leave] closeErr =", closeErr);
 
       if (closeErr) {
         return NextResponse.json(
@@ -89,6 +101,7 @@ export async function POST(req: Request) {
       closed: remaining <= 0,
     });
   } catch (e: any) {
+    console.error("[session/leave] internal error =", e);
     return NextResponse.json(
       { ok: false, error: e?.message ?? "unknown_error" },
       { status: 500 }

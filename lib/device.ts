@@ -1,17 +1,27 @@
-// lib/device.ts
-export const DEVICE_ID_KEY = "classmate_device_id";
+const STORAGE_KEY = "classmate_device_id";
 
 export function getOrCreateDeviceId(): string {
   if (typeof window === "undefined") return "";
-  let id = localStorage.getItem(DEVICE_ID_KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem(DEVICE_ID_KEY, id);
+
+  const existing = localStorage.getItem(STORAGE_KEY);
+  if (existing && existing.trim()) {
+    return existing.trim();
   }
+
+  const id =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  localStorage.setItem(STORAGE_KEY, id);
   return id;
 }
 
 export function getDeviceId(): string {
   if (typeof window === "undefined") return "";
-  return localStorage.getItem(DEVICE_ID_KEY) ?? "";
+  return (localStorage.getItem(STORAGE_KEY) || "").trim();
+}
+
+export function clearDeviceId() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(STORAGE_KEY);
 }
