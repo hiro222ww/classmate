@@ -1,6 +1,5 @@
 "use client";
 
-console.log("🔥 NEW VERSION LOADED");
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getOrCreateDeviceId } from "@/lib/device";
@@ -119,6 +118,8 @@ function sleep(ms: number) {
 }
 
 export default function ClassSelectPage() {
+  console.log("🔥 NEW VERSION LOADED");
+
   const [deviceId, setDeviceId] = useState("");
 
   const [worlds, setWorlds] = useState<World[]>([]);
@@ -407,6 +408,8 @@ export default function ClassSelectPage() {
   }
 
   async function doTransfer(c: ClassRow) {
+    console.log("[select] clicked class =", c);
+
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
       return;
@@ -428,14 +431,14 @@ export default function ClassSelectPage() {
       }
 
       const res = await fetch("/api/class/join", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    deviceId,
-    classId: c.id,
-  }),
-  cache: "no-store",
-});
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId,
+          classId: c.id,
+        }),
+        cache: "no-store",
+      });
 
       const raw = await res.text();
       let j: any = {};
@@ -444,6 +447,8 @@ export default function ClassSelectPage() {
       } catch {
         throw new Error("non_json_response");
       }
+
+      console.log("[select] join response =", j);
 
       if (!res.ok || !j?.ok) {
         if (j?.error === "profile_required") {
@@ -460,13 +465,13 @@ export default function ClassSelectPage() {
         return;
       }
 
-      const joinedClassId = j?.classId ?? c.id;
+      const joinedClassId = j?.class?.id ?? j?.classId ?? c.id;
       const roomUrl = `/room?autojoin=1&classId=${encodeURIComponent(joinedClassId)}`;
 
       pushRecentClass(
         {
           id: joinedClassId,
-          title: c.name,
+          title: j?.class?.name ?? c.name,
           url: roomUrl,
         },
         20
