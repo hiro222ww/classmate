@@ -443,7 +443,7 @@ export default function ClassSelectPage() {
           topicKey: c.topic_key,
           worldKey: c.world_key ?? "default",
           capacity: 5,
-          preferJoinedClass: c.topic_key ? true : false,
+          preferJoinedClass: false,
         }),
         cache: "no-store",
       });
@@ -650,87 +650,87 @@ export default function ClassSelectPage() {
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto", color: "#111" }}>
       <header
-  style={{
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  }}
->
-  <div>
-    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
-  </div>
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <div>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
+        </div>
 
-  <div
-    style={{
-      display: "flex",
-      gap: 8,
-      alignItems: "center",
-      flexWrap: "wrap",
-      justifyContent: "flex-end",
-    }}
-  >
-    <Link
-      href="/profile"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #4ade80",
-        background: "#ecfdf5",
-        fontWeight: 900,
-        color: "#166534",
-        textDecoration: "none",
-      }}
-    >
-      プロフィール登録
-    </Link>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          <Link
+            href="/profile"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #4ade80",
+              background: "#ecfdf5",
+              fontWeight: 900,
+              color: "#166534",
+              textDecoration: "none",
+            }}
+          >
+            プロフィール登録
+          </Link>
 
-    <Link
-      href="/premium"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #ccc",
-        background: "#fff",
-        fontWeight: 900,
-        color: "#111",
-        textDecoration: "none",
-      }}
-    >
-      プランを見る
-    </Link>
+          <Link
+            href="/premium"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            プランを見る
+          </Link>
 
-    <Link
-      href="/billing"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #ccc",
-        background: "#fff",
-        fontWeight: 900,
-        color: "#111",
-        textDecoration: "none",
-      }}
-    >
-      お支払い・解約
-    </Link>
+          <Link
+            href="/billing"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            お支払い・解約
+          </Link>
 
-    <Link
-      href="/"
-      style={{
-        padding: "8px 10px",
-        borderRadius: 12,
-        border: "1px solid #ccc",
-        background: "#fff",
-        fontWeight: 900,
-        color: "#111",
-        textDecoration: "none",
-      }}
-    >
-      今のクラス
-    </Link>
-  </div>
-</header>
+          <Link
+            href="/"
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            今のクラス
+          </Link>
+        </div>
+      </header>
 
       {hasProfile === false && (
         <div
