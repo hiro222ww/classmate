@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Commercial disclosure",
-  description: "Disclosure based on the Act on Specified Commercial Transactions",
   robots: {
     index: false,
     follow: false,
@@ -11,134 +10,147 @@ export const metadata: Metadata = {
 
 export default function CommercialDisclosurePage() {
   const sectionStyle: React.CSSProperties = {
-    borderTop: "1px solid #e5e7eb",
-    padding: "16px 0",
+    borderTop: "1px solid #f3f4f6",
+    padding: "14px 0",
+  };
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    gap: 12,
+    flexWrap: "wrap",
   };
 
   const dtStyle: React.CSSProperties = {
-    fontWeight: 700,
-    width: "220px",
+    fontWeight: 600,
+    width: "200px",
     flexShrink: 0,
+    color: "#6b7280",
   };
 
   const ddStyle: React.CSSProperties = {
     margin: 0,
-    lineHeight: 1.8,
+    flex: 1,
+    minWidth: 0,
+    color: "#374151",
   };
 
   return (
     <main
       style={{
-        maxWidth: 840,
+        maxWidth: 680,
         margin: "0 auto",
-        padding: "32px 20px 64px",
+        padding: "24px 16px 56px",
+        fontSize: 13,
+        lineHeight: 1.9,
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
-      <h1 style={{ fontSize: 28, fontWeight: 800 }}>
+      {/* タイトル（控えめ） */}
+      <h1
+        style={{
+          fontSize: 22,
+          fontWeight: 600,
+          margin: 0,
+          color: "#111827",
+        }}
+      >
         Commercial disclosure
       </h1>
 
-      <p style={{ marginTop: 8, color: "#666" }}>
-        特定商取引法に基づく表記
-      </p>
+      {/* サブタイトル消してOK（目立つ原因なので） */}
 
-      <div style={{ marginTop: 24 }}>
+      <div style={{ marginTop: 20 }}>
+        {/* ▼ 上はサービス情報系 */}
         <section style={sectionStyle}>
-          <dt style={dtStyle}>販売事業者</dt>
-          <dd style={ddStyle}>
-            classmate運営（吉川 弘晃）
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Service</dt>
+            <dd style={ddStyle}>
+              classmate is an online voice communication service.
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>運営責任者</dt>
-          <dd style={ddStyle}>
-            吉川 弘晃
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Price</dt>
+            <dd style={ddStyle}>
+              Prices are shown on each purchase page (tax included).
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>所在地</dt>
-          <dd style={ddStyle}>
-            請求があった場合、遅滞なく開示します。
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Payment</dt>
+            <dd style={ddStyle}>
+              Credit card (Stripe)
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>電話番号</dt>
-          <dd style={ddStyle}>
-            請求があった場合、遅滞なく開示します。
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Billing</dt>
+            <dd style={ddStyle}>
+              Subscription is billed at signup and automatically renewed.
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>メールアドレス</dt>
-          <dd style={ddStyle}>
-            support@classmate-app.com
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Cancellation</dt>
+            <dd style={ddStyle}>
+              You may cancel before the next billing date.
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>販売価格</dt>
-          <dd style={ddStyle}>
-            各プランの購入ページに表示された金額（税込）によります。
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Refund</dt>
+            <dd style={ddStyle}>
+              Due to the nature of digital services, refunds are not provided.
+            </dd>
+          </div>
+        </section>
+
+        {/* ▼ 下に運営情報（目立たせない） */}
+        <section style={sectionStyle}>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Email</dt>
+            <dd style={ddStyle}>
+              support@classmate-app.com
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>商品代金以外の必要料金</dt>
-          <dd style={ddStyle}>
-            インターネット接続料金、通信料金等はお客様のご負担となります。
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Address</dt>
+            <dd style={ddStyle}>
+              Provided upon request without delay
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>支払方法</dt>
-          <dd style={ddStyle}>
-            クレジットカード決済等（Stripe）
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Phone</dt>
+            <dd style={ddStyle}>
+              Provided upon request without delay
+            </dd>
+          </div>
         </section>
 
         <section style={sectionStyle}>
-          <dt style={dtStyle}>支払時期</dt>
-          <dd style={ddStyle}>
-            初回は申込時に課金されます。サブスクリプションは以後、各契約更新日に自動的に課金されます。
-          </dd>
-        </section>
-
-        <section style={sectionStyle}>
-          <dt style={dtStyle}>サービス提供時期</dt>
-          <dd style={ddStyle}>
-            決済手続完了後、直ちにご利用いただけます。
-          </dd>
-        </section>
-
-        <section style={sectionStyle}>
-          <dt style={dtStyle}>動作環境</dt>
-          <dd style={ddStyle}>
-            最新の主要ブラウザを搭載したスマートフォン、PCでの利用を推奨します。
-          </dd>
-        </section>
-
-        <section style={sectionStyle}>
-          <dt style={dtStyle}>解約について</dt>
-          <dd style={ddStyle}>
-            サブスクリプションは次回更新日前までに解約可能です。
-          </dd>
-        </section>
-
-        <section style={sectionStyle}>
-          <dt style={dtStyle}>返金について</dt>
-          <dd style={ddStyle}>
-            デジタルサービスの性質上、決済完了後の返金には原則対応しておりません。
-          </dd>
-        </section>
-
-        <section style={sectionStyle}>
-          <dt style={dtStyle}>サービス内容</dt>
-          <dd style={ddStyle}>
-            classmateはユーザー同士が音声で交流できるオンラインコミュニケーションサービスです。
-          </dd>
+          <div style={rowStyle}>
+            <dt style={dtStyle}>Operator</dt>
+            <dd style={ddStyle}>
+              classmate（吉川 弘晃）
+            </dd>
+          </div>
         </section>
       </div>
     </main>
