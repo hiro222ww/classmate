@@ -48,7 +48,7 @@ export default function RootLayout({
             <Link href="/about">About</Link>
             <Link href="/terms">Terms</Link>
             <Link href="/legal/commercial-disclosure">
-              Commercial disclosure
+              Legal
             </Link>
           </div>
 
