@@ -34,12 +34,6 @@ export default function CommercialDisclosurePage() {
     color: "#374151",
   };
 
-  const jaStyle: React.CSSProperties = {
-    fontSize: 11,
-    color: "#9ca3af",
-    marginLeft: 6,
-  };
-
   return (
     <main
       style={{
@@ -64,120 +58,91 @@ export default function CommercialDisclosurePage() {
       </h1>
 
       <div style={{ marginTop: 20 }}>
-        {/* サービス */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Service <span style={jaStyle}>サービス内容</span>
-            </dt>
+            <dt style={dtStyle}>サービス内容</dt>
             <dd style={ddStyle}>
-              classmate is an online voice communication service.
+              classmateはユーザー同士が音声で交流できるオンラインコミュニケーションサービスです。
             </dd>
           </div>
         </section>
 
-        {/* 価格 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Price <span style={jaStyle}>価格</span>
-            </dt>
+            <dt style={dtStyle}>販売価格</dt>
             <dd style={ddStyle}>
-              Prices are shown on each purchase page (tax included).
+              各プランの購入ページに表示された金額（税込）によります。
             </dd>
           </div>
         </section>
 
-        {/* 支払い */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Payment <span style={jaStyle}>支払方法</span>
-            </dt>
+            <dt style={dtStyle}>支払方法</dt>
             <dd style={ddStyle}>
-              Credit card (Stripe)
+              クレジットカード決済（Stripe）
             </dd>
           </div>
         </section>
 
-        {/* 課金 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Billing <span style={jaStyle}>支払時期</span>
-            </dt>
+            <dt style={dtStyle}>支払時期</dt>
             <dd style={ddStyle}>
-              Subscription is billed at signup and automatically renewed.
+              初回は申込時に課金されます。以降は契約更新日に自動課金されます。
             </dd>
           </div>
         </section>
 
-        {/* 解約 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Cancellation <span style={jaStyle}>解約</span>
-            </dt>
+            <dt style={dtStyle}>解約について</dt>
             <dd style={ddStyle}>
-              You may cancel before the next billing date.
+              次回更新日前までに解約手続きを行うことで、以降の請求は停止されます。
             </dd>
           </div>
         </section>
 
-        {/* 返金 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Refund <span style={jaStyle}>返金</span>
-            </dt>
+            <dt style={dtStyle}>返金について</dt>
             <dd style={ddStyle}>
-              Due to the nature of digital services, refunds are not provided.
+              デジタルサービスの性質上、決済完了後の返金には原則対応しておりません。
             </dd>
           </div>
         </section>
 
-        {/* 連絡 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Email <span style={jaStyle}>メール</span>
-            </dt>
+            <dt style={dtStyle}>メールアドレス</dt>
             <dd style={ddStyle}>
-              support@classmate-app.com
+              classmate.app.team@gmail.com
             </dd>
           </div>
         </section>
 
-        {/* 住所 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Address <span style={jaStyle}>所在地</span>
-            </dt>
+            <dt style={dtStyle}>所在地</dt>
             <dd style={ddStyle}>
-              Provided upon request without delay
+              請求があった場合、遅滞なく開示します。
             </dd>
           </div>
         </section>
 
-        {/* 電話 */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Phone <span style={jaStyle}>電話番号</span>
-            </dt>
+            <dt style={dtStyle}>電話番号</dt>
             <dd style={ddStyle}>
-              Provided upon request without delay
+              請求があった場合、遅滞なく開示します。
             </dd>
           </div>
         </section>
 
-        {/* ▼ 名前だけ完全分離（目立たない最下部） */}
+        {/* ▼ 一番下に名前（目立たない） */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
-            <dt style={dtStyle}>
-              Operator <span style={jaStyle}>事業者</span>
-            </dt>
+            <dt style={dtStyle}>販売事業者</dt>
             <dd style={ddStyle}>
               吉川 弘晃
             </dd>
