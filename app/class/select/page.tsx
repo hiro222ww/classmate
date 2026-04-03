@@ -435,8 +435,8 @@ export default function ClassSelectPage() {
     return true;
   }
 
-  async function joinMatchedBoard(b: EntryBoard) {
-    console.log("[select] clicked board =", b);
+  async function joinMatchedBoard(b: EntryBoard, forcedClassId?: string) {
+    console.log("[select] clicked board =", b, "forcedClassId =", forcedClassId);
 
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
@@ -453,7 +453,9 @@ export default function ClassSelectPage() {
 
     try {
       if (!hasBoardAccess(b)) {
-        alert(`このボードは ${tierName(b.monthly_price)}（¥${b.monthly_price}/月）以上が必要です`);
+        alert(
+          `このボードは ${tierName(b.monthly_price)}（¥${b.monthly_price}/月）以上が必要です`
+        );
         return;
       }
 
@@ -473,6 +475,7 @@ export default function ClassSelectPage() {
           worldKey: b.world_key ?? "default",
           capacity: 5,
           preferJoinedClass: false,
+          classId: forcedClassId ?? undefined,
         }),
         cache: "no-store",
       });
@@ -514,6 +517,7 @@ export default function ClassSelectPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sessionId,
+          classId,
           deviceId,
           name: displayName,
           capacity: 5,
@@ -628,7 +632,9 @@ export default function ClassSelectPage() {
             color: profileMissing ? "#666" : locked ? "#111" : "#fff",
             fontWeight: 900,
             cursor:
-              busy || loading || !deviceId || profileMissing ? "not-allowed" : "pointer",
+              busy || loading || !deviceId || profileMissing
+                ? "not-allowed"
+                : "pointer",
           }}
         >
           {profileMissing
@@ -886,7 +892,9 @@ export default function ClassSelectPage() {
             <input
               type="number"
               value={prefs.min_age}
-              onChange={(e) => setPrefs((p) => ({ ...p, min_age: Number(e.target.value) }))}
+              onChange={(e) =>
+                setPrefs((p) => ({ ...p, min_age: Number(e.target.value) }))
+              }
               style={{ width: "100%", padding: 10, borderRadius: 10, marginTop: 6 }}
             />
           </label>
@@ -895,7 +903,9 @@ export default function ClassSelectPage() {
             <input
               type="number"
               value={prefs.max_age}
-              onChange={(e) => setPrefs((p) => ({ ...p, max_age: Number(e.target.value) }))}
+              onChange={(e) =>
+                setPrefs((p) => ({ ...p, max_age: Number(e.target.value) }))
+              }
               style={{ width: "100%", padding: 10, borderRadius: 10, marginTop: 6 }}
             />
           </label>

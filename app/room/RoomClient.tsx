@@ -43,6 +43,7 @@ type SessionStatusResponse = {
   ok?: boolean;
   session?: {
     id: string;
+    class_id?: string;
     topic: string;
     status: "forming" | "active" | "closed";
     capacity: number;
@@ -255,9 +256,14 @@ export default function RoomClient() {
       return;
     }
 
-    const roomUrl = classId
-      ? `/room?autojoin=1&classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(sessionId)}`
-      : `/room?sessionId=${encodeURIComponent(sessionId)}`;
+    if (!classId) {
+      setErr("classId required");
+      return;
+    }
+
+    const roomUrl =
+      `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
+      `&sessionId=${encodeURIComponent(sessionId)}`;
 
     pushRecentClass(
       {
@@ -271,6 +277,7 @@ export default function RoomClient() {
 
   useEffect(() => {
     if (!sessionId) return;
+    if (!classId) return;
     if (!deviceIdRef.current) return;
     if (!displayNameRef.current) return;
     if (joinedSessionIdRef.current === sessionId) return;
@@ -290,6 +297,7 @@ export default function RoomClient() {
         },
         body: JSON.stringify({
           sessionId,
+          classId,
           deviceId,
           name,
           capacity: 5,
@@ -327,15 +335,16 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [sessionId, classId]);
 
   useEffect(() => {
     if (!sessionId) return;
+    if (!classId) return;
 
     let cancelled = false;
 
     async function fetchStatus() {
-      const qs = new URLSearchParams({ sessionId });
+      const qs = new URLSearchParams({ sessionId, classId });
 
       const res = await fetch(`/api/session/status?${qs.toString()}`, {
         cache: "no-store",
@@ -380,7 +389,7 @@ export default function RoomClient() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [sessionId]);
+  }, [sessionId, classId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -494,9 +503,11 @@ export default function RoomClient() {
       subtitle={subtitle}
       onBack={() => router.push("/class/select")}
       onStartCall={() =>
-        router.push(`/call?sessionId=${encodeURIComponent(sessionId)}`)
+        router.push(
+          `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`
+        )
       }
-      startDisabled={!sessionId}
+      startDisabled={!sessionId || !classId}
       startLabel="通話開始"
     >
       <div style={{ display: "grid", gap: 12 }}>

@@ -181,6 +181,7 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as any;
 
     const sessionIdRaw = String(body.sessionId ?? "").trim();
+    const classIdRaw = String(body.classId ?? "").trim();
     const rawName = String(body.name ?? "").trim();
     const name = sanitizeDisplayName(rawName);
     const deviceId = String(body.deviceId ?? "").trim();
@@ -200,6 +201,13 @@ export async function POST(req: Request) {
       );
     }
 
+    if (!classIdRaw) {
+      return NextResponse.json(
+        { ok: false, error: "classId required" },
+        { status: 400 }
+      );
+    }
+
     if (!sessionIdRaw) {
       return NextResponse.json(
         {
@@ -213,6 +221,13 @@ export async function POST(req: Request) {
     if (!isUuid(sessionIdRaw)) {
       return NextResponse.json(
         { ok: false, error: "sessionId must be uuid" },
+        { status: 400 }
+      );
+    }
+
+    if (!isUuid(classIdRaw)) {
+      return NextResponse.json(
+        { ok: false, error: "classId must be uuid" },
         { status: 400 }
       );
     }
@@ -236,6 +251,20 @@ export async function POST(req: Request) {
 
     const session = ensured.session;
 
+    // class 整合チェック（最重要）
+    if (String(session.class_id ?? "").trim() !== classIdRaw) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_class_mismatch",
+          sessionId: sessionIdRaw,
+          classId: classIdRaw,
+          sessionClassId: String(session.class_id ?? "").trim(),
+        },
+        { status: 400 }
+      );
+    }
+
     // 1. ゴースト削除
     await cleanupGhostMembers(sessionIdRaw);
 
@@ -255,12 +284,19 @@ export async function POST(req: Request) {
         ? session.capacity
         : resolvedCapacity;
 
-    const { data: existingMine } = await supabaseAdmin
+    const { data: existingMine, error: existingMineErr } = await supabaseAdmin
       .from("session_members")
       .select("device_id")
       .eq("session_id", sessionIdRaw)
       .eq("device_id", deviceId)
       .maybeSingle();
+
+    if (existingMineErr) {
+      return NextResponse.json(
+        { ok: false, error: existingMineErr.message },
+        { status: 500 }
+      );
+    }
 
     const alreadyInSession = !!existingMine;
 
@@ -292,7 +328,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       sessionId: sessionIdRaw,
-      classId: session.class_id,
+      classId: classIdRaw,
       topic: session.topic || "クラス",
       capacity: actualCapacity,
       memberCount: countedAfter.ok ? countedAfter.count : 1,

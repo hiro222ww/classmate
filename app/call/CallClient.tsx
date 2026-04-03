@@ -186,19 +186,26 @@ function useBoardSounds() {
   const srcRef = useRef<AudioBufferSourceNode | null>(null);
   const chalkGainRef = useRef<GainNode | null>(null);
   const bpRef = useRef<BiquadFilterNode | null>(null);
+  const hpRef = useRef<BiquadFilterNode | null>(null);
+  const lpRef = useRef<BiquadFilterNode | null>(null);
 
   const lfoRef = useRef<OscillatorNode | null>(null);
   const lfoGainRef = useRef<GainNode | null>(null);
 
+  const bodyOscRef = useRef<OscillatorNode | null>(null);
+  const bodyGainRef = useRef<GainNode | null>(null);
+
   const ensure = () => {
     if (ctxRef.current) return;
-    const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as any;
+
+    const Ctx = (window.AudioContext ||
+      (window as any).webkitAudioContext) as typeof AudioContext | undefined;
     if (!Ctx) return;
 
     const ctx = new Ctx();
 
     const master = ctx.createGain();
-    master.gain.value = 0.9;
+    master.gain.value = 0.92;
     master.connect(ctx.destination);
 
     ctxRef.current = ctx;
@@ -208,7 +215,9 @@ function useBoardSounds() {
   const resumeIfNeeded = () => {
     const ctx = ctxRef.current;
     if (!ctx) return;
-    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    if (ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
   };
 
   const startIfNeeded = () => {
@@ -223,7 +232,10 @@ function useBoardSounds() {
     const bufferSize = Math.floor(ctx.sampleRate * 2.0);
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * 0.48;
+    }
 
     const src = ctx.createBufferSource();
     src.buffer = buffer;
@@ -231,26 +243,33 @@ function useBoardSounds() {
 
     const hp = ctx.createBiquadFilter();
     hp.type = "highpass";
-    hp.frequency.value = 650;
+    hp.frequency.value = 620;
 
     const bp = ctx.createBiquadFilter();
     bp.type = "bandpass";
-    bp.frequency.value = 2600;
-    bp.Q.value = 0.9;
+    bp.frequency.value = 2400;
+    bp.Q.value = 1.2;
 
     const lp = ctx.createBiquadFilter();
     lp.type = "lowpass";
-    lp.frequency.value = 9500;
+    lp.frequency.value = 9000;
 
     const chalkGain = ctx.createGain();
     chalkGain.gain.value = 0.0;
 
     const lfo = ctx.createOscillator();
     lfo.type = "triangle";
-    lfo.frequency.value = 16;
+    lfo.frequency.value = 17;
 
     const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.12;
+    lfoGain.gain.value = 0.1;
+
+    const bodyOsc = ctx.createOscillator();
+    bodyOsc.type = "sine";
+    bodyOsc.frequency.value = 185;
+
+    const bodyGain = ctx.createGain();
+    bodyGain.gain.value = 0.0;
 
     lfo.connect(lfoGain);
     lfoGain.connect(chalkGain.gain);
@@ -261,14 +280,22 @@ function useBoardSounds() {
     lp.connect(chalkGain);
     chalkGain.connect(master);
 
+    bodyOsc.connect(bodyGain);
+    bodyGain.connect(master);
+
     src.start();
     lfo.start();
+    bodyOsc.start();
 
     srcRef.current = src;
     chalkGainRef.current = chalkGain;
     bpRef.current = bp;
+    hpRef.current = hp;
+    lpRef.current = lp;
     lfoRef.current = lfo;
     lfoGainRef.current = lfoGain;
+    bodyOscRef.current = bodyOsc;
+    bodyGainRef.current = bodyGain;
   };
 
   const dispose = () => {
@@ -278,6 +305,9 @@ function useBoardSounds() {
     try {
       lfoRef.current?.stop();
     } catch {}
+    try {
+      bodyOscRef.current?.stop();
+    } catch {}
 
     try {
       srcRef.current?.disconnect();
@@ -286,71 +316,179 @@ function useBoardSounds() {
       lfoRef.current?.disconnect();
     } catch {}
     try {
+      bodyOscRef.current?.disconnect();
+    } catch {}
+    try {
       chalkGainRef.current?.disconnect();
     } catch {}
     try {
       bpRef.current?.disconnect();
     } catch {}
     try {
+      hpRef.current?.disconnect();
+    } catch {}
+    try {
+      lpRef.current?.disconnect();
+    } catch {}
+    try {
       lfoGainRef.current?.disconnect();
+    } catch {}
+    try {
+      bodyGainRef.current?.disconnect();
     } catch {}
 
     srcRef.current = null;
     lfoRef.current = null;
+    bodyOscRef.current = null;
     chalkGainRef.current = null;
     bpRef.current = null;
+    hpRef.current = null;
+    lpRef.current = null;
     lfoGainRef.current = null;
+    bodyGainRef.current = null;
 
     const ctx = ctxRef.current;
     ctxRef.current = null;
     masterRef.current = null;
 
     try {
-      ctx?.close();
+      void ctx?.close();
     } catch {}
   };
 
   const chalkStart = () => {
     startIfNeeded();
+
     const ctx = ctxRef.current;
     const g = chalkGainRef.current;
-    if (!ctx || !g) return;
+    const body = bodyGainRef.current;
+    if (!ctx || !g || !body) return;
 
     const t = ctx.currentTime;
+
     g.gain.cancelScheduledValues(t);
-    g.gain.setTargetAtTime(0.03, t, 0.02);
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.setTargetAtTime(0.028, t, 0.018);
+
+    body.gain.cancelScheduledValues(t);
+    body.gain.setValueAtTime(body.gain.value, t);
+    body.gain.setTargetAtTime(0.006, t, 0.03);
   };
 
   const chalkMove = (speed01: number, pressure01: number) => {
     startIfNeeded();
+
     const ctx = ctxRef.current;
     const g = chalkGainRef.current;
     const bp = bpRef.current;
+    const hp = hpRef.current;
+    const lp = lpRef.current;
     const lfoG = lfoGainRef.current;
-    if (!ctx || !g || !bp || !lfoG) return;
+    const body = bodyGainRef.current;
+
+    if (!ctx || !g || !bp || !hp || !lp || !lfoG || !body) return;
 
     const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
     const s = clamp01(speed01);
     const p = clamp01(pressure01);
 
-    const amp = 0.015 + 0.10 * s + 0.14 * p;
-    const f = 2100 + 2600 * s - 900 * p;
-    const gateDepth = 0.08 + 0.35 * p;
+    const jitter = 0.92 + Math.random() * 0.16;
+
+    const amp = 0.012 + 0.06 * s + 0.12 * p;
+    const center = (1900 + 2900 * s - 850 * p) * jitter;
+    const hpFreq = 500 + 450 * s;
+    const lpFreq = 7000 + 2200 * (1 - p);
+    const gateDepth = 0.06 + 0.28 * p + 0.08 * (1 - s);
+    const bodyAmp = 0.002 + 0.014 * p + 0.004 * (1 - s);
 
     const t = ctx.currentTime;
-    bp.frequency.setTargetAtTime(f, t, 0.03);
-    lfoG.gain.setTargetAtTime(gateDepth, t, 0.05);
-    g.gain.setTargetAtTime(amp, t, 0.02);
+
+    bp.frequency.setTargetAtTime(center, t, 0.02);
+    bp.Q.setTargetAtTime(0.8 + 1.8 * p, t, 0.03);
+    hp.frequency.setTargetAtTime(hpFreq, t, 0.03);
+    lp.frequency.setTargetAtTime(lpFreq, t, 0.03);
+
+    lfoG.gain.setTargetAtTime(gateDepth, t, 0.04);
+    g.gain.setTargetAtTime(amp, t, 0.018);
+
+    body.gain.setTargetAtTime(bodyAmp, t, 0.04);
   };
 
   const chalkEnd = () => {
     const ctx = ctxRef.current;
     const g = chalkGainRef.current;
-    if (!ctx || !g) return;
+    const body = bodyGainRef.current;
+    if (!ctx || !g || !body) return;
 
     const t = ctx.currentTime;
+
     g.gain.cancelScheduledValues(t);
-    g.gain.setTargetAtTime(0.0, t, 0.03);
+    g.gain.setValueAtTime(g.gain.value, t);
+    g.gain.setTargetAtTime(0.0, t, 0.035);
+
+    body.gain.cancelScheduledValues(t);
+    body.gain.setValueAtTime(body.gain.value, t);
+    body.gain.setTargetAtTime(0.0, t, 0.05);
+  };
+
+  const contactTick = (strength = 1) => {
+    ensure();
+    const ctx = ctxRef.current;
+    const master = masterRef.current;
+    if (!ctx || !master) return;
+    resumeIfNeeded();
+
+    const t0 = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const bp = ctx.createBiquadFilter();
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(720, t0);
+    osc.frequency.exponentialRampToValueAtTime(320, t0 + 0.03);
+
+    bp.type = "bandpass";
+    bp.frequency.value = 1100;
+    bp.Q.value = 1.5;
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.035 * strength, t0 + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
+
+    osc.connect(bp);
+    bp.connect(gain);
+    gain.connect(master);
+
+    osc.start(t0);
+    osc.stop(t0 + 0.05);
+  };
+
+  const releaseTick = (strength = 1) => {
+    ensure();
+    const ctx = ctxRef.current;
+    const master = masterRef.current;
+    if (!ctx || !master) return;
+    resumeIfNeeded();
+
+    const t0 = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(480, t0);
+    osc.frequency.exponentialRampToValueAtTime(260, t0 + 0.025);
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.012 * strength, t0 + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.03);
+
+    osc.connect(gain);
+    gain.connect(master);
+
+    osc.start(t0);
+    osc.stop(t0 + 0.035);
   };
 
   const konkon = (strength = 1) => {
@@ -368,7 +506,7 @@ function useBoardSounds() {
     o1.frequency.setValueAtTime(240, t0);
     o1.frequency.exponentialRampToValueAtTime(140, t0 + 0.06);
     g1.gain.setValueAtTime(0.0001, t0);
-    g1.gain.exponentialRampToValueAtTime(0.18 * strength, t0 + 0.01);
+    g1.gain.exponentialRampToValueAtTime(0.16 * strength, t0 + 0.01);
     g1.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
     o1.connect(g1);
     g1.connect(master);
@@ -378,18 +516,89 @@ function useBoardSounds() {
     o2.type = "triangle";
     o2.frequency.setValueAtTime(1200, t0);
     g2.gain.setValueAtTime(0.0001, t0);
-    g2.gain.exponentialRampToValueAtTime(0.05 * strength, t0 + 0.005);
+    g2.gain.exponentialRampToValueAtTime(0.045 * strength, t0 + 0.005);
     g2.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.03);
     o2.connect(g2);
     g2.connect(master);
 
+    const noiseBuf = ctx.createBuffer(
+      1,
+      Math.floor(ctx.sampleRate * 0.02),
+      ctx.sampleRate
+    );
+    const ch = noiseBuf.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) {
+      ch[i] = (Math.random() * 2 - 1) * 0.25;
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+
+    const ng = ctx.createGain();
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 900;
+
+    ng.gain.setValueAtTime(0.0001, t0);
+    ng.gain.exponentialRampToValueAtTime(0.028 * strength, t0 + 0.003);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.025);
+
+    noise.connect(hp);
+    hp.connect(ng);
+    ng.connect(master);
+
     o1.start(t0);
     o2.start(t0);
+    noise.start(t0);
+
     o1.stop(t0 + 0.11);
     o2.stop(t0 + 0.04);
+    noise.stop(t0 + 0.025);
   };
 
-  return { chalkStart, chalkMove, chalkEnd, konkon, dispose };
+  const squeak = (amount = 1) => {
+    ensure();
+    const ctx = ctxRef.current;
+    const master = masterRef.current;
+    if (!ctx || !master) return;
+    resumeIfNeeded();
+
+    const t0 = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const bp = ctx.createBiquadFilter();
+
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(2200, t0);
+    osc.frequency.exponentialRampToValueAtTime(3200, t0 + 0.045);
+
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(2700, t0);
+    bp.Q.value = 8;
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.015 * amount, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.055);
+
+    osc.connect(bp);
+    bp.connect(gain);
+    gain.connect(master);
+
+    osc.start(t0);
+    osc.stop(t0 + 0.06);
+  };
+
+  return {
+    chalkStart,
+    chalkMove,
+    chalkEnd,
+    konkon,
+    squeak,
+    contactTick,
+    releaseTick,
+    dispose,
+  };
 }
 
 /** ===== 共有黒板 ===== */

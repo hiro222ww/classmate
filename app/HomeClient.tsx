@@ -138,17 +138,18 @@ export default function HomeClient() {
       const deviceId = getOrCreateDeviceId();
 
       const res = await fetch("/api/class/match-join", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId,
-          topicKey: target.topic_key,
-          worldKey: target.world_key ?? "default",
-          capacity: 5,
-          preferJoinedClass: true,
-        }),
-        cache: "no-store",
-      });
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    deviceId,
+    classId: target.class_id || target.id,
+    topicKey: target.topic_key,
+    worldKey: target.world_key ?? "default",
+    capacity: 5,
+    preferJoinedClass: true,
+  }),
+  cache: "no-store",
+});
 
       const json = await readJsonSafe(res);
       console.log("[home openClass] match-join response =", json);

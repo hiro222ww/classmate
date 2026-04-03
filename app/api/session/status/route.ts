@@ -36,10 +36,18 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const sessionIdRaw = (searchParams.get("sessionId") ?? "").trim();
+    const classIdRaw = (searchParams.get("classId") ?? "").trim();
 
     if (!sessionIdRaw) {
       return NextResponse.json(
         { ok: false, error: "missing_sessionId" },
+        { status: 400 }
+      );
+    }
+
+    if (!classIdRaw) {
+      return NextResponse.json(
+        { ok: false, error: "missing_classId" },
         { status: 400 }
       );
     }
@@ -54,11 +62,21 @@ export async function GET(req: Request) {
       );
     }
 
+    if (!isUuid(classIdRaw)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `invalid_classId (uuid required): ${classIdRaw}`,
+        },
+        { status: 400 }
+      );
+    }
+
     const sb = admin();
 
     const s = await sb
       .from("sessions")
-      .select("id, topic, status, capacity, created_at")
+      .select("id, class_id, topic, status, capacity, created_at")
       .eq("id", sessionIdRaw)
       .maybeSingle();
 
@@ -70,18 +88,23 @@ export async function GET(req: Request) {
     }
 
     if (!s.data) {
-      return NextResponse.json({
-        ok: true,
-        session: {
-          id: sessionIdRaw,
-          topic: "",
-          status: "forming",
-          capacity: 5,
-          created_at: null,
+      return NextResponse.json(
+        { ok: false, error: "session_not_found" },
+        { status: 404 }
+      );
+    }
+
+    if (String(s.data.class_id ?? "").trim() !== classIdRaw) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_class_mismatch",
+          sessionId: sessionIdRaw,
+          classId: classIdRaw,
+          sessionClassId: String(s.data.class_id ?? "").trim(),
         },
-        members: [],
-        memberCount: 0,
-      });
+        { status: 400 }
+      );
     }
 
     const m = await sb
@@ -134,6 +157,7 @@ export async function GET(req: Request) {
       ok: true,
       session: {
         id: String(s.data.id),
+        class_id: String(s.data.class_id ?? ""),
         topic: String(s.data.topic ?? "").trim(),
         status: String(s.data.status ?? "forming"),
         capacity: Number(s.data.capacity ?? 5),

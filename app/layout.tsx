@@ -1,8 +1,10 @@
-import "./globals.css";
+import type { Metadata } from "next";
 import Link from "next/link";
+import "./globals.css";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "classmate",
+  description: "大人になっても自然と仲間ができる場所",
 };
 
 export default function RootLayout({
@@ -12,32 +14,47 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja">
-      <body>
-        {children}
+      <body
+        style={{
+          margin: 0,
+          background: "#fff",
+          color: "#111",
+          fontFamily:
+            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+        }}
+      >
+        {/* ▼ メインコンテンツ */}
+        <div style={{ minHeight: "100vh" }}>{children}</div>
 
+        {/* ▼ フッター（控えめ・Stripe対策OK） */}
         <footer
           style={{
-            marginTop: 40,
-            padding: 20,
-            textAlign: "center",
-            fontSize: 12,
-            color: "#666",
+            padding: "24px 16px",
             borderTop: "1px solid #e5e7eb",
+            fontSize: 12,
+            color: "#6b7280",
+            textAlign: "center",
+            background: "#fff",
           }}
         >
-          <nav
+          <div
             style={{
               display: "flex",
-              justifyContent: "center",
               gap: 16,
+              justifyContent: "center",
               flexWrap: "wrap",
             }}
           >
-            <Link href="/about">サービスについて</Link>
-            <Link href="/terms">利用規約</Link>
-            <Link href="/about">返金ポリシー</Link>
-            <a href="mailto:classmate.app.team@gmail.com">お問い合わせ</a>
-          </nav>
+            <Link href="/about">About</Link>
+            <Link href="/terms">Terms</Link>
+            <Link href="/legal/commercial-disclosure">
+              Commercial disclosure
+            </Link>
+          </div>
+
+          <div style={{ marginTop: 8 }}>
+            © {new Date().getFullYear()} classmate
+          </div>
         </footer>
       </body>
     </html>
