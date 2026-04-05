@@ -2,8 +2,16 @@
 
 export const DEVICE_ID_KEY = "classmate_device_id";
 
+function isBrowser() {
+  return typeof window !== "undefined";
+}
+
+function isDevMode() {
+  return process.env.NODE_ENV !== "production";
+}
+
 export function getOrCreateDeviceId(): string {
-  if (typeof window === "undefined") return "";
+  if (!isBrowser()) return "";
 
   const existing = localStorage.getItem(DEVICE_ID_KEY);
   if (existing && existing.trim()) {
@@ -18,12 +26,27 @@ export function getOrCreateDeviceId(): string {
   return id;
 }
 
+/**
+ * 🔥 ここだけ変える
+ */
 export function getDeviceId(): string {
-  if (typeof window === "undefined") return "";
-  return (localStorage.getItem(DEVICE_ID_KEY) || "").trim();
+  if (!isBrowser()) return "";
+
+  // devモードだけ仮想ユーザー有効
+  if (isDevMode()) {
+    const params = new URLSearchParams(window.location.search);
+    const dev = (params.get("dev") ?? "").trim();
+
+    if (dev) {
+      return `test-device-${dev}`;
+    }
+  }
+
+  // 通常
+  return getOrCreateDeviceId();
 }
 
 export function clearDeviceId() {
-  if (typeof window === "undefined") return;
+  if (!isBrowser()) return;
   localStorage.removeItem(DEVICE_ID_KEY);
 }

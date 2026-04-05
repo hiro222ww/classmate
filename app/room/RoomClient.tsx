@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 
 type MemberRow = {
@@ -185,7 +185,7 @@ export default function RoomClient() {
   }
 
   useEffect(() => {
-    deviceIdRef.current = getOrCreateDeviceId();
+    deviceIdRef.current = getDeviceId();
   }, []);
 
   useEffect(() => {

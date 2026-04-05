@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 
 type World = {
@@ -263,7 +263,7 @@ export default function ClassSelectPage() {
   }
 
   useEffect(() => {
-    const id = getOrCreateDeviceId();
+    const id = getDeviceId();
     setDeviceId(id);
 
     (async () => {
