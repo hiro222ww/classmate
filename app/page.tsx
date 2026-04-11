@@ -1,4 +1,5 @@
 // app/page.tsx
+import { Suspense } from "react";
 import HomeClient from "./HomeClient";
 
 export default function HomePage() {
@@ -11,7 +12,9 @@ export default function HomePage() {
       </header>
 
       <section style={{ marginTop: 18 }}>
-        <HomeClient />
+        <Suspense fallback={<p>読み込み中...</p>}>
+          <HomeClient />
+        </Suspense>
       </section>
     </main>
   );
