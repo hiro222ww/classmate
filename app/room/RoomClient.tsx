@@ -61,7 +61,7 @@ function normalizeName(v: string | undefined) {
 }
 
 function getAvatarUrl(photoPath?: string | null) {
-  const normalized = String(photoPath ?? "").trim();
+  let normalized = String(photoPath ?? "").trim();
 
   if (!normalized) return "/default-avatar.jpg";
 
@@ -70,6 +70,14 @@ function getAvatarUrl(photoPath?: string | null) {
     normalized.startsWith("https://")
   ) {
     return normalized;
+  }
+
+  if (normalized.startsWith("profile-photos/")) {
+    normalized = normalized.replace(/^profile-photos\//, "");
+  }
+
+  if (normalized.startsWith("avatars/")) {
+    normalized = normalized.replace(/^avatars\//, "");
   }
 
   const { data } = supabase.storage
@@ -214,15 +222,6 @@ function dedupeMessages(list: RoomMessage[]): RoomMessage[] {
   );
 }
 
-async function readJsonBestEffort<T>(res: Response): Promise<T | null> {
-  const text = await res.text().catch(() => "");
-  try {
-    return text ? (JSON.parse(text) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
 function formatTime(v: string) {
   if (!v) return "";
   const d = new Date(v);
@@ -343,9 +342,9 @@ export default function RoomClient() {
           return;
         }
 
-        const json = (await res.json()) as ProfileResponse | null;
+        const data = (await res.json()) as ProfileResponse | null;
         const canonical =
-          normalizeName(json?.display_name) ||
+          normalizeName(data?.display_name) ||
           readStoredDisplayName(deviceId) ||
           "参加者";
 
@@ -433,11 +432,18 @@ export default function RoomClient() {
         cache: "no-store",
       });
 
-      const json = await readJsonBestEffort<SessionJoinResponse>(res);
+      const rawText = await res.text().catch(() => "");
+      let json: SessionJoinResponse | null = null;
+
+      try {
+        json = rawText ? (JSON.parse(rawText) as SessionJoinResponse) : null;
+      } catch {
+        json = null;
+      }
 
       if (!res.ok || !json?.ok) {
         joinedSessionIdRef.current = null;
-        throw new Error(json?.error || "session_join_failed");
+        throw new Error(json?.error || rawText || "session_join_failed");
       }
 
       if (cancelled) return;
@@ -479,21 +485,26 @@ export default function RoomClient() {
           cache: "no-store",
         });
 
-        const json = await readJsonBestEffort<SessionStatusResponse>(res);
+        const rawText = await res.text().catch(() => "");
+        let json: SessionStatusResponse | null = null;
+
+        try {
+          json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
+        } catch {
+          json = null;
+        }
 
         if (!res.ok || !json?.ok) {
           if (!cancelled) {
-            const text = await res.clone().text().catch(() => "");
-
-console.error("[room] status fetch failed", {
-  url: `/api/session/status?${qs.toString()}`,
-  status: res.status,
-  statusText: res.statusText,
-  json,
-  rawText: text,
-  sessionId,
-  classId,
-});
+            console.error("[room] status fetch failed", {
+              url: `/api/session/status?${qs.toString()}`,
+              status: res.status,
+              statusText: res.statusText,
+              json,
+              rawText,
+              sessionId,
+              classId,
+            });
             setSoftConnectionError("status");
           }
           return;
@@ -502,6 +513,7 @@ console.error("[room] status fetch failed", {
         if (cancelled) return;
 
         const incomingMembers = Array.isArray(json.members) ? json.members : [];
+        console.log("[members raw]", incomingMembers);
         setMembers(incomingMembers);
 
         if (json.session?.topic) {
@@ -554,17 +566,24 @@ console.error("[room] status fetch failed", {
         if (cancelled) return;
 
         if (error) {
-  console.error("[room] messages fetch failed", {
-    message: error?.message ?? "no_message",
-    details: error?.details ?? "no_details",
-    hint: error?.hint ?? "no_hint",
-    code: error?.code ?? "no_code",
-    sessionId,
-  });
+          const message =
+            typeof error?.message === "string" ? error.message : "no_message";
+          const details =
+            typeof error?.details === "string" ? error.details : "no_details";
+          const hint =
+            typeof error?.hint === "string" ? error.hint : "no_hint";
+          const code =
+            typeof error?.code === "string" ? error.code : "no_code";
 
-  setSoftConnectionError("messages");
-  return;
-}
+          console.log("[room] messages fetch failed message =", message);
+          console.log("[room] messages fetch failed details =", details);
+          console.log("[room] messages fetch failed hint =", hint);
+          console.log("[room] messages fetch failed code =", code);
+          console.log("[room] messages fetch failed sessionId =", sessionId);
+
+          setSoftConnectionError("messages");
+          return;
+        }
 
         setMsgs(dedupeMessages((data ?? []) as RoomMessage[]));
         clearSoftConnectionError("messages");
@@ -766,33 +785,34 @@ console.error("[room] status fetch failed", {
                         }}
                       >
                         <img
-  src={avatarUrl}
-  alt={label}
-  onLoad={() => {
-    console.log("[avatar ok]", {
-      label,
-      photo_path: m.photo_path,
-      avatarUrl,
-    });
-  }}
-  onError={(e) => {
-    console.log("[avatar ng]", {
-      label,
-      photo_path: m.photo_path,
-      avatarUrl,
-    });
-    e.currentTarget.src = "/default-avatar.png";
-  }}
-  style={{
-    width: 42,
-    height: 42,
-    borderRadius: "9999px",
-    objectFit: "cover",
-    background: "#e5e7eb",
-    border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
-    flexShrink: 0,
-  }}
-/>
+                          src={avatarUrl}
+                          alt={label}
+                          onLoad={() => {
+                            console.log("[avatar ok]", {
+                              label,
+                              photo_path: m.photo_path,
+                              avatarUrl,
+                            });
+                          }}
+                          onError={(e) => {
+                            console.log("[avatar ng]", {
+                              label,
+                              photo_path: m.photo_path,
+                              avatarUrl,
+                            });
+                            e.currentTarget.onerror = null;
+                            e.currentTarget.src = "/default-avatar.jpg";
+                          }}
+                          style={{
+                            width: 42,
+                            height: 42,
+                            borderRadius: "9999px",
+                            objectFit: "cover",
+                            background: "#e5e7eb",
+                            border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
+                            flexShrink: 0,
+                          }}
+                        />
 
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div

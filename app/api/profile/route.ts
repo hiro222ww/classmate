@@ -27,7 +27,6 @@ export async function GET(req: Request) {
 }
 
 function calcAge(birthDateISO: string): number | null {
-  // birthDateISO: YYYY-MM-DD を想定（date input由来）
   if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDateISO)) return null;
 
   const birth = new Date(birthDateISO);
@@ -43,9 +42,6 @@ function calcAge(birthDateISO: string): number | null {
 /**
  * プロフィール保存（写真含む）
  * POST /api/profile
- *
- * ✅ 現在は「18歳以上のみ」利用可
- * - guardian_consent は受け取るが、18未満は保存不可（将来に備えてUIは残せる）
  */
 export async function POST(req: Request) {
   const form = await req.formData();
@@ -55,7 +51,6 @@ export async function POST(req: Request) {
   const birth_date = String(form.get("birth_date") ?? "");
   const gender = String(form.get("gender") ?? "");
 
-  // 将来用に受け取る（今は使わない）
   const guardian_consent =
     String(form.get("guardian_consent") ?? "false") === "true";
 
@@ -67,26 +62,34 @@ export async function POST(req: Request) {
     return new NextResponse("invalid gender", { status: 400 });
   }
 
-  // --- 年齢チェック（サーバ側） ---
   const age = calcAge(birth_date);
   if (age === null) {
     return new NextResponse("invalid birth_date", { status: 400 });
   }
 
-  // ✅ 今は成人限定（ここが変更点）
   if (age < 18) {
-    // guardian_consent が true でも通さない
-    //（将来、未成年解放する段階でここを緩める）
     return new NextResponse("adults_only", { status: 403 });
   }
 
-  // --- 写真アップロード（任意） ---
-  let photo_path: string | null = null;
+  // 既存プロフィールを先に読む
+  const { data: existingProfile, error: existingError } = await supabaseAdmin
+    .from("user_profiles")
+    .select("photo_path")
+    .eq("device_id", device_id)
+    .maybeSingle();
+
+  if (existingError) {
+    return new NextResponse(existingError.message, { status: 500 });
+  }
+
+  let photo_path: string | null =
+    String(existingProfile?.photo_path ?? "").trim() || null;
+
   const photo = form.get("photo");
 
   if (photo instanceof File && photo.size > 0) {
     const ext = photo.name.split(".").pop()?.toLowerCase() || "jpg";
-    const objectPath = `${device_id}/profile.${ext}`;
+    const objectPath = `${device_id}/profile-${Date.now()}.${ext}`;
     const buffer = await photo.arrayBuffer();
 
     const { error: uploadError } = await supabaseAdmin.storage
@@ -103,14 +106,12 @@ export async function POST(req: Request) {
     photo_path = objectPath;
   }
 
-  // --- upsert ---
   const payload: {
     device_id: string;
     display_name: string;
     birth_date: string;
     gender: string;
     photo_path?: string;
-    // guardian_consent?: boolean;  // DBに保存したいなら後で追加
   } = {
     device_id,
     display_name,
@@ -130,8 +131,10 @@ export async function POST(req: Request) {
     return new NextResponse(error.message, { status: 500 });
   }
 
-  // guardian_consent は今は使ってないが、ログなどに残したいならここで扱える
   void guardian_consent;
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    photo_path: photo_path ?? null,
+  });
 }

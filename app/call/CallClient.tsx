@@ -36,7 +36,7 @@ type SessionStatusResponse = {
 };
 
 function getAvatarUrl(photoPath?: string | null) {
-  const normalized = String(photoPath ?? "").trim();
+  let normalized = String(photoPath ?? "").trim();
 
   if (!normalized) return "/default-avatar.jpg";
 
@@ -45,6 +45,14 @@ function getAvatarUrl(photoPath?: string | null) {
     normalized.startsWith("https://")
   ) {
     return normalized;
+  }
+
+  if (normalized.startsWith("profile-photos/")) {
+    normalized = normalized.replace(/^profile-photos\//, "");
+  }
+
+  if (normalized.startsWith("avatars/")) {
+    normalized = normalized.replace(/^avatars\//, "");
   }
 
   const { data } = supabase.storage
@@ -371,7 +379,20 @@ export default function CallClient() {
                       src={avatarUrl}
                       alt={member.display_name}
                       onError={(e) => {
-                        e.currentTarget.src = "/default-avatar.png";
+                        console.log("[call avatar ng]", {
+                          display_name: member.display_name,
+                          photo_path: member.photo_path,
+                          avatarUrl,
+                        });
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = "/default-avatar.jpg";
+                      }}
+                      onLoad={() => {
+                        console.log("[call avatar ok]", {
+                          display_name: member.display_name,
+                          photo_path: member.photo_path,
+                          avatarUrl,
+                        });
                       }}
                       style={{
                         width: "100%",
