@@ -6,10 +6,12 @@ import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
+import { isDevMode, getDevUserKey } from "@/lib/devMode";
 
 type MemberRow = {
   device_id?: string;
   display_name?: string;
+  photo_path?: string | null;
   joined_at?: string;
 };
 
@@ -58,6 +60,63 @@ function normalizeName(v: string | undefined) {
   return String(v ?? "").trim();
 }
 
+function getAvatarUrl(photoPath?: string | null) {
+  const normalized = String(photoPath ?? "").trim();
+
+  if (!normalized) return "/default-avatar.jpg";
+
+  if (
+    normalized.startsWith("http://") ||
+    normalized.startsWith("https://")
+  ) {
+    return normalized;
+  }
+
+  const { data } = supabase.storage
+    .from("profile-photos")
+    .getPublicUrl(normalized);
+
+  return data?.publicUrl || "/default-avatar.jpg";
+}
+
+function getDisplayNameStorageKeys(deviceId: string) {
+  const normalized = String(deviceId ?? "").trim();
+
+  if (!normalized) {
+    return {
+      scoped: "classmate_display_name",
+      legacy: "display_name",
+    };
+  }
+
+  return {
+    scoped: `classmate_display_name:${normalized}`,
+    legacy: `display_name:${normalized}`,
+  };
+}
+
+function readStoredDisplayName(deviceId: string) {
+  if (typeof window === "undefined") return "";
+
+  const { scoped, legacy } = getDisplayNameStorageKeys(deviceId);
+
+  return (
+    localStorage.getItem(scoped) ||
+    localStorage.getItem(legacy) ||
+    ""
+  ).trim();
+}
+
+function writeStoredDisplayName(deviceId: string, name: string) {
+  if (typeof window === "undefined") return;
+
+  const normalizedName = String(name ?? "").trim();
+  const { scoped, legacy } = getDisplayNameStorageKeys(deviceId);
+
+  localStorage.setItem(scoped, normalizedName);
+  localStorage.setItem(legacy, normalizedName);
+}
+
 function dedupeMembers(
   list: MemberRow[],
   myDeviceId: string,
@@ -72,6 +131,10 @@ function dedupeMembers(
   for (const row of list) {
     const did = String(row.device_id ?? "").trim();
     const name = normalizeName(row.display_name);
+    const photoPath: string | null =
+      row.photo_path && String(row.photo_path).trim()
+        ? String(row.photo_path).trim()
+        : null;
     const joinedAt = String(row.joined_at ?? "").trim();
 
     const isMeByDevice =
@@ -85,23 +148,37 @@ function dedupeMembers(
         me = {
           device_id: did || normalizedMyDeviceId,
           display_name: normalizedMyName || name || "",
+          photo_path: photoPath,
           joined_at: joinedAt,
         };
       } else {
         const prevDid = String(me.device_id ?? "").trim();
         const prevJoinedAt = String(me.joined_at ?? "").trim();
+        const prevPhotoPath: string | null =
+          me.photo_path && String(me.photo_path).trim()
+            ? String(me.photo_path).trim()
+            : null;
 
         if (!prevDid && did) {
           me = {
             device_id: did,
             display_name: normalizedMyName || name || "",
+            photo_path: photoPath || prevPhotoPath,
             joined_at: joinedAt || prevJoinedAt,
           };
         } else if (!prevJoinedAt && joinedAt) {
           me = {
             device_id: me.device_id,
             display_name: me.display_name,
+            photo_path: me.photo_path ?? photoPath,
             joined_at: joinedAt,
+          };
+        } else if (!prevPhotoPath && photoPath) {
+          me = {
+            device_id: me.device_id,
+            display_name: me.display_name,
+            photo_path: photoPath,
+            joined_at: me.joined_at,
           };
         }
       }
@@ -113,6 +190,7 @@ function dedupeMembers(
       others.set(did, {
         device_id: did,
         display_name: name,
+        photo_path: photoPath,
         joined_at: joinedAt,
       });
     }
@@ -164,6 +242,11 @@ export default function RoomClient() {
     (searchParams.get("sessionId") ?? "").trim() ||
     (searchParams.get("session_id") ?? "").trim() ||
     (searchParams.get("session") ?? "").trim();
+  const dev = (searchParams.get("dev") ?? "").trim();
+  const devSuffix = dev ? `&dev=${encodeURIComponent(dev)}` : "";
+  const backToSelectUrl = dev
+    ? `/class/select?dev=${encodeURIComponent(dev)}`
+    : "/class/select";
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [msgs, setMsgs] = useState<RoomMessage[]>([]);
@@ -174,25 +257,75 @@ export default function RoomClient() {
   const [status, setStatus] = useState("forming");
   const [capacity, setCapacity] = useState(5);
 
-  const deviceIdRef = useRef("");
-  const displayNameRef = useRef("");
+  const [deviceId, setDeviceId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
+
   const joinedSessionIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const [showDevBanner, setShowDevBanner] = useState(false);
+  const [devBannerLabel, setDevBannerLabel] = useState("");
+
+  const statusFailCountRef = useRef(0);
+  const messagesFailCountRef = useRef(0);
 
   function scrollToBottom(behavior: ScrollBehavior = "smooth") {
     messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
   }
 
+  function setSoftConnectionError(kind: "status" | "messages") {
+    if (kind === "status") {
+      statusFailCountRef.current += 1;
+      if (statusFailCountRef.current >= 3) {
+        setErr("接続が不安定です。再接続しています…");
+      }
+      return;
+    }
+
+    messagesFailCountRef.current += 1;
+    if (messagesFailCountRef.current >= 3) {
+      setErr("通信状況が不安定です。メッセージ更新を再試行しています…");
+    }
+  }
+
+  function clearSoftConnectionError(kind?: "status" | "messages") {
+    if (!kind || kind === "status") {
+      statusFailCountRef.current = 0;
+    }
+    if (!kind || kind === "messages") {
+      messagesFailCountRef.current = 0;
+    }
+
+    setErr((prev) => {
+      if (
+        prev === "接続が不安定です。再接続しています…" ||
+        prev === "通信状況が不安定です。メッセージ更新を再試行しています…"
+      ) {
+        return "";
+      }
+      return prev;
+    });
+  }
+
   useEffect(() => {
-    deviceIdRef.current = getDeviceId();
-  }, []);
+    const id = getDeviceId();
+    setDeviceId(id);
+  }, [dev]);
+
+  useEffect(() => {
+    const active = isDevMode();
+    const key = getDevUserKey();
+
+    setShowDevBanner(active);
+    setDevBannerLabel(key ? `(${key})` : "");
+  }, [dev]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadProfileName() {
-      const deviceId = deviceIdRef.current;
       if (!deviceId) return;
 
       try {
@@ -203,11 +336,9 @@ export default function RoomClient() {
 
         if (!res.ok) {
           if (!cancelled) {
-            const fallback =
-              localStorage.getItem("classmate_display_name") ||
-              localStorage.getItem("display_name") ||
-              "参加者";
-            displayNameRef.current = fallback === "You" ? "参加者" : fallback;
+            const fallback = readStoredDisplayName(deviceId) || "参加者";
+            const safeName = fallback === "You" ? "参加者" : fallback;
+            setDisplayName(safeName);
           }
           return;
         }
@@ -215,22 +346,19 @@ export default function RoomClient() {
         const json = (await res.json()) as ProfileResponse | null;
         const canonical =
           normalizeName(json?.display_name) ||
-          localStorage.getItem("classmate_display_name") ||
-          localStorage.getItem("display_name") ||
+          readStoredDisplayName(deviceId) ||
           "参加者";
 
         if (!cancelled) {
-          displayNameRef.current = canonical === "You" ? "参加者" : canonical;
-          localStorage.setItem("classmate_display_name", displayNameRef.current);
-          localStorage.setItem("display_name", displayNameRef.current);
+          const safeName = canonical === "You" ? "参加者" : canonical;
+          setDisplayName(safeName);
+          writeStoredDisplayName(deviceId, safeName);
         }
       } catch {
         if (!cancelled) {
-          const fallback =
-            localStorage.getItem("classmate_display_name") ||
-            localStorage.getItem("display_name") ||
-            "参加者";
-          displayNameRef.current = fallback === "You" ? "参加者" : fallback;
+          const fallback = readStoredDisplayName(deviceId) || "参加者";
+          const safeName = fallback === "You" ? "参加者" : fallback;
+          setDisplayName(safeName);
         }
       }
     }
@@ -240,15 +368,11 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [deviceId]);
 
   const visibleMembers = useMemo(() => {
-    return dedupeMembers(
-      members,
-      deviceIdRef.current,
-      displayNameRef.current
-    );
-  }, [members]);
+    return dedupeMembers(members, deviceId, displayName);
+  }, [members, deviceId, displayName]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -263,7 +387,8 @@ export default function RoomClient() {
 
     const roomUrl =
       `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-      `&sessionId=${encodeURIComponent(sessionId)}`;
+      `&sessionId=${encodeURIComponent(sessionId)}` +
+      devSuffix;
 
     pushRecentClass(
       {
@@ -273,21 +398,24 @@ export default function RoomClient() {
       },
       20
     );
-  }, [classId, sessionId, topicTitle]);
+  }, [classId, sessionId, topicTitle, devSuffix]);
+
+  useEffect(() => {
+    joinedSessionIdRef.current = null;
+  }, [sessionId, deviceId]);
 
   useEffect(() => {
     if (!sessionId) return;
     if (!classId) return;
-    if (!deviceIdRef.current) return;
-    if (!displayNameRef.current) return;
+    if (!deviceId) return;
+    if (!displayName) return;
     if (joinedSessionIdRef.current === sessionId) return;
 
     joinedSessionIdRef.current = sessionId;
     let cancelled = false;
 
     async function join() {
-      const deviceId = deviceIdRef.current;
-      const rawName = displayNameRef.current || "参加者";
+      const rawName = displayName || "参加者";
       const name = rawName === "You" ? "参加者" : rawName;
 
       const res = await fetch("/api/session/join", {
@@ -335,7 +463,7 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, classId]);
+  }, [sessionId, classId, deviceId, displayName]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -344,39 +472,57 @@ export default function RoomClient() {
     let cancelled = false;
 
     async function fetchStatus() {
-      const qs = new URLSearchParams({ sessionId, classId });
+      try {
+        const qs = new URLSearchParams({ sessionId, classId });
 
-      const res = await fetch(`/api/session/status?${qs.toString()}`, {
-        cache: "no-store",
-      });
+        const res = await fetch(`/api/session/status?${qs.toString()}`, {
+          cache: "no-store",
+        });
 
-      const json = await readJsonBestEffort<SessionStatusResponse>(res);
+        const json = await readJsonBestEffort<SessionStatusResponse>(res);
 
-      if (!res.ok || !json?.ok) {
-        if (!cancelled) {
-          setErr(json?.error || "status_failed");
+        if (!res.ok || !json?.ok) {
+          if (!cancelled) {
+            const text = await res.clone().text().catch(() => "");
+
+console.error("[room] status fetch failed", {
+  url: `/api/session/status?${qs.toString()}`,
+  status: res.status,
+  statusText: res.statusText,
+  json,
+  rawText: text,
+  sessionId,
+  classId,
+});
+            setSoftConnectionError("status");
+          }
+          return;
         }
-        return;
-      }
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      const incomingMembers = Array.isArray(json.members) ? json.members : [];
-      setMembers(incomingMembers);
+        const incomingMembers = Array.isArray(json.members) ? json.members : [];
+        setMembers(incomingMembers);
 
-      if (json.session?.topic) {
-        setTopicTitle(String(json.session.topic).trim() || "ルーム");
-      }
-      if (json.session?.status) {
-        setStatus(String(json.session.status));
-      }
-      if (Number.isFinite(Number(json.session?.capacity))) {
-        setCapacity(Number(json.session?.capacity));
-      }
+        if (json.session?.topic) {
+          setTopicTitle(String(json.session.topic).trim() || "ルーム");
+        }
+        if (json.session?.status) {
+          setStatus(String(json.session.status));
+        }
+        if (Number.isFinite(Number(json.session?.capacity))) {
+          setCapacity(Number(json.session?.capacity));
+        }
 
-      const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
-      setMemberCount(Math.max(nextCount, 0));
-      setErr("");
+        const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
+        setMemberCount(Math.max(nextCount, 0));
+        clearSoftConnectionError("status");
+      } catch (e) {
+        if (!cancelled) {
+          console.error("[room] status fetch exception", e);
+          setSoftConnectionError("status");
+        }
+      }
     }
 
     void fetchStatus();
@@ -397,21 +543,37 @@ export default function RoomClient() {
     let cancelled = false;
 
     async function loadMessages() {
-      const { data, error } = await supabase
-        .from("room_messages")
-        .select("id, session_id, device_id, display_name, message, created_at")
-        .eq("session_id", sessionId)
-        .order("created_at", { ascending: true })
-        .limit(200);
+      try {
+        const { data, error } = await supabase
+          .from("room_messages")
+          .select("id, session_id, device_id, display_name, message, created_at")
+          .eq("session_id", sessionId)
+          .order("created_at", { ascending: true })
+          .limit(200);
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (error) {
-        setErr(`メッセージ取得失敗: ${error.message}`);
-        return;
+        if (error) {
+  console.error("[room] messages fetch failed", {
+    message: error?.message ?? "no_message",
+    details: error?.details ?? "no_details",
+    hint: error?.hint ?? "no_hint",
+    code: error?.code ?? "no_code",
+    sessionId,
+  });
+
+  setSoftConnectionError("messages");
+  return;
+}
+
+        setMsgs(dedupeMessages((data ?? []) as RoomMessage[]));
+        clearSoftConnectionError("messages");
+      } catch (e) {
+        if (!cancelled) {
+          console.error("[room] messages fetch exception", e);
+          setSoftConnectionError("messages");
+        }
       }
-
-      setMsgs(dedupeMessages((data ?? []) as RoomMessage[]));
     }
 
     void loadMessages();
@@ -435,6 +597,7 @@ export default function RoomClient() {
           if (!row?.id) return;
 
           setMsgs((prev) => dedupeMessages([...prev, row]));
+          clearSoftConnectionError("messages");
         }
       )
       .subscribe();
@@ -462,11 +625,12 @@ export default function RoomClient() {
     const text = draft.trim();
     if (!text || !sessionId) return;
 
-    const deviceId = deviceIdRef.current;
-    const rawName = displayNameRef.current || "参加者";
+    const rawName = displayName || "参加者";
     const name = rawName === "You" ? "参加者" : rawName;
 
-    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimisticId = `local-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
     const optimisticRow: RoomMessage = {
       id: optimisticId,
       session_id: sessionId,
@@ -488,7 +652,8 @@ export default function RoomClient() {
     });
 
     if (error) {
-      setErr(`送信失敗: ${error.message}`);
+      console.error("[room] message send failed", error);
+      setErr("送信に失敗しました。通信状況をご確認ください。");
       setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
       setDraft(text);
       return;
@@ -498,218 +663,321 @@ export default function RoomClient() {
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人 ・ ${status}`;
 
   return (
-    <ChalkboardRoomShell
-      title={topicTitle || "ルーム"}
-      subtitle={subtitle}
-      onBack={() => router.push("/class/select")}
-      onStartCall={() =>
-        router.push(
-          `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`
-        )
-      }
-      startDisabled={!sessionId || !classId}
-      startLabel="通話開始"
-    >
-      <div style={{ display: "grid", gap: 12 }}>
-        {err ? (
-          <div
-            style={{
-              border: "1px solid #fecaca",
-              background: "#fef2f2",
-              color: "#991b1b",
-              borderRadius: 12,
-              padding: 10,
-              fontWeight: 700,
-            }}
-          >
-            {err}
-          </div>
-        ) : null}
-
+    <>
+      {showDevBanner && (
         <div
           style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
-            padding: 12,
-            background: "#fff",
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: 28,
+            background: "linear-gradient(90deg, #ef4444, #f59e0b)",
+            color: "#fff",
+            fontWeight: 900,
+            fontSize: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
           }}
         >
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
-
-          {visibleMembers.length === 0 ? (
-            <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
-          ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {visibleMembers.map((m, i) => {
-                const isMe =
-                  String(m.device_id ?? "").trim() ===
-                    String(deviceIdRef.current ?? "").trim() ||
-                  (
-                    !!displayNameRef.current &&
-                    normalizeName(m.display_name) ===
-                      normalizeName(displayNameRef.current)
-                  );
-
-                return (
-                  <div
-                    key={`${m.device_id ?? "noid"}-${m.joined_at ?? ""}-${i}`}
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 10,
-                      border: "1px solid #e5e7eb",
-                      background: "#fafafa",
-                      fontWeight: 700,
-                    }}
-                  >
-                    {isMe ? "You" : m.display_name || "参加者"}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          🚧 DEV MODE {devBannerLabel}
         </div>
+      )}
 
-        <div
-          style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
-            padding: 12,
-            background: "#fff",
-          }}
+      <div style={{ paddingTop: showDevBanner ? 28 : 0 }}>
+        <ChalkboardRoomShell
+          title={topicTitle || "ルーム"}
+          subtitle={subtitle}
+          onBack={() => router.push(backToSelectUrl)}
+          onStartCall={() =>
+            router.push(
+              `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
+            )
+          }
+          startDisabled={!sessionId || !classId}
+          startLabel="通話開始"
         >
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>チャット</div>
+          <div style={{ display: "grid", gap: 12 }}>
+            {err ? (
+              <div
+                style={{
+                  border: "1px solid #fde68a",
+                  background: "#fffbeb",
+                  color: "#92400e",
+                  borderRadius: 12,
+                  padding: 10,
+                  fontWeight: 700,
+                }}
+              >
+                {err}
+              </div>
+            ) : status === "forming" ? (
+              <div
+                style={{
+                  border: "1px solid #bfdbfe",
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                  borderRadius: 12,
+                  padding: 10,
+                  fontWeight: 700,
+                }}
+              >
+                メンバーがそろうと、そのまま自然に通話へ進みます。
+              </div>
+            ) : null}
 
-          <div
-            ref={messagesBoxRef}
-            style={{
-              display: "grid",
-              gap: 10,
-              minHeight: 220,
-              maxHeight: 360,
-              overflowY: "auto",
-              marginBottom: 12,
-              padding: 12,
-              borderRadius: 12,
-              background: "#f3f4f6",
-            }}
-          >
-            {msgs.length === 0 ? (
-              <div style={{ color: "#6b7280" }}>まだメッセージはありません</div>
-            ) : (
-              msgs.map((m) => {
-                const isMe =
-                  String(m.device_id ?? "").trim() ===
-                  String(deviceIdRef.current ?? "").trim();
-
-                return (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: isMe ? "flex-end" : "flex-start",
-                    }}
-                  >
-                    <div
-                      style={{
-                        maxWidth: "78%",
-                        display: "grid",
-                        gap: 4,
-                        justifyItems: isMe ? "end" : "start",
-                      }}
-                    >
-                      {!isMe ? (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "#6b7280",
-                            fontWeight: 800,
-                            paddingLeft: 4,
-                          }}
-                        >
-                          {m.display_name || "参加者"}
-                        </div>
-                      ) : null}
-
-                      <div
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: 18,
-                          background: isMe ? "#86efac" : "#ffffff",
-                          border: isMe ? "none" : "1px solid #e5e7eb",
-                          color: "#111827",
-                          lineHeight: 1.5,
-                          whiteSpace: "pre-wrap",
-                          overflowWrap: "anywhere",
-                          wordBreak: "break-word",
-                          borderBottomRightRadius: isMe ? 6 : 18,
-                          borderBottomLeftRadius: isMe ? 18 : 6,
-                          boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                        }}
-                      >
-                        {m.message}
-                      </div>
-
-                      <div
-                        style={{
-                          fontSize: 10,
-                          color: "#9ca3af",
-                          padding: isMe ? "0 4px 0 0" : "0 0 0 4px",
-                        }}
-                      >
-                        {formatTime(m.created_at)}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void sendMessage();
-                }
-              }}
-              placeholder="メッセージを入力"
+            <div
               style={{
-                flex: 1,
-                border: "1px solid #d1d5db",
-                borderRadius: 999,
-                padding: "12px 14px",
+                border: "1px solid #e5e7eb",
+                borderRadius: 14,
+                padding: 12,
                 background: "#fff",
               }}
-            />
+            >
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
 
-            <button
-              onClick={() => void sendMessage()}
+              {visibleMembers.length === 0 ? (
+                <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {visibleMembers.map((m, i) => {
+                    const isMe =
+                      String(m.device_id ?? "").trim() ===
+                        String(deviceId ?? "").trim() ||
+                      (!!displayName &&
+                        normalizeName(m.display_name) === normalizeName(displayName));
+
+                    const label = isMe ? "You" : m.display_name || "参加者";
+                    const avatarUrl = getAvatarUrl(m.photo_path);
+
+                    return (
+                      <div
+                        key={`${m.device_id ?? "noid"}-${m.joined_at ?? ""}-${i}`}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 12,
+                          border: "1px solid #e5e7eb",
+                          background: "#fafafa",
+                        }}
+                      >
+                        <img
+  src={avatarUrl}
+  alt={label}
+  onLoad={() => {
+    console.log("[avatar ok]", {
+      label,
+      photo_path: m.photo_path,
+      avatarUrl,
+    });
+  }}
+  onError={(e) => {
+    console.log("[avatar ng]", {
+      label,
+      photo_path: m.photo_path,
+      avatarUrl,
+    });
+    e.currentTarget.src = "/default-avatar.png";
+  }}
+  style={{
+    width: 42,
+    height: 42,
+    borderRadius: "9999px",
+    objectFit: "cover",
+    background: "#e5e7eb",
+    border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
+    flexShrink: 0,
+  }}
+/>
+
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              color: "#111827",
+                              lineHeight: 1.2,
+                            }}
+                          >
+                            {label}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 12,
+                              color: "#6b7280",
+                            }}
+                          >
+                            {isMe ? "自分" : "参加中"}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div
               style={{
-                border: "none",
-                borderRadius: 999,
-                padding: "10px 16px",
-                background: "#22c55e",
-                color: "#fff",
-                fontWeight: 900,
-                cursor: "pointer",
-                whiteSpace: "nowrap",
+                border: "1px solid #e5e7eb",
+                borderRadius: 14,
+                padding: 12,
+                background: "#fff",
               }}
             >
-              送信
-            </button>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>チャット</div>
+
+              <div
+                ref={messagesBoxRef}
+                style={{
+                  display: "grid",
+                  gap: 10,
+                  maxHeight: 320,
+                  overflowY: "auto",
+                  paddingRight: 4,
+                  marginBottom: 12,
+                }}
+              >
+                {msgs.length === 0 ? (
+                  <div style={{ color: "#666", fontSize: 13 }}>
+                    まだメッセージはありません
+                  </div>
+                ) : (
+                  msgs.map((m) => {
+                    const isMe =
+                      String(m.device_id ?? "").trim() ===
+                      String(deviceId ?? "").trim();
+
+                    return (
+                      <div
+                        key={m.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: isMe ? "flex-end" : "flex-start",
+                        }}
+                      >
+                        <div
+                          style={{
+                            maxWidth: "78%",
+                            display: "grid",
+                            gap: 4,
+                            justifyItems: isMe ? "end" : "start",
+                          }}
+                        >
+                          {!isMe ? (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: "#6b7280",
+                                fontWeight: 800,
+                                paddingLeft: 4,
+                              }}
+                            >
+                              {m.display_name || "参加者"}
+                            </div>
+                          ) : null}
+
+                          <div
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: 18,
+                              background: isMe ? "#86efac" : "#ffffff",
+                              border: isMe ? "none" : "1px solid #e5e7eb",
+                              color: "#111827",
+                              lineHeight: 1.5,
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                              borderBottomRightRadius: isMe ? 6 : 18,
+                              borderBottomLeftRadius: isMe ? 18 : 6,
+                              boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                            }}
+                          >
+                            {m.message}
+                          </div>
+
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "#9ca3af",
+                              padding: isMe ? "0 4px 0 0" : "0 0 0 4px",
+                            }}
+                          >
+                            {formatTime(m.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                }}
+              >
+                <input
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onCompositionStart={() => setIsComposing(true)}
+                  onCompositionEnd={() => {
+                    window.setTimeout(() => setIsComposing(false), 0);
+                  }}
+                  onKeyDown={(e) => {
+                    const native = e.nativeEvent as KeyboardEvent & {
+                      isComposing?: boolean;
+                      keyCode?: number;
+                    };
+
+                    if (isComposing) return;
+                    if (native?.isComposing) return;
+                    if (e.key === "Process") return;
+                    if (native?.keyCode === 229) return;
+
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendMessage();
+                    }
+                  }}
+                  placeholder="メッセージを入力"
+                  style={{
+                    flex: 1,
+                    border: "1px solid #d1d5db",
+                    borderRadius: 999,
+                    padding: "12px 14px",
+                    background: "#fff",
+                  }}
+                />
+
+                <button
+                  onClick={() => void sendMessage()}
+                  style={{
+                    border: "none",
+                    borderRadius: 999,
+                    padding: "10px 16px",
+                    background: "#22c55e",
+                    color: "#fff",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  送信
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        </ChalkboardRoomShell>
       </div>
-    </ChalkboardRoomShell>
+    </>
   );
 }

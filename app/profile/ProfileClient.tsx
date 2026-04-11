@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getDeviceId } from "@/lib/device";
+import { isDevFeatureEnabled } from "@/lib/devMode";
 
 type Gender = "male" | "female";
 
@@ -35,8 +36,44 @@ function calcAge(birthDate: string): number | null {
   return age;
 }
 
+function getDisplayNameStorageKeys(deviceId: string) {
+  const normalized = String(deviceId ?? "").trim();
+
+  if (!normalized) {
+    return {
+      scoped: "classmate_display_name",
+      legacy: "display_name",
+    };
+  }
+
+  return {
+    scoped: `classmate_display_name:${normalized}`,
+    legacy: `display_name:${normalized}`,
+  };
+}
+
+function writeStoredDisplayName(deviceId: string, name: string) {
+  if (typeof window === "undefined") return;
+
+  const normalizedName = String(name ?? "").trim();
+  const { scoped, legacy } = getDisplayNameStorageKeys(deviceId);
+
+  localStorage.setItem(scoped, normalizedName);
+  localStorage.setItem(legacy, normalizedName);
+}
+
 export default function ProfileClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const searchKey = searchParams.toString();
+  const dev = (searchParams.get("dev") ?? "").trim();
+  const devQuery = dev ? `dev=${encodeURIComponent(dev)}` : "";
+
+  const withDev = (path: string) => {
+    if (!devQuery) return path;
+    return `${path}${path.includes("?") ? "&" : "?"}${devQuery}`;
+  };
 
   const [deviceId, setDeviceId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -68,37 +105,75 @@ export default function ProfileClient() {
     !submitting;
 
   useEffect(() => {
-    const id = getOrCreateDeviceId();
-    setDeviceId(id);
+    let cancelled = false;
 
-    (async () => {
+    async function init() {
+      const id = getDeviceId();
+
+      if (cancelled) return;
+
+      setDeviceId(id);
+      setLoading(true);
+      setErrorMsg("");
+      setDisplayName("");
+      setBirthDate("");
+      setGender("male");
+      setGuardianConsent(false);
+      setTermsAgreed(false);
+      setPhotoFile(null);
+
       try {
         const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
           method: "GET",
+          cache: "no-store",
         });
 
-        if (res.ok) {
-          const data: Profile | null = await res.json();
-          if (data) {
-            setDisplayName(data.display_name ?? "");
-            setBirthDate(isValidISODateString(data.birth_date) ? data.birth_date : "");
-            setGender((data.gender as Gender) ?? "male");
-          }
+        if (!res.ok) {
+          return;
         }
+
+        const data: Profile | null = await res.json();
+
+        if (cancelled || !data) return;
+
+        setDisplayName(data.display_name ?? "");
+        setBirthDate(isValidISODateString(data.birth_date) ? data.birth_date : "");
+        setGender((data.gender as Gender) ?? "male");
+
+        console.log("[profile] loaded profile", {
+          requestedDeviceId: id,
+          returnedDeviceId: data.device_id ?? null,
+          displayName: data.display_name ?? null,
+          dev,
+        });
+      } catch (e) {
+        console.error("[profile] load failed", e);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    })();
-  }, []);
+    }
+
+    void init();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchKey]);
 
   useEffect(() => {
     if (!photoFile) {
       setPhotoPreviewUrl("");
       return;
     }
+
     const url = URL.createObjectURL(photoFile);
     setPhotoPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
   }, [photoFile]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -109,20 +184,29 @@ export default function ProfileClient() {
       setErrorMsg("ニックネームを入力してください。");
       return;
     }
+
     if (!isValidISODateString(birthDate)) {
       setErrorMsg("生年月日を正しく入力してください。");
       return;
     }
+
     if (gender !== "male" && gender !== "female") {
       setErrorMsg("性別を選択してください。");
       return;
     }
+
     if (!isAdult) {
       setErrorMsg("現在は18歳以上の方のみご利用いただけます。");
       return;
     }
+
     if (!termsAgreed) {
       setErrorMsg("利用規約への同意が必要です。");
+      return;
+    }
+
+    if (!deviceId) {
+      setErrorMsg("deviceId の取得に失敗しました。");
       return;
     }
 
@@ -152,17 +236,42 @@ export default function ProfileClient() {
         return;
       }
 
+      writeStoredDisplayName(deviceId, displayName.trim());
+
       alert("プロフィールを保存しました");
-      router.push("/class/select");
+      router.push(withDev("/class/select"));
+    } catch (e) {
+      console.error("[profile] submit failed", e);
+      setErrorMsg("保存に失敗しました。");
     } finally {
       setSubmitting(false);
     }
   }
 
-  if (loading) return <p>読み込み中...</p>;
+  if (loading) {
+    return <p>読み込み中...</p>;
+  }
 
   return (
     <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
+      {isDevFeatureEnabled() && (
+        <div
+          style={{
+            padding: 10,
+            border: "1px solid #fcd34d",
+            background: "#fffbeb",
+            borderRadius: 10,
+            fontSize: 12,
+            color: "#92400e",
+            lineHeight: 1.7,
+          }}
+        >
+          <div style={{ fontWeight: 800 }}>DEV STATUS</div>
+          <div>dev: {dev || "-"}</div>
+          <div>deviceId: {deviceId || "-"}</div>
+        </div>
+      )}
+
       {errorMsg && (
         <div
           style={{
@@ -218,7 +327,14 @@ export default function ProfileClient() {
             <div style={{ fontWeight: 800, color: "#664d03" }}>
               現在は18歳以上のみ利用できます
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#664d03" }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                color: "#664d03",
+              }}
+            >
               <input
                 type="checkbox"
                 checked={guardianConsent}
@@ -273,7 +389,14 @@ export default function ProfileClient() {
           background: "#fafafa",
         }}
       >
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 8, lineHeight: 1.6 }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            lineHeight: 1.6,
+          }}
+        >
           <input
             type="checkbox"
             checked={termsAgreed}
@@ -281,40 +404,46 @@ export default function ProfileClient() {
             style={{ marginTop: 3 }}
           />
           <span>
-            <Link
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ textDecoration: "underline" }}
-            >
+            <Link href="/terms" target="_blank" style={{ textDecoration: "underline" }}>
               利用規約
             </Link>
-            に同意します。
+            に同意します
           </span>
         </label>
       </div>
 
-      <button
-        type="submit"
-        disabled={!canSubmit}
-        style={{
-          padding: 12,
-          borderRadius: 10,
-          border: "none",
-          background: canSubmit ? "#111" : "#999",
-          color: "#fff",
-          fontWeight: 800,
-          cursor: canSubmit ? "pointer" : "not-allowed",
-        }}
-      >
-        {submitting ? "保存中..." : "保存"}
-      </button>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          style={{
+            padding: "10px 14px",
+            border: "none",
+            borderRadius: 10,
+            background: canSubmit ? "#111" : "#ccc",
+            color: "#fff",
+            fontWeight: 800,
+            cursor: canSubmit ? "pointer" : "not-allowed",
+          }}
+        >
+          {submitting ? "保存中..." : "保存する"}
+        </button>
 
-      {!isAdult && birthDate && (
-        <p style={{ margin: 0, fontSize: 12, color: "#842029" }}>
-          ※ 現在は18歳以上のみ利用できます。
-        </p>
-      )}
+        <button
+          type="button"
+          onClick={() => router.push(withDev("/class/select"))}
+          style={{
+            padding: "10px 14px",
+            border: "1px solid #ccc",
+            borderRadius: 10,
+            background: "#fff",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          戻る
+        </button>
+      </div>
     </form>
   );
 }

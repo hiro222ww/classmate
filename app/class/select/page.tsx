@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
+import { DevModeSwitcher } from "@/components/DevModeSwitcher";
+import { isDevFeatureEnabled } from "@/lib/devMode";
 
 type World = {
   world_key: string;
@@ -130,6 +133,15 @@ function sleep(ms: number) {
 export default function ClassSelectPage() {
   console.log("🔥 NEW VERSION LOADED");
 
+  const searchParams = useSearchParams();
+  const dev = (searchParams.get("dev") ?? "").trim();
+  const devQuery = dev ? `dev=${encodeURIComponent(dev)}` : "";
+
+  const withDev = (path: string) => {
+    if (!devQuery) return path;
+    return `${path}${path.includes("?") ? "&" : "?"}${devQuery}`;
+  };
+
   const [deviceId, setDeviceId] = useState("");
 
   const [worlds, setWorlds] = useState<World[]>([]);
@@ -185,8 +197,16 @@ export default function ClassSelectPage() {
 
       const data: Profile | null = await r.json();
       const exists = Boolean(data?.device_id);
+
       setHasProfile(exists);
       setProfile(data ?? null);
+
+      console.log("[class/select] profile =", {
+        requestedDeviceId: id,
+        returnedDeviceId: data?.device_id ?? null,
+        displayName: data?.display_name ?? null,
+      });
+
       return data ?? null;
     } catch (e) {
       console.error("[class/select] profile fetch failed", e);
@@ -219,7 +239,11 @@ export default function ClassSelectPage() {
       topic_plan: topicPlan,
     };
 
-    console.log("[class/select] entitlements =", next);
+    console.log("[class/select] entitlements =", {
+      deviceId: id,
+      entitlements: next,
+    });
+
     setEnt(next);
     return next;
   }
@@ -263,29 +287,68 @@ export default function ClassSelectPage() {
   }
 
   useEffect(() => {
-    const id = getDeviceId();
-    setDeviceId(id);
+    let alive = true;
 
-    (async () => {
+    const init = async () => {
+      const id = getDeviceId();
+
+      console.log("[class/select] init start", {
+        dev,
+        deviceId: id,
+        href: typeof window !== "undefined" ? window.location.href : "",
+      });
+
+      if (!alive) return;
+
+      setLoading(true);
+      setBusy(false);
+      setJoinLimitMessage("");
+      setDeviceId(id);
+      setHasProfile(null);
+      setProfile(null);
+      setEnt(null);
+      setPrefs({ min_age: 18, max_age: 25 });
+      setWorlds([]);
+      setTopics([]);
+      setClasses([]);
+
       try {
         const sp = new URLSearchParams(window.location.search);
         const paid = sp.get("paid");
         const sessionId = sp.get("session_id");
 
-        console.log("[class/select] params", { paid, sessionId, deviceId: id });
+        console.log("[class/select] params", {
+          paid,
+          sessionId,
+          deviceId: id,
+          dev,
+        });
 
         await fetchProfile(id);
+        if (!alive) return;
+
         await fetchEntitlements(id);
+        if (!alive) return;
 
         if (paid === "1" && sessionId) {
           try {
             await finalizeFromSession(id, sessionId);
+            if (!alive) return;
+
             await syncBilling(id);
+            if (!alive) return;
+
             await fetchEntitlements(id);
+            if (!alive) return;
 
             await sleep(1200);
+            if (!alive) return;
+
             await syncBilling(id);
+            if (!alive) return;
+
             await fetchEntitlements(id);
+            if (!alive) return;
 
             sp.delete("paid");
             sp.delete("session_id");
@@ -296,12 +359,20 @@ export default function ClassSelectPage() {
             console.error("[class/select] finalize flow failed", e);
 
             await syncBilling(id);
+            if (!alive) return;
+
             await sleep(800);
+            if (!alive) return;
+
             await fetchEntitlements(id);
+            if (!alive) return;
           }
         } else {
           await syncBilling(id);
+          if (!alive) return;
+
           await fetchEntitlements(id);
+          if (!alive) return;
         }
 
         const pr = await fetch("/api/user/match-prefs", {
@@ -312,26 +383,58 @@ export default function ClassSelectPage() {
         });
 
         try {
-          const pj = await readJsonOrThrow(pr, "match_prefs_get");
-          if (pj?.prefs) {
-            setPrefs({ min_age: pj.prefs.min_age, max_age: pj.prefs.max_age });
+          const raw = await pr.text();
+          let pj: any = null;
+
+          try {
+            pj = raw ? JSON.parse(raw) : null;
+          } catch {
+            pj = null;
+          }
+
+          if (pr.ok && pj?.prefs) {
+            if (!alive) return;
+
+            setPrefs({
+              min_age: Number(pj.prefs.min_age ?? 18),
+              max_age: Number(pj.prefs.max_age ?? 25),
+            });
+          } else {
+            console.warn("[class/select] match-prefs get skipped", {
+              status: pr.status,
+              body: pj,
+              raw,
+              deviceId: id,
+            });
           }
         } catch (e) {
           console.warn("[class/select] match-prefs get failed (non-fatal)", e);
         }
 
+        if (!alive) return;
         await reloadCatalog();
       } catch (e: any) {
         console.error(e);
-        alert(e?.message ?? "load_failed");
+        if (alive) {
+          alert(e?.message ?? "load_failed");
+        }
       } finally {
-        setLoading(false);
+        if (alive) {
+          setLoading(false);
+        }
       }
-    })();
-  }, []);
+    };
+
+    init();
+
+    return () => {
+      alive = false;
+    };
+  }, [dev]);
 
   async function savePrefs(next: MatchPrefs) {
     if (!deviceId) return;
+
     setSavingPrefs(true);
     try {
       const r = await fetch("/api/user/match-prefs", {
@@ -342,6 +445,7 @@ export default function ClassSelectPage() {
           minAge: next.min_age,
           maxAge: next.max_age,
         }),
+        cache: "no-store",
       });
 
       try {
@@ -429,7 +533,7 @@ export default function ClassSelectPage() {
     );
 
     if (ok) {
-      window.location.href = "/profile";
+      window.location.href = withDev("/profile");
     }
 
     return true;
@@ -542,7 +646,8 @@ export default function ClassSelectPage() {
 
       const roomUrl =
         `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-        `&sessionId=${encodeURIComponent(sessionId)}`;
+        `&sessionId=${encodeURIComponent(sessionId)}` +
+        (devQuery ? `&${devQuery}` : "");
 
       pushRecentClass(
         {
@@ -662,6 +767,9 @@ export default function ClassSelectPage() {
     );
   }
 
+  const debugProfileDeviceId = profile?.device_id ?? "-";
+  const debugDisplayName = profile?.display_name ?? "-";
+
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto", color: "#111" }}>
       <header
@@ -686,7 +794,7 @@ export default function ClassSelectPage() {
           }}
         >
           <Link
-            href="/profile"
+            href={withDev("/profile")}
             style={{
               padding: "8px 10px",
               borderRadius: 12,
@@ -701,7 +809,7 @@ export default function ClassSelectPage() {
           </Link>
 
           <Link
-            href="/premium"
+            href={withDev("/premium")}
             style={{
               padding: "8px 10px",
               borderRadius: 12,
@@ -716,7 +824,7 @@ export default function ClassSelectPage() {
           </Link>
 
           <Link
-            href="/billing"
+            href={withDev("/billing")}
             style={{
               padding: "8px 10px",
               borderRadius: 12,
@@ -731,7 +839,7 @@ export default function ClassSelectPage() {
           </Link>
 
           <Link
-            href="/"
+            href={withDev("/")}
             style={{
               padding: "8px 10px",
               borderRadius: 12,
@@ -744,8 +852,46 @@ export default function ClassSelectPage() {
           >
             今のクラス
           </Link>
+
+          {isDevFeatureEnabled() && (
+            <Link
+              href={withDev("/dev/console")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: "1px solid #f59e0b",
+                background: "#fffbeb",
+                fontWeight: 900,
+                color: "#92400e",
+                textDecoration: "none",
+              }}
+            >
+              🧪 開発コンソール
+            </Link>
+          )}
         </div>
       </header>
+
+      {isDevFeatureEnabled() && (
+        <section
+          style={{
+            marginTop: 12,
+            border: "1px solid #fcd34d",
+            background: "#fffbeb",
+            color: "#92400e",
+            borderRadius: 14,
+            padding: 12,
+            fontSize: 12,
+            lineHeight: 1.7,
+          }}
+        >
+          <div style={{ fontWeight: 900, marginBottom: 4 }}>DEV STATUS</div>
+          <div>dev: {dev || "-"}</div>
+          <div>deviceId: {deviceId || "-"}</div>
+          <div>profile.device_id: {debugProfileDeviceId}</div>
+          <div>display_name: {debugDisplayName}</div>
+        </section>
+      )}
 
       {hasProfile === false && (
         <div
@@ -763,7 +909,7 @@ export default function ClassSelectPage() {
           クラスに参加するにはプロフィール登録が必要です。
           <div style={{ marginTop: 10 }}>
             <Link
-              href="/profile"
+              href={withDev("/profile")}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -796,7 +942,7 @@ export default function ClassSelectPage() {
           {joinLimitMessage}
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Link
-              href="/"
+              href={withDev("/")}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -810,7 +956,7 @@ export default function ClassSelectPage() {
               今のクラスを見る
             </Link>
             <Link
-              href="/premium"
+              href={withDev("/premium")}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -1048,6 +1194,7 @@ export default function ClassSelectPage() {
       )}
 
       <div style={{ height: 24 }} />
+      <DevModeSwitcher />
     </main>
   );
 }

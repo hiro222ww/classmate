@@ -1,1423 +1,510 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ChalkboardRoomShell } from "../room/ChalkboardRoomShell";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import SharedCanvasBoard from "./SharedCanvasBoard";
+import CallVoiceLayer from "./CallVoiceLayer";
 import { supabase } from "@/lib/supabaseClient";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { getDeviceId } from "@/lib/device";
 
-type SessionStatusResult = {
-  ok: boolean;
+type Member = {
+  device_id: string;
+  display_name: string;
+  photo_path: string | null;
+};
+
+type PeerState = "idle" | "connecting" | "connected" | "failed";
+
+type SessionStatusResponse = {
+  ok?: boolean;
   session?: {
     id: string;
-    topic: string;
-    status: "forming" | "active" | "closed";
-    capacity: number;
-    created_at: string;
+    class_id?: string;
+    topic?: string;
+    status?: "forming" | "active" | "closed";
+    capacity?: number;
+    created_at?: string | null;
   };
-  members?: {
-    display_name: string;
-    joined_at: string;
+  members?: Array<{
+    device_id?: string;
+    display_name?: string | null;
     photo_path?: string | null;
-  }[];
+    joined_at?: string | null;
+  }>;
   memberCount?: number;
   error?: string;
 };
 
-type StrokePoint = { x: number; y: number };
-type ChalkStrokeRow = {
-  id: string;
-  session_id: string;
-  device_id: string;
-  display_name: string;
-  color: string;
-  width: number;
-  points: StrokePoint[];
-  kind: "stroke" | "clear";
-  created_at: string;
-};
+function getAvatarUrl(photoPath?: string | null) {
+  const normalized = String(photoPath ?? "").trim();
 
-function sanitizeDisplayName(v: string | null | undefined) {
-  const s = String(v ?? "").trim();
-  if (!s || s === "You") return "参加者";
-  return s;
-}
+  if (!normalized) return "/default-avatar.jpg";
 
-async function readJsonBestEffort(res: Response) {
-  const text = await res.text().catch(() => "");
-  try {
-    return { ok: res.ok, status: res.status, json: JSON.parse(text), text };
-  } catch {
-    return { ok: res.ok, status: res.status, json: null as any, text };
+  if (
+    normalized.startsWith("http://") ||
+    normalized.startsWith("https://")
+  ) {
+    return normalized;
   }
+
+  const { data } = supabase.storage
+    .from("profile-photos")
+    .getPublicUrl(normalized);
+
+  return data?.publicUrl || "/default-avatar.jpg";
 }
 
-/** ===== マイク制御 ===== */
-function setMicMuted(stream: MediaStream | null, muted: boolean) {
-  if (!stream) return;
-  for (const t of stream.getAudioTracks()) t.enabled = !muted;
-}
-function stopStream(stream: MediaStream | null) {
-  if (!stream) return;
-  for (const t of stream.getTracks()) t.stop();
-}
+export default function CallClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-function AvatarChip({
-  name,
-  filled,
-  photo,
-}: {
-  name: string;
-  filled: boolean;
-  photo?: string | null;
-}) {
-  const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
+  const sessionId = searchParams.get("sessionId") || "";
+  const classId = searchParams.get("classId") || "";
+  const dev = searchParams.get("dev") || "";
 
-  return (
-    <div style={{ display: "grid", gap: 6, placeItems: "center" }}>
-      <div
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: 999,
-          border: "2px solid #111",
-          overflow: "hidden",
-          display: "grid",
-          placeItems: "center",
-          background: filled ? "#fff" : "#f0f0f0",
-          color: "#111",
-          boxShadow: filled ? "0 2px 10px rgba(0,0,0,0.12)" : "none",
-        }}
-        title={filled ? name : "未参加"}
-      >
-        {filled && photo ? (
-          <img
-            src={photo}
-            alt={name}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
-          />
-        ) : filled ? (
-          <span style={{ fontWeight: 900, fontSize: 16 }}>{initial}</span>
-        ) : (
-          <span style={{ color: "#aaa", fontWeight: 900 }}>○</span>
-        )}
-      </div>
+  const deviceId = useMemo(() => getDeviceId(), []);
 
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 900,
-          color: filled ? "#111" : "#9ca3af",
-          width: 60,
-          textAlign: "center",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {filled ? name : "未参加"}
-      </div>
-    </div>
-  );
-}
+  const returnTo = `/room?sessionId=${sessionId}&classId=${classId}${
+    dev ? `&dev=${dev}` : ""
+  }`;
 
-/** ===== 描画 ===== */
-function drawStroke(
-  ctx: CanvasRenderingContext2D,
-  stroke: { color: string; width: number; points: StrokePoint[] },
-  canvasW: number,
-  canvasH: number
-) {
-  const pts = stroke.points;
-  if (!pts || pts.length === 0) return;
+  const [members, setMembers] = useState<Member[]>([]);
+  const [isMuted, setIsMuted] = useState(false);
+  const [micReady, setMicReady] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [remoteCount, setRemoteCount] = useState(0);
+  const [callInfo, setCallInfo] = useState("");
+  const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
+  const [capacity, setCapacity] = useState(5);
 
-  ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = "source-over";
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.miterLimit = 1;
-
-  ctx.strokeStyle = stroke.color || "#ffffff";
-  ctx.lineWidth = Math.max(1, stroke.width || 6);
-
-  ctx.beginPath();
-  const p0 = pts[0];
-  ctx.moveTo(p0.x * canvasW, p0.y * canvasH);
-
-  for (let i = 1; i < pts.length; i++) {
-    const p = pts[i];
-    ctx.lineTo(p.x * canvasW, p.y * canvasH);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-
-/** ===== ムラを固定（sessionIdでseed固定）===== */
-function hashToSeed(s: string) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-function makeRng(seed: number) {
-  let t = seed >>> 0;
-  return () => {
-    t += 0x6d2b79f5;
-    let x = t;
-    x = Math.imul(x ^ (x >>> 15), x | 1);
-    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
-    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** ===== 音（リアル寄りチョーク + コンコン） ===== */
-function useBoardSounds() {
-  const ctxRef = useRef<AudioContext | null>(null);
-  const masterRef = useRef<GainNode | null>(null);
-
-  const srcRef = useRef<AudioBufferSourceNode | null>(null);
-  const chalkGainRef = useRef<GainNode | null>(null);
-  const bpRef = useRef<BiquadFilterNode | null>(null);
-  const hpRef = useRef<BiquadFilterNode | null>(null);
-  const lpRef = useRef<BiquadFilterNode | null>(null);
-
-  const lfoRef = useRef<OscillatorNode | null>(null);
-  const lfoGainRef = useRef<GainNode | null>(null);
-
-  const bodyOscRef = useRef<OscillatorNode | null>(null);
-  const bodyGainRef = useRef<GainNode | null>(null);
-
-  const ensure = () => {
-    if (ctxRef.current) return;
-
-    const Ctx = (window.AudioContext ||
-      (window as any).webkitAudioContext) as typeof AudioContext | undefined;
-    if (!Ctx) return;
-
-    const ctx = new Ctx();
-
-    const master = ctx.createGain();
-    master.gain.value = 0.92;
-    master.connect(ctx.destination);
-
-    ctxRef.current = ctx;
-    masterRef.current = master;
-  };
-
-  const resumeIfNeeded = () => {
-    const ctx = ctxRef.current;
-    if (!ctx) return;
-    if (ctx.state === "suspended") {
-      void ctx.resume().catch(() => {});
-    }
-  };
-
-  const startIfNeeded = () => {
-    ensure();
-    const ctx = ctxRef.current;
-    const master = masterRef.current;
-    if (!ctx || !master) return;
-
-    resumeIfNeeded();
-    if (srcRef.current) return;
-
-    const bufferSize = Math.floor(ctx.sampleRate * 2.0);
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * 0.48;
+  const fetchMembers = useCallback(async () => {
+    if (!sessionId || !classId) {
+      setMembers([]);
+      return;
     }
 
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.loop = true;
-
-    const hp = ctx.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 620;
-
-    const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = 2400;
-    bp.Q.value = 1.2;
-
-    const lp = ctx.createBiquadFilter();
-    lp.type = "lowpass";
-    lp.frequency.value = 9000;
-
-    const chalkGain = ctx.createGain();
-    chalkGain.gain.value = 0.0;
-
-    const lfo = ctx.createOscillator();
-    lfo.type = "triangle";
-    lfo.frequency.value = 17;
-
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.1;
-
-    const bodyOsc = ctx.createOscillator();
-    bodyOsc.type = "sine";
-    bodyOsc.frequency.value = 185;
-
-    const bodyGain = ctx.createGain();
-    bodyGain.gain.value = 0.0;
-
-    lfo.connect(lfoGain);
-    lfoGain.connect(chalkGain.gain);
-
-    src.connect(hp);
-    hp.connect(bp);
-    bp.connect(lp);
-    lp.connect(chalkGain);
-    chalkGain.connect(master);
-
-    bodyOsc.connect(bodyGain);
-    bodyGain.connect(master);
-
-    src.start();
-    lfo.start();
-    bodyOsc.start();
-
-    srcRef.current = src;
-    chalkGainRef.current = chalkGain;
-    bpRef.current = bp;
-    hpRef.current = hp;
-    lpRef.current = lp;
-    lfoRef.current = lfo;
-    lfoGainRef.current = lfoGain;
-    bodyOscRef.current = bodyOsc;
-    bodyGainRef.current = bodyGain;
-  };
-
-  const dispose = () => {
     try {
-      srcRef.current?.stop();
-    } catch {}
-    try {
-      lfoRef.current?.stop();
-    } catch {}
-    try {
-      bodyOscRef.current?.stop();
-    } catch {}
-
-    try {
-      srcRef.current?.disconnect();
-    } catch {}
-    try {
-      lfoRef.current?.disconnect();
-    } catch {}
-    try {
-      bodyOscRef.current?.disconnect();
-    } catch {}
-    try {
-      chalkGainRef.current?.disconnect();
-    } catch {}
-    try {
-      bpRef.current?.disconnect();
-    } catch {}
-    try {
-      hpRef.current?.disconnect();
-    } catch {}
-    try {
-      lpRef.current?.disconnect();
-    } catch {}
-    try {
-      lfoGainRef.current?.disconnect();
-    } catch {}
-    try {
-      bodyGainRef.current?.disconnect();
-    } catch {}
-
-    srcRef.current = null;
-    lfoRef.current = null;
-    bodyOscRef.current = null;
-    chalkGainRef.current = null;
-    bpRef.current = null;
-    hpRef.current = null;
-    lpRef.current = null;
-    lfoGainRef.current = null;
-    bodyGainRef.current = null;
-
-    const ctx = ctxRef.current;
-    ctxRef.current = null;
-    masterRef.current = null;
-
-    try {
-      void ctx?.close();
-    } catch {}
-  };
-
-  const chalkStart = () => {
-    startIfNeeded();
-
-    const ctx = ctxRef.current;
-    const g = chalkGainRef.current;
-    const body = bodyGainRef.current;
-    if (!ctx || !g || !body) return;
-
-    const t = ctx.currentTime;
-
-    g.gain.cancelScheduledValues(t);
-    g.gain.setValueAtTime(g.gain.value, t);
-    g.gain.setTargetAtTime(0.028, t, 0.018);
-
-    body.gain.cancelScheduledValues(t);
-    body.gain.setValueAtTime(body.gain.value, t);
-    body.gain.setTargetAtTime(0.006, t, 0.03);
-  };
-
-  const chalkMove = (speed01: number, pressure01: number) => {
-    startIfNeeded();
-
-    const ctx = ctxRef.current;
-    const g = chalkGainRef.current;
-    const bp = bpRef.current;
-    const hp = hpRef.current;
-    const lp = lpRef.current;
-    const lfoG = lfoGainRef.current;
-    const body = bodyGainRef.current;
-
-    if (!ctx || !g || !bp || !hp || !lp || !lfoG || !body) return;
-
-    const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-    const s = clamp01(speed01);
-    const p = clamp01(pressure01);
-
-    const jitter = 0.92 + Math.random() * 0.16;
-
-    const amp = 0.012 + 0.06 * s + 0.12 * p;
-    const center = (1900 + 2900 * s - 850 * p) * jitter;
-    const hpFreq = 500 + 450 * s;
-    const lpFreq = 7000 + 2200 * (1 - p);
-    const gateDepth = 0.06 + 0.28 * p + 0.08 * (1 - s);
-    const bodyAmp = 0.002 + 0.014 * p + 0.004 * (1 - s);
-
-    const t = ctx.currentTime;
-
-    bp.frequency.setTargetAtTime(center, t, 0.02);
-    bp.Q.setTargetAtTime(0.8 + 1.8 * p, t, 0.03);
-    hp.frequency.setTargetAtTime(hpFreq, t, 0.03);
-    lp.frequency.setTargetAtTime(lpFreq, t, 0.03);
-
-    lfoG.gain.setTargetAtTime(gateDepth, t, 0.04);
-    g.gain.setTargetAtTime(amp, t, 0.018);
-
-    body.gain.setTargetAtTime(bodyAmp, t, 0.04);
-  };
-
-  const chalkEnd = () => {
-    const ctx = ctxRef.current;
-    const g = chalkGainRef.current;
-    const body = bodyGainRef.current;
-    if (!ctx || !g || !body) return;
-
-    const t = ctx.currentTime;
-
-    g.gain.cancelScheduledValues(t);
-    g.gain.setValueAtTime(g.gain.value, t);
-    g.gain.setTargetAtTime(0.0, t, 0.035);
-
-    body.gain.cancelScheduledValues(t);
-    body.gain.setValueAtTime(body.gain.value, t);
-    body.gain.setTargetAtTime(0.0, t, 0.05);
-  };
-
-  const contactTick = (strength = 1) => {
-    ensure();
-    const ctx = ctxRef.current;
-    const master = masterRef.current;
-    if (!ctx || !master) return;
-    resumeIfNeeded();
-
-    const t0 = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const bp = ctx.createBiquadFilter();
-
-    osc.type = "triangle";
-    osc.frequency.setValueAtTime(720, t0);
-    osc.frequency.exponentialRampToValueAtTime(320, t0 + 0.03);
-
-    bp.type = "bandpass";
-    bp.frequency.value = 1100;
-    bp.Q.value = 1.5;
-
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.035 * strength, t0 + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
-
-    osc.connect(bp);
-    bp.connect(gain);
-    gain.connect(master);
-
-    osc.start(t0);
-    osc.stop(t0 + 0.05);
-  };
-
-  const releaseTick = (strength = 1) => {
-    ensure();
-    const ctx = ctxRef.current;
-    const master = masterRef.current;
-    if (!ctx || !master) return;
-    resumeIfNeeded();
-
-    const t0 = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(480, t0);
-    osc.frequency.exponentialRampToValueAtTime(260, t0 + 0.025);
-
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.012 * strength, t0 + 0.003);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.03);
-
-    osc.connect(gain);
-    gain.connect(master);
-
-    osc.start(t0);
-    osc.stop(t0 + 0.035);
-  };
-
-  const konkon = (strength = 1) => {
-    ensure();
-    const ctx = ctxRef.current;
-    const master = masterRef.current;
-    if (!ctx || !master) return;
-    resumeIfNeeded();
-
-    const t0 = ctx.currentTime;
-
-    const o1 = ctx.createOscillator();
-    const g1 = ctx.createGain();
-    o1.type = "sine";
-    o1.frequency.setValueAtTime(240, t0);
-    o1.frequency.exponentialRampToValueAtTime(140, t0 + 0.06);
-    g1.gain.setValueAtTime(0.0001, t0);
-    g1.gain.exponentialRampToValueAtTime(0.16 * strength, t0 + 0.01);
-    g1.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
-    o1.connect(g1);
-    g1.connect(master);
-
-    const o2 = ctx.createOscillator();
-    const g2 = ctx.createGain();
-    o2.type = "triangle";
-    o2.frequency.setValueAtTime(1200, t0);
-    g2.gain.setValueAtTime(0.0001, t0);
-    g2.gain.exponentialRampToValueAtTime(0.045 * strength, t0 + 0.005);
-    g2.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.03);
-    o2.connect(g2);
-    g2.connect(master);
-
-    const noiseBuf = ctx.createBuffer(
-      1,
-      Math.floor(ctx.sampleRate * 0.02),
-      ctx.sampleRate
-    );
-    const ch = noiseBuf.getChannelData(0);
-    for (let i = 0; i < ch.length; i++) {
-      ch[i] = (Math.random() * 2 - 1) * 0.25;
-    }
-
-    const noise = ctx.createBufferSource();
-    noise.buffer = noiseBuf;
-
-    const ng = ctx.createGain();
-    const hp = ctx.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 900;
-
-    ng.gain.setValueAtTime(0.0001, t0);
-    ng.gain.exponentialRampToValueAtTime(0.028 * strength, t0 + 0.003);
-    ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.025);
-
-    noise.connect(hp);
-    hp.connect(ng);
-    ng.connect(master);
-
-    o1.start(t0);
-    o2.start(t0);
-    noise.start(t0);
-
-    o1.stop(t0 + 0.11);
-    o2.stop(t0 + 0.04);
-    noise.stop(t0 + 0.025);
-  };
-
-  const squeak = (amount = 1) => {
-    ensure();
-    const ctx = ctxRef.current;
-    const master = masterRef.current;
-    if (!ctx || !master) return;
-    resumeIfNeeded();
-
-    const t0 = ctx.currentTime;
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const bp = ctx.createBiquadFilter();
-
-    osc.type = "sawtooth";
-    osc.frequency.setValueAtTime(2200, t0);
-    osc.frequency.exponentialRampToValueAtTime(3200, t0 + 0.045);
-
-    bp.type = "bandpass";
-    bp.frequency.setValueAtTime(2700, t0);
-    bp.Q.value = 8;
-
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.015 * amount, t0 + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.055);
-
-    osc.connect(bp);
-    bp.connect(gain);
-    gain.connect(master);
-
-    osc.start(t0);
-    osc.stop(t0 + 0.06);
-  };
-
-  return {
-    chalkStart,
-    chalkMove,
-    chalkEnd,
-    konkon,
-    squeak,
-    contactTick,
-    releaseTick,
-    dispose,
-  };
-}
-
-/** ===== 共有黒板 ===== */
-function SharedCanvasBoard({ sessionId }: { sessionId: string }) {
-  const deviceIdRef = useRef("");
-  const displayNameRef = useRef("");
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-
-  const drawingRef = useRef(false);
-  const pointsRef = useRef<StrokePoint[]>([]);
-  const lastPtRef = useRef<StrokePoint | null>(null);
-
-  const lastMoveRef = useRef<{ t: number; x: number; y: number } | null>(null);
-  const lastKonkonRef = useRef(0);
-
-  const watchdogRef = useRef<number | null>(null);
-  const lastInputAtRef = useRef(0);
-
-  const [penWidth, setPenWidth] = useState(6);
-  const [penColor, setPenColor] = useState("#ffffff");
-  const [info, setInfo] = useState("");
-
-  const seedRef = useRef(0);
-  const sounds = useBoardSounds();
-
-  useEffect(() => {
-    deviceIdRef.current = getOrCreateDeviceId();
-    try {
-      displayNameRef.current = sanitizeDisplayName(
-        localStorage.getItem("classmate_display_name") ||
-          localStorage.getItem("display_name") ||
-          "参加者"
-      );
-    } catch {
-      displayNameRef.current = "参加者";
-    }
-  }, []);
-
-  useEffect(() => {
-    seedRef.current = hashToSeed(sessionId || "default");
-  }, [sessionId]);
-
-  const resizeCanvas = () => {
-    const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const rect = wrap.getBoundingClientRect();
-    const w = Math.max(300, Math.floor(rect.width));
-    const h = Math.max(260, Math.floor(rect.height));
-
-    canvas.width = Math.floor(w * dpr);
-    canvas.height = Math.floor(h * dpr);
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  };
-
-  const paintBoardBase = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
-    const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
-
-    ctx.save();
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.clearRect(0, 0, w, h);
-
-    const grad = ctx.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0, "#0a3328");
-    grad.addColorStop(1, "#06251d");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-
-    const rng = makeRng(seedRef.current);
-    ctx.globalAlpha = 0.028;
-    for (let i = 0; i < 900; i++) {
-      const x = rng() * w;
-      const y = rng() * h;
-      const r = 0.5 + rng() * 1.6;
-      ctx.fillStyle = rng() > 0.5 ? "#ffffff" : "#000000";
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    const rng2 = makeRng(seedRef.current ^ 0x9e3779b9);
-    ctx.globalAlpha = 0.015;
-    for (let i = 0; i < 1200; i++) {
-      const x = rng2() * w;
-      const y = rng2() * h;
-      const r = 0.6 + rng2() * 2.2;
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.restore();
-  };
-
-  const clearLocal = () => paintBoardBase();
-
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const boot = async () => {
-      setInfo("");
-      resizeCanvas();
-      paintBoardBase();
-
-      const { data, error } = await supabase
-        .from("call_chalk_strokes")
-        .select("id, session_id, device_id, display_name, color, width, points, kind, created_at")
-        .eq("session_id", sessionId)
-        .order("created_at", { ascending: true })
-        .limit(500);
-
-      if (error) {
-        setInfo(`黒板ロード失敗: ${error.message}`);
+      const qs = new URLSearchParams({
+        sessionId,
+        classId,
+      });
+
+      const res = await fetch(`/api/session/status?${qs.toString()}`, {
+        cache: "no-store",
+      });
+
+      const json = (await res.json()) as SessionStatusResponse;
+
+      if (!res.ok || !json?.ok) {
+        console.error("[call] session status fetch error", {
+          status: res.status,
+          error: json?.error || "session_status_failed",
+        });
         return;
       }
 
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext("2d");
-      if (!canvas || !ctx) return;
+      const incoming = Array.isArray(json.members) ? json.members : [];
 
-      const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
-      const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
+      const nextMembers: Member[] = [];
 
-      for (const row of (data ?? []) as any as ChalkStrokeRow[]) {
-        if (row.kind === "clear") {
-          clearLocal();
-          continue;
-        }
-        drawStroke(
-          ctx,
-          { color: row.color, width: row.width, points: row.points as any },
-          w,
-          h
-        );
+      for (const m of incoming) {
+        const did = String(m.device_id ?? "").trim();
+        if (!did) continue;
+
+        nextMembers.push({
+          device_id: did,
+          display_name: String(m.display_name ?? "").trim() || "参加者",
+          photo_path: String(m.photo_path ?? "").trim() || null,
+        });
       }
-    };
 
-    void boot();
-  }, [sessionId]);
+      setMembers(nextMembers);
+
+      if (Number.isFinite(Number(json.session?.capacity))) {
+        setCapacity(Number(json.session?.capacity));
+      }
+    } catch (e: any) {
+      console.error("[call] fetchMembers unexpected error", {
+        message: e?.message ?? "unknown_error",
+      });
+    }
+  }, [sessionId, classId]);
 
   useEffect(() => {
-    const onResize = () => {
-      void (async () => {
-        resizeCanvas();
-        paintBoardBase();
-
-        const { data } = await supabase
-          .from("call_chalk_strokes")
-          .select("color,width,points,kind,created_at")
-          .eq("session_id", sessionId)
-          .order("created_at", { ascending: true })
-          .limit(500);
-
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
-
-        const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
-        const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
-
-        for (const row of (data ?? []) as any as ChalkStrokeRow[]) {
-          if ((row as any).kind === "clear") {
-            clearLocal();
-            continue;
-          }
-          drawStroke(
-            ctx,
-            {
-              color: (row as any).color,
-              width: (row as any).width,
-              points: (row as any).points,
-            },
-            w,
-            h
-          );
-        }
-      })();
-    };
-
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [sessionId]);
+    void fetchMembers();
+  }, [fetchMembers]);
 
   useEffect(() => {
     if (!sessionId) return;
 
-    const ch = supabase
-      .channel(`chalk_strokes:${sessionId}`)
+    const channel = supabase
+      .channel(`call-members-${sessionId}`)
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
-          table: "call_chalk_strokes",
+          table: "session_members",
           filter: `session_id=eq.${sessionId}`,
         },
-        (payload: any) => {
-          const row = payload?.new as ChalkStrokeRow;
-          if (!row?.id) return;
-          if (row.device_id === deviceIdRef.current) return;
-
-          const canvas = canvasRef.current;
-          const ctx = canvas?.getContext("2d");
-          if (!canvas || !ctx) return;
-
-          const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
-          const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
-
-          if (row.kind === "clear") {
-            clearLocal();
-            return;
-          }
-          drawStroke(
-            ctx,
-            { color: row.color, width: row.width, points: row.points as any },
-            w,
-            h
-          );
+        async () => {
+          await fetchMembers();
         }
       )
       .subscribe();
 
     return () => {
-      void supabase.removeChannel(ch);
+      void supabase.removeChannel(channel);
     };
-  }, [sessionId]);
-
-  const getNormPoint = (e: PointerEvent): StrokePoint | null => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
-    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
-  };
-
-  const drawLocalSegment = (from: StrokePoint, to: StrokePoint) => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-
-    const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
-    const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
-
-    ctx.save();
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.miterLimit = 1;
-    ctx.strokeStyle = penColor;
-    ctx.lineWidth = Math.max(1, penWidth);
-
-    ctx.beginPath();
-    ctx.moveTo(from.x * w, from.y * h);
-    ctx.lineTo(to.x * w, to.y * h);
-    ctx.stroke();
-    ctx.restore();
-  };
+  }, [sessionId, fetchMembers]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!sessionId) return;
 
-    const forceEnd = () => {
-      drawingRef.current = false;
-      lastMoveRef.current = null;
-      lastPtRef.current = null;
-      pointsRef.current = [];
-      sounds.dispose();
-    };
+    const timer = window.setInterval(() => {
+      void fetchMembers();
+    }, 5000);
 
-    const finalizeAndSend = async () => {
-      drawingRef.current = false;
-      lastMoveRef.current = null;
+    return () => window.clearInterval(timer);
+  }, [sessionId, fetchMembers]);
 
-      const pts = pointsRef.current;
-      pointsRef.current = [];
-      lastPtRef.current = null;
-
-      sounds.dispose();
-
-      if (!pts || pts.length < 2) return;
-
-      const safeName = sanitizeDisplayName(displayNameRef.current);
-
-      const { error } = await supabase.from("call_chalk_strokes").insert({
-        session_id: sessionId,
-        device_id: deviceIdRef.current,
-        display_name: safeName,
-        color: penColor,
-        width: penWidth,
-        points: pts,
-        kind: "stroke",
-      });
-
-      if (error) setInfo(`送信失敗: ${error.message}`);
-      else setInfo("");
-    };
-
-    const onDown = (ev: PointerEvent) => {
-      ev.preventDefault();
-      (ev.target as any)?.setPointerCapture?.(ev.pointerId);
-
-      const p = getNormPoint(ev);
-      if (!p) return;
-
-      drawingRef.current = true;
-      pointsRef.current = [p];
-      lastPtRef.current = p;
-      lastMoveRef.current = { t: performance.now(), x: p.x, y: p.y };
-
-      lastInputAtRef.current = performance.now();
-
-      const now = performance.now();
-      if (now - lastKonkonRef.current > 400) {
-        lastKonkonRef.current = now;
-        sounds.konkon(0.22);
+  useEffect(() => {
+    const memberIds = new Set(members.map((m) => m.device_id));
+    setPeerStates((prev) => {
+      const next: Record<string, PeerState> = {};
+      for (const [id, state] of Object.entries(prev)) {
+        if (memberIds.has(id)) next[id] = state;
       }
-
-      sounds.chalkStart();
-    };
-
-    const onMove = (ev: PointerEvent) => {
-      if (!drawingRef.current) return;
-      ev.preventDefault();
-
-      const p = getNormPoint(ev);
-      const last = lastPtRef.current;
-      if (!p || !last) return;
-
-      const dx = p.x - last.x;
-      const dy = p.y - last.y;
-      const dist2 = dx * dx + dy * dy;
-      if (dist2 < 0.000015) return;
-
-      pointsRef.current.push(p);
-      drawLocalSegment(last, p);
-      lastPtRef.current = p;
-
-      const prev = lastMoveRef.current;
-      const now = performance.now();
-      if (prev) {
-        const w = parseInt(canvas.style.width || "0", 10) || canvas.width;
-        const h = parseInt(canvas.style.height || "0", 10) || canvas.height;
-
-        const dt = Math.max(1, now - prev.t);
-        const dxPx = (p.x - prev.x) * w;
-        const dyPx = (p.y - prev.y) * h;
-        const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
-
-        const speed01 = Math.max(0, Math.min(1, (distPx / dt) / 1.8));
-        const pressure01 = Math.max(
-          0,
-          Math.min(1, 0.75 * (1 - speed01) + 0.02 * (penWidth - 2))
-        );
-
-        sounds.chalkMove(speed01, pressure01);
-      }
-
-      lastMoveRef.current = { t: now, x: p.x, y: p.y };
-      lastInputAtRef.current = now;
-    };
-
-    const onUp = (ev: PointerEvent) => {
-      ev.preventDefault();
-      if (!drawingRef.current) {
-        forceEnd();
-        return;
-      }
-      void finalizeAndSend();
-    };
-
-    const onCancel = (ev: Event) => {
-      ev.preventDefault?.();
-      forceEnd();
-    };
-
-    const onLeave = (ev: Event) => {
-      ev.preventDefault?.();
-      forceEnd();
-    };
-
-    const onCtx = (ev: Event) => {
-      ev.preventDefault?.();
-      forceEnd();
-    };
-
-    const onBlur = () => forceEnd();
-    const onVis = () => {
-      if (document.hidden) forceEnd();
-    };
-
-    if (watchdogRef.current) window.clearInterval(watchdogRef.current);
-    watchdogRef.current = window.setInterval(() => {
-      const dt = performance.now() - lastInputAtRef.current;
-      if (dt > 220) sounds.dispose();
-    }, 140);
-
-    canvas.addEventListener("pointerdown", onDown, { passive: false });
-    canvas.addEventListener("pointermove", onMove, { passive: false });
-    canvas.addEventListener("pointerup", onUp, { passive: false });
-    canvas.addEventListener("pointercancel", onCancel as any, { passive: false });
-    canvas.addEventListener("lostpointercapture", onCancel as any, {
-      passive: false,
+      return next;
     });
-    canvas.addEventListener("pointerleave", onLeave as any, { passive: false });
-    canvas.addEventListener("contextmenu", onCtx as any, { passive: false });
+  }, [members]);
 
-    window.addEventListener("pointerup", onUp, { passive: false });
-    window.addEventListener("pointercancel", onCancel as any, { passive: false });
-    window.addEventListener("blur", onBlur);
-    document.addEventListener("visibilitychange", onVis);
+  const filled = members.length;
 
-    return () => {
-      canvas.removeEventListener("pointerdown", onDown);
-      canvas.removeEventListener("pointermove", onMove);
-      canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointercancel", onCancel as any);
-      canvas.removeEventListener("lostpointercapture", onCancel as any);
-      canvas.removeEventListener("pointerleave", onLeave as any);
-      canvas.removeEventListener("contextmenu", onCtx as any);
+  const muteButtonLabel = useMemo(() => {
+    if (!micReady) return "マイク準備中…";
+    return isMuted ? "ミュート解除" : "ミュート";
+  }, [micReady, isMuted]);
 
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel as any);
-      window.removeEventListener("blur", onBlur);
-      document.removeEventListener("visibilitychange", onVis);
+  const summaryText = useMemo(() => {
+    const values = Object.values(peerStates);
+    const connected = values.filter((v) => v === "connected").length;
+    const connecting = values.filter((v) => v === "connecting").length;
+    const failed = values.filter((v) => v === "failed").length;
 
-      if (watchdogRef.current) window.clearInterval(watchdogRef.current);
-      watchdogRef.current = null;
+    return `接続済み ${connected} / 接続中 ${connecting} / 不安定 ${failed}`;
+  }, [peerStates]);
 
-      forceEnd();
-      sounds.dispose();
-    };
-  }, [sessionId, penColor, penWidth]);
+  const getMemberStatus = useCallback(
+    (member?: Member) => {
+      if (!member) {
+        return {
+          text: "待機中",
+          color: "#9ca3af",
+          chipBg: "#f3f4f6",
+          chipText: "#6b7280",
+        };
+      }
 
-  const onClear = async () => {
-    clearLocal();
+      const isMe = member.device_id === deviceId;
+      if (isMe) {
+        return {
+          text: isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+          color: "#6b7280",
+          chipBg: isMuted ? "#fef2f2" : "#eff6ff",
+          chipText: isMuted ? "#991b1b" : "#1d4ed8",
+        };
+      }
 
-    const safeName = sanitizeDisplayName(displayNameRef.current);
+      const state = peerStates[member.device_id] ?? "idle";
 
-    const { error } = await supabase.from("call_chalk_strokes").insert({
-      session_id: sessionId,
-      device_id: deviceIdRef.current,
-      display_name: safeName,
-      color: penColor,
-      width: penWidth,
-      points: [],
-      kind: "clear",
-    });
+      if (state === "connected") {
+        return {
+          text: "接続中",
+          color: "#065f46",
+          chipBg: "#ecfdf5",
+          chipText: "#047857",
+        };
+      }
 
-    if (error) setInfo(`クリア送信失敗: ${error.message}`);
-    else setInfo("");
-  };
+      if (state === "connecting") {
+        return {
+          text: "接続処理中",
+          color: "#92400e",
+          chipBg: "#fffbeb",
+          chipText: "#b45309",
+        };
+      }
+
+      if (state === "failed") {
+        return {
+          text: "再接続中",
+          color: "#991b1b",
+          chipBg: "#fef2f2",
+          chipText: "#dc2626",
+        };
+      }
+
+      return {
+        text: "接続待ち",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
+      };
+    },
+    [deviceId, isMuted, peerStates]
+  );
 
   return (
-    <div style={{ marginTop: 10 }}>
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+      <CallVoiceLayer
+        sessionId={sessionId}
+        deviceId={deviceId}
+        members={members}
+        isMuted={isMuted}
+        onMicReadyChange={setMicReady}
+        onMicLevelChange={setMicLevel}
+        onRemoteCountChange={setRemoteCount}
+        onStatusChange={setCallInfo}
+        onPeerStatesChange={setPeerStates}
+      />
+
       <div
         style={{
           display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
         }}
       >
-        <div style={{ fontWeight: 900 }}>黒板（ペン対応・共有）</div>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>
+            通話ルーム
+          </h1>
+          <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
+            参加人数 {filled}/{capacity}
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+            受信中音声 {remoteCount} 本
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+            {summaryText}
+          </div>
+        </div>
+
+        <button
+          style={{
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: "1px solid #fca5a5",
+            background: "#fee2e2",
+            color: "#7f1d1d",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+          onClick={() => router.push(returnTo)}
+        >
+          退出
+        </button>
+      </div>
+
+      <section
+        style={{
+          marginTop: 16,
+          padding: 14,
+          border: "1px solid #e5e7eb",
+          borderRadius: 18,
+          background: "#fff",
+        }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 12 }}>
+          通話中のメンバー
+        </div>
+
         <div
           style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+            gap: 12,
+          }}
+        >
+          {Array.from({ length: capacity }).map((_, i) => {
+            const member = members[i];
+            const isFilled = !!member;
+            const isMe = member?.device_id === deviceId;
+            const status = getMemberStatus(member);
+            const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
+
+            return (
+              <div
+                key={i}
+                style={{
+                  minHeight: 96,
+                  borderRadius: 16,
+                  border: "1px solid #e5e7eb",
+                  background: isFilled ? "#ffffff" : "#f9fafb",
+                  padding: 12,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <div
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: "50%",
+                    background: isFilled ? "#dbeafe" : "#e5e7eb",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    fontWeight: 900,
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
+                  }}
+                >
+                  {member ? (
+                    <img
+                      src={avatarUrl}
+                      alt={member.display_name}
+                      onError={(e) => {
+                        e.currentTarget.src = "/default-avatar.png";
+                      }}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                      }}
+                    />
+                  ) : null}
+                </div>
+
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 800,
+                      color: isFilled ? "#111827" : "#9ca3af",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {isFilled
+                      ? isMe
+                        ? `${member.display_name} (You)`
+                        : member.display_name
+                      : "空席"}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 6,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "4px 8px",
+                      borderRadius: 999,
+                      background: status.chipBg,
+                      color: status.chipText,
+                      fontSize: 11,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {status.text}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section
+        style={{
+          marginTop: 16,
+          padding: 14,
+          border: "1px solid #e5e7eb",
+          borderRadius: 18,
+          background: "#fff",
+        }}
+      >
+        <div style={{ fontWeight: 900, fontSize: 15 }}>通話コントロール</div>
+
+        <div
+          style={{
+            marginTop: 10,
             display: "flex",
-            gap: 8,
+            gap: 10,
             flexWrap: "wrap",
             alignItems: "center",
           }}
         >
-          <label
-            style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}
+          <button
+            disabled={!micReady}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isMuted ? "#fff" : "#111827",
+              color: isMuted ? "#111827" : "#fff",
+              fontWeight: 900,
+              cursor: micReady ? "pointer" : "not-allowed",
+              opacity: micReady ? 1 : 0.6,
+            }}
+            onClick={() => {
+              setIsMuted((prev) => !prev);
+            }}
           >
-            太さ
-            <input
-              type="range"
-              min={2}
-              max={14}
-              value={penWidth}
-              onChange={(e) => setPenWidth(Number(e.target.value))}
-              style={{ marginLeft: 8, verticalAlign: "middle" }}
-            />
-          </label>
+            {muteButtonLabel}
+          </button>
 
-          <label
-            style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}
+          <div style={{ fontSize: 12, color: "#374151", minWidth: 180 }}>
+            マイク入力: {(micLevel * 100).toFixed(1)}
+          </div>
+
+          <div
+            style={{
+              width: 140,
+              height: 10,
+              borderRadius: 999,
+              background: "#e5e7eb",
+              overflow: "hidden",
+            }}
           >
-            色
-            <input
-              type="color"
-              value={penColor}
-              onChange={(e) => setPenColor(e.target.value)}
+            <div
               style={{
-                marginLeft: 8,
-                width: 34,
-                height: 28,
-                border: "none",
-                background: "transparent",
+                width: `${Math.min(100, micLevel * 800)}%`,
+                height: "100%",
+                background: "#111827",
               }}
             />
-          </label>
-
-          <button
-            onClick={onClear}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            全消し
-          </button>
+          </div>
         </div>
-      </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
+          {callInfo || "通話シグナリング待機中"}
+        </div>
+      </section>
+
+      <section style={{ marginTop: 16 }}>
+        {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
+      </section>
 
       <div
-        ref={wrapRef}
         style={{
-          marginTop: 10,
-          height: 460,
-          borderRadius: 16,
-          border: "2px solid #073126",
-          background: "#0b3b2e",
-          boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
-          overflow: "hidden",
-          touchAction: "none",
+          marginTop: 14,
+          fontSize: 12,
+          color: "#6b7280",
+          lineHeight: 1.7,
         }}
       >
-        <canvas
-          ref={canvasRef}
-          style={{ display: "block", width: "100%", height: "100%" }}
-        />
+        <div>sessionId: {sessionId || "-"}</div>
+        <div>classId: {classId || "-"}</div>
+        <div>dev: {dev || "-"}</div>
       </div>
-
-      <div
-        style={{ marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: 900 }}
-      >
-        ※ タッチペン/指で書けます。みんなの線はリアルタイムで反映されます。
-        {info ? `（${info}）` : ""}
-      </div>
-    </div>
-  );
-}
-
-export default function CallClient() {
-  const router = useRouter();
-
-  const [sessionId, setSessionId] = useState<string>("");
-  const [returnTo, setReturnTo] = useState<string>("/class/select");
-
-  const [status, setStatus] = useState<"forming" | "active" | "closed">(
-    "forming"
-  );
-  const [capacity, setCapacity] = useState(5);
-  const [memberCount, setMemberCount] = useState(0);
-  const [members, setMembers] = useState<
-    { display_name: string; joined_at: string; photo_path?: string | null }[]
-  >([]);
-  const [err, setErr] = useState("");
-
-  const pollTimer = useRef<number | null>(null);
-
-  /** マイク */
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const [micReady, setMicReady] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    const sid = (sp.get("sessionId") ?? "").trim();
-    const rt = (sp.get("returnTo") ?? "").trim();
-
-    if (!sid) {
-      setErr("sessionId がありません");
-      return;
-    }
-    setSessionId(sid);
-    setReturnTo(rt ? rt : `/room?sessionId=${encodeURIComponent(sid)}`);
-  }, []);
-
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const rawName =
-      localStorage.getItem("classmate_display_name") ||
-      localStorage.getItem("display_name") ||
-      "参加者";
-
-    const name = sanitizeDisplayName(rawName);
-    const deviceId = getOrCreateDeviceId();
-
-    fetch("/api/session/join", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId, name, deviceId }),
-    }).catch(() => {});
-  }, [sessionId]);
-
-  async function fetchStatus(sid: string) {
-    try {
-      const res = await fetch(
-        `/api/session/status?sessionId=${encodeURIComponent(sid)}`,
-        {
-          cache: "no-store",
-        }
-      );
-      const r = await readJsonBestEffort(res);
-      const j = (r.json ?? {}) as SessionStatusResult;
-
-      if (!r.ok || !j.ok) {
-        setErr(j?.error ?? r.text ?? "status_failed");
-        return;
-      }
-
-      const mc = Number(j.memberCount ?? (j.members?.length ?? 0));
-      const cap = Number(j.session?.capacity ?? 5);
-
-      setStatus(j.session?.status ?? "forming");
-      setCapacity(Number.isFinite(cap) && cap > 0 ? cap : 5);
-      setMembers(j.members ?? []);
-      setMemberCount(mc);
-      setErr("");
-    } catch (e: any) {
-      setErr(e?.message ?? "status_failed");
-    }
-  }
-
-  useEffect(() => {
-    if (!sessionId) return;
-    void fetchStatus(sessionId);
-
-    if (pollTimer.current) window.clearInterval(pollTimer.current);
-    pollTimer.current = window.setInterval(() => void fetchStatus(sessionId), 5000);
-
-    return () => {
-      if (pollTimer.current) window.clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    };
-  }, [sessionId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      if (!sessionId) return;
-      if (localStreamRef.current) return;
-
-      try {
-        setMicReady(false);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-
-        if (cancelled) {
-          stopStream(stream);
-          return;
-        }
-
-        localStreamRef.current = stream;
-        setMicMuted(stream, isMuted);
-        setMicReady(true);
-      } catch (e: any) {
-        setErr(e?.message ?? "マイク取得に失敗しました");
-        setMicReady(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      stopStream(localStreamRef.current);
-      localStreamRef.current = null;
-      setMicReady(false);
-    };
-  }, [sessionId, isMuted]);
-
-  const filled = Math.min(
-    (members?.length ?? 0) > 0 ? members.length : memberCount,
-    capacity
-  );
-
-  const micStateLabel = isMuted ? "🔇 ミュート中" : "🎙 マイクON";
-  const muteButtonLabel = isMuted ? "ミュート解除" : "ミュート";
-
-  return (
-    <ChalkboardRoomShell
-      title="通話"
-      subtitle={sessionId ? `セッション：${sessionId}` : undefined}
-      lines={["黒板はペンで書けます。", "待機ルームでメッセージ、通話で黒板。"]}
-    >
-      <div style={{ display: "grid", gap: 12, color: "#111" }}>
-        {err ? (
-          <div
-            style={{
-              padding: 10,
-              border: "1px solid #f5c2c7",
-              background: "#f8d7da",
-              borderRadius: 10,
-              color: "#842029",
-            }}
-          >
-            <p style={{ margin: 0, fontWeight: 900 }}>エラー</p>
-            <p style={{ margin: "6px 0 0 0" }}>{err}</p>
-          </div>
-        ) : null}
-
-        <div
-          style={{
-            border: "1px solid #ddd",
-            borderRadius: 14,
-            padding: 12,
-            background: "#fff",
-          }}
-        >
-          <div style={{ fontWeight: 900 }}>クラス</div>
-          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-            参加者：<b>{memberCount}</b> / {capacity} ・ 状態：
-            {status === "active"
-              ? "通話中"
-              : status === "closed"
-              ? "終了"
-              : "待機"}{" "}
-            ・ マイク：{micReady ? micStateLabel : "未許可/準備中"}
-          </div>
-
-          <div
-            style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}
-          >
-            {Array.from({ length: capacity }).map((_, i) => {
-              const m = members[i];
-              const isFilled = i < filled;
-
-              return (
-                <AvatarChip
-                  key={i}
-                  name={m?.display_name ?? "参加者"}
-                  photo={m?.photo_path}
-                  filled={isFilled}
-                />
-              );
-            })}
-          </div>
-
-          {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
-
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #eee" }}>
-            <div style={{ fontWeight: 900 }}>通話コントロール</div>
-
-            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button
-                disabled={!micReady}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #ddd",
-                  background: isMuted ? "#fff" : "#111",
-                  color: isMuted ? "#111" : "#fff",
-                  fontWeight: 900,
-                  cursor: micReady ? "pointer" : "not-allowed",
-                  opacity: micReady ? 1 : 0.6,
-                }}
-                onClick={() => {
-                  setIsMuted((prev) => {
-                    const next = !prev;
-                    setMicMuted(localStreamRef.current, next);
-                    return next;
-                  });
-                }}
-              >
-                {muteButtonLabel}
-              </button>
-
-              <button
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid #fca5a5",
-                  background: "#fee2e2",
-                  color: "#7f1d1d",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-                onClick={() => router.push(returnTo)}
-              >
-                退出
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </ChalkboardRoomShell>
+    </main>
   );
 }

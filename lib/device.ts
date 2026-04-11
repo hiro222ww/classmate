@@ -1,13 +1,11 @@
 // lib/device.ts
 
+import { getDevDeviceId, isDevFeatureEnabled } from "@/lib/devMode";
+
 export const DEVICE_ID_KEY = "classmate_device_id";
 
 function isBrowser() {
   return typeof window !== "undefined";
-}
-
-function isDevMode() {
-  return process.env.NODE_ENV !== "production";
 }
 
 export function getOrCreateDeviceId(): string {
@@ -27,22 +25,18 @@ export function getOrCreateDeviceId(): string {
 }
 
 /**
- * 🔥 ここだけ変える
+ * フロントでは基本これだけ使う
  */
 export function getDeviceId(): string {
   if (!isBrowser()) return "";
 
-  // devモードだけ仮想ユーザー有効
-  if (isDevMode()) {
-    const params = new URLSearchParams(window.location.search);
-    const dev = (params.get("dev") ?? "").trim();
-
-    if (dev) {
-      return `test-device-${dev}`;
+  if (isDevFeatureEnabled()) {
+    const devId = getDevDeviceId();
+    if (devId) {
+      return devId;
     }
   }
 
-  // 通常
   return getOrCreateDeviceId();
 }
 

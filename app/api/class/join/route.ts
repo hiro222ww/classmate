@@ -1,4 +1,3 @@
-// app/api/class/join/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -8,6 +7,14 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+const MATCH_WINDOW_MS = 5 * 60 * 1000;
+
+function getAgeMs(createdAt: string | null | undefined) {
+  const t = new Date(String(createdAt ?? "")).getTime();
+  if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
+  return Date.now() - t;
+}
 
 export async function POST(req: Request) {
   try {
@@ -32,7 +39,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) クラス実在確認
     const { data: cls, error: clsErr } = await supabase
       .from("classes")
       .select("id,name,topic_key,world_key,created_at")
@@ -65,7 +71,50 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2) entitlement 取得
+    const { data: latestSession, error: latestSessionErr } = await supabase
+      .from("sessions")
+      .select("id,status,created_at,capacity")
+      .eq("class_id", classId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    console.log("[class/join] latestSession =", latestSession);
+    console.log("[class/join] latestSessionErr =", latestSessionErr);
+
+    if (latestSessionErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "db_error",
+          where: "latest_session_lookup",
+          detail: latestSessionErr.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (latestSession) {
+      const ageMs = getAgeMs(latestSession.created_at);
+      const isClosedByTime = ageMs > MATCH_WINDOW_MS;
+      const isClosedByStatus =
+        latestSession.status === "active" || latestSession.status === "closed";
+
+      if (isClosedByTime || isClosedByStatus) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "class_closed",
+            classId,
+            sessionId: latestSession.id,
+            sessionStatus: latestSession.status ?? null,
+            reason: isClosedByStatus ? "status_closed" : "time_closed",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const { data: ent, error: entErr } = await supabase
       .from("user_entitlements")
       .select("class_slots, topic_plan, theme_pass")
@@ -90,7 +139,6 @@ export async function POST(req: Request) {
     const classSlots = Math.max(1, Number(ent?.class_slots ?? 1));
     console.log("[class/join] classSlots =", classSlots);
 
-    // 3) 現在の所属一覧
     const { data: mine, error: mineErr } = await supabase
       .from("class_memberships")
       .select("class_id")
@@ -117,7 +165,6 @@ export async function POST(req: Request) {
 
     console.log("[class/join] currentIds =", currentIds);
 
-    // 同一 class_id のみ重複禁止
     if (currentIds.includes(classId)) {
       console.log("[class/join] already joined");
       return NextResponse.json({
@@ -128,7 +175,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // 総枠数だけ制限
     if (currentIds.length >= classSlots) {
       console.log("[class/join] class slots limit", {
         current: currentIds.length,
@@ -147,7 +193,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) insert
     const { data: inserted, error: insErr } = await supabase
       .from("class_memberships")
       .insert({
@@ -176,7 +221,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5) verify
     const { data: verifyRows, error: verifyErr } = await supabase
       .from("class_memberships")
       .select("device_id,class_id")

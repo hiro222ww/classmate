@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
+import { DevPanel } from "@/components/DevPanel";
 
 type Profile = {
   device_id: string;
@@ -37,15 +38,6 @@ function formatClassTitle(c: MineClass): string {
   return `${topicKey}クラス`;
 }
 
-function buildRoomUrl(classId: string, sessionId: string) {
-  const qs = new URLSearchParams({
-    autojoin: "1",
-    classId,
-    sessionId,
-  });
-  return `/room?${qs.toString()}`;
-}
-
 async function readJsonSafe(res: Response) {
   const raw = await res.text().catch(() => "");
   try {
@@ -57,7 +49,31 @@ async function readJsonSafe(res: Response) {
 
 export default function HomeClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
+  const dev = (searchParams.get("dev") ?? "").trim();
+  const devQuery = dev ? `dev=${encodeURIComponent(dev)}` : "";
+
+  const withDev = (path: string) => {
+    if (!devQuery) return path;
+    return `${path}${path.includes("?") ? "&" : "?"}${devQuery}`;
+  };
+
+  function buildRoomUrl(classId: string, sessionId: string) {
+    const qs = new URLSearchParams({
+      autojoin: "1",
+      classId,
+      sessionId,
+    });
+
+    if (dev) {
+      qs.set("dev", dev);
+    }
+
+    return `/room?${qs.toString()}`;
+  }
+
+  const [deviceId, setDeviceId] = useState("");
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [classes, setClasses] = useState<MineClass[]>([]);
@@ -73,14 +89,17 @@ export default function HomeClient() {
       try {
         setLoading(true);
         setError("");
+        setProfile(null);
+        setClasses([]);
 
-        const deviceId = getDeviceId();
+        const id = getDeviceId();
+        if (!cancelled) setDeviceId(id);
 
         const [profileRes, classesRes] = await Promise.all([
-          fetch(`/api/profile?device_id=${encodeURIComponent(deviceId)}`, {
+          fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
             cache: "no-store",
           }),
-          fetch(`/api/class/mine?deviceId=${encodeURIComponent(deviceId)}`, {
+          fetch(`/api/class/mine?deviceId=${encodeURIComponent(id)}`, {
             cache: "no-store",
           }),
         ]);
@@ -103,18 +122,21 @@ export default function HomeClient() {
         setClasses(Array.isArray(classesJson.classes) ? classesJson.classes : []);
       } catch (e: any) {
         if (!cancelled) {
+          console.error("[home] load error", e);
           setError(e?.message || "読み込みに失敗しました");
           setClasses([]);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dev]);
 
   const visible = useMemo(() => {
     const arr = [...classes];
@@ -130,29 +152,42 @@ export default function HomeClient() {
     try {
       setOpeningClassId(target.id);
 
-      const deviceId = getDeviceId();
+      const currentDeviceId = getDeviceId();
 
       const res = await fetch("/api/class/match-join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          deviceId,
-          classId: target.class_id || target.id,
+          deviceId: currentDeviceId,
+          classId: target.id,
           topicKey: target.topic_key,
           worldKey: target.world_key ?? "default",
           capacity: 5,
           preferJoinedClass: true,
         }),
+        cache: "no-store",
       });
 
       const json = await readJsonSafe(res);
+      console.log("[home openClass] match-join response =", json);
 
       if (!res.ok || !json?.ok) {
         alert(json?.error || "open_class_failed");
         return;
       }
 
-      router.push(buildRoomUrl(json.classId, json.sessionId));
+      const classId = String(json?.classId ?? "").trim();
+      const sessionId = String(json?.sessionId ?? "").trim();
+
+      if (!classId || !sessionId) {
+        alert("open_class_missing_ids");
+        return;
+      }
+
+      router.push(buildRoomUrl(classId, sessionId));
+    } catch (e: any) {
+      console.error("[home openClass] error =", e);
+      alert(e?.message || "open_class_failed");
     } finally {
       setOpeningClassId(null);
     }
@@ -162,62 +197,269 @@ export default function HomeClient() {
     try {
       setQuickBusy(true);
 
-      const deviceId = getDeviceId();
+      const currentDeviceId = getDeviceId();
 
       const res = await fetch("/api/class/match-join", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          deviceId,
+          deviceId: currentDeviceId,
           topicKey: null,
           worldKey: "default",
           capacity: 5,
+          preferJoinedClass: false,
         }),
+        cache: "no-store",
       });
 
       const json = await readJsonSafe(res);
+      console.log("[home quick free] response =", json);
 
       if (!res.ok || !json?.ok) {
         alert(json?.error || "quick_join_failed");
         return;
       }
 
-      router.push(buildRoomUrl(json.classId, json.sessionId));
+      const classId = String(json?.classId ?? "").trim();
+      const sessionId = String(json?.sessionId ?? "").trim();
+
+      if (!classId || !sessionId) {
+        alert("quick_join_missing_ids");
+        return;
+      }
+
+      router.push(buildRoomUrl(classId, sessionId));
+    } catch (e: any) {
+      console.error("[home quick free] error =", e);
+      alert(e?.message || "quick_join_failed");
     } finally {
       setQuickBusy(false);
     }
   }
 
   async function leaveClass(target: MineClass) {
+    const title = formatClassTitle(target);
+
+    if (!confirm(`「${title}」を抜けますか？`)) {
+      return;
+    }
+
     try {
       setLeavingClassId(target.id);
 
-      const deviceId = getDeviceId();
+      const currentDeviceId = getDeviceId();
 
-      await fetch("/api/class/leave", {
+      const res = await fetch("/api/class/leave", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          deviceId,
-          classId: target.class_id || target.id,
+          deviceId: currentDeviceId,
+          classId: target.id,
         }),
+        cache: "no-store",
       });
 
-      setClasses((prev) =>
-        prev.filter((c) => c.class_id !== target.class_id)
-      );
+      const raw = await res.text().catch(() => "");
+      let json: any = {};
+      try {
+        json = raw ? JSON.parse(raw) : {};
+      } catch {
+        json = { raw };
+      }
+
+      console.log("[home leave] status =", res.status);
+      console.log("[home leave] json =", json);
+
+      if (!res.ok || !json?.ok) {
+        alert(json?.error || `leave_failed (${res.status})`);
+        return;
+      }
+
+      setClasses((prev) => prev.filter((c) => String(c.id) !== String(target.id)));
+    } catch (e: any) {
+      console.error("[home leave] error =", e);
+      alert(e?.message || "leave_failed");
     } finally {
       setLeavingClassId(null);
     }
   }
 
-  if (loading) return <p>読み込み中...</p>;
+  if (loading) {
+    return (
+      <>
+        <p style={{ margin: 0 }}>読み込み中...</p>
+        <DevPanel deviceId={deviceId} />
+      </>
+    );
+  }
 
   return (
-    <div>
-      <button onClick={() => router.push("/class/select")}>
-        クラス選択
-      </button>
+    <div style={{ display: "grid", gap: 12 }}>
+      {profile ? (
+        <p style={{ margin: 0 }}>
+          ようこそ、<b>{profile.display_name}</b> さん
+        </p>
+      ) : (
+        <p style={{ margin: 0 }}>はじめにプロフィール登録が必要です。</p>
+      )}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button
+          onClick={() => router.push(withDev("/class/select"))}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: "#111",
+            color: "#fff",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          はじめる（入る場所を選ぶ）
+        </button>
+
+        <button
+          onClick={quickJoinFreeAndOpen}
+          disabled={quickBusy}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: "#fff",
+            color: "#111",
+            fontWeight: 900,
+            cursor: quickBusy ? "default" : "pointer",
+            opacity: quickBusy ? 0.7 : 1,
+          }}
+        >
+          {quickBusy ? "参加中…" : "フリーですぐ入る"}
+        </button>
+
+        {!profile ? (
+          <button
+            onClick={() => router.push(withDev("/profile"))}
+            style={{
+              padding: "12px 16px",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: "#fff",
+              color: "#111",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            プロフィール登録
+          </button>
+        ) : null}
+      </div>
+
+      <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 12 }}>
+        <div style={{ fontWeight: 900, marginBottom: 8 }}>自分のクラス</div>
+
+        {error ? (
+          <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>
+            {error}
+          </div>
+        ) : visible.length === 0 ? (
+          <div style={{ color: "#6b7280", fontWeight: 800, fontSize: 13 }}>
+            まだありません。
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {visible.map((c) => {
+              const leaving = leavingClassId === c.id;
+              const opening = openingClassId === c.id;
+
+              return (
+                <div
+                  key={`${c.id}`}
+                  style={{
+                    textAlign: "left",
+                    padding: "12px 12px",
+                    borderRadius: 12,
+                    border: "1px solid #ddd",
+                    background: "#fff",
+                  }}
+                >
+                  <div style={{ fontWeight: 900, color: "#111" }}>
+                    {formatClassTitle(c)}
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#6b7280",
+                      fontWeight: 800,
+                      marginTop: 4,
+                    }}
+                  >
+                    開くか、不要なら抜けられます
+                  </div>
+
+                  {c.description ? (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "#6b7280",
+                        fontWeight: 700,
+                        marginTop: 6,
+                      }}
+                    >
+                      {c.description}
+                    </div>
+                  ) : null}
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      marginTop: 10,
+                    }}
+                  >
+                    <button
+                      onClick={() => void openClass(c)}
+                      disabled={opening}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid #ddd",
+                        background: "#111",
+                        color: "#fff",
+                        fontWeight: 900,
+                        cursor: opening ? "default" : "pointer",
+                        opacity: opening ? 0.7 : 1,
+                      }}
+                    >
+                      {opening ? "開いています…" : "開く"}
+                    </button>
+
+                    <button
+                      onClick={() => void leaveClass(c)}
+                      disabled={leaving}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid #fca5a5",
+                        background: "#fff",
+                        color: "#b91c1c",
+                        fontWeight: 900,
+                        cursor: leaving ? "default" : "pointer",
+                        opacity: leaving ? 0.7 : 1,
+                      }}
+                    >
+                      {leaving ? "抜けています…" : "抜ける"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <DevPanel deviceId={deviceId} />
     </div>
   );
 }

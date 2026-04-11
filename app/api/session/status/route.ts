@@ -20,10 +20,16 @@ function admin() {
 
 export const dynamic = "force-dynamic";
 
-type MemberRow = {
+type SessionMemberRow = {
   device_id?: string | null;
   display_name?: string | null;
   joined_at?: string | null;
+};
+
+type UserProfileRow = {
+  device_id?: string | null;
+  display_name?: string | null;
+  photo_path?: string | null;
 };
 
 function sanitizeDisplayName(v: string | null | undefined) {
@@ -122,28 +128,93 @@ export async function GET(req: Request) {
       );
     }
 
-    const rawMembers = (Array.isArray(m.data) ? m.data : []) as MemberRow[];
+    const rawMembers = (Array.isArray(m.data) ? m.data : []) as SessionMemberRow[];
+
+    const deviceIds = Array.from(
+      new Set(
+        rawMembers
+          .map((row) => String(row.device_id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    let profileMap = new Map<
+      string,
+      { display_name: string; photo_path: string | null }
+    >();
+
+    if (deviceIds.length > 0) {
+      const p = await sb
+        .from("user_profiles")
+        .select("device_id, display_name, photo_path")
+        .in("device_id", deviceIds);
+
+      if (p.error) {
+        return NextResponse.json(
+          { ok: false, error: p.error.message },
+          { status: 500 }
+        );
+      }
+
+      const rawProfiles = (Array.isArray(p.data) ? p.data : []) as UserProfileRow[];
+
+      profileMap = new Map(
+        rawProfiles
+          .map((row) => {
+            const deviceId = String(row.device_id ?? "").trim();
+            if (!deviceId) return null;
+
+            return [
+              deviceId,
+              {
+                display_name: sanitizeDisplayName(row.display_name),
+                photo_path: String(row.photo_path ?? "").trim() || null,
+              },
+            ] as const;
+          })
+          .filter(
+            (
+              entry
+            ): entry is readonly [
+              string,
+              { display_name: string; photo_path: string | null }
+            ] => !!entry
+          )
+      );
+    }
 
     const byDevice = new Map<
       string,
-      { device_id?: string; display_name: string; joined_at: string }
+      {
+        device_id: string;
+        display_name: string;
+        photo_path: string | null;
+        joined_at: string;
+      }
     >();
 
     for (const row of rawMembers) {
       const deviceId = String(row.device_id ?? "").trim();
       if (!deviceId) continue;
 
-      const displayName = sanitizeDisplayName(row.display_name);
+      const profile = profileMap.get(deviceId);
+
+      const displayName = profile?.display_name
+        ? sanitizeDisplayName(profile.display_name)
+        : sanitizeDisplayName(row.display_name);
+
+      const photoPath = profile?.photo_path ?? null;
       const joinedAt =
         String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
       const prev = byDevice.get(deviceId);
 
-      // 最初に入った時刻を優先して保持
+      // 最初に入った時刻を優先
       if (!prev || joinedAt < prev.joined_at) {
         byDevice.set(deviceId, {
           device_id: deviceId,
           display_name: displayName,
+          photo_path: photoPath,
           joined_at: joinedAt,
         });
       }

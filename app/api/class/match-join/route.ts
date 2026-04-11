@@ -8,13 +8,15 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const MATCH_WINDOW_MS = 5 * 60 * 1000;
+const AUTO_START_MEMBER_COUNT = 3;
+
 function normalizeTopicKey(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "free") return null;
   return s;
 }
 
-// 旧入口系の名前は完全除外
 function isLegacyEntryClassName(name: string | null | undefined) {
   const s = String(name ?? "").trim();
   if (!s) return false;
@@ -39,10 +41,6 @@ function buildIndexedClassLabel(n: number) {
   return `クラス${String(block).padStart(4, "0")}${letter}`;
 }
 
-// クラス0001A -> 1
-// クラス0001B -> 2
-// ...
-// クラス0002A -> 27
 function extractIndexedClassNumber(name: string | null | undefined): number {
   const s = String(name ?? "").trim();
   const m = s.match(/^クラス(\d{4})([A-Z])$/);
@@ -65,19 +63,60 @@ type ClassRow = {
   topic_key: string | null;
   world_key: string | null;
   created_at?: string | null;
+  is_user_created?: boolean | null;
 };
+
+type SessionStatus = "forming" | "waiting" | "active" | "closed";
 
 type SessionRow = {
   id: string;
   class_id: string;
-  status?: string | null;
+  topic?: string | null;
+  status?: SessionStatus | null;
   created_at?: string | null;
+  capacity?: number | null;
 };
 
 function normalizeCapacity(v: unknown) {
   const n = Number(v);
   if (!Number.isFinite(n)) return 5;
   return Math.max(2, Math.min(5, Math.floor(n)));
+}
+
+function getSessionAgeMs(createdAt: string | null | undefined) {
+  const t = new Date(String(createdAt ?? "")).getTime();
+  if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
+  return Date.now() - t;
+}
+
+function isJoinOpenSession(
+  session: SessionRow,
+  memberCount: number,
+  requestedCapacity: number
+) {
+  const ageMs = getSessionAgeMs(session.created_at);
+  const sessionCapacity = Math.max(
+    2,
+    Math.min(5, Number(session.capacity ?? requestedCapacity) || requestedCapacity)
+  );
+
+  if (session.status && !["forming", "waiting"].includes(session.status)) {
+    return false;
+  }
+
+  if (ageMs > MATCH_WINDOW_MS) {
+    return false;
+  }
+
+  if (memberCount >= sessionCapacity) {
+    return false;
+  }
+
+  return true;
+}
+
+function shouldAutoActivate(memberCount: number) {
+  return memberCount >= AUTO_START_MEMBER_COUNT;
 }
 
 async function countSessionMembers(sessionId: string) {
@@ -99,13 +138,54 @@ async function countSessionMembers(sessionId: string) {
   return uniqueIds.size;
 }
 
-async function findAvailableFormingSession(
+async function maybeAutoUpdateSessionStatus(session: SessionRow, memberCount: number) {
+  const ageMs = getSessionAgeMs(session.created_at);
+
+  let nextStatus: SessionStatus | null = null;
+
+  if (shouldAutoActivate(memberCount)) {
+    nextStatus = "active";
+  } else if (ageMs > MATCH_WINDOW_MS) {
+    nextStatus = "active";
+  }
+
+  if (!nextStatus || session.status === nextStatus) {
+    return {
+      ...session,
+      status: session.status ?? null,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("sessions")
+    .update({ status: nextStatus })
+    .eq("id", session.id)
+    .select("id,class_id,topic,status,created_at,capacity")
+    .single();
+
+  if (error) {
+    console.warn("[class/match-join] session status update skipped", {
+      sessionId: session.id,
+      nextStatus,
+      detail: error.message,
+    });
+
+    return {
+      ...session,
+      status: nextStatus,
+    };
+  }
+
+  return data as SessionRow;
+}
+
+async function findAvailableSession(
   classId: string,
   requestedCapacity: number
 ): Promise<SessionRow | null> {
   const { data: sessions, error } = await supabase
     .from("sessions")
-    .select("id,class_id,status,created_at")
+    .select("id,class_id,topic,status,created_at,capacity")
     .eq("class_id", classId)
     .in("status", ["forming", "waiting"])
     .order("created_at", { ascending: true });
@@ -119,17 +199,26 @@ async function findAvailableFormingSession(
 
   for (const s of rows) {
     const memberCount = await countSessionMembers(s.id);
+    const ageMs = getSessionAgeMs(s.created_at);
 
-    console.log("[class/match-join] session memberCount =", {
+    console.log("[class/match-join] session candidate =", {
       classId,
       sessionId: s.id,
       status: s.status,
       memberCount,
       requestedCapacity,
+      sessionCapacity: s.capacity,
+      ageMs,
     });
 
-    if (memberCount < requestedCapacity && memberCount > bestCount) {
-      best = s;
+    const refreshed = await maybeAutoUpdateSessionStatus(s, memberCount);
+
+    if (!isJoinOpenSession(refreshed, memberCount, requestedCapacity)) {
+      continue;
+    }
+
+    if (memberCount > bestCount) {
+      best = refreshed;
       bestCount = memberCount;
     }
   }
@@ -139,17 +228,25 @@ async function findAvailableFormingSession(
 
 async function createSession(
   classId: string,
+  topic: string,
   requestedCapacity: number
 ): Promise<SessionRow> {
+  const safeTopic = String(topic ?? "").trim() || "ルーム";
+  const safeCapacity = normalizeCapacity(requestedCapacity);
+
   const { data, error } = await supabase
     .from("sessions")
     .insert({
       class_id: classId,
+      topic: safeTopic,
       status: "forming",
-      capacity: requestedCapacity,
+      capacity: safeCapacity,
     })
-    .select("id,class_id,status,created_at")
+    .select("id,class_id,topic,status,created_at,capacity")
     .single();
+
+  console.log("[class/match-join] created session =", data);
+  console.log("[class/match-join] create session error =", error);
 
   if (error) throw error;
   return data as SessionRow;
@@ -249,7 +346,7 @@ async function getCurrentMemberships(deviceId: string) {
 async function getSameTopicClasses(worldKey: string, topicKey: string | null) {
   let classesQuery = supabase
     .from("classes")
-    .select("id,name,topic_key,world_key,created_at")
+    .select("id,name,topic_key,world_key,created_at,is_user_created")
     .eq("world_key", worldKey)
     .eq("is_user_created", false)
     .order("created_at", { ascending: true });
@@ -282,6 +379,48 @@ async function getSameTopicClasses(worldKey: string, topicKey: string | null) {
     ok: true as const,
     allSameTopicClasses,
     sameTopicClasses,
+  };
+}
+
+async function getClassById(classId: string) {
+  const { data, error } = await supabase
+    .from("classes")
+    .select("id,name,topic_key,world_key,created_at,is_user_created")
+    .eq("id", classId)
+    .single();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "forced_class_lookup_failed",
+          detail: error.message,
+          classId,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  if (!data) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "forced_class_not_found",
+          classId,
+        },
+        { status: 404 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    classRow: data as ClassRow,
   };
 }
 
@@ -364,6 +503,10 @@ async function ensureMembership(params: {
   };
 }
 
+function foundSessionCreateErrorCode(_e: unknown) {
+  return "session_resolve_failed";
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -373,9 +516,6 @@ export async function POST(req: Request) {
     const topicKey = normalizeTopicKey(body.topicKey);
     const requestedCapacity = normalizeCapacity(body.capacity);
     const preferJoinedClass = Boolean(body.preferJoinedClass ?? false);
-
-    // これを追加:
-    // classId が来たら、そのクラスに固定して session を解決する
     const forcedClassId = String(body.classId ?? "").trim();
 
     console.log("[class/match-join] body =", body);
@@ -393,86 +533,48 @@ export async function POST(req: Request) {
       );
     }
 
-    // 0) プロフィール存在チェック
     const profileRes = await getProfile(deviceId);
     if (!profileRes.ok) return profileRes.response;
 
-    // 1) entitlement
     const slotsRes = await getClassSlots(deviceId);
     if (!slotsRes.ok) return slotsRes.response;
     const classSlots = slotsRes.classSlots;
 
-    // 2) 現在所属
     const mineRes = await getCurrentMemberships(deviceId);
     if (!mineRes.ok) return mineRes.response;
     const currentIds = mineRes.currentIds;
 
-    // 3) 同テーマの class 一覧を取得
     const classesRes = await getSameTopicClasses(worldKey, topicKey);
     if (!classesRes.ok) return classesRes.response;
 
-    const { allSameTopicClasses, sameTopicClasses } = classesRes;
+    const { sameTopicClasses } = classesRes;
 
-    console.log("[class/match-join] all same-topic classes =", allSameTopicClasses);
     console.log("[class/match-join] filtered instance classes =", sameTopicClasses);
     console.log("[class/match-join] currentIds =", currentIds);
 
     let targetClass: ClassRow | null = null;
     let targetSession: SessionRow | null = null;
 
-    // A) classId 指定あり:
-    //    「そのクラスに入る」を最優先で実行
     if (forcedClassId) {
-      const forcedClass =
-        sameTopicClasses.find((c) => String(c.id) === forcedClassId) ?? null;
+      const forcedClassRes = await getClassById(forcedClassId);
+      if (!forcedClassRes.ok) return forcedClassRes.response;
 
-      if (!forcedClass) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "forced_class_not_found",
-            classId: forcedClassId,
-          },
-          { status: 404 }
-        );
-      }
-
-      // 念のため topic/world 整合も forcedClass 側で担保
-      if (String(forcedClass.world_key ?? "") !== String(worldKey)) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "forced_class_world_mismatch",
-            classId: forcedClassId,
-          },
-          { status: 400 }
-        );
-      }
-
-      const forcedTopic = normalizeTopicKey(forcedClass.topic_key);
-      if (forcedTopic !== topicKey) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "forced_class_topic_mismatch",
-            classId: forcedClassId,
-            requestedTopicKey: topicKey,
-            actualTopicKey: forcedTopic,
-          },
-          { status: 400 }
-        );
-      }
-
+      const forcedClass = forcedClassRes.classRow;
       targetClass = forcedClass;
 
       try {
-        const found = await findAvailableFormingSession(
+        const found = await findAvailableSession(
           forcedClassId,
           requestedCapacity
         );
 
         targetSession =
-          found ?? (await createSession(forcedClassId, requestedCapacity));
+          found ??
+          (await createSession(
+            forcedClassId,
+            forcedClass.name,
+            requestedCapacity
+          ));
 
         console.log("[class/match-join] forced class resolved =", {
           classId: forcedClassId,
@@ -481,18 +583,18 @@ export async function POST(req: Request) {
           reused: Boolean(found),
         });
       } catch (e: any) {
+        console.error("[class/match-join] forced session resolve failed", e);
         return NextResponse.json(
           {
             ok: false,
             error: foundSessionCreateErrorCode(e),
             detail: e?.message ?? String(e),
+            classId: forcedClassId,
           },
           { status: 500 }
         );
       }
     } else {
-      // B) classId 指定なし:
-      //    従来どおり、テーマ内で最適な class/session を自動選択
       const orderedClasses = sortClassesForAutoMatch(
         sameTopicClasses,
         currentIds,
@@ -503,11 +605,11 @@ export async function POST(req: Request) {
         const cid = String(c.id);
 
         try {
-          const found = await findAvailableFormingSession(cid, requestedCapacity);
+          const found = await findAvailableSession(cid, requestedCapacity);
           if (found) {
             targetClass = c;
             targetSession = found;
-            console.log("[class/match-join] using existing session =", {
+            console.log("[class/match-join] using existing open session =", {
               classId: cid,
               className: c.name,
               sessionId: found.id,
@@ -515,6 +617,7 @@ export async function POST(req: Request) {
             break;
           }
         } catch (e: any) {
+          console.error("[class/match-join] session lookup failed", e);
           return NextResponse.json(
             {
               ok: false,
@@ -526,7 +629,6 @@ export async function POST(req: Request) {
         }
       }
 
-      // 空き session がなければ新規 class + session 作成
       if (!targetClass) {
         const maxIndex = sameTopicClasses.reduce((max, c) => {
           return Math.max(max, extractIndexedClassNumber(c.name));
@@ -546,7 +648,7 @@ export async function POST(req: Request) {
             is_sensitive: false,
             is_user_created: false,
           })
-          .select("id,name,topic_key,world_key,created_at")
+          .select("id,name,topic_key,world_key,created_at,is_user_created")
           .single();
 
         console.log("[class/match-join] created class =", createdClass);
@@ -571,18 +673,17 @@ export async function POST(req: Request) {
         try {
           targetSession = await createSession(
             String(targetClass.id),
+            targetClass.name,
             requestedCapacity
           );
-          console.log("[class/match-join] created session on new class =", {
-            classId: targetClass.id,
-            sessionId: targetSession.id,
-          });
         } catch (e: any) {
+          console.error("[class/match-join] created class session resolve failed", e);
           return NextResponse.json(
             {
               ok: false,
-              error: "session_create_failed",
+              error: foundSessionCreateErrorCode(e),
               detail: e?.message ?? String(e),
+              classId: targetClass.id,
             },
             { status: 500 }
           );
@@ -590,54 +691,46 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!targetClass?.id) {
-      return NextResponse.json(
-        { ok: false, error: "class_resolve_failed" },
-        { status: 500 }
-      );
-    }
-
-    if (!targetSession?.id) {
-      return NextResponse.json(
-        { ok: false, error: "session_resolve_failed" },
-        { status: 500 }
-      );
-    }
-
-    const classId = String(targetClass.id);
-    const sessionId = String(targetSession.id);
-
-    // 念のため最終防御
-    if (String(targetSession.class_id) !== classId) {
+    if (!targetClass || !targetSession) {
       return NextResponse.json(
         {
           ok: false,
-          error: "session_class_mismatch",
-          classId,
-          sessionClassId: String(targetSession.class_id),
-          sessionId,
+          error: "match_target_not_found",
         },
         { status: 500 }
       );
     }
 
-    // membership
     const membershipRes = await ensureMembership({
       deviceId,
-      classId,
+      classId: String(targetClass.id),
       currentIds,
       classSlots,
     });
     if (!membershipRes.ok) return membershipRes.response;
 
+    const currentSessionMemberCount = await countSessionMembers(targetSession.id);
+    const refreshedSession = await maybeAutoUpdateSessionStatus(
+      targetSession,
+      currentSessionMemberCount
+    );
+
+    const joinAgeMs = getSessionAgeMs(refreshedSession.created_at);
+    const matchWindowRemainingMs = Math.max(0, MATCH_WINDOW_MS - joinAgeMs);
+
     return NextResponse.json({
       ok: true,
+      classId: targetClass.id,
+      className: targetClass.name,
+      sessionId: refreshedSession.id,
+      sessionStatus: refreshedSession.status ?? "forming",
+      sessionCreatedAt: refreshedSession.created_at ?? null,
+      requestedCapacity,
+      currentSessionMemberCount,
       alreadyJoined: membershipRes.alreadyJoined,
-      classId,
-      sessionId,
-      class: targetClass,
-      session: targetSession,
-      inserted: membershipRes.inserted,
+      matchWindowMs: MATCH_WINDOW_MS,
+      matchWindowRemainingMs,
+      autoStartMemberCount: AUTO_START_MEMBER_COUNT,
     });
   } catch (e: any) {
     console.error("[class/match-join] server error =", e);
@@ -650,8 +743,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}
-
-function foundSessionCreateErrorCode(_e: unknown) {
-  return "session_resolve_failed";
 }
