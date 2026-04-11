@@ -1,13 +1,13 @@
 // app/call/page.tsx
+import { Suspense } from "react";
 import CallClient from "./CallClient";
 
 export default function CallPage() {
   return (
-    <main style={{ maxWidth: 920, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 12 }}>
-        通話セッション
-      </h1>
-      <CallClient />
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+      <Suspense fallback={<p>読み込み中...</p>}>
+        <CallClient />
+      </Suspense>
     </main>
   );
 }
