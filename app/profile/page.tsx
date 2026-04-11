@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import ProfileClient from "./ProfileClient";
 
 export default function ProfilePage() {
@@ -7,10 +8,12 @@ export default function ProfilePage() {
         プロフィール登録
       </h1>
       <p style={{ marginTop: 0, opacity: 0.7, fontSize: 13 }}>
-  現在は18歳以上の方のみご利用いただけます。
-</p>
+        現在は18歳以上の方のみご利用いただけます。
+      </p>
 
-      <ProfileClient />
+      <Suspense fallback={<p>読み込み中...</p>}>
+        <ProfileClient />
+      </Suspense>
     </main>
   );
 }

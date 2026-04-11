@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import RoomClient from "./RoomClient";
 
 export const dynamic = "force-dynamic";
@@ -23,5 +24,9 @@ export default async function RoomPage({ searchParams }: Props) {
 
   const remountKey = sessionId || classId || "room";
 
-  return <RoomClient key={remountKey} />;
+  return (
+    <Suspense fallback={<main style={{ padding: 16 }}>読み込み中...</main>}>
+      <RoomClient key={remountKey} />
+    </Suspense>
+  );
 }
