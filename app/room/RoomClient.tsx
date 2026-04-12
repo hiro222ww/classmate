@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
@@ -84,7 +84,10 @@ function getAvatarUrl(photoPath?: string | null) {
     .from("profile-photos")
     .getPublicUrl(normalized);
 
-  return data?.publicUrl || "/default-avatar.jpg";
+  const publicUrl = data?.publicUrl?.trim();
+  if (!publicUrl) return "/default-avatar.jpg";
+
+  return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
 function getDisplayNameStorageKeys(deviceId: string) {
@@ -374,6 +377,66 @@ export default function RoomClient() {
   }, [members, deviceId, displayName]);
 
   useEffect(() => {
+    console.log("[room] visibleMembers", visibleMembers);
+  }, [visibleMembers]);
+
+  const fetchStatus = useCallback(async () => {
+    if (!sessionId || !classId) return;
+
+    try {
+      const qs = new URLSearchParams({ sessionId, classId });
+
+      const res = await fetch(`/api/session/status?${qs.toString()}`, {
+        cache: "no-store",
+      });
+
+      const rawText = await res.text().catch(() => "");
+      let json: SessionStatusResponse | null = null;
+
+      try {
+        json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok || !json?.ok) {
+        console.error("[room] status fetch failed", {
+          url: `/api/session/status?${qs.toString()}`,
+          status: res.status,
+          statusText: res.statusText,
+          json,
+          rawText,
+          sessionId,
+          classId,
+        });
+        setSoftConnectionError("status");
+        return;
+      }
+
+      const incomingMembers = Array.isArray(json.members) ? json.members : [];
+      console.log("[members raw]", incomingMembers);
+      setMembers(incomingMembers);
+
+      if (json.session?.topic) {
+        setTopicTitle(String(json.session.topic).trim() || "ルーム");
+      }
+      if (json.session?.status) {
+        setStatus(String(json.session.status));
+      }
+      if (Number.isFinite(Number(json.session?.capacity))) {
+        setCapacity(Number(json.session?.capacity));
+      }
+
+      const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
+      setMemberCount(Math.max(nextCount, 0));
+      clearSoftConnectionError("status");
+    } catch (e) {
+      console.error("[room] status fetch exception", e);
+      setSoftConnectionError("status");
+    }
+  }, [sessionId, classId]);
+
+  useEffect(() => {
     if (!sessionId) {
       setErr("sessionId required");
       return;
@@ -458,6 +521,7 @@ export default function RoomClient() {
       }
 
       setErr("");
+      await fetchStatus();
     }
 
     void join().catch((e: any) => {
@@ -469,73 +533,10 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, classId, deviceId, displayName]);
+  }, [sessionId, classId, deviceId, displayName, fetchStatus]);
 
   useEffect(() => {
-    if (!sessionId) return;
-    if (!classId) return;
-
-    let cancelled = false;
-
-    async function fetchStatus() {
-      try {
-        const qs = new URLSearchParams({ sessionId, classId });
-
-        const res = await fetch(`/api/session/status?${qs.toString()}`, {
-          cache: "no-store",
-        });
-
-        const rawText = await res.text().catch(() => "");
-        let json: SessionStatusResponse | null = null;
-
-        try {
-          json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
-        } catch {
-          json = null;
-        }
-
-        if (!res.ok || !json?.ok) {
-          if (!cancelled) {
-            console.error("[room] status fetch failed", {
-              url: `/api/session/status?${qs.toString()}`,
-              status: res.status,
-              statusText: res.statusText,
-              json,
-              rawText,
-              sessionId,
-              classId,
-            });
-            setSoftConnectionError("status");
-          }
-          return;
-        }
-
-        if (cancelled) return;
-
-        const incomingMembers = Array.isArray(json.members) ? json.members : [];
-        console.log("[members raw]", incomingMembers);
-        setMembers(incomingMembers);
-
-        if (json.session?.topic) {
-          setTopicTitle(String(json.session.topic).trim() || "ルーム");
-        }
-        if (json.session?.status) {
-          setStatus(String(json.session.status));
-        }
-        if (Number.isFinite(Number(json.session?.capacity))) {
-          setCapacity(Number(json.session?.capacity));
-        }
-
-        const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
-        setMemberCount(Math.max(nextCount, 0));
-        clearSoftConnectionError("status");
-      } catch (e) {
-        if (!cancelled) {
-          console.error("[room] status fetch exception", e);
-          setSoftConnectionError("status");
-        }
-      }
-    }
+    if (!sessionId || !classId) return;
 
     void fetchStatus();
 
@@ -544,10 +545,54 @@ export default function RoomClient() {
     }, 2000);
 
     return () => {
-      cancelled = true;
       window.clearInterval(interval);
     };
-  }, [sessionId, classId]);
+  }, [sessionId, classId, fetchStatus]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const channel = supabase
+      .channel(`room-session-members-${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "session_members",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        async () => {
+          await fetchStatus();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionId, fetchStatus]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`room-user-profiles-${sessionId || "no-session"}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "user_profiles",
+        },
+        async () => {
+          await fetchStatus();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionId, fetchStatus]);
 
   useEffect(() => {
     if (!sessionId) return;

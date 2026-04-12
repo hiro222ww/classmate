@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { isDevFeatureEnabled } from "@/lib/devMode";
+import { supabase } from "@/lib/supabaseClient";
 
 type Gender = "male" | "female";
 
@@ -62,6 +63,36 @@ function writeStoredDisplayName(deviceId: string, name: string) {
   localStorage.setItem(legacy, normalizedName);
 }
 
+function getAvatarUrl(photoPath?: string | null) {
+  let normalized = String(photoPath ?? "").trim();
+
+  if (!normalized) return "/default-avatar.jpg";
+
+  if (
+    normalized.startsWith("http://") ||
+    normalized.startsWith("https://")
+  ) {
+    return normalized;
+  }
+
+  if (normalized.startsWith("profile-photos/")) {
+    normalized = normalized.replace(/^profile-photos\//, "");
+  }
+
+  if (normalized.startsWith("avatars/")) {
+    normalized = normalized.replace(/^avatars\//, "");
+  }
+
+  const { data } = supabase.storage
+    .from("profile-photos")
+    .getPublicUrl(normalized);
+
+  const publicUrl = data?.publicUrl?.trim();
+  if (!publicUrl) return "/default-avatar.jpg";
+
+  return `${publicUrl}?t=${encodeURIComponent(normalized)}`;
+}
+
 export default function ProfileClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -86,7 +117,7 @@ export default function ProfileClient() {
   const [termsAgreed, setTermsAgreed] = useState(false);
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState("");
+  const [photoPath, setPhotoPath] = useState<string | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -121,6 +152,7 @@ export default function ProfileClient() {
       setGuardianConsent(false);
       setTermsAgreed(false);
       setPhotoFile(null);
+      setPhotoPath(null);
 
       try {
         const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
@@ -139,11 +171,13 @@ export default function ProfileClient() {
         setDisplayName(data.display_name ?? "");
         setBirthDate(isValidISODateString(data.birth_date) ? data.birth_date : "");
         setGender((data.gender as Gender) ?? "male");
+        setPhotoPath(data.photo_path ?? null);
 
         console.log("[profile] loaded profile", {
           requestedDeviceId: id,
           returnedDeviceId: data.device_id ?? null,
           displayName: data.display_name ?? null,
+          photo_path: data.photo_path ?? null,
           dev,
         });
       } catch (e) {
@@ -160,21 +194,24 @@ export default function ProfileClient() {
     return () => {
       cancelled = true;
     };
-  }, [searchKey]);
+  }, [searchKey, dev]);
+
+  const localPreviewUrl = useMemo(() => {
+    if (!photoFile) return "";
+    return URL.createObjectURL(photoFile);
+  }, [photoFile]);
 
   useEffect(() => {
-    if (!photoFile) {
-      setPhotoPreviewUrl("");
-      return;
-    }
-
-    const url = URL.createObjectURL(photoFile);
-    setPhotoPreviewUrl(url);
-
     return () => {
-      URL.revokeObjectURL(url);
+      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
     };
-  }, [photoFile]);
+  }, [localPreviewUrl]);
+
+  const previewUrl = useMemo(() => {
+    if (localPreviewUrl) return localPreviewUrl;
+    if (photoPath) return getAvatarUrl(photoPath);
+    return "/default-avatar.jpg";
+  }, [localPreviewUrl, photoPath]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -236,6 +273,18 @@ export default function ProfileClient() {
         return;
       }
 
+      const json = await res.json().catch(() => null);
+      const nextPhotoPath =
+        String(json?.photo_path ?? "").trim() || photoPath || null;
+
+      console.log("[profile] submit ok", {
+        deviceId,
+        nextPhotoPath,
+      });
+
+      setPhotoPath(nextPhotoPath);
+      setPhotoFile(null);
+
       writeStoredDisplayName(deviceId, displayName.trim());
 
       alert("プロフィールを保存しました");
@@ -269,6 +318,8 @@ export default function ProfileClient() {
           <div style={{ fontWeight: 800 }}>DEV STATUS</div>
           <div>dev: {dev || "-"}</div>
           <div>deviceId: {deviceId || "-"}</div>
+          <div>photoPath: {photoPath || "-"}</div>
+          <div>hasPhotoFile: {photoFile ? "yes" : "no"}</div>
         </div>
       )}
 
@@ -364,21 +415,38 @@ export default function ProfileClient() {
         <input
           type="file"
           accept="image/*"
-          onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+          onChange={(e) => {
+            const next = e.target.files?.[0] ?? null;
+            setPhotoFile(next);
+          }}
         />
-        {photoPreviewUrl && (
-          <img
-            src={photoPreviewUrl}
-            alt="preview"
-            style={{
-              width: 120,
-              height: 120,
-              objectFit: "cover",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-            }}
-          />
-        )}
+
+        <img
+          src={previewUrl}
+          alt="preview"
+          onError={(e) => {
+            console.log("[profile preview ng]", {
+              photoPath,
+              previewUrl,
+            });
+            e.currentTarget.onerror = null;
+            e.currentTarget.src = "/default-avatar.jpg";
+          }}
+          onLoad={() => {
+            console.log("[profile preview ok]", {
+              photoPath,
+              previewUrl,
+            });
+          }}
+          style={{
+            width: 120,
+            height: 120,
+            objectFit: "cover",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: "#f3f4f6",
+          }}
+        />
       </div>
 
       <div

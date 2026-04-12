@@ -138,6 +138,11 @@ export async function GET(req: Request) {
       )
     );
 
+    // profile 更新直後のわずかなズレを減らす
+    if (deviceIds.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+
     let profileMap = new Map<
       string,
       { display_name: string; photo_path: string | null }
@@ -183,6 +188,8 @@ export async function GET(req: Request) {
       );
     }
 
+    console.log("[session/status] profileMap", Array.from(profileMap.entries()));
+
     const byDevice = new Map<
       string,
       {
@@ -203,13 +210,12 @@ export async function GET(req: Request) {
         ? sanitizeDisplayName(profile.display_name)
         : sanitizeDisplayName(row.display_name);
 
-      const photoPath = profile?.photo_path ?? null;
+      const photoPath = String(profile?.photo_path ?? "").trim() || null;
       const joinedAt =
         String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
       const prev = byDevice.get(deviceId);
 
-      // 最初に入った時刻を優先
       if (!prev || joinedAt < prev.joined_at) {
         byDevice.set(deviceId, {
           device_id: deviceId,
@@ -224,19 +230,28 @@ export async function GET(req: Request) {
       a.joined_at.localeCompare(b.joined_at)
     );
 
-    return NextResponse.json({
-      ok: true,
-      session: {
-        id: String(s.data.id),
-        class_id: String(s.data.class_id ?? ""),
-        topic: String(s.data.topic ?? "").trim(),
-        status: String(s.data.status ?? "forming"),
-        capacity: Number(s.data.capacity ?? 5),
-        created_at: s.data.created_at ?? null,
+    console.log("[session/status] members raw", members);
+
+    return NextResponse.json(
+      {
+        ok: true,
+        session: {
+          id: String(s.data.id),
+          class_id: String(s.data.class_id ?? ""),
+          topic: String(s.data.topic ?? "").trim(),
+          status: String(s.data.status ?? "forming"),
+          capacity: Number(s.data.capacity ?? 5),
+          created_at: s.data.created_at ?? null,
+        },
+        members,
+        memberCount: members.length,
       },
-      members,
-      memberCount: members.length,
-    });
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message ?? "status_failed" },

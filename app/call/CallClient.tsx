@@ -59,7 +59,11 @@ function getAvatarUrl(photoPath?: string | null) {
     .from("profile-photos")
     .getPublicUrl(normalized);
 
-  return data?.publicUrl || "/default-avatar.jpg";
+  const publicUrl = data?.publicUrl?.trim();
+  if (!publicUrl) return "/default-avatar.jpg";
+
+  // 毎レンダーで変わらない安定した cache buster
+  return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
 export default function CallClient() {
@@ -80,7 +84,6 @@ export default function CallClient() {
   const [isMuted, setIsMuted] = useState(false);
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
-  const [remoteCount, setRemoteCount] = useState(0);
   const [callInfo, setCallInfo] = useState("");
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
@@ -101,17 +104,27 @@ export default function CallClient() {
         cache: "no-store",
       });
 
-      const json = (await res.json()) as SessionStatusResponse;
+      const rawText = await res.text().catch(() => "");
+      let json: SessionStatusResponse | null = null;
+
+      try {
+        json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
+      } catch {
+        json = null;
+      }
 
       if (!res.ok || !json?.ok) {
         console.error("[call] session status fetch error", {
           status: res.status,
+          statusText: res.statusText,
           error: json?.error || "session_status_failed",
+          rawText,
         });
         return;
       }
 
       const incoming = Array.isArray(json.members) ? json.members : [];
+      console.log("[call] incoming members", incoming);
 
       const nextMembers: Member[] = [];
 
@@ -126,6 +139,7 @@ export default function CallClient() {
         });
       }
 
+      console.log("[call] nextMembers", nextMembers);
       setMembers(nextMembers);
 
       if (Number.isFinite(Number(json.session?.capacity))) {
@@ -167,11 +181,32 @@ export default function CallClient() {
   }, [sessionId, fetchMembers]);
 
   useEffect(() => {
+    const channel = supabase
+      .channel(`call-profiles-${sessionId || "no-session"}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "user_profiles",
+        },
+        async () => {
+          await fetchMembers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionId, fetchMembers]);
+
+  useEffect(() => {
     if (!sessionId) return;
 
     const timer = window.setInterval(() => {
       void fetchMembers();
-    }, 5000);
+    }, 2000);
 
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers]);
@@ -193,15 +228,6 @@ export default function CallClient() {
     if (!micReady) return "マイク準備中…";
     return isMuted ? "ミュート解除" : "ミュート";
   }, [micReady, isMuted]);
-
-  const summaryText = useMemo(() => {
-    const values = Object.values(peerStates);
-    const connected = values.filter((v) => v === "connected").length;
-    const connecting = values.filter((v) => v === "connecting").length;
-    const failed = values.filter((v) => v === "failed").length;
-
-    return `接続済み ${connected} / 接続中 ${connecting} / 不安定 ${failed}`;
-  }, [peerStates]);
 
   const getMemberStatus = useCallback(
     (member?: Member) => {
@@ -272,7 +298,7 @@ export default function CallClient() {
         isMuted={isMuted}
         onMicReadyChange={setMicReady}
         onMicLevelChange={setMicLevel}
-        onRemoteCountChange={setRemoteCount}
+        onRemoteCountChange={() => {}}
         onStatusChange={setCallInfo}
         onPeerStatesChange={setPeerStates}
       />
@@ -292,12 +318,6 @@ export default function CallClient() {
           </h1>
           <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
             参加人数 {filled}/{capacity}
-          </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
-            受信中音声 {remoteCount} 本
-          </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
-            {summaryText}
           </div>
         </div>
 
@@ -452,7 +472,7 @@ export default function CallClient() {
           background: "#fff",
         }}
       >
-        <div style={{ fontWeight: 900, fontSize: 15 }}>通話コントロール</div>
+        <div style={{ fontWeight: 900, fontSize: 15 }}>音声設定</div>
 
         <div
           style={{
@@ -513,19 +533,6 @@ export default function CallClient() {
       <section style={{ marginTop: 16 }}>
         {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
       </section>
-
-      <div
-        style={{
-          marginTop: 14,
-          fontSize: 12,
-          color: "#6b7280",
-          lineHeight: 1.7,
-        }}
-      >
-        <div>sessionId: {sessionId || "-"}</div>
-        <div>classId: {classId || "-"}</div>
-        <div>dev: {dev || "-"}</div>
-      </div>
     </main>
   );
 }

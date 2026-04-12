@@ -82,6 +82,13 @@ export default function HomeClient() {
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
+  // hydration対策: client mount後だけ DevPanel を出す
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -285,12 +292,7 @@ export default function HomeClient() {
   }
 
   if (loading) {
-    return (
-      <>
-        <p style={{ margin: 0 }}>読み込み中...</p>
-        <DevPanel deviceId={deviceId} />
-      </>
-    );
+    return <p style={{ margin: 0 }}>読み込み中...</p>;
   }
 
   return (
@@ -459,7 +461,7 @@ export default function HomeClient() {
         )}
       </div>
 
-      <DevPanel deviceId={deviceId} />
+      {mounted ? <DevPanel deviceId={deviceId} /> : null}
     </div>
   );
 }

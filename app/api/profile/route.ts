@@ -20,10 +20,23 @@ export async function GET(req: Request) {
     .maybeSingle();
 
   if (error) {
+    console.log("[profile][GET] error", {
+      device_id,
+      message: error.message,
+      details: (error as any)?.details ?? null,
+      hint: (error as any)?.hint ?? null,
+      code: (error as any)?.code ?? null,
+    });
     return new NextResponse(error.message, { status: 500 });
   }
 
-  return NextResponse.json(data ?? null);
+  console.log("[profile][GET] result", data ?? null);
+
+  return NextResponse.json(data ?? null, {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    },
+  });
 }
 
 function calcAge(birthDateISO: string): number | null {
@@ -46,13 +59,26 @@ function calcAge(birthDateISO: string): number | null {
 export async function POST(req: Request) {
   const form = await req.formData();
 
-  const device_id = String(form.get("device_id") ?? "");
-  const display_name = String(form.get("display_name") ?? "");
-  const birth_date = String(form.get("birth_date") ?? "");
-  const gender = String(form.get("gender") ?? "");
+  const device_id = String(form.get("device_id") ?? "").trim();
+  const display_name = String(form.get("display_name") ?? "").trim();
+  const birth_date = String(form.get("birth_date") ?? "").trim();
+  const gender = String(form.get("gender") ?? "").trim();
 
   const guardian_consent =
     String(form.get("guardian_consent") ?? "false") === "true";
+
+  const photo = form.get("photo");
+
+  console.log("[profile][POST] incoming", {
+    device_id,
+    display_name,
+    birth_date,
+    gender,
+    hasPhoto: photo instanceof File && photo.size > 0,
+    photoName: photo instanceof File ? photo.name : null,
+    photoType: photo instanceof File ? photo.type : null,
+    photoSize: photo instanceof File ? photo.size : null,
+  });
 
   if (!device_id || !display_name || !birth_date || !gender) {
     return new NextResponse("missing fields", { status: 400 });
@@ -79,13 +105,23 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (existingError) {
+    console.log("[profile][POST] existing profile read error", {
+      device_id,
+      message: existingError.message,
+      details: (existingError as any)?.details ?? null,
+      hint: (existingError as any)?.hint ?? null,
+      code: (existingError as any)?.code ?? null,
+    });
     return new NextResponse(existingError.message, { status: 500 });
   }
 
+  console.log("[profile][POST] existing profile", {
+    device_id,
+    existing_photo_path: String(existingProfile?.photo_path ?? "").trim() || null,
+  });
+
   let photo_path: string | null =
     String(existingProfile?.photo_path ?? "").trim() || null;
-
-  const photo = form.get("photo");
 
   if (photo instanceof File && photo.size > 0) {
     const ext = photo.name.split(".").pop()?.toLowerCase() || "jpg";
@@ -100,8 +136,18 @@ export async function POST(req: Request) {
       });
 
     if (uploadError) {
+      console.log("[profile][POST] upload ng", {
+        device_id,
+        objectPath,
+        message: uploadError.message,
+      });
       return new NextResponse(uploadError.message, { status: 500 });
     }
+
+    console.log("[profile][POST] upload ok", {
+      device_id,
+      objectPath,
+    });
 
     photo_path = objectPath;
   }
@@ -128,13 +174,52 @@ export async function POST(req: Request) {
     .upsert(payload, { onConflict: "device_id" });
 
   if (error) {
+    console.log("[profile][POST] upsert ng", {
+      device_id,
+      payload,
+      message: error.message,
+      details: (error as any)?.details ?? null,
+      hint: (error as any)?.hint ?? null,
+      code: (error as any)?.code ?? null,
+    });
     return new NextResponse(error.message, { status: 500 });
+  }
+
+  console.log("[profile][POST] upsert ok", {
+    device_id,
+    photo_path: photo_path ?? null,
+  });
+
+  // 念のため保存結果を再読込して確認
+  const { data: confirmData, error: confirmError } = await supabaseAdmin
+    .from("user_profiles")
+    .select("device_id, display_name, birth_date, gender, photo_path")
+    .eq("device_id", device_id)
+    .maybeSingle();
+
+  if (confirmError) {
+    console.log("[profile][POST] confirm read error", {
+      device_id,
+      message: confirmError.message,
+      details: (confirmError as any)?.details ?? null,
+      hint: (confirmError as any)?.hint ?? null,
+      code: (confirmError as any)?.code ?? null,
+    });
+  } else {
+    console.log("[profile][POST] confirm result", confirmData ?? null);
   }
 
   void guardian_consent;
 
-  return NextResponse.json({
-    ok: true,
-    photo_path: photo_path ?? null,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+      photo_path: photo_path ?? null,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      },
+    }
+  );
 }
