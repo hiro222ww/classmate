@@ -38,6 +38,18 @@ type BroadcastClearPayload = {
   clearAt: number;
 };
 
+const CHALK_COLORS = [
+  { name: "白", value: "#ffffff" },
+  { name: "蛍光黄", value: "#fff44f" },
+  { name: "蛍光ピンク", value: "#ff5ccf" },
+  { name: "蛍光オレンジ", value: "#ff9f1c" },
+  { name: "蛍光緑", value: "#39ff14" },
+  { name: "蛍光青", value: "#4cc9f0" },
+] as const;
+
+const BOARD_BG = "#0b3b2e";
+const ERASER_WIDTH = 28;
+
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "You") return "参加者";
@@ -46,6 +58,24 @@ function sanitizeDisplayName(v: string | null | undefined) {
 
 function makeStrokeId() {
   return `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function applyStrokeStyle(
+  ctx: CanvasRenderingContext2D,
+  color: string,
+  width: number
+) {
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.miterLimit = 1;
+  ctx.strokeStyle = color || "#ffffff";
+  ctx.lineWidth = Math.max(1, width || 3);
+
+  // もやの原因になるので発光は切る
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
 }
 
 function drawStroke(
@@ -58,13 +88,7 @@ function drawStroke(
   if (!pts || pts.length === 0) return;
 
   ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = "source-over";
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.miterLimit = 1;
-  ctx.strokeStyle = stroke.color || "#ffffff";
-  ctx.lineWidth = Math.max(1, stroke.width || 3);
+  applyStrokeStyle(ctx, stroke.color || "#ffffff", stroke.width || 3);
 
   if (pts.length === 1) {
     const p = pts[0];
@@ -443,8 +467,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   );
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  const [penWidth, setPenWidth] = useState(3);
-  const [penColor, setPenColor] = useState("#ffffff");
+  const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
+
+  const strokeColorRef = useRef<string>(CHALK_COLORS[0].value);
+  const strokeWidthRef = useRef<number>(3);
+
+  const [penWidth, setPenWidth] = useState<number>(3);
+  const [penColor, setPenColor] = useState<string>(CHALK_COLORS[0].value);
+  const [tool, setTool] = useState<"chalk" | "eraser">("chalk");
   const [info, setInfo] = useState("");
 
   const sounds = useBoardSounds();
@@ -514,7 +544,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#0b3b2e";
+    ctx.fillStyle = BOARD_BG;
     ctx.fillRect(0, 0, w, h);
     ctx.restore();
   };
@@ -525,7 +555,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     remoteStyleRef.current = {};
   };
 
-  const redrawFromRows = (rows: ChalkStrokeRow[]) => {
+  const redrawScene = () => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
@@ -535,7 +565,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     paintBoardBase();
 
-    for (const row of rows) {
+    for (const row of persistedRowsRef.current) {
       if (row.kind === "clear") {
         paintBoardBase();
         continue;
@@ -570,8 +600,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       drawStroke(
         ctx,
         {
-          color: penColor,
-          width: penWidth,
+          color: strokeColorRef.current,
+          width: strokeWidthRef.current,
           points: pointsRef.current,
         },
         w,
@@ -597,7 +627,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       return;
     }
 
-    redrawFromRows((data ?? []) as ChalkStrokeRow[]);
+    persistedRowsRef.current = (data ?? []) as ChalkStrokeRow[];
+    redrawScene();
     setInfo("");
   };
 
@@ -643,17 +674,26 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         if (w <= 0 || h <= 0) return;
 
         const key = `${p.deviceId}:${p.strokeId}`;
-        const prev = remoteProgressRef.current[key] ?? [];
 
         if (p.done) {
           delete remoteProgressRef.current[key];
           delete remoteStyleRef.current[key];
+          redrawScene();
           return;
         }
 
         if (!p.points || p.points.length < 2) return;
 
-        const merged = [...prev, ...p.points];
+        const prev = remoteProgressRef.current[key] ?? [];
+        let merged: StrokePoint[];
+
+        if (prev.length === 0) {
+          merged = [...p.points];
+        } else {
+          const tail = p.points[p.points.length - 1];
+          merged = [...prev, tail];
+        }
+
         remoteProgressRef.current[key] = merged;
         remoteStyleRef.current[key] = {
           color: p.color,
@@ -676,6 +716,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         if (!p || p.sessionId !== sessionId) return;
         if (p.deviceId === deviceIdRef.current) return;
         clearLocal();
+        redrawScene();
       })
       .on(
         "postgres_changes",
@@ -688,26 +729,27 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         (payload: any) => {
           const row = payload?.new as ChalkStrokeRow;
           if (!row?.id) return;
-          if (row.device_id === deviceIdRef.current) return;
-
-          const canvas = canvasRef.current;
-          const ctx = canvas?.getContext("2d");
-          if (!canvas || !ctx) return;
-
-          const { w, h } = getCanvasSize();
-          if (w <= 0 || h <= 0) return;
 
           if (row.kind === "clear") {
+            persistedRowsRef.current = [...persistedRowsRef.current, row];
             clearLocal();
+            redrawScene();
             return;
           }
 
-          drawStroke(
-            ctx,
-            { color: row.color, width: row.width, points: row.points ?? [] },
-            w,
-            h
-          );
+          persistedRowsRef.current = [
+            ...persistedRowsRef.current.filter((r) => {
+              if (r.device_id !== row.device_id) return true;
+              if (r.kind !== row.kind) return true;
+              if (r.color !== row.color) return true;
+              if (r.width !== row.width) return true;
+              if ((r.points?.length ?? 0) !== (row.points?.length ?? 0)) return true;
+              return false;
+            }),
+            row,
+          ];
+
+          redrawScene();
         }
       );
 
@@ -782,14 +824,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     const { w, h } = getCanvasSize();
     if (w <= 0 || h <= 0) return;
 
+    const strokeColor = strokeColorRef.current;
+    const strokeWidth = strokeWidthRef.current;
+
     ctx.save();
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.miterLimit = 1;
-    ctx.strokeStyle = penColor;
-    ctx.lineWidth = Math.max(1, penWidth);
+    applyStrokeStyle(ctx, strokeColor, strokeWidth);
 
     ctx.beginPath();
     ctx.moveTo(from.x * w, from.y * h);
@@ -803,18 +842,37 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     const safeName = sanitizeDisplayName(displayNameRef.current);
 
+    const optimisticRow: ChalkStrokeRow = {
+      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      session_id: sessionId,
+      device_id: deviceIdRef.current,
+      display_name: safeName,
+      color: strokeColorRef.current,
+      width: strokeWidthRef.current,
+      points: pts,
+      kind: "stroke",
+      created_at: new Date().toISOString(),
+    };
+
+    persistedRowsRef.current = [...persistedRowsRef.current, optimisticRow];
+    redrawScene();
+
     const { error } = await supabase.from("call_chalk_strokes").insert({
       session_id: sessionId,
       device_id: deviceIdRef.current,
       display_name: safeName,
-      color: penColor,
-      width: penWidth,
+      color: strokeColorRef.current,
+      width: strokeWidthRef.current,
       points: pts,
       kind: "stroke",
     });
 
     if (error) {
       setInfo(`保存失敗: ${error.message}`);
+      persistedRowsRef.current = persistedRowsRef.current.filter(
+        (row) => row.id !== optimisticRow.id
+      );
+      redrawScene();
     } else {
       setInfo("");
     }
@@ -838,14 +896,16 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       lastMoveRef.current = null;
 
       const finalPoints = [...pointsRef.current];
+      const strokeColor = strokeColorRef.current;
+      const strokeWidth = strokeWidthRef.current;
 
       if (finalPoints.length >= 2) {
         await sendBroadcastStroke({
           sessionId,
           deviceId: deviceIdRef.current,
           strokeId: strokeIdRef.current,
-          color: penColor,
-          width: penWidth,
+          color: strokeColor,
+          width: strokeWidth,
           points: finalPoints,
           done: true,
         });
@@ -867,6 +927,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
       const p = getNormPoint(ev);
       if (!p) return;
+
+      strokeColorRef.current = tool === "eraser" ? BOARD_BG : penColor;
+      strokeWidthRef.current = tool === "eraser" ? ERASER_WIDTH : penWidth;
 
       drawingRef.current = true;
       pointsRef.current = [p];
@@ -902,12 +965,15 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       drawLocalSegment(last, p);
       lastPtRef.current = p;
 
+      const strokeColor = strokeColorRef.current;
+      const strokeWidth = strokeWidthRef.current;
+
       void sendBroadcastStroke({
         sessionId,
         deviceId: deviceIdRef.current,
         strokeId: strokeIdRef.current,
-        color: penColor,
-        width: penWidth,
+        color: strokeColor,
+        width: strokeWidth,
         points: [last, p],
         done: false,
       }).catch((e: any) => {
@@ -1009,10 +1075,26 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       forceEnd();
       sounds.dispose();
     };
-  }, [sessionId, penColor, penWidth, sounds]);
+  }, [sessionId, penColor, penWidth, tool, sounds]);
 
   const onClear = async () => {
     clearLocal();
+
+    const safeName = sanitizeDisplayName(displayNameRef.current);
+    const optimisticRow: ChalkStrokeRow = {
+      id: `local-clear-${Date.now()}`,
+      session_id: sessionId,
+      device_id: deviceIdRef.current,
+      display_name: safeName,
+      color: tool === "eraser" ? BOARD_BG : penColor,
+      width: tool === "eraser" ? ERASER_WIDTH : penWidth,
+      points: [],
+      kind: "clear",
+      created_at: new Date().toISOString(),
+    };
+
+    persistedRowsRef.current = [...persistedRowsRef.current, optimisticRow];
+    redrawScene();
 
     await sendBroadcastClear({
       sessionId,
@@ -1020,14 +1102,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       clearAt: Date.now(),
     });
 
-    const safeName = sanitizeDisplayName(displayNameRef.current);
-
     const { error } = await supabase.from("call_chalk_strokes").insert({
       session_id: sessionId,
       device_id: deviceIdRef.current,
       display_name: safeName,
-      color: penColor,
-      width: penWidth,
+      color: tool === "eraser" ? BOARD_BG : penColor,
+      width: tool === "eraser" ? ERASER_WIDTH : penWidth,
       points: [],
       kind: "clear",
     });
@@ -1063,43 +1143,101 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               type="range"
               min={1}
               max={10}
-              value={penWidth}
+              value={tool === "eraser" ? Math.min(10, penWidth) : penWidth}
               onChange={(e) => setPenWidth(Number(e.target.value))}
               style={{ marginLeft: 8, verticalAlign: "middle" }}
             />
           </label>
 
-          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
-            色
-            <input
-              type="color"
-              value={penColor}
-              onChange={(e) => setPenColor(e.target.value)}
-              style={{
-                marginLeft: 8,
-                width: 34,
-                height: 28,
-                border: "none",
-                background: "transparent",
-              }}
-            />
-          </label>
-
-          <button
-            onClick={onClear}
+          <div
             style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontWeight: 900,
-              cursor: "pointer",
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
             }}
           >
-            全消し
-          </button>
+            {CHALK_COLORS.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                title={c.name}
+                onClick={() => {
+                  setTool("chalk");
+                  setPenColor(c.value);
+                }}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 999,
+                  border:
+                    tool === "chalk" && penColor === c.value
+                      ? "2px solid #111"
+                      : "1px solid #bbb",
+                  background: c.value,
+                  cursor: "pointer",
+                  boxShadow:
+                    tool === "chalk" && penColor === c.value
+                      ? "0 0 0 2px rgba(255,255,255,0.5) inset"
+                      : "none",
+                }}
+              />
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setTool("eraser")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: tool === "eraser" ? "2px solid #111" : "1px solid #ddd",
+                background: "#fff",
+                color: "#111",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              黒板消し
+            </button>
+
+            <button
+              onClick={onClear}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: "1px solid #ddd",
+                background: "#fff",
+                color: "#111",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              全消し
+            </button>
+          </div>
         </div>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+          fontSize: 12,
+          color: "#d1d5db",
+          fontWeight: 900,
+        }}
+      >
+        <span>ツール: {tool === "eraser" ? "黒板消し" : "チョーク"}</span>
+        {tool === "chalk" ? (
+          <span>
+            色: {CHALK_COLORS.find((c) => c.value === penColor)?.name ?? "白"}
+          </span>
+        ) : (
+          <span>太さ: 黒板消し</span>
+        )}
       </div>
 
       <div
@@ -1112,7 +1250,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           height: 480,
           borderRadius: 16,
           border: "2px solid #073126",
-          background: "#0b3b2e",
+          background: BOARD_BG,
           boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
           overflow: "hidden",
           touchAction: "none",
