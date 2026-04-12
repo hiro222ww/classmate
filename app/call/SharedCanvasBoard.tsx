@@ -60,6 +60,10 @@ function makeStrokeId() {
   return `stroke_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function makeLocalRowId(prefix: string) {
+  return `local-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function applyStrokeStyle(
   ctx: CanvasRenderingContext2D,
   color: string,
@@ -72,8 +76,6 @@ function applyStrokeStyle(
   ctx.miterLimit = 1;
   ctx.strokeStyle = color || "#ffffff";
   ctx.lineWidth = Math.max(1, width || 3);
-
-  // もやの原因になるので発光は切る
   ctx.shadowColor = "transparent";
   ctx.shadowBlur = 0;
 }
@@ -115,6 +117,17 @@ function drawStroke(
 
   ctx.stroke();
   ctx.restore();
+}
+
+function upsertRows(base: ChalkStrokeRow[], incoming: ChalkStrokeRow[]) {
+  const map = new Map<string, ChalkStrokeRow>();
+
+  for (const row of base) map.set(row.id, row);
+  for (const row of incoming) map.set(row.id, row);
+
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
+  );
 }
 
 function useBoardSounds() {
@@ -331,7 +344,7 @@ function useBoardSounds() {
     const p = clamp01(pressure01);
     const jitter = 0.92 + Math.random() * 0.16;
 
-    const amp = 0.012 + 0.06 * s + 0.12 * p;
+    const amp = 0.016 + 0.08 * s + 0.14 * p;
     const center = (1900 + 2900 * s - 850 * p) * jitter;
     const hpFreq = 500 + 450 * s;
     const lpFreq = 7000 + 2200 * (1 - p);
@@ -468,6 +481,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
+  const pendingRowsRef = useRef<ChalkStrokeRow[]>([]);
 
   const strokeColorRef = useRef<string>(CHALK_COLORS[0].value);
   const strokeWidthRef = useRef<number>(3);
@@ -484,14 +498,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     try {
       const did = deviceIdRef.current;
-      const scoped = did ? `classmate_display_name:${did}` : "classmate_display_name";
-      const legacyScoped = did ? `display_name:${did}` : "display_name";
+      const scoped = did ? `classmate_display_name:${did}` : "";
+      const legacyScoped = did ? `display_name:${did}` : "";
 
       displayNameRef.current = sanitizeDisplayName(
-        localStorage.getItem(scoped) ||
-          localStorage.getItem(legacyScoped) ||
-          localStorage.getItem("classmate_display_name") ||
-          localStorage.getItem("display_name") ||
+        (scoped && localStorage.getItem(scoped)) ||
+          (legacyScoped && localStorage.getItem(legacyScoped)) ||
           "参加者"
       );
     } catch {
@@ -523,11 +535,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const getCanvasSize = () => {
     const canvas = canvasRef.current;
     if (!canvas) return { w: 0, h: 0 };
-
-    return {
-      w: canvas.width,
-      h: canvas.height,
-    };
+    return { w: canvas.width, h: canvas.height };
   };
 
   const paintBoardBase = () => {
@@ -549,8 +557,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     ctx.restore();
   };
 
-  const clearLocal = () => {
-    paintBoardBase();
+  const clearRemoteOnly = () => {
     remoteProgressRef.current = {};
     remoteStyleRef.current = {};
   };
@@ -565,7 +572,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     paintBoardBase();
 
-    for (const row of persistedRowsRef.current) {
+    const mergedRows = upsertRows(
+      persistedRowsRef.current,
+      pendingRowsRef.current
+    );
+
+    for (const row of mergedRows) {
       if (row.kind === "clear") {
         paintBoardBase();
         continue;
@@ -627,7 +639,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       return;
     }
 
-    persistedRowsRef.current = (data ?? []) as ChalkStrokeRow[];
+    const incoming = (data ?? []) as ChalkStrokeRow[];
+    persistedRowsRef.current = upsertRows(persistedRowsRef.current, incoming);
     redrawScene();
     setInfo("");
   };
@@ -666,18 +679,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         if (!p || p.sessionId !== sessionId) return;
         if (p.deviceId === deviceIdRef.current) return;
 
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
-
-        const { w, h } = getCanvasSize();
-        if (w <= 0 || h <= 0) return;
-
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          delete remoteProgressRef.current[key];
-          delete remoteStyleRef.current[key];
           redrawScene();
           return;
         }
@@ -685,37 +689,31 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         if (!p.points || p.points.length < 2) return;
 
         const prev = remoteProgressRef.current[key] ?? [];
-        let merged: StrokePoint[];
+        const nextPoints = [...prev];
 
-        if (prev.length === 0) {
-          merged = [...p.points];
+        if (nextPoints.length === 0) {
+          nextPoints.push(...p.points);
         } else {
           const tail = p.points[p.points.length - 1];
-          merged = [...prev, tail];
+          const last = nextPoints[nextPoints.length - 1];
+          if (!last || last.x !== tail.x || last.y !== tail.y) {
+            nextPoints.push(tail);
+          }
         }
 
-        remoteProgressRef.current[key] = merged;
+        remoteProgressRef.current[key] = nextPoints;
         remoteStyleRef.current[key] = {
           color: p.color,
           width: p.width,
         };
 
-        drawStroke(
-          ctx,
-          {
-            color: p.color,
-            width: p.width,
-            points: p.points,
-          },
-          w,
-          h
-        );
+        redrawScene();
       })
       .on("broadcast", { event: "chalk_clear" }, ({ payload }) => {
         const p = payload as BroadcastClearPayload;
         if (!p || p.sessionId !== sessionId) return;
         if (p.deviceId === deviceIdRef.current) return;
-        clearLocal();
+        clearRemoteOnly();
         redrawScene();
       })
       .on(
@@ -731,23 +729,21 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           if (!row?.id) return;
 
           if (row.kind === "clear") {
-            persistedRowsRef.current = [...persistedRowsRef.current, row];
-            clearLocal();
+            persistedRowsRef.current = upsertRows(persistedRowsRef.current, [row]);
+            clearRemoteOnly();
             redrawScene();
             return;
           }
 
-          persistedRowsRef.current = [
-            ...persistedRowsRef.current.filter((r) => {
-              if (r.device_id !== row.device_id) return true;
-              if (r.kind !== row.kind) return true;
-              if (r.color !== row.color) return true;
-              if (r.width !== row.width) return true;
-              if ((r.points?.length ?? 0) !== (row.points?.length ?? 0)) return true;
-              return false;
-            }),
-            row,
-          ];
+          persistedRowsRef.current = upsertRows(persistedRowsRef.current, [row]);
+
+          const devicePrefix = `${String(row.device_id ?? "").trim()}:`;
+          for (const key of Object.keys(remoteProgressRef.current)) {
+            if (key.startsWith(devicePrefix)) {
+              delete remoteProgressRef.current[key];
+              delete remoteStyleRef.current[key];
+            }
+          }
 
           redrawScene();
         }
@@ -777,27 +773,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
   useEffect(() => {
     const onResize = () => {
-      void (async () => {
-        resizeCanvas();
-        await loadAll();
-      })();
+      resizeCanvas();
+      redrawScene();
     };
 
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [sessionId]);
-
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const timer = window.setInterval(() => {
-      if (drawingRef.current) return;
-      void loadAll();
-    }, 5000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
   }, [sessionId]);
 
   const getNormPoint = (e: PointerEvent): StrokePoint | null => {
@@ -843,7 +824,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     const safeName = sanitizeDisplayName(displayNameRef.current);
 
     const optimisticRow: ChalkStrokeRow = {
-      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: makeLocalRowId("stroke"),
       session_id: sessionId,
       device_id: deviceIdRef.current,
       display_name: safeName,
@@ -854,56 +835,81 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       created_at: new Date().toISOString(),
     };
 
-    persistedRowsRef.current = [...persistedRowsRef.current, optimisticRow];
+    pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
     redrawScene();
 
-    const { error } = await supabase.from("call_chalk_strokes").insert({
-      session_id: sessionId,
-      device_id: deviceIdRef.current,
-      display_name: safeName,
-      color: strokeColorRef.current,
-      width: strokeWidthRef.current,
-      points: pts,
-      kind: "stroke",
-    });
+    const { data, error } = await supabase
+      .from("call_chalk_strokes")
+      .insert({
+        session_id: sessionId,
+        device_id: deviceIdRef.current,
+        display_name: safeName,
+        color: strokeColorRef.current,
+        width: strokeWidthRef.current,
+        points: pts,
+        kind: "stroke",
+      })
+      .select(
+        "id, session_id, device_id, display_name, color, width, points, kind, created_at"
+      )
+      .single();
+
+    pendingRowsRef.current = pendingRowsRef.current.filter(
+      (row) => row.id !== optimisticRow.id
+    );
 
     if (error) {
       setInfo(`保存失敗: ${error.message}`);
-      persistedRowsRef.current = persistedRowsRef.current.filter(
-        (row) => row.id !== optimisticRow.id
-      );
       redrawScene();
-    } else {
-      setInfo("");
+      return;
     }
+
+    if (data) {
+      persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
+        data as ChalkStrokeRow,
+      ]);
+    }
+
+    redrawScene();
+    setInfo("");
   };
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const forceEnd = () => {
+    const resetDrawingState = () => {
       drawingRef.current = false;
       lastMoveRef.current = null;
       lastPtRef.current = null;
       pointsRef.current = [];
       strokeIdRef.current = "";
+    };
+
+    const forceAbort = () => {
+      resetDrawingState();
+      sounds.chalkEnd();
       sounds.dispose();
     };
 
     const finalizeAndSend = async () => {
-      drawingRef.current = false;
-      lastMoveRef.current = null;
+      if (!drawingRef.current) {
+        forceAbort();
+        return;
+      }
 
       const finalPoints = [...pointsRef.current];
       const strokeColor = strokeColorRef.current;
       const strokeWidth = strokeWidthRef.current;
+      const finalStrokeId = strokeIdRef.current;
+
+      resetDrawingState();
 
       if (finalPoints.length >= 2) {
         await sendBroadcastStroke({
           sessionId,
           deviceId: deviceIdRef.current,
-          strokeId: strokeIdRef.current,
+          strokeId: finalStrokeId,
           color: strokeColor,
           width: strokeWidth,
           points: finalPoints,
@@ -912,10 +918,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
         await persistWholeStroke(finalPoints);
       }
-
-      pointsRef.current = [];
-      lastPtRef.current = null;
-      strokeIdRef.current = "";
 
       sounds.chalkEnd();
       sounds.dispose();
@@ -1006,9 +1008,20 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     const onUp = (ev: PointerEvent) => {
       ev.preventDefault();
 
-      if (!drawingRef.current) {
-        forceEnd();
-        return;
+      if (!drawingRef.current) return;
+
+      const p = getNormPoint(ev);
+      const last = lastPtRef.current;
+
+      if (p && last) {
+        const dx = p.x - last.x;
+        const dy = p.y - last.y;
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 >= 0.000001) {
+          pointsRef.current.push(p);
+          drawLocalSegment(last, p);
+          lastPtRef.current = p;
+        }
       }
 
       void finalizeAndSend();
@@ -1016,22 +1029,23 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     const onCancel = (ev: Event) => {
       ev.preventDefault?.();
-      forceEnd();
-    };
-
-    const onLeave = (ev: Event) => {
-      ev.preventDefault?.();
-      forceEnd();
+      if (!drawingRef.current) return;
+      void finalizeAndSend();
     };
 
     const onCtx = (ev: Event) => {
       ev.preventDefault?.();
-      forceEnd();
     };
 
-    const onBlur = () => forceEnd();
+    const onBlur = () => {
+      if (!drawingRef.current) return;
+      void finalizeAndSend();
+    };
+
     const onVis = () => {
-      if (document.hidden) forceEnd();
+      if (!document.hidden) return;
+      if (!drawingRef.current) return;
+      void finalizeAndSend();
     };
 
     if (watchdogRef.current) window.clearInterval(watchdogRef.current);
@@ -1047,7 +1061,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     canvas.addEventListener("lostpointercapture", onCancel as any, {
       passive: false,
     });
-    canvas.addEventListener("pointerleave", onLeave as any, { passive: false });
     canvas.addEventListener("contextmenu", onCtx as any, { passive: false });
 
     window.addEventListener("pointerup", onUp, { passive: false });
@@ -1061,7 +1074,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onCancel as any);
       canvas.removeEventListener("lostpointercapture", onCancel as any);
-      canvas.removeEventListener("pointerleave", onLeave as any);
       canvas.removeEventListener("contextmenu", onCtx as any);
 
       window.removeEventListener("pointerup", onUp);
@@ -1072,17 +1084,16 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       if (watchdogRef.current) window.clearInterval(watchdogRef.current);
       watchdogRef.current = null;
 
-      forceEnd();
-      sounds.dispose();
+      forceAbort();
     };
   }, [sessionId, penColor, penWidth, tool, sounds]);
 
   const onClear = async () => {
-    clearLocal();
+    clearRemoteOnly();
 
     const safeName = sanitizeDisplayName(displayNameRef.current);
     const optimisticRow: ChalkStrokeRow = {
-      id: `local-clear-${Date.now()}`,
+      id: makeLocalRowId("clear"),
       session_id: sessionId,
       device_id: deviceIdRef.current,
       display_name: safeName,
@@ -1093,7 +1104,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       created_at: new Date().toISOString(),
     };
 
-    persistedRowsRef.current = [...persistedRowsRef.current, optimisticRow];
+    pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
     redrawScene();
 
     await sendBroadcastClear({
@@ -1102,18 +1113,40 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       clearAt: Date.now(),
     });
 
-    const { error } = await supabase.from("call_chalk_strokes").insert({
-      session_id: sessionId,
-      device_id: deviceIdRef.current,
-      display_name: safeName,
-      color: tool === "eraser" ? BOARD_BG : penColor,
-      width: tool === "eraser" ? ERASER_WIDTH : penWidth,
-      points: [],
-      kind: "clear",
-    });
+    const { data, error } = await supabase
+      .from("call_chalk_strokes")
+      .insert({
+        session_id: sessionId,
+        device_id: deviceIdRef.current,
+        display_name: safeName,
+        color: tool === "eraser" ? BOARD_BG : penColor,
+        width: tool === "eraser" ? ERASER_WIDTH : penWidth,
+        points: [],
+        kind: "clear",
+      })
+      .select(
+        "id, session_id, device_id, display_name, color, width, points, kind, created_at"
+      )
+      .single();
 
-    if (error) setInfo(`クリア送信失敗: ${error.message}`);
-    else setInfo("");
+    pendingRowsRef.current = pendingRowsRef.current.filter(
+      (row) => row.id !== optimisticRow.id
+    );
+
+    if (error) {
+      setInfo(`クリア送信失敗: ${error.message}`);
+      redrawScene();
+      return;
+    }
+
+    if (data) {
+      persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
+        data as ChalkStrokeRow,
+      ]);
+    }
+
+    redrawScene();
+    setInfo("");
   };
 
   return (

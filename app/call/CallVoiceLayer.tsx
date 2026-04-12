@@ -79,6 +79,7 @@ export default function CallVoiceLayer({
   const offeredPeersRef = useRef<Set<string>>(new Set());
 
   const [micReady, setMicReady] = useState(false);
+  const [signalReady, setSignalReady] = useState(false);
   const [remoteAudios, setRemoteAudios] = useState<Record<string, RemoteAudioState>>(
     {}
   );
@@ -276,6 +277,29 @@ export default function CallVoiceLayer({
     [getCurrentConnectionId]
   );
 
+  const scheduleReconnect = useCallback(
+    (remoteId: string, delay = 300) => {
+      const iAmOfferer = deviceId < remoteId;
+      if (!iAmOfferer) return;
+      if (!localAudioTrackRef.current && !localStreamRef.current) return;
+
+      clearReconnectTimer(remoteId);
+
+      const timer = window.setTimeout(() => {
+        reconnectTimersRef.current.delete(remoteId);
+
+        const nextConnectionId = makeConnectionId(deviceId, remoteId);
+        closePeer(remoteId, { clearConnectionId: false });
+        setCurrentConnectionId(remoteId, nextConnectionId);
+
+        // signalReady の後にしか maybeStartOffer は呼ばれない想定
+      }, delay);
+
+      reconnectTimersRef.current.set(remoteId, timer);
+    },
+    [clearReconnectTimer, closePeer, deviceId, setCurrentConnectionId]
+  );
+
   const createPeerConnection = useCallback(
     (remoteId: string, connectionId: string) => {
       const existing = pcsRef.current.get(remoteId);
@@ -394,6 +418,7 @@ export default function CallVoiceLayer({
       getCurrentConnectionId,
       isMuted,
       notifyStatus,
+      scheduleReconnect,
       sendSignal,
       setCurrentConnectionId,
       setPeerState,
@@ -458,29 +483,6 @@ export default function CallVoiceLayer({
       setCurrentConnectionId,
       setPeerState,
     ]
-  );
-
-  const scheduleReconnect = useCallback(
-    (remoteId: string, delay = 300) => {
-      const iAmOfferer = deviceId < remoteId;
-      if (!iAmOfferer) return;
-      if (!localAudioTrackRef.current && !localStreamRef.current) return;
-
-      clearReconnectTimer(remoteId);
-
-      const timer = window.setTimeout(() => {
-        reconnectTimersRef.current.delete(remoteId);
-
-        const nextConnectionId = makeConnectionId(deviceId, remoteId);
-        closePeer(remoteId, { clearConnectionId: false });
-        setCurrentConnectionId(remoteId, nextConnectionId);
-
-        void maybeStartOffer(remoteId);
-      }, delay);
-
-      reconnectTimersRef.current.set(remoteId, timer);
-    },
-    [clearReconnectTimer, closePeer, deviceId, maybeStartOffer, setCurrentConnectionId]
   );
 
   const handleSignal = useCallback(
@@ -771,9 +773,41 @@ export default function CallVoiceLayer({
   }, [micReady, onMicLevelChange]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !deviceId) return;
 
-    subscribedAtRef.current = new Date(Date.now() - 5000).toISOString();
+    let alive = true;
+    setSignalReady(false);
+
+    const bootRecentSignals = async () => {
+      const since = subscribedAtRef.current;
+      if (!since) return;
+
+      const { data, error } = await supabase
+        .from("call_signals")
+        .select("*")
+        .eq("session_id", sessionId)
+        .gte("created_at", since)
+        .order("created_at", { ascending: true })
+        .limit(100);
+
+      if (error) {
+        console.warn("[call] boot recent signals skipped", {
+          message: error.message,
+          details: (error as any)?.details ?? null,
+          hint: (error as any)?.hint ?? null,
+          code: (error as any)?.code ?? null,
+        });
+        return;
+      }
+
+      for (const row of (data ?? []) as SignalRow[]) {
+        if (row.from_device_id === deviceId) continue;
+        if (row.to_device_id && row.to_device_id !== deviceId) continue;
+        await handleSignal(row);
+      }
+    };
+
+    subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
 
     const channel = supabase
       .channel(`call-signals-${sessionId}`)
@@ -790,50 +824,28 @@ export default function CallVoiceLayer({
           await handleSignal(row);
         }
       )
-      .subscribe();
+      .subscribe(async (status) => {
+        console.log("[call] signal subscribe status", status);
+
+        if (!alive) return;
+
+        if (status === "SUBSCRIBED") {
+          await bootRecentSignals();
+          if (!alive) return;
+          setSignalReady(true);
+        }
+      });
 
     return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [sessionId, handleSignal]);
-
-  useEffect(() => {
-    if (!sessionId || !deviceId) return;
-
-    const bootRecentSignals = async () => {
-      const since = subscribedAtRef.current;
-      if (!since) return;
-
-      const { data, error } = await supabase
-        .from("call_signals")
-        .select("*")
-        .eq("session_id", sessionId)
-        .gte("created_at", since)
-        .or(`to_device_id.is.null,to_device_id.eq.${deviceId}`)
-        .order("created_at", { ascending: true })
-        .limit(100);
-
-      if (error) {
-        console.error("[call] boot recent signals error", error);
-        return;
-      }
-
-      for (const row of (data ?? []) as SignalRow[]) {
-        await handleSignal(row);
-      }
-    };
-
-    const timer = window.setTimeout(() => {
-      void bootRecentSignals();
-    }, 800);
-
-    return () => {
-      window.clearTimeout(timer);
+      alive = false;
+      setSignalReady(false);
+      void supabase.removeChannel(channel);
     };
   }, [sessionId, deviceId, handleSignal]);
 
   useEffect(() => {
     if (!micReady) return;
+    if (!signalReady) return;
 
     const remoteIds = members
       .map((m) => m.device_id)
@@ -856,6 +868,7 @@ export default function CallVoiceLayer({
   }, [
     members,
     micReady,
+    signalReady,
     deviceId,
     closePeer,
     emitPeerStates,
@@ -866,6 +879,7 @@ export default function CallVoiceLayer({
 
   useEffect(() => {
     if (!micReady) return;
+    if (!signalReady) return;
 
     const timer = window.setInterval(() => {
       const remoteIds = members
@@ -886,7 +900,7 @@ export default function CallVoiceLayer({
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, deviceId, maybeStartOffer]);
+  }, [members, micReady, signalReady, deviceId, maybeStartOffer]);
 
   return (
     <>

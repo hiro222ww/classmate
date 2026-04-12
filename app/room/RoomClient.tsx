@@ -148,8 +148,9 @@ function dedupeMembers(
         : null;
     const joinedAt = String(row.joined_at ?? "").trim();
 
-    const isMeByDevice =
-      !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
+   const isMeByDevice =
+  !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
+
 
     const isMeByName =
       !!name && !!normalizedMyName && name === normalizedMyName;
@@ -808,10 +809,7 @@ export default function RoomClient() {
                 <div style={{ display: "grid", gap: 8 }}>
                   {visibleMembers.map((m, i) => {
                     const isMe =
-                      String(m.device_id ?? "").trim() ===
-                        String(deviceId ?? "").trim() ||
-                      (!!displayName &&
-                        normalizeName(m.display_name) === normalizeName(displayName));
+  String(m.device_id ?? "").trim() === String(deviceId ?? "").trim();
 
                     const label = isMe ? "You" : m.display_name || "参加者";
                     const avatarUrl = getAvatarUrl(m.photo_path);

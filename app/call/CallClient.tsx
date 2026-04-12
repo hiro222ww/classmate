@@ -113,15 +113,29 @@ export default function CallClient() {
         json = null;
       }
 
-      if (!res.ok || !json?.ok) {
-        console.error("[call] session status fetch error", {
-          status: res.status,
-          statusText: res.statusText,
-          error: json?.error || "session_status_failed",
-          rawText,
-        });
-        return;
-      }
+      if (!res.ok) {
+  console.error("[call] session status fetch http error", {
+    status: res.status,
+    statusText: res.statusText,
+    rawText,
+  });
+  return;
+}
+
+if (!json) {
+  console.warn("[call] session status non-json or empty response", {
+    rawText,
+  });
+  return;
+}
+
+if (!json.ok) {
+  console.warn("[call] session status api not ok", {
+    error: json.error || "session_status_failed",
+    rawText,
+  });
+  return;
+}
 
       const incoming = Array.isArray(json.members) ? json.members : [];
       console.log("[call] incoming members", incoming);
@@ -156,29 +170,6 @@ export default function CallClient() {
     void fetchMembers();
   }, [fetchMembers]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const channel = supabase
-      .channel(`call-members-${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "session_members",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        async () => {
-          await fetchMembers();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [sessionId, fetchMembers]);
 
   useEffect(() => {
     const channel = supabase
