@@ -17,6 +17,13 @@ type Profile = {
   photo_path: string | null;
 };
 
+type ProfileResponse = {
+  ok?: boolean;
+  profile?: Profile | null;
+  error?: string;
+  message?: string;
+};
+
 function isValidISODateString(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(s);
@@ -164,20 +171,23 @@ export default function ProfileClient() {
           return;
         }
 
-        const data: Profile | null = await res.json();
+        const json = (await res.json().catch(() => null)) as ProfileResponse | null;
+        const profile = json?.profile ?? null;
 
-        if (cancelled || !data) return;
+        if (cancelled || !profile) return;
 
-        setDisplayName(data.display_name ?? "");
-        setBirthDate(isValidISODateString(data.birth_date) ? data.birth_date : "");
-        setGender((data.gender as Gender) ?? "male");
-        setPhotoPath(data.photo_path ?? null);
+        setDisplayName(profile.display_name ?? "");
+        setBirthDate(
+          isValidISODateString(profile.birth_date) ? profile.birth_date : ""
+        );
+        setGender((profile.gender as Gender) ?? "male");
+        setPhotoPath(profile.photo_path ?? null);
 
         console.log("[profile] loaded profile", {
           requestedDeviceId: id,
-          returnedDeviceId: data.device_id ?? null,
-          displayName: data.display_name ?? null,
-          photo_path: data.photo_path ?? null,
+          returnedDeviceId: profile.device_id ?? null,
+          displayName: profile.display_name ?? null,
+          photo_path: profile.photo_path ?? null,
           dev,
         });
       } catch (e) {
@@ -274,8 +284,12 @@ export default function ProfileClient() {
       }
 
       const json = await res.json().catch(() => null);
+
       const nextPhotoPath =
-        String(json?.photo_path ?? "").trim() || photoPath || null;
+        String(json?.profile?.photo_path ?? "").trim() ||
+        String(json?.photo_path ?? "").trim() ||
+        photoPath ||
+        null;
 
       console.log("[profile] submit ok", {
         deviceId,

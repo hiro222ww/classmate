@@ -38,6 +38,52 @@ function sanitizeDisplayName(v: string | null | undefined) {
   return s;
 }
 
+function normalizePhotoPath(v: string | null | undefined) {
+  let s = String(v ?? "").trim();
+  if (!s) return null;
+
+  if (s.startsWith("profile-photos/")) {
+    s = s.replace(/^profile-photos\//, "");
+  }
+
+  if (s.startsWith("avatars/")) {
+    s = s.replace(/^avatars\//, "");
+  }
+
+  return s || null;
+}
+
+async function createAvatarUrl(
+  sb: ReturnType<typeof admin>,
+  photoPath: string | null
+) {
+  const normalized = normalizePhotoPath(photoPath);
+  if (!normalized) return null;
+
+  if (
+    normalized.startsWith("http://") ||
+    normalized.startsWith("https://")
+  ) {
+    return normalized;
+  }
+
+  const { data, error } = await sb.storage
+    .from("profile-photos")
+    .createSignedUrl(normalized, 60 * 60);
+
+  if (error) {
+    console.warn("[session/status] avatar signed url failed", {
+      photoPath,
+      normalized,
+      message: error.message,
+    });
+    return null;
+  }
+
+  const signedUrl = String(data?.signedUrl ?? "").trim();
+  return signedUrl || null;
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -101,16 +147,11 @@ export async function GET(req: Request) {
     }
 
     if (String(s.data.class_id ?? "").trim() !== classIdRaw) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "session_class_mismatch",
-          sessionId: sessionIdRaw,
-          classId: classIdRaw,
-          sessionClassId: String(s.data.class_id ?? "").trim(),
-        },
-        { status: 400 }
-      );
+      console.warn("[session/status] class mismatch", {
+        sessionIdRaw,
+        classIdRaw,
+        sessionClassId: String(s.data.class_id ?? "").trim(),
+      });
     }
 
     const m = await sb
@@ -138,14 +179,13 @@ export async function GET(req: Request) {
       )
     );
 
-    // profile 更新直後のわずかなズレを減らす
     if (deviceIds.length > 0) {
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
     let profileMap = new Map<
       string,
-      { display_name: string; photo_path: string | null }
+      { display_name: string; photo_path: string | null; avatar_url: string | null }
     >();
 
     if (deviceIds.length > 0) {
@@ -163,28 +203,38 @@ export async function GET(req: Request) {
 
       const rawProfiles = (Array.isArray(p.data) ? p.data : []) as UserProfileRow[];
 
-      profileMap = new Map(
-        rawProfiles
-          .map((row) => {
-            const deviceId = String(row.device_id ?? "").trim();
-            if (!deviceId) return null;
+      const profileEntries = await Promise.all(
+        rawProfiles.map(async (row) => {
+          const deviceId = String(row.device_id ?? "").trim();
+          if (!deviceId) return null;
 
-            return [
-              deviceId,
-              {
-                display_name: sanitizeDisplayName(row.display_name),
-                photo_path: String(row.photo_path ?? "").trim() || null,
-              },
-            ] as const;
-          })
-          .filter(
-            (
-              entry
-            ): entry is readonly [
-              string,
-              { display_name: string; photo_path: string | null }
-            ] => !!entry
-          )
+          const photoPath = normalizePhotoPath(row.photo_path);
+          const avatarUrl = await createAvatarUrl(sb, photoPath);
+
+          return [
+            deviceId,
+            {
+              display_name: sanitizeDisplayName(row.display_name),
+              photo_path: photoPath,
+              avatar_url: avatarUrl,
+            },
+          ] as const;
+        })
+      );
+
+      profileMap = new Map(
+        profileEntries.filter(
+          (
+            entry
+          ): entry is readonly [
+            string,
+            {
+              display_name: string;
+              photo_path: string | null;
+              avatar_url: string | null;
+            }
+          ] => !!entry
+        )
       );
     }
 
@@ -196,6 +246,7 @@ export async function GET(req: Request) {
         device_id: string;
         display_name: string;
         photo_path: string | null;
+        avatar_url: string | null;
         joined_at: string;
       }
     >();
@@ -210,7 +261,8 @@ export async function GET(req: Request) {
         ? sanitizeDisplayName(profile.display_name)
         : sanitizeDisplayName(row.display_name);
 
-      const photoPath = String(profile?.photo_path ?? "").trim() || null;
+      const photoPath = normalizePhotoPath(profile?.photo_path ?? null);
+      const avatarUrl = profile?.avatar_url ?? null;
       const joinedAt =
         String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
@@ -221,6 +273,7 @@ export async function GET(req: Request) {
           device_id: deviceId,
           display_name: displayName,
           photo_path: photoPath,
+          avatar_url: avatarUrl,
           joined_at: joinedAt,
         });
       }

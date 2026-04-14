@@ -8,74 +8,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const MATCH_WINDOW_MS = 5 * 60 * 1000;
-const AUTO_START_MEMBER_COUNT = 3;
-
 function normalizeTopicKey(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "free") return null;
   return s;
 }
-
-function isLegacyEntryClassName(name: string | null | undefined) {
-  const s = String(name ?? "").trim();
-  if (!s) return false;
-
-  return (
-    s === "女子校" ||
-    s === "男子校" ||
-    s === "フリークラス" ||
-    s === "ホームルーム" ||
-    s.startsWith("フリークラス") ||
-    s.startsWith("女子校") ||
-    s.startsWith("男子校") ||
-    s.startsWith("ホームルーム")
-  );
-}
-
-function buildIndexedClassLabel(n: number) {
-  const safe = Math.max(1, Math.floor(n));
-  const block = Math.floor((safe - 1) / 26) + 1;
-  const letterIndex = (safe - 1) % 26;
-  const letter = String.fromCharCode(65 + letterIndex);
-  return `クラス${String(block).padStart(4, "0")}${letter}`;
-}
-
-function extractIndexedClassNumber(name: string | null | undefined): number {
-  const s = String(name ?? "").trim();
-  const m = s.match(/^クラス(\d{4})([A-Z])$/);
-  if (!m) return 0;
-
-  const block = parseInt(m[1], 10);
-  const letterIndex = m[2].charCodeAt(0) - 65;
-
-  if (!Number.isFinite(block) || block <= 0) return 0;
-  if (!Number.isFinite(letterIndex) || letterIndex < 0 || letterIndex > 25) {
-    return 0;
-  }
-
-  return (block - 1) * 26 + letterIndex + 1;
-}
-
-type ClassRow = {
-  id: string;
-  name: string;
-  topic_key: string | null;
-  world_key: string | null;
-  created_at?: string | null;
-  is_user_created?: boolean | null;
-};
-
-type SessionStatus = "forming" | "waiting" | "active" | "closed";
-
-type SessionRow = {
-  id: string;
-  class_id: string;
-  topic?: string | null;
-  status?: SessionStatus | null;
-  created_at?: string | null;
-  capacity?: number | null;
-};
 
 function normalizeCapacity(v: unknown) {
   const n = Number(v);
@@ -83,179 +20,48 @@ function normalizeCapacity(v: unknown) {
   return Math.max(2, Math.min(5, Math.floor(n)));
 }
 
-function getSessionAgeMs(createdAt: string | null | undefined) {
-  const t = new Date(String(createdAt ?? "")).getTime();
-  if (!Number.isFinite(t)) return Number.POSITIVE_INFINITY;
-  return Date.now() - t;
+function normalizeAge(v: unknown, fallback: number) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.floor(n));
 }
 
-function isJoinOpenSession(
-  session: SessionRow,
-  memberCount: number,
-  requestedCapacity: number
-) {
-  const ageMs = getSessionAgeMs(session.created_at);
-  const sessionCapacity = Math.max(
-    2,
-    Math.min(5, Number(session.capacity ?? requestedCapacity) || requestedCapacity)
-  );
+function calcAgeFromBirthDate(birthDate: string | null | undefined) {
+  const s = String(birthDate ?? "").trim();
+  if (!s) return null;
 
-  if (session.status && !["forming", "waiting"].includes(session.status)) {
-    return false;
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return null;
+
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) {
+    age -= 1;
   }
 
-  if (ageMs > MATCH_WINDOW_MS) {
-    return false;
-  }
-
-  if (memberCount >= sessionCapacity) {
-    return false;
-  }
-
-  return true;
+  return age >= 0 ? age : null;
 }
 
-function shouldAutoActivate(memberCount: number) {
-  return memberCount >= AUTO_START_MEMBER_COUNT;
-}
+type ProfileRow = {
+  device_id: string;
+  birth_date?: string | null;
+};
 
-async function countSessionMembers(sessionId: string) {
-  const { data, error } = await supabase
-    .from("session_members")
-    .select("device_id")
-    .eq("session_id", sessionId)
-    .not("device_id", "is", null)
-    .neq("device_id", "");
-
-  if (error) throw error;
-
-  const uniqueIds = new Set(
-    (data ?? [])
-      .map((r: any) => String(r.device_id ?? "").trim())
-      .filter(Boolean)
-  );
-
-  return uniqueIds.size;
-}
-
-async function maybeAutoUpdateSessionStatus(session: SessionRow, memberCount: number) {
-  const ageMs = getSessionAgeMs(session.created_at);
-
-  let nextStatus: SessionStatus | null = null;
-
-  if (shouldAutoActivate(memberCount)) {
-    nextStatus = "active";
-  } else if (ageMs > MATCH_WINDOW_MS) {
-    nextStatus = "active";
-  }
-
-  if (!nextStatus || session.status === nextStatus) {
-    return {
-      ...session,
-      status: session.status ?? null,
-    };
-  }
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .update({ status: nextStatus })
-    .eq("id", session.id)
-    .select("id,class_id,topic,status,created_at,capacity")
-    .single();
-
-  if (error) {
-    console.warn("[class/match-join] session status update skipped", {
-      sessionId: session.id,
-      nextStatus,
-      detail: error.message,
-    });
-
-    return {
-      ...session,
-      status: nextStatus,
-    };
-  }
-
-  return data as SessionRow;
-}
-
-async function findAvailableSession(
-  classId: string,
-  requestedCapacity: number
-): Promise<SessionRow | null> {
-  const { data: sessions, error } = await supabase
-    .from("sessions")
-    .select("id,class_id,topic,status,created_at,capacity")
-    .eq("class_id", classId)
-    .in("status", ["forming", "waiting"])
-    .order("created_at", { ascending: true });
-
-  if (error) throw error;
-
-  const rows = (sessions ?? []) as SessionRow[];
-
-  let best: SessionRow | null = null;
-  let bestCount = -1;
-
-  for (const s of rows) {
-    const memberCount = await countSessionMembers(s.id);
-    const ageMs = getSessionAgeMs(s.created_at);
-
-    console.log("[class/match-join] session candidate =", {
-      classId,
-      sessionId: s.id,
-      status: s.status,
-      memberCount,
-      requestedCapacity,
-      sessionCapacity: s.capacity,
-      ageMs,
-    });
-
-    const refreshed = await maybeAutoUpdateSessionStatus(s, memberCount);
-
-    if (!isJoinOpenSession(refreshed, memberCount, requestedCapacity)) {
-      continue;
-    }
-
-    if (memberCount > bestCount) {
-      best = refreshed;
-      bestCount = memberCount;
-    }
-  }
-
-  return best;
-}
-
-async function createSession(
-  classId: string,
-  topic: string,
-  requestedCapacity: number
-): Promise<SessionRow> {
-  const safeTopic = String(topic ?? "").trim() || "ルーム";
-  const safeCapacity = normalizeCapacity(requestedCapacity);
-
-  const { data, error } = await supabase
-    .from("sessions")
-    .insert({
-      class_id: classId,
-      topic: safeTopic,
-      status: "forming",
-      capacity: safeCapacity,
-    })
-    .select("id,class_id,topic,status,created_at,capacity")
-    .single();
-
-  console.log("[class/match-join] created session =", data);
-  console.log("[class/match-join] create session error =", error);
-
-  if (error) throw error;
-  return data as SessionRow;
-}
+type AtomicMatchRow = {
+  class_id: string;
+  class_name: string;
+  session_id: string;
+  session_status: string | null;
+  session_created_at: string | null;
+  reused: boolean;
+};
 
 async function getProfile(deviceId: string) {
   const { data, error } = await supabase
     .from("user_profiles")
-    .select("device_id")
+    .select("device_id,birth_date")
     .eq("device_id", deviceId)
     .maybeSingle();
 
@@ -263,11 +69,7 @@ async function getProfile(deviceId: string) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        {
-          ok: false,
-          error: "profile_lookup_failed",
-          detail: error.message,
-        },
+        { ok: false, error: "profile_lookup_failed", detail: error.message },
         { status: 500 }
       ),
     };
@@ -277,16 +79,13 @@ async function getProfile(deviceId: string) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        {
-          ok: false,
-          error: "profile_required",
-        },
+        { ok: false, error: "profile_required" },
         { status: 400 }
       ),
     };
   }
 
-  return { ok: true as const, profile: data };
+  return { ok: true as const, profile: data as ProfileRow };
 }
 
 async function getClassSlots(deviceId: string) {
@@ -300,11 +99,7 @@ async function getClassSlots(deviceId: string) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        {
-          ok: false,
-          error: "entitlements_lookup_failed",
-          detail: error.message,
-        },
+        { ok: false, error: "entitlements_lookup_failed", detail: error.message },
         { status: 500 }
       ),
     };
@@ -326,11 +121,7 @@ async function getCurrentMemberships(deviceId: string) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        {
-          ok: false,
-          error: "memberships_lookup_failed",
-          detail: error.message,
-        },
+        { ok: false, error: "memberships_lookup_failed", detail: error.message },
         { status: 500 }
       ),
     };
@@ -341,104 +132,6 @@ async function getCurrentMemberships(deviceId: string) {
     .filter(Boolean);
 
   return { ok: true as const, currentIds };
-}
-
-async function getSameTopicClasses(worldKey: string, topicKey: string | null) {
-  let classesQuery = supabase
-    .from("classes")
-    .select("id,name,topic_key,world_key,created_at,is_user_created")
-    .eq("world_key", worldKey)
-    .eq("is_user_created", false)
-    .order("created_at", { ascending: true });
-
-  const result = topicKey
-    ? await classesQuery.eq("topic_key", topicKey)
-    : await classesQuery.is("topic_key", null);
-
-  if (result.error) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "class_lookup_failed",
-          detail: result.error.message,
-        },
-        { status: 500 }
-      ),
-    };
-  }
-
-  const allSameTopicClasses = (result.data ?? []) as ClassRow[];
-
-  const sameTopicClasses = allSameTopicClasses.filter((c) => {
-    return !isLegacyEntryClassName(c?.name);
-  });
-
-  return {
-    ok: true as const,
-    allSameTopicClasses,
-    sameTopicClasses,
-  };
-}
-
-async function getClassById(classId: string) {
-  const { data, error } = await supabase
-    .from("classes")
-    .select("id,name,topic_key,world_key,created_at,is_user_created")
-    .eq("id", classId)
-    .single();
-
-  if (error) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "forced_class_lookup_failed",
-          detail: error.message,
-          classId,
-        },
-        { status: 500 }
-      ),
-    };
-  }
-
-  if (!data) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "forced_class_not_found",
-          classId,
-        },
-        { status: 404 }
-      ),
-    };
-  }
-
-  return {
-    ok: true as const,
-    classRow: data as ClassRow,
-  };
-}
-
-function sortClassesForAutoMatch(
-  classes: ClassRow[],
-  currentIds: string[],
-  preferJoinedClass: boolean
-) {
-  return [...classes].sort((a, b) => {
-    const aJoined = currentIds.includes(String(a.id)) ? 1 : 0;
-    const bJoined = currentIds.includes(String(b.id)) ? 1 : 0;
-
-    if (preferJoinedClass) {
-      return bJoined - aJoined;
-    }
-
-    return aJoined - bJoined;
-  });
 }
 
 async function ensureMembership(params: {
@@ -476,9 +169,6 @@ async function ensureMembership(params: {
     })
     .select("device_id,class_id");
 
-  console.log("[class/match-join] inserted =", inserted);
-  console.log("[class/match-join] insert error =", insErr);
-
   if (insErr) {
     return {
       ok: false as const,
@@ -503,8 +193,74 @@ async function ensureMembership(params: {
   };
 }
 
-function foundSessionCreateErrorCode(_e: unknown) {
-  return "session_resolve_failed";
+async function runAtomicMatch(params: {
+  worldKey: string;
+  topicKey: string | null;
+  requestedCapacity: number;
+  requestedMinAge: number;
+  requestedMaxAge: number;
+  deviceId: string;
+}) {
+  const {
+    worldKey,
+    topicKey,
+    requestedCapacity,
+    requestedMinAge,
+    requestedMaxAge,
+    deviceId,
+  } = params;
+
+  const { data, error } = await supabase.rpc("match_join_atomic", {
+    p_world_key: worldKey,
+    p_topic_key: topicKey,
+    p_requested_capacity: requestedCapacity,
+    p_requested_min_age: requestedMinAge,
+    p_requested_max_age: requestedMaxAge,
+    p_device_id: deviceId,
+  });
+
+  console.log("🔥 RPC RESULT", {
+    params,
+    data,
+    error,
+  });
+
+  if (error) {
+    console.error("❌ RPC ERROR FULL", error);
+
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "match_join_atomic_failed",
+          detail: error.message,
+          raw: error,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  const row = ((data ?? [])[0] ?? null) as AtomicMatchRow | null;
+
+  if (!row?.class_id || !row?.session_id) {
+    console.error("❌ RPC EMPTY", data);
+
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "match_join_atomic_empty",
+          data,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return { ok: true as const, row };
 }
 
 export async function POST(req: Request) {
@@ -515,16 +271,22 @@ export async function POST(req: Request) {
     const worldKey = String(body.worldKey ?? "default").trim() || "default";
     const topicKey = normalizeTopicKey(body.topicKey);
     const requestedCapacity = normalizeCapacity(body.capacity);
-    const preferJoinedClass = Boolean(body.preferJoinedClass ?? false);
     const forcedClassId = String(body.classId ?? "").trim();
 
+    const rawMinAge = normalizeAge(body.minAge, 18);
+    const rawMaxAge = normalizeAge(body.maxAge, 25);
+    const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
+    const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
+
+    console.log("🔥 MATCH JOIN ATOMIC VERSION LOADED");
     console.log("[class/match-join] body =", body);
     console.log("[class/match-join] deviceId =", deviceId);
     console.log("[class/match-join] topicKey =", topicKey);
     console.log("[class/match-join] worldKey =", worldKey);
     console.log("[class/match-join] requestedCapacity =", requestedCapacity);
-    console.log("[class/match-join] preferJoinedClass =", preferJoinedClass);
     console.log("[class/match-join] forcedClassId =", forcedClassId);
+    console.log("[class/match-join] requestedMinAge =", requestedMinAge);
+    console.log("[class/match-join] requestedMaxAge =", requestedMaxAge);
 
     if (!deviceId) {
       return NextResponse.json(
@@ -536,6 +298,14 @@ export async function POST(req: Request) {
     const profileRes = await getProfile(deviceId);
     if (!profileRes.ok) return profileRes.response;
 
+    const selfAge = calcAgeFromBirthDate(profileRes.profile.birth_date);
+
+    console.log("[class/match-join] self profile =", {
+      deviceId,
+      selfAge,
+      birth_date: profileRes.profile.birth_date ?? null,
+    });
+
     const slotsRes = await getClassSlots(deviceId);
     if (!slotsRes.ok) return slotsRes.response;
     const classSlots = slotsRes.classSlots;
@@ -544,193 +314,138 @@ export async function POST(req: Request) {
     if (!mineRes.ok) return mineRes.response;
     const currentIds = mineRes.currentIds;
 
-    const classesRes = await getSameTopicClasses(worldKey, topicKey);
-    if (!classesRes.ok) return classesRes.response;
-
-    const { sameTopicClasses } = classesRes;
-
-    console.log("[class/match-join] filtered instance classes =", sameTopicClasses);
-    console.log("[class/match-join] currentIds =", currentIds);
-
-    let targetClass: ClassRow | null = null;
-    let targetSession: SessionRow | null = null;
+    let classId = "";
+    let className = "";
+    let sessionId = "";
+    let sessionStatus = "forming";
+    let sessionCreatedAt: string | null = null;
+    let reused = false;
 
     if (forcedClassId) {
-      const forcedClassRes = await getClassById(forcedClassId);
-      if (!forcedClassRes.ok) return forcedClassRes.response;
+      const { data: existingClass, error: classErr } = await supabase
+        .from("classes")
+        .select("id,name")
+        .eq("id", forcedClassId)
+        .maybeSingle();
 
-      const forcedClass = forcedClassRes.classRow;
-      targetClass = forcedClass;
-
-      try {
-        const found = await findAvailableSession(
-          forcedClassId,
-          requestedCapacity
-        );
-
-        targetSession =
-          found ??
-          (await createSession(
-            forcedClassId,
-            forcedClass.name,
-            requestedCapacity
-          ));
-
-        console.log("[class/match-join] forced class resolved =", {
-          classId: forcedClassId,
-          className: forcedClass.name,
-          sessionId: targetSession.id,
-          reused: Boolean(found),
-        });
-      } catch (e: any) {
-        console.error("[class/match-join] forced session resolve failed", e);
+      if (classErr) {
         return NextResponse.json(
           {
             ok: false,
-            error: foundSessionCreateErrorCode(e),
-            detail: e?.message ?? String(e),
-            classId: forcedClassId,
+            error: "forced_class_lookup_failed",
+            detail: classErr.message,
           },
           { status: 500 }
         );
       }
-    } else {
-      const orderedClasses = sortClassesForAutoMatch(
-        sameTopicClasses,
-        currentIds,
-        preferJoinedClass
-      );
 
-      for (const c of orderedClasses) {
-        const cid = String(c.id);
-
-        try {
-          const found = await findAvailableSession(cid, requestedCapacity);
-          if (found) {
-            targetClass = c;
-            targetSession = found;
-            console.log("[class/match-join] using existing open session =", {
-              classId: cid,
-              className: c.name,
-              sessionId: found.id,
-            });
-            break;
-          }
-        } catch (e: any) {
-          console.error("[class/match-join] session lookup failed", e);
-          return NextResponse.json(
-            {
-              ok: false,
-              error: "session_lookup_failed",
-              detail: e?.message ?? String(e),
-            },
-            { status: 500 }
-          );
-        }
+      if (!existingClass) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "forced_class_not_found",
+            classId: forcedClassId,
+          },
+          { status: 404 }
+        );
       }
 
-      if (!targetClass) {
-        const maxIndex = sameTopicClasses.reduce((max, c) => {
-          return Math.max(max, extractIndexedClassNumber(c.name));
-        }, 0);
+      classId = String(existingClass.id);
+      className = String(existingClass.name ?? "").trim() || "クラス";
 
-        const nextIndex = maxIndex + 1;
-        const numberedName = buildIndexedClassLabel(nextIndex);
+      const { data: existingSession, error: sessionErr } = await supabase
+        .from("sessions")
+        .select("id,status,created_at,capacity")
+        .eq("class_id", classId)
+        .in("status", ["forming", "waiting"])
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-        const { data: createdClass, error: createErr } = await supabase
-          .from("classes")
+      if (sessionErr) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "forced_session_lookup_failed",
+            detail: sessionErr.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      if (existingSession?.id) {
+        sessionId = String(existingSession.id);
+        sessionStatus = String(existingSession.status ?? "forming");
+        sessionCreatedAt = existingSession.created_at ?? null;
+        reused = true;
+      } else {
+        const { data: createdSession, error: createSessionErr } = await supabase
+          .from("sessions")
           .insert({
-            name: numberedName,
-            description: "",
-            world_key: worldKey,
-            topic_key: topicKey,
-            min_age: 0,
-            is_sensitive: false,
-            is_user_created: false,
+            class_id: classId,
+            topic: className,
+            status: "forming",
+            capacity: requestedCapacity,
           })
-          .select("id,name,topic_key,world_key,created_at,is_user_created")
+          .select("id,status,created_at")
           .single();
 
-        console.log("[class/match-join] created class =", createdClass);
-        console.log("[class/match-join] create error =", createErr);
-
-        if (createErr) {
+        if (createSessionErr) {
           return NextResponse.json(
             {
               ok: false,
-              error: "class_create_failed",
-              detail: createErr.message,
-              code: (createErr as any)?.code ?? null,
-              hint: (createErr as any)?.hint ?? null,
-              details: (createErr as any)?.details ?? null,
+              error: "forced_session_create_failed",
+              detail: createSessionErr.message,
             },
             { status: 500 }
           );
         }
 
-        targetClass = createdClass as ClassRow;
-
-        try {
-          targetSession = await createSession(
-            String(targetClass.id),
-            targetClass.name,
-            requestedCapacity
-          );
-        } catch (e: any) {
-          console.error("[class/match-join] created class session resolve failed", e);
-          return NextResponse.json(
-            {
-              ok: false,
-              error: foundSessionCreateErrorCode(e),
-              detail: e?.message ?? String(e),
-              classId: targetClass.id,
-            },
-            { status: 500 }
-          );
-        }
+        sessionId = String(createdSession.id);
+        sessionStatus = String(createdSession.status ?? "forming");
+        sessionCreatedAt = createdSession.created_at ?? null;
+        reused = false;
       }
-    }
+    } else {
+      const atomicRes = await runAtomicMatch({
+        worldKey,
+        topicKey,
+        requestedCapacity,
+        requestedMinAge,
+        requestedMaxAge,
+        deviceId,
+      });
+      if (!atomicRes.ok) return atomicRes.response;
 
-    if (!targetClass || !targetSession) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "match_target_not_found",
-        },
-        { status: 500 }
-      );
+      classId = String(atomicRes.row.class_id);
+      className = String(atomicRes.row.class_name ?? "").trim() || "クラス";
+      sessionId = String(atomicRes.row.session_id);
+      sessionStatus = String(atomicRes.row.session_status ?? "forming");
+      sessionCreatedAt = atomicRes.row.session_created_at ?? null;
+      reused = Boolean(atomicRes.row.reused);
     }
 
     const membershipRes = await ensureMembership({
       deviceId,
-      classId: String(targetClass.id),
+      classId,
       currentIds,
       classSlots,
     });
     if (!membershipRes.ok) return membershipRes.response;
 
-    const currentSessionMemberCount = await countSessionMembers(targetSession.id);
-    const refreshedSession = await maybeAutoUpdateSessionStatus(
-      targetSession,
-      currentSessionMemberCount
-    );
-
-    const joinAgeMs = getSessionAgeMs(refreshedSession.created_at);
-    const matchWindowRemainingMs = Math.max(0, MATCH_WINDOW_MS - joinAgeMs);
-
     return NextResponse.json({
       ok: true,
-      classId: targetClass.id,
-      className: targetClass.name,
-      sessionId: refreshedSession.id,
-      sessionStatus: refreshedSession.status ?? "forming",
-      sessionCreatedAt: refreshedSession.created_at ?? null,
+      classId,
+      className,
+      sessionId,
+      sessionStatus,
+      sessionCreatedAt,
       requestedCapacity,
-      currentSessionMemberCount,
+      requestedMinAge,
+      requestedMaxAge,
+      selfAge,
       alreadyJoined: membershipRes.alreadyJoined,
-      matchWindowMs: MATCH_WINDOW_MS,
-      matchWindowRemainingMs,
-      autoStartMemberCount: AUTO_START_MEMBER_COUNT,
+      reused,
     });
   } catch (e: any) {
     console.error("[class/match-join] server error =", e);

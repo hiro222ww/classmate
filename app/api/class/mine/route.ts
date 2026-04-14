@@ -3,6 +3,22 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 
+function isLegacyEntryClassName(name: string | null | undefined) {
+  const s = String(name ?? "").trim();
+  if (!s) return false;
+
+  return (
+    s === "女子校" ||
+    s === "男子校" ||
+    s === "フリークラス" ||
+    s === "ホームルーム" ||
+    s.startsWith("フリークラス") ||
+    s.startsWith("女子校") ||
+    s.startsWith("男子校") ||
+    s.startsWith("ホームルーム")
+  );
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -56,6 +72,7 @@ export async function GET(req: Request) {
           membershipCount: 0,
           classRowCount: 0,
           joinFailedCount: 0,
+          legacyFilteredCount: 0,
         },
       });
     }
@@ -97,7 +114,7 @@ export async function GET(req: Request) {
     );
 
     // 3) merge
-    const classes = classIds.map((classId) => {
+    const merged = classIds.map((classId) => {
       const c = classMap.get(classId);
 
       return {
@@ -115,7 +132,13 @@ export async function GET(req: Request) {
       };
     });
 
-    console.log("[class/mine] mapped classes =", classes);
+    // 4) レガシー入口クラスを除外
+    const classes = merged.filter((c: any) => !isLegacyEntryClassName(c?.name));
+    const legacyFilteredCount = merged.length - classes.length;
+
+    console.log("[class/mine] merged classes =", merged);
+    console.log("[class/mine] filtered classes =", classes);
+    console.log("[class/mine] legacyFilteredCount =", legacyFilteredCount);
 
     return NextResponse.json({
       ok: true,
@@ -124,6 +147,7 @@ export async function GET(req: Request) {
         membershipCount: memberships?.length ?? 0,
         classRowCount: classRows?.length ?? 0,
         joinFailedCount: classes.filter((c: any) => !c.join_ok).length,
+        legacyFilteredCount,
       },
     });
   } catch (e: any) {

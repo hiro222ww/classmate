@@ -124,6 +124,37 @@ export async function POST(req: Request) {
       );
     }
 
+    const { data: currentEnt, error: currentErr } = await supabaseAdmin
+      .from("user_entitlements")
+      .select(
+        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override, manual_override_updated_at"
+      )
+      .eq("device_id", deviceId)
+      .maybeSingle();
+
+    if (currentErr) {
+      return NextResponse.json(
+        { ok: false, error: "db_error", detail: currentErr.message },
+        { status: 500 }
+      );
+    }
+
+    // 手動上書き中のユーザーだけ同期を止める
+    if (currentEnt?.manual_override) {
+      console.log("[billing/sync] skipped by manual override", {
+        deviceId,
+        entitlements: currentEnt,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "manual_override_enabled",
+        deviceId,
+        entitlements: currentEnt,
+      });
+    }
+
     const customerId = await getCustomerIdByDeviceId(deviceId);
     if (!customerId) {
       return NextResponse.json(
@@ -186,12 +217,13 @@ export async function POST(req: Request) {
           can_create_classes,
           topic_plan,
           theme_pass,
+          manual_override: false,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "device_id" }
       )
       .select(
-        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at"
+        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override, manual_override_updated_at"
       )
       .single();
 

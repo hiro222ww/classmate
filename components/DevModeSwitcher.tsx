@@ -6,8 +6,9 @@ import {
   isAdminUnlocked,
   unlockAdmin,
   lockAdmin,
+  getDevUserKeyFromUrl,
+  getStoredDevUserKey,
   setDevUserKey,
-  getDevUserKey,
 } from "@/lib/devMode";
 
 export function DevModeSwitcher() {
@@ -19,12 +20,22 @@ export function DevModeSwitcher() {
 
   useEffect(() => {
     setMounted(true);
-    setAdminUnlocked(isAdminUnlocked());
-    setDev(getDevUserKey());
+
+    const unlocked = isAdminUnlocked();
+    setAdminUnlocked(unlocked);
+
+    const fromUrl = getDevUserKeyFromUrl();
+    const stored = unlocked ? getStoredDevUserKey() : "";
+    setDev(fromUrl || stored || "");
   }, []);
 
   if (!isDevFeatureEnabled()) return null;
   if (!mounted) return null;
+
+  const params = new URLSearchParams(window.location.search);
+  const hasDevInUrl = params.has("dev");
+
+  if (hasDevInUrl) return null;
 
   function handleUnlock() {
     const ok = unlockAdmin(password);
@@ -37,7 +48,7 @@ export function DevModeSwitcher() {
     setError("");
     setPassword("");
     setAdminUnlocked(true);
-    setDev(getDevUserKey());
+    setDev(getStoredDevUserKey());
   }
 
   function handleLock() {
@@ -48,9 +59,18 @@ export function DevModeSwitcher() {
   }
 
   function handleDevChange(v: string) {
-    setDevUserKey(v);
     setDev(v);
-    window.location.reload();
+    setDevUserKey(v);
+
+    const url = new URL(window.location.href);
+
+    if (v) {
+      url.searchParams.set("dev", v);
+    } else {
+      url.searchParams.delete("dev");
+    }
+
+    window.location.href = url.toString();
   }
 
   return (
@@ -101,7 +121,9 @@ export function DevModeSwitcher() {
           >
             開発モード解除
           </button>
-          {error ? <div style={{ color: "#f87171", fontSize: 12 }}>{error}</div> : null}
+          {error ? (
+            <div style={{ color: "#f87171", fontSize: 12 }}>{error}</div>
+          ) : null}
         </>
       ) : (
         <>

@@ -58,6 +58,13 @@ type Profile = {
   photo_path: string | null;
 };
 
+type ProfileApiResponse = {
+  ok?: boolean;
+  profile?: Profile | null;
+  error?: string;
+  message?: string;
+};
+
 type EntryBoard = {
   key: string;
   title: string;
@@ -90,6 +97,11 @@ async function readJsonOrThrow(r: Response, label: string) {
     if (err === "billing_customer_missing") {
       console.warn(`[${label}] billing_customer_missing (non-fatal)`);
       return { ok: false, error: "billing_customer_missing" };
+    }
+
+    if (err === "manual_override_enabled") {
+      console.warn(`[${label}] manual_override_enabled`);
+      return j;
     }
 
     console.error(`[${label}] api error`, j);
@@ -128,6 +140,10 @@ function Pill({ children }: { children: React.ReactNode }) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function safeTrim(v: unknown) {
+  return String(v ?? "").trim();
 }
 
 export default function SelectClient() {
@@ -189,26 +205,48 @@ export default function SelectClient() {
         cache: "no-store",
       });
 
-      if (!r.ok) {
+      const rawText = await r.text().catch(() => "");
+      let raw: ProfileApiResponse | null = null;
+
+      try {
+        raw = rawText ? (JSON.parse(rawText) as ProfileApiResponse) : null;
+      } catch {
+        raw = null;
+      }
+
+      if (!r.ok || !raw?.ok) {
+        console.warn("[class/select] profile fetch not ok", {
+          requestedDeviceId: id,
+          status: r.status,
+          rawText,
+          raw,
+          dev,
+        });
         setHasProfile(false);
         setProfile(null);
         return null;
       }
 
-      const data: Profile | null = await r.json();
-      const exists = Boolean(data?.device_id);
+      const nextProfile: Profile | null = raw?.profile ?? null;
+
+      const exists =
+        !!safeTrim(nextProfile?.device_id) &&
+        !!safeTrim(nextProfile?.display_name) &&
+        !!safeTrim(nextProfile?.birth_date) &&
+        !!safeTrim(nextProfile?.gender);
 
       setHasProfile(exists);
-      setProfile(data ?? null);
+      setProfile(nextProfile);
 
       console.log("[class/select] profile =", {
         requestedDeviceId: id,
-        returnedDeviceId: data?.device_id ?? null,
-        displayName: data?.display_name ?? null,
+        returnedDeviceId: nextProfile?.device_id ?? null,
+        displayName: nextProfile?.display_name ?? null,
+        hasProfile: exists,
         dev,
       });
 
-      return data ?? null;
+      return nextProfile;
     } catch (e) {
       console.error("[class/select] profile fetch failed", e);
       setHasProfile(false);
@@ -262,7 +300,9 @@ export default function SelectClient() {
 
     try {
       const sj = await readJsonOrThrow(sr, "billing_sync");
-      if (sj?.error === "billing_customer_missing") return null;
+      if (sj?.error === "billing_customer_missing") return sj;
+      if (sj?.reason === "manual_override_enabled") return sj;
+
       console.log("[class/select] sync ok", sj);
       return sj;
     } catch (e) {
@@ -336,7 +376,7 @@ export default function SelectClient() {
             await finalizeFromSession(id, sessionId);
             if (!alive) return;
 
-            await syncBilling(id);
+            const firstSync = await syncBilling(id);
             if (!alive) return;
 
             await fetchEntitlements(id);
@@ -345,11 +385,16 @@ export default function SelectClient() {
             await sleep(1200);
             if (!alive) return;
 
-            await syncBilling(id);
+            const secondSync = await syncBilling(id);
             if (!alive) return;
 
             await fetchEntitlements(id);
             if (!alive) return;
+
+            console.log("[class/select] finalize sync results =", {
+              firstSync,
+              secondSync,
+            });
 
             sp.delete("paid");
             sp.delete("session_id");
@@ -359,7 +404,7 @@ export default function SelectClient() {
           } catch (e) {
             console.error("[class/select] finalize flow failed", e);
 
-            await syncBilling(id);
+            const syncResult = await syncBilling(id);
             if (!alive) return;
 
             await sleep(800);
@@ -367,13 +412,17 @@ export default function SelectClient() {
 
             await fetchEntitlements(id);
             if (!alive) return;
+
+            console.log("[class/select] finalize fallback syncResult =", syncResult);
           }
         } else {
-          await syncBilling(id);
+          const syncResult = await syncBilling(id);
           if (!alive) return;
 
           await fetchEntitlements(id);
           if (!alive) return;
+
+          console.log("[class/select] syncResult =", syncResult);
         }
 
         const pr = await fetch("/api/user/match-prefs", {
@@ -426,7 +475,7 @@ export default function SelectClient() {
       }
     };
 
-    init();
+    void init();
 
     return () => {
       alive = false;
@@ -564,7 +613,7 @@ export default function SelectClient() {
         return;
       }
 
-      const displayName = String(profile?.display_name ?? "").trim();
+      const displayName = safeTrim(profile?.display_name);
 
       if (!displayName) {
         goProfileIfNeeded("profile_required");
@@ -581,6 +630,8 @@ export default function SelectClient() {
           capacity: 5,
           preferJoinedClass: false,
           classId: forcedClassId ?? undefined,
+          minAge: Math.min(prefs.min_age, prefs.max_age),
+          maxAge: Math.max(prefs.min_age, prefs.max_age),
         }),
         cache: "no-store",
       });
@@ -610,8 +661,8 @@ export default function SelectClient() {
         return;
       }
 
-      const classId = String(matchJson?.classId ?? "").trim();
-      const sessionId = String(matchJson?.sessionId ?? "").trim();
+      const classId = safeTrim(matchJson?.classId);
+      const sessionId = safeTrim(matchJson?.sessionId);
 
       if (!classId || !sessionId) {
         throw new Error("match_join_missing_ids");
@@ -727,7 +778,7 @@ export default function SelectClient() {
         </p>
 
         <button
-          onClick={() => joinMatchedBoard(b)}
+          onClick={() => void joinMatchedBoard(b)}
           disabled={busy || loading || !deviceId || profileMissing}
           style={{
             width: "100%",
@@ -837,21 +888,6 @@ export default function SelectClient() {
             }}
           >
             お支払い・解約
-          </Link>
-
-          <Link
-            href={withDev("/")}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            今のクラス
           </Link>
 
           {isDevFeatureEnabled() && (
@@ -987,7 +1023,7 @@ export default function SelectClient() {
         <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
         {loading ? <Pill>読み込み中…</Pill> : null}
         <button
-          onClick={() => reloadCatalog()}
+          onClick={() => void reloadCatalog()}
           disabled={loading}
           style={{
             padding: "8px 10px",
@@ -1059,7 +1095,7 @@ export default function SelectClient() {
         </div>
 
         <button
-          onClick={() => savePrefs(prefs)}
+          onClick={() => void savePrefs(prefs)}
           disabled={savingPrefs || !deviceId || loading}
           style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, fontWeight: 900 }}
         >
@@ -1079,6 +1115,30 @@ export default function SelectClient() {
         <div
           style={{
             display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            marginBottom: 12,
+          }}
+        >
+          <Link
+            href={withDev("/")}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#f8f8f8",
+              fontWeight: 900,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            今所属しているクラスを見る
+          </Link>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
             justifyContent: "space-between",
             alignItems: "baseline",
             gap: 10,
@@ -1087,13 +1147,10 @@ export default function SelectClient() {
         >
           <div>
             <strong style={{ fontSize: 16 }}>今すぐ入る</strong>
-            <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
-              無料テーマ（考えずに入れる入口）
-            </div>
           </div>
 
           <button
-            onClick={enterQuickFreeTheme}
+            onClick={() => void enterQuickFreeTheme()}
             disabled={busy || loading || !deviceId || hasProfile === false}
             style={{
               padding: "12px 14px",

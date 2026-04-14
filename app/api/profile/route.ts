@@ -1,16 +1,90 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 
+type ProfileRow = {
+  device_id: string;
+  display_name: string | null;
+  birth_date: string | null;
+  gender: string | null;
+  photo_path: string | null;
+};
+
+function normalizeString(v: unknown) {
+  return String(v ?? "").trim();
+}
+
+function normalizePhotoPath(photoPath: unknown) {
+  let normalized = normalizeString(photoPath);
+  if (!normalized) return null;
+
+  if (
+    normalized.startsWith("http://") ||
+    normalized.startsWith("https://")
+  ) {
+    return normalized;
+  }
+
+  if (normalized.startsWith("profile-photos/")) {
+    normalized = normalized.replace(/^profile-photos\//, "");
+  }
+
+  if (normalized.startsWith("avatars/")) {
+    normalized = normalized.replace(/^avatars\//, "");
+  }
+
+  return normalized || null;
+}
+
+function toProfileResponse(row: Partial<ProfileRow> | null) {
+  if (!row) return null;
+
+  return {
+    device_id: normalizeString(row.device_id) || null,
+    display_name: normalizeString(row.display_name) || null,
+    birth_date: normalizeString(row.birth_date) || null,
+    gender: normalizeString(row.gender) || null,
+    photo_path: normalizePhotoPath(row.photo_path),
+  };
+}
+
+function calcAge(birthDateISO: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDateISO)) return null;
+
+  const birth = new Date(`${birthDateISO}T00:00:00`);
+  if (Number.isNaN(birth.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+
+  return age;
+}
+
 /**
  * プロフィール取得
  * GET /api/profile?device_id=xxxx
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const device_id = searchParams.get("device_id");
+  const device_id = normalizeString(searchParams.get("device_id"));
 
   if (!device_id) {
-    return new NextResponse("device_id is required", { status: 400 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "device_id_required",
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
   const { data, error } = await supabaseAdmin
@@ -27,29 +101,42 @@ export async function GET(req: Request) {
       hint: (error as any)?.hint ?? null,
       code: (error as any)?.code ?? null,
     });
-    return new NextResponse(error.message, { status: 500 });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "profile_get_failed",
+        message: error.message,
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
-  console.log("[profile][GET] result", data ?? null);
+  const profile = toProfileResponse(data);
 
-  return NextResponse.json(data ?? null, {
-    headers: {
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-    },
+  console.log("[profile][GET] result", {
+    device_id,
+    found: !!profile,
+    display_name: profile?.display_name ?? null,
+    photo_path: profile?.photo_path ?? null,
   });
-}
 
-function calcAge(birthDateISO: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDateISO)) return null;
-
-  const birth = new Date(birthDateISO);
-  if (Number.isNaN(birth.getTime())) return null;
-
-  const today = new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  const m = today.getMonth() - birth.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
-  return age;
+  return NextResponse.json(
+    {
+      ok: true,
+      profile,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      },
+    }
+  );
 }
 
 /**
@@ -59,13 +146,13 @@ function calcAge(birthDateISO: string): number | null {
 export async function POST(req: Request) {
   const form = await req.formData();
 
-  const device_id = String(form.get("device_id") ?? "").trim();
-  const display_name = String(form.get("display_name") ?? "").trim();
-  const birth_date = String(form.get("birth_date") ?? "").trim();
-  const gender = String(form.get("gender") ?? "").trim();
+  const device_id = normalizeString(form.get("device_id"));
+  const display_name = normalizeString(form.get("display_name"));
+  const birth_date = normalizeString(form.get("birth_date"));
+  const gender = normalizeString(form.get("gender"));
 
   const guardian_consent =
-    String(form.get("guardian_consent") ?? "false") === "true";
+    normalizeString(form.get("guardian_consent")) === "true";
 
   const photo = form.get("photo");
 
@@ -81,23 +168,66 @@ export async function POST(req: Request) {
   });
 
   if (!device_id || !display_name || !birth_date || !gender) {
-    return new NextResponse("missing fields", { status: 400 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "missing_fields",
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
   if (gender !== "male" && gender !== "female") {
-    return new NextResponse("invalid gender", { status: 400 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "invalid_gender",
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
   const age = calcAge(birth_date);
   if (age === null) {
-    return new NextResponse("invalid birth_date", { status: 400 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "invalid_birth_date",
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
   if (age < 18) {
-    return new NextResponse("adults_only", { status: 403 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "adults_only",
+      },
+      {
+        status: 403,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
-  // 既存プロフィールを先に読む
   const { data: existingProfile, error: existingError } = await supabaseAdmin
     .from("user_profiles")
     .select("photo_path")
@@ -112,16 +242,23 @@ export async function POST(req: Request) {
       hint: (existingError as any)?.hint ?? null,
       code: (existingError as any)?.code ?? null,
     });
-    return new NextResponse(existingError.message, { status: 500 });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "profile_existing_read_failed",
+        message: existingError.message,
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
-  console.log("[profile][POST] existing profile", {
-    device_id,
-    existing_photo_path: String(existingProfile?.photo_path ?? "").trim() || null,
-  });
-
-  let photo_path: string | null =
-    String(existingProfile?.photo_path ?? "").trim() || null;
+  let photo_path: string | null = normalizePhotoPath(existingProfile?.photo_path);
 
   if (photo instanceof File && photo.size > 0) {
     const ext = photo.name.split(".").pop()?.toLowerCase() || "jpg";
@@ -141,7 +278,20 @@ export async function POST(req: Request) {
         objectPath,
         message: uploadError.message,
       });
-      return new NextResponse(uploadError.message, { status: 500 });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "profile_photo_upload_failed",
+          message: uploadError.message,
+        },
+        {
+          status: 500,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
     }
 
     console.log("[profile][POST] upload ok", {
@@ -152,45 +302,43 @@ export async function POST(req: Request) {
     photo_path = objectPath;
   }
 
-  const payload: {
-    device_id: string;
-    display_name: string;
-    birth_date: string;
-    gender: string;
-    photo_path?: string;
-  } = {
+  const payload: ProfileRow = {
     device_id,
     display_name,
     birth_date,
     gender,
+    photo_path,
   };
 
-  if (photo_path) {
-    payload.photo_path = photo_path;
-  }
-
-  const { error } = await supabaseAdmin
+  const { error: upsertError } = await supabaseAdmin
     .from("user_profiles")
     .upsert(payload, { onConflict: "device_id" });
 
-  if (error) {
+  if (upsertError) {
     console.log("[profile][POST] upsert ng", {
       device_id,
       payload,
-      message: error.message,
-      details: (error as any)?.details ?? null,
-      hint: (error as any)?.hint ?? null,
-      code: (error as any)?.code ?? null,
+      message: upsertError.message,
+      details: (upsertError as any)?.details ?? null,
+      hint: (upsertError as any)?.hint ?? null,
+      code: (upsertError as any)?.code ?? null,
     });
-    return new NextResponse(error.message, { status: 500 });
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "profile_upsert_failed",
+        message: upsertError.message,
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
 
-  console.log("[profile][POST] upsert ok", {
-    device_id,
-    photo_path: photo_path ?? null,
-  });
-
-  // 念のため保存結果を再読込して確認
   const { data: confirmData, error: confirmError } = await supabaseAdmin
     .from("user_profiles")
     .select("device_id, display_name, birth_date, gender, photo_path")
@@ -205,16 +353,36 @@ export async function POST(req: Request) {
       hint: (confirmError as any)?.hint ?? null,
       code: (confirmError as any)?.code ?? null,
     });
-  } else {
-    console.log("[profile][POST] confirm result", confirmData ?? null);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "profile_confirm_read_failed",
+        message: confirmError.message,
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   }
+
+  const profile = toProfileResponse(confirmData);
+
+  console.log("[profile][POST] confirm result", {
+    device_id,
+    display_name: profile?.display_name ?? null,
+    photo_path: profile?.photo_path ?? null,
+  });
 
   void guardian_consent;
 
   return NextResponse.json(
     {
       ok: true,
-      photo_path: photo_path ?? null,
+      profile,
     },
     {
       headers: {

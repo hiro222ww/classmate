@@ -1,5 +1,3 @@
-// lib/device.ts
-
 import { getDevDeviceId, isDevFeatureEnabled } from "@/lib/devMode";
 
 export const DEVICE_ID_KEY = "classmate_device_id";
@@ -24,17 +22,15 @@ export function getOrCreateDeviceId(): string {
   return id;
 }
 
-/**
- * フロントでは基本これだけ使う
- */
 export function getDeviceId(): string {
   if (!isBrowser()) return "";
 
   if (isDevFeatureEnabled()) {
     const devId = getDevDeviceId();
-    if (devId) {
-      return devId;
+    if (devId && devId.trim()) {
+      return devId.trim();
     }
+    return "";
   }
 
   return getOrCreateDeviceId();

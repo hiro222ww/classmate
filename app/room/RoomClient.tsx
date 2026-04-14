@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
+import {
+  usePathname,
+  useRouter,
+  useSearchParams,
+} from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
@@ -12,6 +22,7 @@ type MemberRow = {
   device_id?: string;
   display_name?: string;
   photo_path?: string | null;
+  avatar_url?: string | null;
   joined_at?: string;
 };
 
@@ -25,8 +36,16 @@ type RoomMessage = {
 };
 
 type ProfileResponse = {
-  device_id?: string;
-  display_name?: string;
+  ok?: boolean;
+  profile?: {
+    device_id?: string | null;
+    display_name?: string | null;
+    birth_date?: string | null;
+    gender?: string | null;
+    photo_path?: string | null;
+  } | null;
+  error?: string;
+  message?: string;
 };
 
 type SessionJoinResponse = {
@@ -56,38 +75,17 @@ type SessionStatusResponse = {
   error?: string;
 };
 
-function normalizeName(v: string | undefined) {
+function normalizeName(v: string | null | undefined) {
   return String(v ?? "").trim();
 }
 
-function getAvatarUrl(photoPath?: string | null) {
-  let normalized = String(photoPath ?? "").trim();
-
-  if (!normalized) return "/default-avatar.jpg";
-
-  if (
-    normalized.startsWith("http://") ||
-    normalized.startsWith("https://")
-  ) {
-    return normalized;
-  }
-
-  if (normalized.startsWith("profile-photos/")) {
-    normalized = normalized.replace(/^profile-photos\//, "");
-  }
-
-  if (normalized.startsWith("avatars/")) {
-    normalized = normalized.replace(/^avatars\//, "");
-  }
-
-  const { data } = supabase.storage
-    .from("profile-photos")
-    .getPublicUrl(normalized);
-
-  const publicUrl = data?.publicUrl?.trim();
-  if (!publicUrl) return "/default-avatar.jpg";
-
-  return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
+function normalizeMemberCompare(list: MemberRow[]) {
+  return list.map((m) => ({
+    device_id: String(m.device_id ?? "").trim(),
+    display_name: String(m.display_name ?? "").trim(),
+    photo_path: String(m.photo_path ?? "").trim(),
+    joined_at: String(m.joined_at ?? "").trim(),
+  }));
 }
 
 function getDisplayNameStorageKeys(deviceId: string) {
@@ -122,6 +120,8 @@ function writeStoredDisplayName(deviceId: string, name: string) {
   if (typeof window === "undefined") return;
 
   const normalizedName = String(name ?? "").trim();
+  if (!normalizedName) return;
+
   const { scoped, legacy } = getDisplayNameStorageKeys(deviceId);
 
   localStorage.setItem(scoped, normalizedName);
@@ -146,11 +146,14 @@ function dedupeMembers(
       row.photo_path && String(row.photo_path).trim()
         ? String(row.photo_path).trim()
         : null;
+    const avatarUrl: string | null =
+      row.avatar_url && String(row.avatar_url).trim()
+        ? String(row.avatar_url).trim()
+        : null;
     const joinedAt = String(row.joined_at ?? "").trim();
 
-   const isMeByDevice =
-  !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
-
+    const isMeByDevice =
+      !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
 
     const isMeByName =
       !!name && !!normalizedMyName && name === normalizedMyName;
@@ -159,8 +162,9 @@ function dedupeMembers(
       if (!me) {
         me = {
           device_id: did || normalizedMyDeviceId,
-          display_name: normalizedMyName || name || "",
+          display_name: name || normalizedMyName || "",
           photo_path: photoPath,
+          avatar_url: avatarUrl,
           joined_at: joinedAt,
         };
       } else {
@@ -170,12 +174,18 @@ function dedupeMembers(
           me.photo_path && String(me.photo_path).trim()
             ? String(me.photo_path).trim()
             : null;
+        const prevAvatarUrl: string | null =
+          me.avatar_url && String(me.avatar_url).trim()
+            ? String(me.avatar_url).trim()
+            : null;
+        const prevName = normalizeName(me.display_name);
 
         if (!prevDid && did) {
           me = {
             device_id: did,
-            display_name: normalizedMyName || name || "",
+            display_name: name || prevName || normalizedMyName || "",
             photo_path: photoPath || prevPhotoPath,
+            avatar_url: avatarUrl || prevAvatarUrl,
             joined_at: joinedAt || prevJoinedAt,
           };
         } else if (!prevJoinedAt && joinedAt) {
@@ -183,6 +193,7 @@ function dedupeMembers(
             device_id: me.device_id,
             display_name: me.display_name,
             photo_path: me.photo_path ?? photoPath,
+            avatar_url: me.avatar_url ?? avatarUrl,
             joined_at: joinedAt,
           };
         } else if (!prevPhotoPath && photoPath) {
@@ -190,6 +201,23 @@ function dedupeMembers(
             device_id: me.device_id,
             display_name: me.display_name,
             photo_path: photoPath,
+            avatar_url: me.avatar_url ?? avatarUrl,
+            joined_at: me.joined_at,
+          };
+        } else if (!prevAvatarUrl && avatarUrl) {
+          me = {
+            device_id: me.device_id,
+            display_name: me.display_name,
+            photo_path: me.photo_path,
+            avatar_url: avatarUrl,
+            joined_at: me.joined_at,
+          };
+        } else if (!prevName && name) {
+          me = {
+            device_id: me.device_id,
+            display_name: name,
+            photo_path: me.photo_path,
+            avatar_url: me.avatar_url,
             joined_at: me.joined_at,
           };
         }
@@ -203,6 +231,7 @@ function dedupeMembers(
         device_id: did,
         display_name: name,
         photo_path: photoPath,
+        avatar_url: avatarUrl,
         joined_at: joinedAt,
       });
     }
@@ -236,8 +265,40 @@ function formatTime(v: string) {
   });
 }
 
+function MemberAvatar({
+  src,
+  label,
+  isMe,
+}: {
+  src?: string | null;
+  label: string;
+  isMe: boolean;
+}) {
+  return (
+    <img
+      src={src || "/default-avatar.jpg"}
+      alt={label}
+      onError={(e) => {
+        if (e.currentTarget.src.includes("default-avatar")) return;
+        e.currentTarget.onerror = null;
+        e.currentTarget.src = "/default-avatar.jpg";
+      }}
+      style={{
+        width: 42,
+        height: 42,
+        borderRadius: "9999px",
+        objectFit: "cover",
+        background: "#e5e7eb",
+        border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
 export default function RoomClient() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const classId = (searchParams.get("classId") ?? "").trim();
@@ -264,7 +325,7 @@ export default function RoomClient() {
   const [displayName, setDisplayName] = useState("");
   const [isComposing, setIsComposing] = useState(false);
 
-  const joinedSessionIdRef = useRef<string | null>(null);
+  const joinedSessionKeyRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesBoxRef = useRef<HTMLDivElement | null>(null);
 
@@ -315,7 +376,7 @@ export default function RoomClient() {
   useEffect(() => {
     const id = getDeviceId();
     setDeviceId(id);
-  }, [dev]);
+  }, []);
 
   useEffect(() => {
     const active = isDevMode();
@@ -337,8 +398,17 @@ export default function RoomClient() {
           { cache: "no-store" }
         );
 
-        if (!res.ok) {
-          if (!cancelled) {
+        const rawText = await res.text().catch(() => "");
+        let data: ProfileResponse | null = null;
+
+        try {
+          data = rawText ? (JSON.parse(rawText) as ProfileResponse) : null;
+        } catch {
+          data = null;
+        }
+
+        if (!res.ok || !data?.ok) {
+          if (!cancelled && !displayName) {
             const fallback = readStoredDisplayName(deviceId) || "参加者";
             const safeName = fallback === "You" ? "参加者" : fallback;
             setDisplayName(safeName);
@@ -346,9 +416,8 @@ export default function RoomClient() {
           return;
         }
 
-        const data = (await res.json()) as ProfileResponse | null;
         const canonical =
-          normalizeName(data?.display_name) ||
+          normalizeName(data?.profile?.display_name) ||
           readStoredDisplayName(deviceId) ||
           "参加者";
 
@@ -358,7 +427,7 @@ export default function RoomClient() {
           writeStoredDisplayName(deviceId, safeName);
         }
       } catch {
-        if (!cancelled) {
+        if (!cancelled && !displayName) {
           const fallback = readStoredDisplayName(deviceId) || "参加者";
           const safeName = fallback === "You" ? "参加者" : fallback;
           setDisplayName(safeName);
@@ -371,18 +440,15 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [deviceId]);
+  }, [deviceId, displayName]);
 
   const visibleMembers = useMemo(() => {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
 
-  useEffect(() => {
-    console.log("[room] visibleMembers", visibleMembers);
-  }, [visibleMembers]);
-
   const fetchStatus = useCallback(async () => {
     if (!sessionId || !classId) return;
+    if (pathname !== "/room") return;
 
     try {
       const qs = new URLSearchParams({ sessionId, classId });
@@ -401,22 +467,18 @@ export default function RoomClient() {
       }
 
       if (!res.ok || !json?.ok) {
-        console.error("[room] status fetch failed", {
-          url: `/api/session/status?${qs.toString()}`,
-          status: res.status,
-          statusText: res.statusText,
-          json,
-          rawText,
-          sessionId,
-          classId,
-        });
         setSoftConnectionError("status");
         return;
       }
 
       const incomingMembers = Array.isArray(json.members) ? json.members : [];
-      console.log("[members raw]", incomingMembers);
-      setMembers(incomingMembers);
+
+      setMembers((prev) => {
+        const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
+        const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
+        if (prevNorm === nextNorm) return prev;
+        return incomingMembers;
+      });
 
       if (json.session?.topic) {
         setTopicTitle(String(json.session.topic).trim() || "ルーム");
@@ -431,11 +493,10 @@ export default function RoomClient() {
       const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
       setMemberCount(Math.max(nextCount, 0));
       clearSoftConnectionError("status");
-    } catch (e) {
-      console.error("[room] status fetch exception", e);
+    } catch {
       setSoftConnectionError("status");
     }
-  }, [sessionId, classId]);
+  }, [sessionId, classId, pathname]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -464,7 +525,7 @@ export default function RoomClient() {
   }, [classId, sessionId, topicTitle, devSuffix]);
 
   useEffect(() => {
-    joinedSessionIdRef.current = null;
+    joinedSessionKeyRef.current = null;
   }, [sessionId, deviceId]);
 
   useEffect(() => {
@@ -472,9 +533,12 @@ export default function RoomClient() {
     if (!classId) return;
     if (!deviceId) return;
     if (!displayName) return;
-    if (joinedSessionIdRef.current === sessionId) return;
+    if (pathname !== "/room") return;
 
-    joinedSessionIdRef.current = sessionId;
+    const joinKey = `${sessionId}:${deviceId}`;
+    if (joinedSessionKeyRef.current === joinKey) return;
+
+    joinedSessionKeyRef.current = joinKey;
     let cancelled = false;
 
     async function join() {
@@ -506,7 +570,7 @@ export default function RoomClient() {
       }
 
       if (!res.ok || !json?.ok) {
-        joinedSessionIdRef.current = null;
+        joinedSessionKeyRef.current = null;
         throw new Error(json?.error || rawText || "session_join_failed");
       }
 
@@ -534,24 +598,27 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, classId, deviceId, displayName, fetchStatus]);
+  }, [sessionId, classId, deviceId, displayName, pathname, fetchStatus]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;
+    if (pathname !== "/room") return;
 
     void fetchStatus();
 
     const interval = window.setInterval(() => {
+      if (window.location.pathname !== "/room") return;
       void fetchStatus();
     }, 2000);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [sessionId, classId, fetchStatus]);
+  }, [sessionId, classId, pathname, fetchStatus]);
 
   useEffect(() => {
     if (!sessionId) return;
+    if (pathname !== "/room") return;
 
     const channel = supabase
       .channel(`room-session-members-${sessionId}`)
@@ -564,6 +631,7 @@ export default function RoomClient() {
           filter: `session_id=eq.${sessionId}`,
         },
         async () => {
+          if (window.location.pathname !== "/room") return;
           await fetchStatus();
         }
       )
@@ -572,31 +640,11 @@ export default function RoomClient() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [sessionId, fetchStatus]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel(`room-user-profiles-${sessionId || "no-session"}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "user_profiles",
-        },
-        async () => {
-          await fetchStatus();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [sessionId, fetchStatus]);
+  }, [sessionId, pathname, fetchStatus]);
 
   useEffect(() => {
     if (!sessionId) return;
+    if (pathname !== "/room") return;
 
     let cancelled = false;
 
@@ -612,30 +660,21 @@ export default function RoomClient() {
         if (cancelled) return;
 
         if (error) {
-          const message =
-            typeof error?.message === "string" ? error.message : "no_message";
-          const details =
-            typeof error?.details === "string" ? error.details : "no_details";
-          const hint =
-            typeof error?.hint === "string" ? error.hint : "no_hint";
-          const code =
-            typeof error?.code === "string" ? error.code : "no_code";
-
-          console.log("[room] messages fetch failed message =", message);
-          console.log("[room] messages fetch failed details =", details);
-          console.log("[room] messages fetch failed hint =", hint);
-          console.log("[room] messages fetch failed code =", code);
-          console.log("[room] messages fetch failed sessionId =", sessionId);
-
           setSoftConnectionError("messages");
           return;
         }
 
-        setMsgs(dedupeMessages((data ?? []) as RoomMessage[]));
+        setMsgs((prev) => {
+          const next = dedupeMessages((data ?? []) as RoomMessage[]);
+          const prevStr = JSON.stringify(prev);
+          const nextStr = JSON.stringify(next);
+          if (prevStr === nextStr) return prev;
+          return next;
+        });
+
         clearSoftConnectionError("messages");
-      } catch (e) {
+      } catch {
         if (!cancelled) {
-          console.error("[room] messages fetch exception", e);
           setSoftConnectionError("messages");
         }
       }
@@ -644,6 +683,7 @@ export default function RoomClient() {
     void loadMessages();
 
     const poll = window.setInterval(() => {
+      if (window.location.pathname !== "/room") return;
       void loadMessages();
     }, 2000);
 
@@ -658,6 +698,8 @@ export default function RoomClient() {
           filter: `session_id=eq.${sessionId}`,
         },
         (payload: any) => {
+          if (window.location.pathname !== "/room") return;
+
           const row = payload?.new as RoomMessage;
           if (!row?.id) return;
 
@@ -672,7 +714,7 @@ export default function RoomClient() {
       window.clearInterval(poll);
       void supabase.removeChannel(channel);
     };
-  }, [sessionId]);
+  }, [sessionId, pathname]);
 
   useEffect(() => {
     const box = messagesBoxRef.current;
@@ -717,7 +759,6 @@ export default function RoomClient() {
     });
 
     if (error) {
-      console.error("[room] message send failed", error);
       setErr("送信に失敗しました。通信状況をご確認ください。");
       setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
       setDraft(text);
@@ -807,16 +848,20 @@ export default function RoomClient() {
                 <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
-                  {visibleMembers.map((m, i) => {
+                  {visibleMembers.map((m) => {
                     const isMe =
-  String(m.device_id ?? "").trim() === String(deviceId ?? "").trim();
+                      String(m.device_id ?? "").trim() ===
+                      String(deviceId ?? "").trim();
 
-                    const label = isMe ? "You" : m.display_name || "参加者";
-                    const avatarUrl = getAvatarUrl(m.photo_path);
+                    const label = isMe
+                      ? normalizeName(displayName) ||
+                        normalizeName(m.display_name) ||
+                        "参加者"
+                      : normalizeName(m.display_name) || "参加者";
 
                     return (
                       <div
-                        key={`${m.device_id ?? "noid"}-${m.joined_at ?? ""}-${i}`}
+                        key={String(m.device_id ?? "unknown")}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -827,34 +872,10 @@ export default function RoomClient() {
                           background: "#fafafa",
                         }}
                       >
-                        <img
-                          src={avatarUrl}
-                          alt={label}
-                          onLoad={() => {
-                            console.log("[avatar ok]", {
-                              label,
-                              photo_path: m.photo_path,
-                              avatarUrl,
-                            });
-                          }}
-                          onError={(e) => {
-                            console.log("[avatar ng]", {
-                              label,
-                              photo_path: m.photo_path,
-                              avatarUrl,
-                            });
-                            e.currentTarget.onerror = null;
-                            e.currentTarget.src = "/default-avatar.jpg";
-                          }}
-                          style={{
-                            width: 42,
-                            height: 42,
-                            borderRadius: "9999px",
-                            objectFit: "cover",
-                            background: "#e5e7eb",
-                            border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
-                            flexShrink: 0,
-                          }}
+                        <MemberAvatar
+                          src={m.avatar_url}
+                          label={label}
+                          isMe={isMe}
                         />
 
                         <div style={{ minWidth: 0, flex: 1 }}>

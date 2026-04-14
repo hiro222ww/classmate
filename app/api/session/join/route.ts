@@ -16,9 +16,6 @@ function sanitizeDisplayName(v: string | null | undefined) {
   return s;
 }
 
-// -------------------------------
-// ゴースト削除（device_idなし）
-// -------------------------------
 async function cleanupGhostMembers(sessionId: string) {
   const { error } = await supabaseAdmin
     .from("session_members")
@@ -26,16 +23,10 @@ async function cleanupGhostMembers(sessionId: string) {
     .eq("session_id", sessionId)
     .or("device_id.is.null,device_id.eq.");
 
-  if (error) {
-    return { ok: false as const, error };
-  }
-
+  if (error) return { ok: false as const, error };
   return { ok: true as const };
 }
 
-// -------------------------------
-// 古い自分削除（display_name一致）
-// -------------------------------
 async function cleanupOldSelfRows(
   sessionId: string,
   deviceId: string,
@@ -59,9 +50,27 @@ async function cleanupOldSelfRows(
   return { ok: true as const };
 }
 
-// -------------------------------
-// メンバー数（device_id単位）
-// -------------------------------
+async function cleanupSameDeviceFromOtherSessions(
+  sessionId: string,
+  deviceId: string
+) {
+  const { error } = await supabaseAdmin
+    .from("session_members")
+    .delete()
+    .eq("device_id", deviceId)
+    .neq("session_id", sessionId);
+
+  if (error) {
+    console.error(
+      "[session/join] cleanup same device from other sessions error:",
+      error
+    );
+    return { ok: false as const, error };
+  }
+
+  return { ok: true as const };
+}
+
 async function countValidMembers(sessionId: string) {
   const { data, error } = await supabaseAdmin
     .from("session_members")
@@ -70,9 +79,7 @@ async function countValidMembers(sessionId: string) {
     .not("device_id", "is", null)
     .neq("device_id", "");
 
-  if (error) {
-    return { ok: false as const, error };
-  }
+  if (error) return { ok: false as const, error };
 
   const uniqueIds = new Set(
     (data ?? [])
@@ -86,9 +93,6 @@ async function countValidMembers(sessionId: string) {
   };
 }
 
-// -------------------------------
-// upsert（device_id一意）
-// -------------------------------
 async function upsertMember(
   sessionId: string,
   deviceId: string,
@@ -107,9 +111,6 @@ async function upsertMember(
   );
 }
 
-// -------------------------------
-// session存在確認
-// -------------------------------
 async function ensureJoinableSession(params: {
   sessionId: string;
   capacity: number;
@@ -122,9 +123,7 @@ async function ensureJoinableSession(params: {
     .eq("id", sessionId)
     .maybeSingle();
 
-  if (error) {
-    return { ok: false as const, error };
-  }
+  if (error) return { ok: false as const, error };
 
   if (!existing) {
     return {
@@ -156,9 +155,7 @@ async function ensureJoinableSession(params: {
       .update(updates)
       .eq("id", sessionId);
 
-    if (updateErr) {
-      return { ok: false as const, error: updateErr };
-    }
+    if (updateErr) return { ok: false as const, error: updateErr };
   }
 
   return {
@@ -173,9 +170,6 @@ async function ensureJoinableSession(params: {
   };
 }
 
-// ===============================
-// メイン
-// ===============================
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
@@ -210,10 +204,7 @@ export async function POST(req: Request) {
 
     if (!sessionIdRaw) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "sessionId required",
-        },
+        { ok: false, error: "sessionId required" },
         { status: 400 }
       );
     }
@@ -242,7 +233,6 @@ export async function POST(req: Request) {
 
     if (!ensured.ok) {
       const msg = ensured.error?.message ?? "ensure_session_failed";
-
       return NextResponse.json(
         { ok: false, error: msg },
         { status: msg === "session_not_found" ? 404 : 400 }
@@ -251,7 +241,6 @@ export async function POST(req: Request) {
 
     const session = ensured.session;
 
-    // class 整合チェック（最重要）
     if (String(session.class_id ?? "").trim() !== classIdRaw) {
       return NextResponse.json(
         {
@@ -265,11 +254,32 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. ゴースト削除
-    await cleanupGhostMembers(sessionIdRaw);
+    const ghostCleanup = await cleanupGhostMembers(sessionIdRaw);
+    if (!ghostCleanup.ok) {
+      return NextResponse.json(
+        { ok: false, error: ghostCleanup.error.message },
+        { status: 500 }
+      );
+    }
 
-    // 2. 古い自分削除（device違い）
-    await cleanupOldSelfRows(sessionIdRaw, deviceId, name);
+    const oldSelfCleanup = await cleanupOldSelfRows(sessionIdRaw, deviceId, name);
+    if (!oldSelfCleanup.ok) {
+      return NextResponse.json(
+        { ok: false, error: oldSelfCleanup.error.message },
+        { status: 500 }
+      );
+    }
+
+    const otherSessionCleanup = await cleanupSameDeviceFromOtherSessions(
+      sessionIdRaw,
+      deviceId
+    );
+    if (!otherSessionCleanup.ok) {
+      return NextResponse.json(
+        { ok: false, error: otherSessionCleanup.error.message },
+        { status: 500 }
+      );
+    }
 
     const countedBefore = await countValidMembers(sessionIdRaw);
     if (!countedBefore.ok) {
@@ -302,10 +312,7 @@ export async function POST(req: Request) {
 
     if (!alreadyInSession && countedBefore.count >= actualCapacity) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "session_full",
-        },
+        { ok: false, error: "session_full" },
         { status: 400 }
       );
     }

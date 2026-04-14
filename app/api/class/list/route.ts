@@ -19,6 +19,22 @@ function bad(status: number, error: string) {
   return NextResponse.json({ ok: false, error }, { status });
 }
 
+function isLegacyEntryClassName(name: string | null | undefined) {
+  const s = String(name ?? "").trim();
+  if (!s) return false;
+
+  return (
+    s === "女子校" ||
+    s === "男子校" ||
+    s === "フリークラス" ||
+    s === "ホームルーム" ||
+    s.startsWith("フリークラス") ||
+    s.startsWith("女子校") ||
+    s.startsWith("男子校") ||
+    s.startsWith("ホームルーム")
+  );
+}
+
 export async function GET() {
   try {
     if (!SUPABASE_URL) return bad(500, "SUPABASE_URL is not set");
@@ -39,34 +55,42 @@ export async function GET() {
     // topics（非表示はユーザーには出さない）
     const { data: topics, error: tErr } = await supabase
       .from("topics")
-      .select("topic_key,title,description,is_sensitive,min_age,monthly_price")
+      .select(
+        "topic_key,title,description,is_sensitive,min_age,monthly_price"
+      )
       .eq("is_archived", false)
       .order("monthly_price", { ascending: true })
       .order("created_at", { ascending: true });
 
     if (tErr) return bad(500, `topics: ${tErr.message}`);
 
-    // classes（ボード）
-    const { data: classes, error: cErr } = await supabase
+    // classes（レガシー入口クラスは返さない）
+    const { data: classesRaw, error: cErr } = await supabase
       .from("classes")
-      .select("id,name,description,world_key,topic_key,min_age,is_sensitive,is_user_created,created_at")
+      .select(
+        "id,name,description,world_key,topic_key,min_age,is_sensitive,is_user_created,created_at"
+      )
       .order("created_at", { ascending: true });
 
     if (cErr) return bad(500, `classes: ${cErr.message}`);
 
+    const classes = (classesRaw ?? []).filter(
+      (c: any) => !isLegacyEntryClassName(c?.name)
+    );
+
     return new NextResponse(
-  JSON.stringify({
-    ok: true,
-    worlds: worlds ?? [],
-    topics: topics ?? [],
-    classes: classes ?? [],
-  }),
-  {
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-    },
-  }
-);
+      JSON.stringify({
+        ok: true,
+        worlds: worlds ?? [],
+        topics: topics ?? [],
+        classes,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    );
   } catch (e: any) {
     return bad(500, e?.message ?? "class list failed");
   }
