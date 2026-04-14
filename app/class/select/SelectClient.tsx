@@ -833,7 +833,17 @@ export default function SelectClient() {
         }}
       >
         <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>classmate</h1>
+          <h1
+  style={{
+    margin: 0,
+    fontSize: 22,
+    fontWeight: 900,
+    color: "#e9fff2",
+    letterSpacing: 0.5,
+  }}
+>
+  classmate
+</h1>
         </div>
 
         <div
