@@ -81,7 +81,7 @@ export default function CallClient() {
   }`;
 
   const [members, setMembers] = useState<Member[]>([]);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [callInfo, setCallInfo] = useState("");
