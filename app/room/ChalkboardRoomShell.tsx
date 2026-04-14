@@ -21,7 +21,7 @@ type Props = {
 export function ChalkboardRoomShell({
   title,
   subtitle,
-  lines = ["通話を開始する際は、青いボタンを押してください"],
+  lines = ["通話を開始する際は，通話開始ボタン(青)を押してください"],
   right,
   children,
   onBack,
@@ -29,119 +29,102 @@ export function ChalkboardRoomShell({
   startDisabled = false,
   startLabel = "通話を開始",
 }: Props) {
-  const subtitleText = subtitle ?? "";
-  const hasSubtitle = subtitleText.length > 0;
+  const subtitleText = String(subtitle ?? "").trim();
+  const boardTitle = subtitleText ? `${title} (${subtitleText})` : title;
 
   const moveHref = "/class/select";
   const homeHref = "/";
 
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto" }}>
-      {/* 上の操作バー */}
       <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
+          justifyContent: "flex-end",
+          gap: 10,
           alignItems: "center",
+          flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "grid", gap: 2 }}>
-          <div style={{ fontWeight: 900, fontSize: 14, color: "#111" }}>
-            {title}
-          </div>
-
-          <div
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
             style={{
-              fontSize: 12,
-              color: "#555",
-              minHeight: 16,
-              visibility: hasSubtitle ? "visible" : "hidden",
+              display: "inline-block",
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: "#f2f2f2",
+              color: "#111",
+              textDecoration: "none",
+              fontWeight: 900,
+              fontSize: 13,
+              border: "none",
+              cursor: "pointer",
             }}
-            suppressHydrationWarning
           >
-            {subtitleText}
-          </div>
-        </div>
+            戻る
+          </button>
+        ) : null}
 
-        <div
+        {onStartCall ? (
+          <button
+            type="button"
+            onClick={onStartCall}
+            disabled={startDisabled}
+            style={{
+              display: "inline-block",
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: startDisabled ? "#d1d5db" : "#2563eb",
+              color: "#fff",
+              textDecoration: "none",
+              fontWeight: 900,
+              fontSize: 13,
+              border: "none",
+              cursor: startDisabled ? "not-allowed" : "pointer",
+              opacity: startDisabled ? 0.7 : 1,
+            }}
+          >
+            {startLabel}
+          </button>
+        ) : null}
+
+        <Link
+          href={moveHref}
           style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-            flexWrap: "wrap",
+            display: "inline-block",
+            padding: "8px 10px",
+            borderRadius: 10,
+            background: "#f2f2f2",
+            color: "#111",
+            textDecoration: "none",
+            fontWeight: 900,
+            fontSize: 13,
           }}
         >
-          {onBack ? (
-            <button
-              type="button"
-              onClick={onBack}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                background: "#f2f2f2",
-                fontWeight: 900,
-                fontSize: 13,
-                border: "none",
-                cursor: "pointer",
-              }}
-            >
-              戻る
-            </button>
-          ) : null}
+          移動
+        </Link>
 
-          {onStartCall ? (
-            <button
-              type="button"
-              onClick={onStartCall}
-              disabled={startDisabled}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                background: startDisabled ? "#d1d5db" : "#2563eb",
-                color: "#fff",
-                fontWeight: 900,
-                fontSize: 13,
-                border: "none",
-                cursor: startDisabled ? "not-allowed" : "pointer",
-                opacity: startDisabled ? 0.7 : 1,
-              }}
-            >
-              {startLabel}
-            </button>
-          ) : null}
+        <Link
+          href={homeHref}
+          style={{
+            display: "inline-block",
+            padding: "8px 10px",
+            borderRadius: 10,
+            background: "#f2f2f2",
+            color: "#111",
+            textDecoration: "none",
+            fontWeight: 900,
+            fontSize: 13,
+          }}
+        >
+          ホーム
+        </Link>
 
-          <Link
-            href={moveHref}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 10,
-              background: "#f2f2f2",
-              fontWeight: 900,
-              fontSize: 13,
-            }}
-          >
-            移動
-          </Link>
-
-          <Link
-            href={homeHref}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 10,
-              background: "#f2f2f2",
-              fontWeight: 900,
-              fontSize: 13,
-            }}
-          >
-            ホーム
-          </Link>
-
-          {right}
-        </div>
+        {right}
       </div>
 
-      {/* 黒板 */}
       <div style={{ marginTop: 8 }}>
         <div
           style={{
@@ -151,43 +134,40 @@ export function ChalkboardRoomShell({
             color: "#e9fff2",
             border: "1px solid rgba(255,255,255,0.12)",
             boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+            width: "100%",
           }}
         >
-          {/* タイトル（クラス名 + 人数） */}
           <div
             style={{
-              fontSize: 18,
-              fontWeight: 900,
-              letterSpacing: 0.5,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
             }}
           >
-            {title}
-          </div>
-
-          {/* サブタイトル（人数・状態） */}
-          {hasSubtitle && (
             <div
               style={{
-                marginTop: 4,
-                fontSize: 13,
-                opacity: 0.85,
-                fontWeight: 700,
+                fontSize: 18,
+                fontWeight: 900,
+                letterSpacing: 0.2,
+                lineHeight: 1.3,
               }}
             >
-              {subtitleText}
+              {boardTitle}
             </div>
-          )}
 
-          {/* 案内文（ここを大きくした） */}
+            <div style={{ fontSize: 11, opacity: 0.8 }}>board</div>
+          </div>
+
           <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
             {lines.map((t, i) => (
               <div
                 key={i}
                 style={{
-                  fontSize: 15,          // ← ★ここ大きくした
-                  fontWeight: 800,       // ← ★強調
-                  lineHeight: 1.4,
-                  opacity: 0.95,
+                  fontSize: 15,
+                  lineHeight: 1.45,
+                  fontWeight: 800,
+                  opacity: 0.96,
                 }}
               >
                 {t}
@@ -197,10 +177,7 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
-      {/* 中身 */}
-      <section style={{ marginTop: 12, color: "#111" }}>
-        {children}
-      </section>
+      <section style={{ marginTop: 10, color: "#111" }}>{children}</section>
     </main>
   );
 }

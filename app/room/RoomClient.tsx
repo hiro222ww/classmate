@@ -785,8 +785,7 @@ export default function RoomClient() {
     }
   }
 
-  const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人 ・ ${status}`;
-
+  const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
   return (
     <>
       {showDevBanner && (
@@ -812,10 +811,19 @@ export default function RoomClient() {
       )}
 
       <div style={{ paddingTop: showDevBanner ? 28 : 0 }}>
-        <ChalkboardRoomShell
-          title={topicTitle || "ルーム"}
-          subtitle={subtitle}
-          onBack={() => router.push(backToSelectUrl)}
+       <ChalkboardRoomShell
+  title={topicTitle || "ルーム"}
+  subtitle={subtitle}
+  lines={
+    err
+      ? [err]
+      : status === "forming"
+      ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+      : status === "active"
+      ? ["通話を開始できます。"]
+      : []
+  }
+  onBack={() => router.push(backToSelectUrl)}
           onStartCall={() =>
             router.push(
               `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
@@ -825,105 +833,77 @@ export default function RoomClient() {
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
-            {err ? (
-              <div
-                style={{
-                  border: "1px solid #fde68a",
-                  background: "#fffbeb",
-                  color: "#92400e",
-                  borderRadius: 12,
-                  padding: 10,
-                  fontWeight: 700,
-                }}
-              >
-                {err}
-              </div>
-            ) : status === "forming" ? (
-              <div
-                style={{
-                  border: "1px solid #bfdbfe",
-                  background: "#eff6ff",
-                  color: "#1d4ed8",
-                  borderRadius: 12,
-                  padding: 10,
-                  fontWeight: 700,
-                }}
-              >
-                メンバーがそろうと、そのまま自然に通話へ進みます。
-              </div>
-            ) : null}
+  <div
+    style={{
+      border: "1px solid #e5e7eb",
+      borderRadius: 14,
+      padding: 12,
+      background: "#fff",
+    }}
+  >
+    <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
 
+    {visibleMembers.length === 0 ? (
+      <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
+    ) : (
+      <div style={{ display: "grid", gap: 8 }}>
+        {visibleMembers.map((m) => {
+          const isMe =
+            String(m.device_id ?? "").trim() ===
+            String(deviceId ?? "").trim();
+
+          const label = isMe
+            ? normalizeName(displayName) ||
+              normalizeName(m.display_name) ||
+              "参加者"
+            : normalizeName(m.display_name) || "参加者";
+
+          return (
             <div
+              key={String(m.device_id ?? "unknown")}
               style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 12px",
+                borderRadius: 12,
                 border: "1px solid #e5e7eb",
-                borderRadius: 14,
-                padding: 12,
-                background: "#fff",
+                background: "#fafafa",
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
+              <MemberAvatar
+                src={m.avatar_url}
+                label={label}
+                isMe={isMe}
+              />
 
-              {visibleMembers.length === 0 ? (
-                <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {visibleMembers.map((m) => {
-                    const isMe =
-                      String(m.device_id ?? "").trim() ===
-                      String(deviceId ?? "").trim();
-
-                    const label = isMe
-                      ? normalizeName(displayName) ||
-                        normalizeName(m.display_name) ||
-                        "参加者"
-                      : normalizeName(m.display_name) || "参加者";
-
-                    return (
-                      <div
-                        key={String(m.device_id ?? "unknown")}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid #e5e7eb",
-                          background: "#fafafa",
-                        }}
-                      >
-                        <MemberAvatar
-                          src={m.avatar_url}
-                          label={label}
-                          isMe={isMe}
-                        />
-
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div
-                            style={{
-                              fontWeight: 800,
-                              color: "#111827",
-                              lineHeight: 1.2,
-                            }}
-                          >
-                            {label}
-                          </div>
-
-                          <div
-                            style={{
-                              marginTop: 4,
-                              fontSize: 12,
-                              color: "#6b7280",
-                            }}
-                          >
-                            {isMe ? "自分" : "参加中"}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    color: "#111827",
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {label}
                 </div>
-              )}
+
+                <div
+                  style={{
+                    marginTop: 4,
+                    fontSize: 12,
+                    color: "#6b7280",
+                  }}
+                >
+                  {isMe ? "自分" : "参加中"}
+                </div>
+              </div>
             </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
 
             <div
               style={{
