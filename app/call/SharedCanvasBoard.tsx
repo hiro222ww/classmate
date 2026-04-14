@@ -48,7 +48,21 @@ const CHALK_COLORS = [
 ] as const;
 
 const BOARD_BG = "#0b3b2e";
+const BOARD_OUTER_BG = "#08271e";
 const ERASER_WIDTH = 28;
+
+/**
+ * ここが重要:
+ * 端末ごとの canvas 比率ではなく、固定の論理黒板座標で保存・復元する
+ */
+const BOARD_LOGICAL_WIDTH = 1000;
+const BOARD_LOGICAL_HEIGHT = 700;
+
+/**
+ * スマホではここが横スクロール対象になる最小横幅
+ * 900〜1100くらいで調整しやすい
+ */
+const MOBILE_MIN_BOARD_WIDTH_PX = 920;
 
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
@@ -89,6 +103,9 @@ function drawStroke(
   const pts = stroke.points;
   if (!pts || pts.length === 0) return;
 
+  const mapX = (x: number) => (x / BOARD_LOGICAL_WIDTH) * canvasW;
+  const mapY = (y: number) => (y / BOARD_LOGICAL_HEIGHT) * canvasH;
+
   ctx.save();
   applyStrokeStyle(ctx, stroke.color || "#ffffff", stroke.width || 3);
 
@@ -96,8 +113,8 @@ function drawStroke(
     const p = pts[0];
     ctx.beginPath();
     ctx.arc(
-      p.x * canvasW,
-      p.y * canvasH,
+      mapX(p.x),
+      mapY(p.y),
       Math.max(1, (stroke.width || 3) / 2),
       0,
       Math.PI * 2
@@ -109,10 +126,10 @@ function drawStroke(
   }
 
   ctx.beginPath();
-  ctx.moveTo(pts[0].x * canvasW, pts[0].y * canvasH);
+  ctx.moveTo(mapX(pts[0].x), mapY(pts[0].y));
 
   for (let i = 1; i < pts.length; i++) {
-    ctx.lineTo(pts[i].x * canvasW, pts[i].y * canvasH);
+    ctx.lineTo(mapX(pts[i].x), mapY(pts[i].y));
   }
 
   ctx.stroke();
@@ -461,7 +478,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const displayNameRef = useRef("");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
 
   const drawingRef = useRef(false);
   const pointsRef = useRef<StrokePoint[]>([]);
@@ -490,6 +507,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const [penColor, setPenColor] = useState<string>(CHALK_COLORS[0].value);
   const [tool, setTool] = useState<"chalk" | "eraser">("chalk");
   const [info, setInfo] = useState("");
+  const [isTouchLike, setIsTouchLike] = useState(false);
+  const [touchMode, setTouchMode] = useState<"draw" | "pan">("draw");
 
   const sounds = useBoardSounds();
 
@@ -510,22 +529,29 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       displayNameRef.current = "参加者";
     }
 
+    const touch =
+      typeof window !== "undefined" &&
+      ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+
+    setIsTouchLike(touch);
+
     console.log("[chalk] mount", {
       sessionId,
       deviceId: deviceIdRef.current,
       displayName: displayNameRef.current,
       href: typeof window !== "undefined" ? window.location.href : "",
+      touch,
     });
   }, [sessionId]);
 
   const resizeCanvas = () => {
     const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
+    const boardSurface = boardSurfaceRef.current;
+    if (!canvas || !boardSurface) return;
 
-    const rect = wrap.getBoundingClientRect();
+    const rect = boardSurface.getBoundingClientRect();
     const w = Math.max(320, Math.floor(rect.width));
-    const h = Math.max(280, Math.floor(rect.height));
+    const h = Math.max(220, Math.floor(rect.height));
 
     canvas.width = w;
     canvas.height = h;
@@ -845,19 +871,23 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     return () => window.removeEventListener("resize", onResize);
   }, [sessionId]);
 
-  const getNormPoint = (e: PointerEvent): StrokePoint | null => {
+  const getBoardPoint = (e: PointerEvent): StrokePoint | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
 
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      return null;
+    }
 
     return {
-      x: Math.min(1, Math.max(0, x)),
-      y: Math.min(1, Math.max(0, y)),
+      x: (x / rect.width) * BOARD_LOGICAL_WIDTH,
+      y: (y / rect.height) * BOARD_LOGICAL_HEIGHT,
     };
   };
 
@@ -869,6 +899,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     const { w, h } = getCanvasSize();
     if (w <= 0 || h <= 0) return;
 
+    const mapX = (x: number) => (x / BOARD_LOGICAL_WIDTH) * w;
+    const mapY = (y: number) => (y / BOARD_LOGICAL_HEIGHT) * h;
+
     const strokeColor = strokeColorRef.current;
     const strokeWidth = strokeWidthRef.current;
 
@@ -876,8 +909,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     applyStrokeStyle(ctx, strokeColor, strokeWidth);
 
     ctx.beginPath();
-    ctx.moveTo(from.x * w, from.y * h);
-    ctx.lineTo(to.x * w, to.y * h);
+    ctx.moveTo(mapX(from.x), mapY(from.y));
+    ctx.lineTo(mapX(to.x), mapY(to.y));
     ctx.stroke();
     ctx.restore();
   };
@@ -999,10 +1032,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     };
 
     const onDown = (ev: PointerEvent) => {
+      if (isTouchLike && touchMode === "pan") return;
+
       ev.preventDefault();
       (ev.target as any)?.setPointerCapture?.(ev.pointerId);
 
-      const p = getNormPoint(ev);
+      const p = getBoardPoint(ev);
       if (!p) return;
 
       strokeColorRef.current = tool === "eraser" ? BOARD_BG : penColor;
@@ -1029,14 +1064,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       if (!drawingRef.current) return;
       ev.preventDefault();
 
-      const p = getNormPoint(ev);
+      const p = getBoardPoint(ev);
       const last = lastPtRef.current;
       if (!p || !last) return;
 
       const dx = p.x - last.x;
       const dy = p.y - last.y;
       const dist2 = dx * dx + dy * dy;
-      if (dist2 < 0.000015) return;
+      if (dist2 < 0.8) return;
 
       pointsRef.current.push(p);
       drawLocalSegment(last, p);
@@ -1064,8 +1099,10 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       if (prev) {
         const { w, h } = getCanvasSize();
         const dt = Math.max(1, now - prev.t);
-        const dxPx = (p.x - prev.x) * w;
-        const dyPx = (p.y - prev.y) * h;
+        const dxPx =
+          ((p.x - prev.x) / BOARD_LOGICAL_WIDTH) * w;
+        const dyPx =
+          ((p.y - prev.y) / BOARD_LOGICAL_HEIGHT) * h;
         const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
 
         const speed01 = Math.max(0, Math.min(1, (distPx / dt) / 1.8));
@@ -1082,18 +1119,20 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     };
 
     const onUp = (ev: PointerEvent) => {
+      if (isTouchLike && touchMode === "pan") return;
+
       ev.preventDefault();
 
       if (!drawingRef.current) return;
 
-      const p = getNormPoint(ev);
+      const p = getBoardPoint(ev);
       const last = lastPtRef.current;
 
       if (p && last) {
         const dx = p.x - last.x;
         const dy = p.y - last.y;
         const dist2 = dx * dx + dy * dy;
-        if (dist2 >= 0.000001) {
+        if (dist2 >= 0.2) {
           pointsRef.current.push(p);
           drawLocalSegment(last, p);
           lastPtRef.current = p;
@@ -1162,7 +1201,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
       forceAbort();
     };
-  }, [sessionId, penColor, penWidth, tool, sounds]);
+  }, [sessionId, penColor, penWidth, tool, sounds, isTouchLike, touchMode]);
 
   const onClear = async () => {
     clearRemoteOnly();
@@ -1336,6 +1375,56 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         </div>
       </div>
 
+      {isTouchLike ? (
+        <div
+          style={{
+            marginTop: 8,
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setTouchMode("draw")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: touchMode === "draw" ? "2px solid #111" : "1px solid #d1d5db",
+              background: touchMode === "draw" ? "#111827" : "#fff",
+              color: touchMode === "draw" ? "#fff" : "#111827",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            描画モード
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTouchMode("pan")}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 999,
+              border: touchMode === "pan" ? "2px solid #111" : "1px solid #d1d5db",
+              background: touchMode === "pan" ? "#111827" : "#fff",
+              color: touchMode === "pan" ? "#fff" : "#111827",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            移動モード
+          </button>
+
+          <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+            {touchMode === "draw"
+              ? "1本指で描画"
+              : "横スクロールして全体を確認"}
+          </span>
+        </div>
+      ) : null}
+
       <div
         style={{
           marginTop: 6,
@@ -1344,7 +1433,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           alignItems: "center",
           flexWrap: "wrap",
           fontSize: 12,
-          color: "#d1d5db",
+          color: "#6b7280",
           fontWeight: 900,
         }}
       >
@@ -1356,34 +1445,62 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         ) : (
           <span>太さ: 黒板消し</span>
         )}
+        <span>黒板比率固定: {BOARD_LOGICAL_WIDTH}×{BOARD_LOGICAL_HEIGHT}</span>
       </div>
 
       <div
-        ref={wrapRef}
         style={{
           marginTop: 10,
-          marginLeft: -12,
-          marginRight: -12,
-          width: "calc(100% + 24px)",
-          height: 480,
           borderRadius: 16,
-          border: "2px solid #073126",
-          background: BOARD_BG,
-          boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
-          overflow: "hidden",
-          touchAction: "none",
+          border: "1px solid rgba(0,0,0,0.08)",
+          background: BOARD_OUTER_BG,
+          padding: 8,
+          overflowX: "auto",
+          overflowY: "hidden",
+          WebkitOverflowScrolling: "touch",
         }}
       >
-        <canvas
-          ref={canvasRef}
-          style={{ display: "block", width: "100%", height: "100%" }}
-        />
+        <div
+          ref={boardSurfaceRef}
+          style={{
+            position: "relative",
+            width: "100%",
+            minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
+            aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
+            borderRadius: 16,
+            border: "2px solid #073126",
+            background: BOARD_BG,
+            boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
+            overflow: "hidden",
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            style={{
+              display: "block",
+              width: "100%",
+              height: "100%",
+              touchAction: isTouchLike
+                ? touchMode === "pan"
+                  ? "pan-x pan-y"
+                  : "none"
+                : "none",
+              cursor:
+                tool === "eraser"
+                  ? "cell"
+                  : isTouchLike && touchMode === "pan"
+                  ? "grab"
+                  : "crosshair",
+            }}
+          />
+        </div>
       </div>
 
       <div
         style={{ marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: 900 }}
       >
         ※ 描画中は broadcast、履歴復元は DB を使います。
+        {isTouchLike ? " スマホでは移動モードで横スクロールできます。" : ""}
         {info ? `（${info}）` : ""}
       </div>
     </div>
