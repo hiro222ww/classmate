@@ -15,14 +15,13 @@ type Props = {
   startDisabled?: boolean;
   startLabel?: string;
 
-  // 互換のため残すが、このコンポーネント内では使わない
   returnTo?: string;
 };
 
 export function ChalkboardRoomShell({
   title,
   subtitle,
-  lines = ["無言でもOK", "合わなければ移動してOK"],
+  lines = ["通話を開始する際は，通話開始ボタン(青)を押してください"],
   right,
   children,
   onBack,
@@ -145,45 +144,46 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: 8 }}>
         <div
           style={{
             borderRadius: 18,
-            padding: 18,
+            padding: "12px 16px",
             background: "#0f2b1d",
             color: "#e9fff2",
             border: "1px solid rgba(255,255,255,0.12)",
             boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+            width: "100%",
           }}
         >
           <div
             style={{
               display: "flex",
               justifyContent: "space-between",
-              alignItems: "baseline",
-              gap: 12,
+              alignItems: "center",
+              gap: 8,
             }}
           >
-            <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: 0.2 }}>
+            <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: 0.2 }}>
               {title}
             </div>
-            <div style={{ fontSize: 12, opacity: 0.85 }}>board</div>
+            <div style={{ fontSize: 11, opacity: 0.8 }}>board</div>
           </div>
 
-          <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+          <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
             {lines.map((t, i) => (
               <div
                 key={i}
-                style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.95 }}
+                style={{ fontSize: 12, lineHeight: 1.35, opacity: 0.95 }}
               >
-                ・{t}
+                {t}
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      <section style={{ marginTop: 14, color: "#111" }}>{children}</section>
+      <section style={{ marginTop: 10, color: "#111" }}>{children}</section>
     </main>
   );
 }
