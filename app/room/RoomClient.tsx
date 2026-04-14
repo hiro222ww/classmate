@@ -326,6 +326,7 @@ export default function RoomClient() {
   const [isComposing, setIsComposing] = useState(false);
 
   const joinedSessionKeyRef = useRef<string | null>(null);
+  const autoMovedRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesBoxRef = useRef<HTMLDivElement | null>(null);
 
@@ -526,6 +527,7 @@ export default function RoomClient() {
 
   useEffect(() => {
     joinedSessionKeyRef.current = null;
+    autoMovedRef.current = null;
   }, [sessionId, deviceId]);
 
   useEffect(() => {
@@ -641,6 +643,21 @@ export default function RoomClient() {
       void supabase.removeChannel(channel);
     };
   }, [sessionId, pathname, fetchStatus]);
+
+  useEffect(() => {
+    if (!sessionId || !classId) return;
+    if (pathname !== "/room") return;
+    if (status !== "active") return;
+
+    const moveKey = `${sessionId}:${classId}`;
+    if (autoMovedRef.current === moveKey) return;
+
+    autoMovedRef.current = moveKey;
+
+    router.replace(
+      `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
+    );
+  }, [status, sessionId, classId, pathname, router, devSuffix]);
 
   useEffect(() => {
     if (!sessionId) return;

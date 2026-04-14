@@ -20,6 +20,9 @@ function admin() {
 
 export const dynamic = "force-dynamic";
 
+const AUTO_ACTIVE_MEMBER_COUNT = 3;
+const FORMING_TIMEOUT_MS = 5 * 60 * 1000;
+
 type SessionMemberRow = {
   device_id?: string | null;
   display_name?: string | null;
@@ -283,6 +286,37 @@ export async function GET(req: Request) {
       a.joined_at.localeCompare(b.joined_at)
     );
 
+    const memberCount = members.length;
+    let resolvedStatus = String(s.data.status ?? "forming");
+
+    if (resolvedStatus === "forming") {
+      const createdAtMs = s.data.created_at
+        ? new Date(s.data.created_at).getTime()
+        : 0;
+      const nowMs = Date.now();
+
+      const shouldActivate =
+        memberCount >= AUTO_ACTIVE_MEMBER_COUNT ||
+        (createdAtMs > 0 && nowMs - createdAtMs >= FORMING_TIMEOUT_MS);
+
+      if (shouldActivate) {
+        const updateRes = await sb
+          .from("sessions")
+          .update({ status: "active" })
+          .eq("id", sessionIdRaw)
+          .eq("status", "forming");
+
+        if (updateRes.error) {
+          console.warn("[session/status] activate failed", {
+            sessionIdRaw,
+            message: updateRes.error.message,
+          });
+        } else {
+          resolvedStatus = "active";
+        }
+      }
+    }
+
     console.log("[session/status] members raw", members);
 
     return NextResponse.json(
@@ -292,12 +326,12 @@ export async function GET(req: Request) {
           id: String(s.data.id),
           class_id: String(s.data.class_id ?? ""),
           topic: String(s.data.topic ?? "").trim(),
-          status: String(s.data.status ?? "forming"),
+          status: resolvedStatus,
           capacity: Number(s.data.capacity ?? 5),
           created_at: s.data.created_at ?? null,
         },
         members,
-        memberCount: members.length,
+        memberCount,
       },
       {
         headers: {
