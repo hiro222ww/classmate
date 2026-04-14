@@ -62,7 +62,6 @@ function getAvatarUrl(photoPath?: string | null) {
   const publicUrl = data?.publicUrl?.trim();
   if (!publicUrl) return "/default-avatar.jpg";
 
-  // 毎レンダーで変わらない安定した cache buster
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
@@ -114,28 +113,28 @@ export default function CallClient() {
       }
 
       if (!res.ok) {
-  console.error("[call] session status fetch http error", {
-    status: res.status,
-    statusText: res.statusText,
-    rawText,
-  });
-  return;
-}
+        console.error("[call] session status fetch http error", {
+          status: res.status,
+          statusText: res.statusText,
+          rawText,
+        });
+        return;
+      }
 
-if (!json) {
-  console.warn("[call] session status non-json or empty response", {
-    rawText,
-  });
-  return;
-}
+      if (!json) {
+        console.warn("[call] session status non-json or empty response", {
+          rawText,
+        });
+        return;
+      }
 
-if (!json.ok) {
-  console.warn("[call] session status api not ok", {
-    error: json.error || "session_status_failed",
-    rawText,
-  });
-  return;
-}
+      if (!json.ok) {
+        console.warn("[call] session status api not ok", {
+          error: json.error || "session_status_failed",
+          rawText,
+        });
+        return;
+      }
 
       const incoming = Array.isArray(json.members) ? json.members : [];
       console.log("[call] incoming members", incoming);
@@ -516,9 +515,32 @@ if (!json.ok) {
             {muteButtonLabel}
           </button>
 
+          <div style={{ fontSize: 12, color: "#374151", minWidth: 180 }}>
+            マイク入力: {(micLevel * 100).toFixed(1)}
+          </div>
+
+          <div
+            style={{
+              width: 140,
+              height: 10,
+              borderRadius: 999,
+              background: "#e5e7eb",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(100, micLevel * 800)}%`,
+                height: "100%",
+                background: "#111827",
+              }}
+            />
+          </div>
         </div>
 
-       
+        <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
+          {callInfo || "通話シグナリング待機中"}
+        </div>
       </section>
 
       <section style={{ marginTop: 16 }}>

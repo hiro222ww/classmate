@@ -241,8 +241,6 @@ export async function GET(req: Request) {
       );
     }
 
-    console.log("[session/status] profileMap", Array.from(profileMap.entries()));
-
     const byDevice = new Map<
       string,
       {
@@ -316,8 +314,6 @@ export async function GET(req: Request) {
         }
       }
     }
-
-    console.log("[session/status] members raw", members);
 
     return NextResponse.json(
       {

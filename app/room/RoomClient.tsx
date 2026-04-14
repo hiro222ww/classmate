@@ -306,6 +306,7 @@ export default function RoomClient() {
     (searchParams.get("sessionId") ?? "").trim() ||
     (searchParams.get("session_id") ?? "").trim() ||
     (searchParams.get("session") ?? "").trim();
+  const autojoin = (searchParams.get("autojoin") ?? "").trim() === "1";
   const dev = (searchParams.get("dev") ?? "").trim();
   const devSuffix = dev ? `&dev=${encodeURIComponent(dev)}` : "";
   const backToSelectUrl = dev
@@ -647,9 +648,10 @@ export default function RoomClient() {
   useEffect(() => {
     if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
+    if (!autojoin) return;
     if (status !== "active") return;
 
-    const moveKey = `${sessionId}:${classId}`;
+    const moveKey = `${sessionId}:${classId}:autojoin`;
     if (autoMovedRef.current === moveKey) return;
 
     autoMovedRef.current = moveKey;
@@ -657,7 +659,7 @@ export default function RoomClient() {
     router.replace(
       `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
     );
-  }, [status, sessionId, classId, pathname, router, devSuffix]);
+  }, [status, sessionId, classId, pathname, router, devSuffix, autojoin]);
 
   useEffect(() => {
     if (!sessionId) return;

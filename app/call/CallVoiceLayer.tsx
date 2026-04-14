@@ -77,6 +77,7 @@ export default function CallVoiceLayer({
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const connectionIdsRef = useRef<Map<string, string>>(new Map());
   const offeredPeersRef = useRef<Set<string>>(new Set());
+  const startedPeersRef = useRef<Set<string>>(new Set());
 
   const [micReady, setMicReady] = useState(false);
   const [signalReady, setSignalReady] = useState(false);
@@ -253,6 +254,7 @@ export default function CallVoiceLayer({
 
       pcsRef.current.delete(remoteId);
       offeredPeersRef.current.delete(remoteId);
+      startedPeersRef.current.delete(remoteId);
       remoteStreamsRef.current.delete(remoteId);
       pendingIceRef.current.delete(remoteId);
       clearReconnectTimer(remoteId);
@@ -576,6 +578,7 @@ export default function CallVoiceLayer({
           setCurrentConnectionId(remoteId, incomingConnectionId);
           currentConnectionId = incomingConnectionId;
           offeredPeersRef.current.delete(remoteId);
+          startedPeersRef.current.add(remoteId);
         }
       } else {
         if (!currentConnectionId || currentConnectionId !== incomingConnectionId) {
@@ -915,6 +918,7 @@ export default function CallVoiceLayer({
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
+        startedPeersRef.current.delete(existingId);
         peerStatesRef.current.delete(existingId);
         emitPeerStates();
         closePeer(existingId, { clearConnectionId: true });
@@ -922,9 +926,14 @@ export default function CallVoiceLayer({
     }
 
     for (const remoteId of remoteIds) {
+      if (startedPeersRef.current.has(remoteId)) continue;
+
+      startedPeersRef.current.add(remoteId);
+
       if (!getCurrentConnectionId(remoteId)) {
         setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
       }
+
       void maybeStartOffer(remoteId);
     }
   }, [
