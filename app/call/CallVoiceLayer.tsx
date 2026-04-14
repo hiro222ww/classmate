@@ -346,9 +346,11 @@ export default function CallVoiceLayer({
       });
 
       const localTrack = localAudioTrackRef.current;
-      if (localTrack && !isMuted) {
-        pc.addTrack(localTrack, localStreamRef.current as MediaStream);
-      }
+const localStream = localStreamRef.current;
+
+if (localTrack && localStream) {
+  pc.addTrack(localTrack, localStream);
+}
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
