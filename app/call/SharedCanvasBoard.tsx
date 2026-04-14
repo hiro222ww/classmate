@@ -1284,7 +1284,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           justifyContent: "space-between",
         }}
       >
-        <div style={{ fontWeight: 900 }}>黒板（通話中のみ）</div>
 
         <div
           style={{
@@ -1425,28 +1424,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         </div>
       ) : null}
 
-      <div
-        style={{
-          marginTop: 6,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          flexWrap: "wrap",
-          fontSize: 12,
-          color: "#6b7280",
-          fontWeight: 900,
-        }}
-      >
-        <span>ツール: {tool === "eraser" ? "黒板消し" : "チョーク"}</span>
-        {tool === "chalk" ? (
-          <span>
-            色: {CHALK_COLORS.find((c) => c.value === penColor)?.name ?? "白"}
-          </span>
-        ) : (
-          <span>太さ: 黒板消し</span>
-        )}
-        <span>黒板比率固定: {BOARD_LOGICAL_WIDTH}×{BOARD_LOGICAL_HEIGHT}</span>
-      </div>
 
       <div
         style={{
@@ -1496,13 +1473,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         </div>
       </div>
 
-      <div
-        style={{ marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: 900 }}
-      >
-        ※ 描画中は broadcast、履歴復元は DB を使います。
-        {isTouchLike ? " スマホでは移動モードで横スクロールできます。" : ""}
-        {info ? `（${info}）` : ""}
-      </div>
     </div>
   );
 }

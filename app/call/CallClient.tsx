@@ -170,6 +170,29 @@ if (!json.ok) {
     void fetchMembers();
   }, [fetchMembers]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const channel = supabase
+      .channel(`call-members-${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "session_members",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        async () => {
+          await fetchMembers();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionId, fetchMembers]);
 
   useEffect(() => {
     const channel = supabase
@@ -493,32 +516,9 @@ if (!json.ok) {
             {muteButtonLabel}
           </button>
 
-          <div style={{ fontSize: 12, color: "#374151", minWidth: 180 }}>
-            マイク入力: {(micLevel * 100).toFixed(1)}
-          </div>
-
-          <div
-            style={{
-              width: 140,
-              height: 10,
-              borderRadius: 999,
-              background: "#e5e7eb",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${Math.min(100, micLevel * 800)}%`,
-                height: "100%",
-                background: "#111827",
-              }}
-            />
-          </div>
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
-          {callInfo || "通話シグナリング待機中"}
-        </div>
+       
       </section>
 
       <section style={{ marginTop: 16 }}>
