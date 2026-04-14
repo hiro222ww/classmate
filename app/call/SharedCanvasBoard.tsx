@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { getDeviceId } from "@/lib/device";
 
 type StrokePoint = { x: number; y: number };
@@ -478,7 +478,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
     {}
   );
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const channelRef = useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
 
   const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
   const pendingRowsRef = useRef<ChalkStrokeRow[]>([]);
@@ -509,7 +509,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     } catch {
       displayNameRef.current = "参加者";
     }
-  }, []);
+
+    console.log("[chalk] mount", {
+      sessionId,
+      deviceId: deviceIdRef.current,
+      displayName: displayNameRef.current,
+      href: typeof window !== "undefined" ? window.location.href : "",
+    });
+  }, [sessionId]);
 
   const resizeCanvas = () => {
     const canvas = canvasRef.current;
@@ -625,7 +632,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const loadAll = async () => {
     if (drawingRef.current) return;
 
-    const { data, error } = await supabase
+    console.log("[chalk] loadAll start", { sessionId });
+
+    const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
       .select(
         "id, session_id, device_id, display_name, color, width, points, kind, created_at"
@@ -635,40 +644,73 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       .limit(1000);
 
     if (error) {
+      console.error("[chalk] loadAll failed", {
+        sessionId,
+        message: error.message,
+      });
       setInfo(`黒板ロード失敗: ${error.message}`);
       return;
     }
 
     const incoming = (data ?? []) as ChalkStrokeRow[];
+    console.log("[chalk] loadAll success", {
+      sessionId,
+      rows: incoming.length,
+    });
+
     persistedRowsRef.current = upsertRows(persistedRowsRef.current, incoming);
     redrawScene();
     setInfo("");
   };
 
   const sendBroadcastStroke = async (payload: BroadcastStrokePayload) => {
-    if (!channelRef.current) return;
+    if (!channelRef.current) {
+      console.warn("[chalk] send skipped: no channel", payload);
+      return;
+    }
 
-    await channelRef.current.send({
+    const result = await channelRef.current.send({
       type: "broadcast",
       event: "chalk_move",
       payload,
     });
+
+    console.log("[chalk] send chalk_move", {
+      result,
+      sessionId: payload.sessionId,
+      strokeId: payload.strokeId,
+      done: payload.done,
+      points: payload.points.length,
+    });
+
+    return result;
   };
 
   const sendBroadcastClear = async (payload: BroadcastClearPayload) => {
-    if (!channelRef.current) return;
+    if (!channelRef.current) {
+      console.warn("[chalk] clear skipped: no channel", payload);
+      return;
+    }
 
-    await channelRef.current.send({
+    const result = await channelRef.current.send({
       type: "broadcast",
       event: "chalk_clear",
       payload,
     });
+
+    console.log("[chalk] send chalk_clear", {
+      result,
+      sessionId: payload.sessionId,
+      clearAt: payload.clearAt,
+    });
+
+    return result;
   };
 
   useEffect(() => {
     if (!sessionId) return;
 
-    const ch = supabase
+    const ch = supabaseBrowser
       .channel(`chalk_live:${sessionId}`, {
         config: {
           broadcast: { self: false },
@@ -676,6 +718,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       })
       .on("broadcast", { event: "chalk_move" }, ({ payload }) => {
         const p = payload as BroadcastStrokePayload;
+        console.log("[chalk] recv chalk_move", p);
+
         if (!p || p.sessionId !== sessionId) return;
         if (p.deviceId === deviceIdRef.current) return;
 
@@ -711,8 +755,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       })
       .on("broadcast", { event: "chalk_clear" }, ({ payload }) => {
         const p = payload as BroadcastClearPayload;
+        console.log("[chalk] recv chalk_clear", p);
+
         if (!p || p.sessionId !== sessionId) return;
         if (p.deviceId === deviceIdRef.current) return;
+
         clearRemoteOnly();
         redrawScene();
       })
@@ -726,6 +773,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         },
         (payload: any) => {
           const row = payload?.new as ChalkStrokeRow;
+          console.log("[chalk] postgres INSERT", row);
+
           if (!row?.id) return;
 
           if (row.kind === "clear") {
@@ -749,12 +798,27 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         }
       );
 
-    ch.subscribe();
+    ch.subscribe((status) => {
+      console.log("[chalk] subscribe status", {
+        sessionId,
+        status,
+      });
+
+      if (status === "CHANNEL_ERROR") {
+        setInfo("黒板Realtime接続失敗");
+      } else if (status === "TIMED_OUT") {
+        setInfo("黒板Realtimeタイムアウト");
+      } else if (status === "SUBSCRIBED") {
+        setInfo("");
+      }
+    });
+
     channelRef.current = ch;
 
     return () => {
+      console.log("[chalk] cleanup channel", { sessionId });
       channelRef.current = null;
-      void supabase.removeChannel(ch);
+      void supabaseBrowser.removeChannel(ch);
     };
   }, [sessionId]);
 
@@ -838,7 +902,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
     redrawScene();
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
       .insert({
         session_id: sessionId,
@@ -859,12 +923,23 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     );
 
     if (error) {
+      console.error("[chalk] persist stroke failed", {
+        sessionId,
+        message: error.message,
+        pointCount: pts.length,
+      });
       setInfo(`保存失敗: ${error.message}`);
       redrawScene();
       return;
     }
 
     if (data) {
+      console.log("[chalk] persist stroke success", {
+        sessionId,
+        id: data.id,
+        pointCount: pts.length,
+      });
+
       persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
         data as ChalkStrokeRow,
       ]);
@@ -979,6 +1054,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         points: [last, p],
         done: false,
       }).catch((e: any) => {
+        console.error("[chalk] broadcast move failed", e);
         setInfo(e?.message ?? "broadcast_failed");
       });
 
@@ -1057,14 +1133,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     canvas.addEventListener("pointerdown", onDown, { passive: false });
     canvas.addEventListener("pointermove", onMove, { passive: false });
     canvas.addEventListener("pointerup", onUp, { passive: false });
-    canvas.addEventListener("pointercancel", onCancel as any, { passive: false });
-    canvas.addEventListener("lostpointercapture", onCancel as any, {
+    canvas.addEventListener("pointercancel", onCancel as EventListener, { passive: false });
+    canvas.addEventListener("lostpointercapture", onCancel as EventListener, {
       passive: false,
     });
-    canvas.addEventListener("contextmenu", onCtx as any, { passive: false });
+    canvas.addEventListener("contextmenu", onCtx as EventListener, { passive: false });
 
     window.addEventListener("pointerup", onUp, { passive: false });
-    window.addEventListener("pointercancel", onCancel as any, { passive: false });
+    window.addEventListener("pointercancel", onCancel as EventListener, { passive: false });
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVis);
 
@@ -1072,12 +1148,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointercancel", onCancel as any);
-      canvas.removeEventListener("lostpointercapture", onCancel as any);
-      canvas.removeEventListener("contextmenu", onCtx as any);
+      canvas.removeEventListener("pointercancel", onCancel as EventListener);
+      canvas.removeEventListener("lostpointercapture", onCancel as EventListener);
+      canvas.removeEventListener("contextmenu", onCtx as EventListener);
 
       window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel as any);
+      window.removeEventListener("pointercancel", onCancel as EventListener);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVis);
 
@@ -1113,7 +1189,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       clearAt: Date.now(),
     });
 
-    const { data, error } = await supabase
+    const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
       .insert({
         session_id: sessionId,
@@ -1134,12 +1210,21 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     );
 
     if (error) {
+      console.error("[chalk] clear failed", {
+        sessionId,
+        message: error.message,
+      });
       setInfo(`クリア送信失敗: ${error.message}`);
       redrawScene();
       return;
     }
 
     if (data) {
+      console.log("[chalk] clear success", {
+        sessionId,
+        id: data.id,
+      });
+
       persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
         data as ChalkStrokeRow,
       ]);
