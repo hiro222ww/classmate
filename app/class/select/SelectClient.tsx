@@ -833,7 +833,7 @@ export default function SelectClient() {
         }}
       >
         <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>入る</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>classmate</h1>
         </div>
 
         <div
