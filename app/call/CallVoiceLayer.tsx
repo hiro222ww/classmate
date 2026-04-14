@@ -197,28 +197,22 @@ export default function CallVoiceLayer({
   );
 
   const syncSendersMuted = useCallback(
-    async (pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
-      const localTrack = localAudioTrackRef.current;
+  async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
+    const localTrack = localAudioTrackRef.current;
+    if (!localTrack) return;
 
-      for (const sender of pc.getSenders()) {
-        const senderKind = sender.track?.kind ?? localTrack?.kind ?? "";
-        if (senderKind !== "audio") continue;
+    localTrack.enabled = !muted;
 
-        try {
-          await sender.replaceTrack(muted ? null : localTrack);
-          console.log("[call] sender mute sync", {
-            remoteId,
-            muted,
-            senderTrackId: sender.track?.id ?? null,
-            localTrackId: localTrack?.id ?? null,
-          });
-        } catch (e) {
-          console.error("[call] sender mute sync error", remoteId, e);
-        }
-      }
-    },
-    []
-  );
+    console.log("[call] sender mute sync", {
+      remoteId,
+      muted,
+      localTrackId: localTrack.id,
+      enabled: localTrack.enabled,
+      readyState: localTrack.readyState,
+    });
+  },
+  []
+);
 
   const syncAllPeerSendersMuted = useCallback(
     async (muted: boolean) => {
@@ -725,6 +719,10 @@ if (localTrack && localStream) {
 
         localStreamRef.current = stream;
         localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
+
+        if (localAudioTrackRef.current) {
+  localAudioTrackRef.current.enabled = !isMuted;
+}
 
         console.log("[call] local audio track", {
           deviceId,
