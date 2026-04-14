@@ -21,7 +21,7 @@ type Props = {
 export function ChalkboardRoomShell({
   title,
   subtitle,
-  lines = ["通話を開始する際は，通話開始ボタン(青)を押してください"],
+  lines = ["通話を開始する際は、青いボタンを押してください"],
   right,
   children,
   onBack,
@@ -37,6 +37,7 @@ export function ChalkboardRoomShell({
 
   return (
     <main style={{ padding: 16, maxWidth: 980, margin: "0 auto" }}>
+      {/* 上の操作バー */}
       <div
         style={{
           display: "flex",
@@ -63,18 +64,22 @@ export function ChalkboardRoomShell({
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           {onBack ? (
             <button
               type="button"
               onClick={onBack}
               style={{
-                display: "inline-block",
                 padding: "8px 10px",
                 borderRadius: 10,
                 background: "#f2f2f2",
-                color: "#111",
-                textDecoration: "none",
                 fontWeight: 900,
                 fontSize: 13,
                 border: "none",
@@ -91,12 +96,10 @@ export function ChalkboardRoomShell({
               onClick={onStartCall}
               disabled={startDisabled}
               style={{
-                display: "inline-block",
                 padding: "8px 10px",
                 borderRadius: 10,
                 background: startDisabled ? "#d1d5db" : "#2563eb",
                 color: "#fff",
-                textDecoration: "none",
                 fontWeight: 900,
                 fontSize: 13,
                 border: "none",
@@ -111,12 +114,9 @@ export function ChalkboardRoomShell({
           <Link
             href={moveHref}
             style={{
-              display: "inline-block",
               padding: "8px 10px",
               borderRadius: 10,
               background: "#f2f2f2",
-              color: "#111",
-              textDecoration: "none",
               fontWeight: 900,
               fontSize: 13,
             }}
@@ -127,12 +127,9 @@ export function ChalkboardRoomShell({
           <Link
             href={homeHref}
             style={{
-              display: "inline-block",
               padding: "8px 10px",
               borderRadius: 10,
               background: "#f2f2f2",
-              color: "#111",
-              textDecoration: "none",
               fontWeight: 900,
               fontSize: 13,
             }}
@@ -144,37 +141,54 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
+      {/* 黒板 */}
       <div style={{ marginTop: 8 }}>
         <div
           style={{
             borderRadius: 18,
-            padding: "12px 16px",
+            padding: "14px 18px",
             background: "#0f2b1d",
             color: "#e9fff2",
             border: "1px solid rgba(255,255,255,0.12)",
             boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
-            width: "100%",
           }}
         >
+          {/* タイトル（クラス名 + 人数） */}
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 8,
+              fontSize: 18,
+              fontWeight: 900,
+              letterSpacing: 0.5,
             }}
           >
-            <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: 0.2 }}>
-              {title}
-            </div>
-            <div style={{ fontSize: 11, opacity: 0.8 }}>board</div>
+            {title}
           </div>
 
-          <div style={{ marginTop: 8, display: "grid", gap: 4 }}>
+          {/* サブタイトル（人数・状態） */}
+          {hasSubtitle && (
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 13,
+                opacity: 0.85,
+                fontWeight: 700,
+              }}
+            >
+              {subtitleText}
+            </div>
+          )}
+
+          {/* 案内文（ここを大きくした） */}
+          <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
             {lines.map((t, i) => (
               <div
                 key={i}
-                style={{ fontSize: 12, lineHeight: 1.35, opacity: 0.95 }}
+                style={{
+                  fontSize: 15,          // ← ★ここ大きくした
+                  fontWeight: 800,       // ← ★強調
+                  lineHeight: 1.4,
+                  opacity: 0.95,
+                }}
               >
                 {t}
               </div>
@@ -183,7 +197,10 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
-      <section style={{ marginTop: 10, color: "#111" }}>{children}</section>
+      {/* 中身 */}
+      <section style={{ marginTop: 12, color: "#111" }}>
+        {children}
+      </section>
     </main>
   );
 }
