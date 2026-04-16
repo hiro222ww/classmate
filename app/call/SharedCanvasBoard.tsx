@@ -798,15 +798,28 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         redrawScene();
       })
       .on("broadcast", { event: "chalk_clear" }, ({ payload }) => {
-        const p = payload as BroadcastClearPayload;
-        console.log("[chalk] recv chalk_clear", p);
+  const p = payload as BroadcastClearPayload;
+  console.log("[chalk] recv chalk_clear", p);
 
-        if (!p || p.sessionId !== sessionId) return;
-        if (p.deviceId === deviceIdRef.current) return;
+  if (!p || p.sessionId !== sessionId) return;
+  if (p.deviceId === deviceIdRef.current) return;
 
-        clearRemoteOnly();
-        redrawScene();
-      })
+  clearRemoteOnly();
+
+  remoteCommittedRef.current["__remote_clear__"] = {
+    id: `remote-clear-${p.clearAt}`,
+    session_id: sessionId,
+    device_id: p.deviceId,
+    display_name: "参加者",
+    color: BOARD_BG,
+    width: 1,
+    points: [],
+    kind: "clear",
+    created_at: new Date(p.clearAt).toISOString(),
+  };
+
+  redrawScene();
+})
       .on(
         "postgres_changes",
         {
