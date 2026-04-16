@@ -746,18 +746,22 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          const pts = remoteProgressRef.current[key];
           const style = remoteStyleRef.current[key];
 
-          if (pts && pts.length >= 2 && style) {
+          const finalPoints =
+            p.points && p.points.length >= 2
+              ? p.points
+              : remoteProgressRef.current[key] ?? [];
+
+          if (finalPoints.length >= 2) {
             remoteCommittedRef.current[key] = {
               id: makeLocalRowId("remote-commit"),
               session_id: sessionId,
               device_id: p.deviceId,
               display_name: "参加者",
-              color: style.color,
-              width: style.width,
-              points: [...pts],
+              color: style?.color ?? p.color ?? "#ffffff",
+              width: style?.width ?? p.width ?? 3,
+              points: [...finalPoints],
               kind: "stroke",
               created_at: new Date().toISOString(),
             };
