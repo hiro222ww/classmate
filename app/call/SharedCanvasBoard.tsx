@@ -751,10 +751,37 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
         const key = `${p.deviceId}:${p.strokeId}`;
 
-        if (p.done) {
-          redrawScene();
-          return;
-        }
+       if (p.done) {
+  const key = `${p.deviceId}:${p.strokeId}`;
+
+  const pts = remoteProgressRef.current[key];
+  const style = remoteStyleRef.current[key];
+
+  if (pts && pts.length >= 2 && style) {
+    const row: ChalkStrokeRow = {
+      id: makeLocalRowId("remote"),
+      session_id: sessionId,
+      device_id: p.deviceId,
+      display_name: "参加者",
+      color: style.color,
+      width: style.width,
+      points: pts,
+      kind: "stroke",
+      created_at: new Date().toISOString(),
+    };
+
+    persistedRowsRef.current = upsertRows(
+      persistedRowsRef.current,
+      [row]
+    );
+  }
+
+  delete remoteProgressRef.current[key];
+  delete remoteStyleRef.current[key];
+
+  redrawScene();
+  return;
+}
 
         if (!p.points || p.points.length < 2) return;
 
