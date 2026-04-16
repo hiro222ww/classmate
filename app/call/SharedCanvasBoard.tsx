@@ -1055,6 +1055,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     };
 
     const onDown = (ev: PointerEvent) => {
+      if (window.getSelection) {
+        const sel = window.getSelection();
+        if (sel && sel.removeAllRanges) sel.removeAllRanges();
+      }
+
       if (isTouchLike && touchMode === "pan") return;
 
       ev.preventDefault();
@@ -1297,7 +1302,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   };
 
   return (
-    <div style={{ marginTop: 10 }}>
+    <div
+      style={{
+        marginTop: 10,
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        WebkitTouchCallout: "none",
+      }}
+    >
       <div
         style={{
           display: "flex",
@@ -1305,6 +1317,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           flexWrap: "wrap",
           alignItems: "center",
           justifyContent: "space-between",
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
       >
         <div
@@ -1313,6 +1327,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             gap: 8,
             flexWrap: "wrap",
             alignItems: "center",
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
         >
           <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
@@ -1333,6 +1349,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               gap: 8,
               flexWrap: "wrap",
               alignItems: "center",
+              userSelect: "none",
+              WebkitUserSelect: "none",
             }}
           >
             {CHALK_COLORS.map((c) => (
@@ -1358,6 +1376,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
                     tool === "chalk" && penColor === c.value
                       ? "0 0 0 2px rgba(255,255,255,0.5) inset"
                       : "none",
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
                 }}
               />
             ))}
@@ -1373,6 +1393,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
                 color: "#111",
                 fontWeight: 900,
                 cursor: "pointer",
+                userSelect: "none",
+                WebkitUserSelect: "none",
               }}
             >
               黒板消し
@@ -1388,6 +1410,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
                 color: "#111",
                 fontWeight: 900,
                 cursor: "pointer",
+                userSelect: "none",
+                WebkitUserSelect: "none",
               }}
             >
               全消し
@@ -1404,6 +1428,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             gap: 8,
             flexWrap: "wrap",
             alignItems: "center",
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
         >
           <button
@@ -1417,6 +1443,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               color: touchMode === "draw" ? "#fff" : "#111827",
               fontWeight: 900,
               cursor: "pointer",
+              userSelect: "none",
+              WebkitUserSelect: "none",
             }}
           >
             描画モード
@@ -1433,6 +1461,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               color: touchMode === "pan" ? "#fff" : "#111827",
               fontWeight: 900,
               cursor: "pointer",
+              userSelect: "none",
+              WebkitUserSelect: "none",
             }}
           >
             移動モード
@@ -1456,6 +1486,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           overflowX: "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
         }}
       >
         <div
@@ -1470,6 +1503,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             background: BOARD_BG,
             boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
             overflow: "hidden",
+            userSelect: "none",
+            WebkitUserSelect: "none",
+            WebkitTouchCallout: "none",
           }}
         >
           <canvas
@@ -1478,6 +1514,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               display: "block",
               width: "100%",
               height: "100%",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              WebkitTouchCallout: "none",
               touchAction: isTouchLike
                 ? touchMode === "pan"
                   ? "pan-x pan-y"
