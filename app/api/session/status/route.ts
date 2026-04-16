@@ -26,49 +26,10 @@ type SessionMemberRow = {
   joined_at?: string | null;
 };
 
-type UserProfileRow = {
-  device_id?: string | null;
-  display_name?: string | null;
-  photo_path?: string | null;
-};
-
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "You") return "参加者";
   return s;
-}
-
-function normalizePhotoPath(v: string | null | undefined) {
-  let s = String(v ?? "").trim();
-  if (!s) return null;
-
-  if (s.startsWith("profile-photos/")) {
-    s = s.replace(/^profile-photos\//, "");
-  }
-
-  if (s.startsWith("avatars/")) {
-    s = s.replace(/^avatars\//, "");
-  }
-
-  return s || null;
-}
-
-function createAvatarPublicUrl(photoPath: string | null) {
-  const normalized = normalizePhotoPath(photoPath);
-  const baseUrl =
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  if (!normalized || !baseUrl) return null;
-
-  if (
-    normalized.startsWith("http://") ||
-    normalized.startsWith("https://")
-  ) {
-    return normalized;
-  }
-
-  const root = String(baseUrl).replace(/\/+$/, "");
-  return `${root}/storage/v1/object/public/profile-photos/${normalized}`;
 }
 
 export async function GET(req: Request) {
@@ -158,74 +119,13 @@ export async function GET(req: Request) {
 
     const rawMembers = (Array.isArray(m.data) ? m.data : []) as SessionMemberRow[];
 
-    const deviceIds = Array.from(
-      new Set(
-        rawMembers
-          .map((row) => String(row.device_id ?? "").trim())
-          .filter(Boolean)
-      )
-    );
-
-    let profileMap = new Map<
-      string,
-      { display_name: string; photo_path: string | null; avatar_url: string | null }
-    >();
-
-    if (deviceIds.length > 0) {
-      const p = await sb
-        .from("user_profiles")
-        .select("device_id, display_name, photo_path")
-        .in("device_id", deviceIds);
-
-      if (p.error) {
-        return NextResponse.json(
-          { ok: false, error: p.error.message },
-          { status: 500 }
-        );
-      }
-
-      const rawProfiles = (Array.isArray(p.data) ? p.data : []) as UserProfileRow[];
-
-      const profileEntries = rawProfiles.map((row) => {
-        const deviceId = String(row.device_id ?? "").trim();
-        if (!deviceId) return null;
-
-        const photoPath = normalizePhotoPath(row.photo_path);
-        const avatarUrl = createAvatarPublicUrl(photoPath);
-
-        return [
-          deviceId,
-          {
-            display_name: sanitizeDisplayName(row.display_name),
-            photo_path: photoPath,
-            avatar_url: avatarUrl,
-          },
-        ] as const;
-      });
-
-      profileMap = new Map(
-        profileEntries.filter(
-          (
-            entry
-          ): entry is readonly [
-            string,
-            {
-              display_name: string;
-              photo_path: string | null;
-              avatar_url: string | null;
-            }
-          ] => !!entry
-        )
-      );
-    }
-
     const byDevice = new Map<
       string,
       {
         device_id: string;
         display_name: string;
-        photo_path: string | null;
-        avatar_url: string | null;
+        photo_path: null;
+        avatar_url: null;
         joined_at: string;
       }
     >();
@@ -234,14 +134,7 @@ export async function GET(req: Request) {
       const deviceId = String(row.device_id ?? "").trim();
       if (!deviceId) continue;
 
-      const profile = profileMap.get(deviceId);
-
-      const displayName = profile?.display_name
-        ? sanitizeDisplayName(profile.display_name)
-        : sanitizeDisplayName(row.display_name);
-
-      const photoPath = normalizePhotoPath(profile?.photo_path ?? null);
-      const avatarUrl = profile?.avatar_url ?? null;
+      const displayName = sanitizeDisplayName(row.display_name);
       const joinedAt =
         String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
@@ -251,8 +144,8 @@ export async function GET(req: Request) {
         byDevice.set(deviceId, {
           device_id: deviceId,
           display_name: displayName,
-          photo_path: photoPath,
-          avatar_url: avatarUrl,
+          photo_path: null,
+          avatar_url: null,
           joined_at: joinedAt,
         });
       }

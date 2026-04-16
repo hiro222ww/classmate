@@ -486,6 +486,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
     {}
   );
+  const remoteCommittedRef = useRef<Record<string, ChalkStrokeRow>>({});
   const channelRef = useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
 
   const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
@@ -584,6 +585,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const clearRemoteOnly = () => {
     remoteProgressRef.current = {};
     remoteStyleRef.current = {};
+    remoteCommittedRef.current = {};
   };
 
   const redrawScene = () => {
@@ -596,8 +598,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     paintBoardBase();
 
+    const committedRows = Object.values(remoteCommittedRef.current);
     const mergedRows = upsertRows(
-      persistedRowsRef.current,
+      upsertRows(persistedRowsRef.current, committedRows),
       pendingRowsRef.current
     );
 
@@ -743,8 +746,26 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
+          const pts = remoteProgressRef.current[key];
+          const style = remoteStyleRef.current[key];
+
+          if (pts && pts.length >= 2 && style) {
+            remoteCommittedRef.current[key] = {
+              id: makeLocalRowId("remote-commit"),
+              session_id: sessionId,
+              device_id: p.deviceId,
+              display_name: "参加者",
+              color: style.color,
+              width: style.width,
+              points: [...pts],
+              kind: "stroke",
+              created_at: new Date().toISOString(),
+            };
+          }
+
           delete remoteProgressRef.current[key];
           delete remoteStyleRef.current[key];
+
           redrawScene();
           return;
         }
@@ -810,6 +831,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             if (key.startsWith(devicePrefix)) {
               delete remoteProgressRef.current[key];
               delete remoteStyleRef.current[key];
+            }
+          }
+          for (const key of Object.keys(remoteCommittedRef.current)) {
+            if (key.startsWith(devicePrefix)) {
+              delete remoteCommittedRef.current[key];
             }
           }
 
