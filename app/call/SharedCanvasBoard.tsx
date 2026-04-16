@@ -50,19 +50,10 @@ const CHALK_COLORS = [
 const BOARD_BG = "#0b3b2e";
 const BOARD_OUTER_BG = "#08271e";
 const ERASER_WIDTH = 28;
-
-/**
- * ここが重要:
- * 端末ごとの canvas 比率ではなく、固定の論理黒板座標で保存・復元する
- */
 const BOARD_LOGICAL_WIDTH = 1000;
 const BOARD_LOGICAL_HEIGHT = 700;
-
-/**
- * スマホではここが横スクロール対象になる最小横幅
- * 900〜1100くらいで調整しやすい
- */
 const MOBILE_MIN_BOARD_WIDTH_PX = 920;
+const INITIAL_STROKE_LOAD_LIMIT = 300;
 
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
@@ -667,7 +658,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       )
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true })
-      .limit(1000);
+      .limit(INITIAL_STROKE_LOAD_LIMIT);
 
     if (error) {
       console.error("[chalk] loadAll failed", {
@@ -751,37 +742,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
         const key = `${p.deviceId}:${p.strokeId}`;
 
-       if (p.done) {
-  const key = `${p.deviceId}:${p.strokeId}`;
-
-  const pts = remoteProgressRef.current[key];
-  const style = remoteStyleRef.current[key];
-
-  if (pts && pts.length >= 2 && style) {
-    const row: ChalkStrokeRow = {
-      id: makeLocalRowId("remote"),
-      session_id: sessionId,
-      device_id: p.deviceId,
-      display_name: "参加者",
-      color: style.color,
-      width: style.width,
-      points: pts,
-      kind: "stroke",
-      created_at: new Date().toISOString(),
-    };
-
-    persistedRowsRef.current = upsertRows(
-      persistedRowsRef.current,
-      [row]
-    );
-  }
-
-  delete remoteProgressRef.current[key];
-  delete remoteStyleRef.current[key];
-
-  redrawScene();
-  return;
-}
+        if (p.done) {
+          delete remoteProgressRef.current[key];
+          delete remoteStyleRef.current[key];
+          redrawScene();
+          return;
+        }
 
         if (!p.points || p.points.length < 2) return;
 
@@ -1311,7 +1277,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           justifyContent: "space-between",
         }}
       >
-
         <div
           style={{
             display: "flex",
@@ -1451,7 +1416,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         </div>
       ) : null}
 
-
       <div
         style={{
           marginTop: 10,
@@ -1499,7 +1463,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           />
         </div>
       </div>
-
     </div>
   );
 }

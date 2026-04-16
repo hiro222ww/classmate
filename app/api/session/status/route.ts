@@ -20,9 +20,6 @@ function admin() {
 
 export const dynamic = "force-dynamic";
 
-const AUTO_ACTIVE_MEMBER_COUNT = 3;
-const FORMING_TIMEOUT_MS = 5 * 60 * 1000;
-
 type SessionMemberRow = {
   device_id?: string | null;
   display_name?: string | null;
@@ -56,12 +53,12 @@ function normalizePhotoPath(v: string | null | undefined) {
   return s || null;
 }
 
-async function createAvatarUrl(
-  sb: ReturnType<typeof admin>,
-  photoPath: string | null
-) {
+function createAvatarPublicUrl(photoPath: string | null) {
   const normalized = normalizePhotoPath(photoPath);
-  if (!normalized) return null;
+  const baseUrl =
+    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  if (!normalized || !baseUrl) return null;
 
   if (
     normalized.startsWith("http://") ||
@@ -70,21 +67,8 @@ async function createAvatarUrl(
     return normalized;
   }
 
-  const { data, error } = await sb.storage
-    .from("profile-photos")
-    .createSignedUrl(normalized, 60 * 60);
-
-  if (error) {
-    console.warn("[session/status] avatar signed url failed", {
-      photoPath,
-      normalized,
-      message: error.message,
-    });
-    return null;
-  }
-
-  const signedUrl = String(data?.signedUrl ?? "").trim();
-  return signedUrl || null;
+  const root = String(baseUrl).replace(/\/+$/, "");
+  return `${root}/storage/v1/object/public/profile-photos/${normalized}`;
 }
 
 export async function GET(req: Request) {
@@ -182,10 +166,6 @@ export async function GET(req: Request) {
       )
     );
 
-    if (deviceIds.length > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 120));
-    }
-
     let profileMap = new Map<
       string,
       { display_name: string; photo_path: string | null; avatar_url: string | null }
@@ -206,24 +186,22 @@ export async function GET(req: Request) {
 
       const rawProfiles = (Array.isArray(p.data) ? p.data : []) as UserProfileRow[];
 
-      const profileEntries = await Promise.all(
-        rawProfiles.map(async (row) => {
-          const deviceId = String(row.device_id ?? "").trim();
-          if (!deviceId) return null;
+      const profileEntries = rawProfiles.map((row) => {
+        const deviceId = String(row.device_id ?? "").trim();
+        if (!deviceId) return null;
 
-          const photoPath = normalizePhotoPath(row.photo_path);
-          const avatarUrl = await createAvatarUrl(sb, photoPath);
+        const photoPath = normalizePhotoPath(row.photo_path);
+        const avatarUrl = createAvatarPublicUrl(photoPath);
 
-          return [
-            deviceId,
-            {
-              display_name: sanitizeDisplayName(row.display_name),
-              photo_path: photoPath,
-              avatar_url: avatarUrl,
-            },
-          ] as const;
-        })
-      );
+        return [
+          deviceId,
+          {
+            display_name: sanitizeDisplayName(row.display_name),
+            photo_path: photoPath,
+            avatar_url: avatarUrl,
+          },
+        ] as const;
+      });
 
       profileMap = new Map(
         profileEntries.filter(
@@ -284,37 +262,6 @@ export async function GET(req: Request) {
       a.joined_at.localeCompare(b.joined_at)
     );
 
-    const memberCount = members.length;
-    let resolvedStatus = String(s.data.status ?? "forming");
-
-    if (resolvedStatus === "forming") {
-      const createdAtMs = s.data.created_at
-        ? new Date(s.data.created_at).getTime()
-        : 0;
-      const nowMs = Date.now();
-
-      const shouldActivate =
-        memberCount >= AUTO_ACTIVE_MEMBER_COUNT ||
-        (createdAtMs > 0 && nowMs - createdAtMs >= FORMING_TIMEOUT_MS);
-
-      if (shouldActivate) {
-        const updateRes = await sb
-          .from("sessions")
-          .update({ status: "active" })
-          .eq("id", sessionIdRaw)
-          .eq("status", "forming");
-
-        if (updateRes.error) {
-          console.warn("[session/status] activate failed", {
-            sessionIdRaw,
-            message: updateRes.error.message,
-          });
-        } else {
-          resolvedStatus = "active";
-        }
-      }
-    }
-
     return NextResponse.json(
       {
         ok: true,
@@ -322,12 +269,12 @@ export async function GET(req: Request) {
           id: String(s.data.id),
           class_id: String(s.data.class_id ?? ""),
           topic: String(s.data.topic ?? "").trim(),
-          status: resolvedStatus,
+          status: String(s.data.status ?? "forming"),
           capacity: Number(s.data.capacity ?? 5),
           created_at: s.data.created_at ?? null,
         },
         members,
-        memberCount,
+        memberCount: members.length,
       },
       {
         headers: {
