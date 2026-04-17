@@ -26,10 +26,30 @@ type SessionMemberRow = {
   joined_at?: string | null;
 };
 
+type UserProfileRow = {
+  device_id?: string | null;
+  photo_path?: string | null;
+};
+
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "You") return "参加者";
   return s;
+}
+
+function normalizePhotoPath(v: string | null | undefined) {
+  let s = String(v ?? "").trim();
+  if (!s) return null;
+
+  if (s.startsWith("profile-photos/")) {
+    s = s.replace(/^profile-photos\//, "");
+  }
+
+  if (s.startsWith("avatars/")) {
+    s = s.replace(/^avatars\//, "");
+  }
+
+  return s || null;
 }
 
 export async function GET(req: Request) {
@@ -119,12 +139,44 @@ export async function GET(req: Request) {
 
     const rawMembers = (Array.isArray(m.data) ? m.data : []) as SessionMemberRow[];
 
+    const deviceIds = Array.from(
+      new Set(
+        rawMembers
+          .map((row) => String(row.device_id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    const photoPathMap = new Map<string, string | null>();
+
+    if (deviceIds.length > 0) {
+      const p = await sb
+        .from("user_profiles")
+        .select("device_id, photo_path")
+        .in("device_id", deviceIds);
+
+      if (p.error) {
+        return NextResponse.json(
+          { ok: false, error: p.error.message },
+          { status: 500 }
+        );
+      }
+
+      const rawProfiles = (Array.isArray(p.data) ? p.data : []) as UserProfileRow[];
+
+      for (const row of rawProfiles) {
+        const did = String(row.device_id ?? "").trim();
+        if (!did) continue;
+        photoPathMap.set(did, normalizePhotoPath(row.photo_path));
+      }
+    }
+
     const byDevice = new Map<
       string,
       {
         device_id: string;
         display_name: string;
-        photo_path: null;
+        photo_path: string | null;
         avatar_url: null;
         joined_at: string;
       }
@@ -137,6 +189,7 @@ export async function GET(req: Request) {
       const displayName = sanitizeDisplayName(row.display_name);
       const joinedAt =
         String(row.joined_at ?? "").trim() || new Date(0).toISOString();
+      const photoPath = photoPathMap.get(deviceId) ?? null;
 
       const prev = byDevice.get(deviceId);
 
@@ -144,7 +197,7 @@ export async function GET(req: Request) {
         byDevice.set(deviceId, {
           device_id: deviceId,
           display_name: displayName,
-          photo_path: null,
+          photo_path: photoPath,
           avatar_url: null,
           joined_at: joinedAt,
         });

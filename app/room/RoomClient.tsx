@@ -84,6 +84,7 @@ function normalizeMemberCompare(list: MemberRow[]) {
     device_id: String(m.device_id ?? "").trim(),
     display_name: String(m.display_name ?? "").trim(),
     photo_path: String(m.photo_path ?? "").trim(),
+    avatar_url: String(m.avatar_url ?? "").trim(),
     joined_at: String(m.joined_at ?? "").trim(),
   }));
 }
@@ -152,13 +153,10 @@ function dedupeMembers(
         : null;
     const joinedAt = String(row.joined_at ?? "").trim();
 
-    const isMeByDevice =
-      !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
+   const isMeByDevice =
+  !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
 
-    const isMeByName =
-      !!name && !!normalizedMyName && name === normalizedMyName;
-
-    if (isMeByDevice || isMeByName) {
+if (isMeByDevice) {
       if (!me) {
         me = {
           device_id: did || normalizedMyDeviceId,
@@ -447,6 +445,11 @@ export default function RoomClient() {
   const visibleMembers = useMemo(() => {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
+
+  const publicStorageBase =
+  process.env.NEXT_PUBLIC_SUPABASE_URL
+    ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos`
+    : "";
 
   const fetchStatus = useCallback(async () => {
     if (!sessionId || !classId) return;
@@ -871,11 +874,16 @@ export default function RoomClient() {
                 background: "#fafafa",
               }}
             >
-              <MemberAvatar
-                src={m.avatar_url}
-                label={label}
-                isMe={isMe}
-              />
+             <MemberAvatar
+  src={
+    m.avatar_url ||
+    (m.photo_path
+      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos/${m.photo_path}`
+      : null)
+  }
+  label={label}
+  isMe={isMe}
+/>
 
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
