@@ -81,6 +81,7 @@ export default function CallVoiceLayer({
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retrySubscribeTimerRef = useRef<number | null>(null);
+  const isSubscribingRef = useRef(false);
 
   const [micReady, setMicReady] = useState(false);
   const [signalReady, setSignalReady] = useState(false);
@@ -770,6 +771,7 @@ export default function CallVoiceLayer({
       mounted = false;
 
       clearRetrySubscribeTimer();
+      isSubscribingRef.current = false;
 
       for (const remoteId of Array.from(reconnectTimersRef.current.keys())) {
         clearReconnectTimer(remoteId);
@@ -906,7 +908,9 @@ export default function CallVoiceLayer({
     const startSubscribe = () => {
       if (!alive) return;
       if (channelRef.current) return;
+      if (isSubscribingRef.current) return;
 
+      isSubscribingRef.current = true;
       subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
 
       const channel = supabase
@@ -930,6 +934,7 @@ export default function CallVoiceLayer({
           if (!alive) return;
 
           if (status === "SUBSCRIBED") {
+            isSubscribingRef.current = false;
             clearRetrySubscribeTimer();
             await bootRecentSignals();
             if (!alive) return;
@@ -937,12 +942,19 @@ export default function CallVoiceLayer({
             return;
           }
 
-          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          if (
+            status === "CHANNEL_ERROR" ||
+            status === "TIMED_OUT" ||
+            status === "CLOSED"
+          ) {
             console.warn("[call] signal channel unstable → retry", status);
+
+            isSubscribingRef.current = false;
             setSignalReady(false);
 
-            if (channelRef.current) {
-              void supabase.removeChannel(channelRef.current);
+            // CLOSED / ERROR のコールバック中では removeChannel しない
+            // ここで remove すると再帰的に CLOSED が連鎖して stack overflow しやすい
+            if (channelRef.current === channel) {
               channelRef.current = null;
             }
 
@@ -963,6 +975,7 @@ export default function CallVoiceLayer({
       alive = false;
       setSignalReady(false);
       clearRetrySubscribeTimer();
+      isSubscribingRef.current = false;
 
       if (channelRef.current) {
         void supabase.removeChannel(channelRef.current);
