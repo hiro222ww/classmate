@@ -54,6 +54,7 @@ const BOARD_LOGICAL_WIDTH = 1000;
 const BOARD_LOGICAL_HEIGHT = 700;
 const MOBILE_MIN_BOARD_WIDTH_PX = 920;
 const INITIAL_STROKE_LOAD_LIMIT = 300;
+const FULL_SYNC_INTERVAL_MS = 4000;
 
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
@@ -481,6 +482,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
   const watchdogRef = useRef<number | null>(null);
   const lastInputAtRef = useRef(0);
+  const fullSyncTimerRef = useRef<number | null>(null);
 
   const remoteProgressRef = useRef<Record<string, StrokePoint[]>>({});
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
@@ -621,7 +623,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     for (const key of Object.keys(remoteProgressRef.current)) {
       const pts = remoteProgressRef.current[key];
       const style = remoteStyleRef.current[key];
-      if (pts && pts.length >= 2) {
+      if (pts && pts.length >= 1) {
         drawStroke(
           ctx,
           {
@@ -635,7 +637,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       }
     }
 
-    if (drawingRef.current && pointsRef.current.length >= 2) {
+    if (drawingRef.current && pointsRef.current.length >= 1) {
       drawStroke(
         ctx,
         {
@@ -650,8 +652,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   };
 
   const loadAll = async () => {
-    if (drawingRef.current) return;
-
     console.log("[chalk] loadAll start", { sessionId });
 
     const { data, error } = await supabaseBrowser
@@ -678,7 +678,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       rows: incoming.length,
     });
 
-    persistedRowsRef.current = upsertRows(persistedRowsRef.current, incoming);
+    persistedRowsRef.current = upsertRows([], incoming);
     redrawScene();
     setInfo("");
   };
@@ -749,13 +749,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           const style = remoteStyleRef.current[key];
 
           const finalPoints =
-            p.points && p.points.length >= 2
+            p.points && p.points.length >= 1
               ? p.points
               : remoteProgressRef.current[key] ?? [];
 
-          if (finalPoints.length >= 2) {
+          if (finalPoints.length >= 1) {
             remoteCommittedRef.current[key] = {
-              id: makeLocalRowId("remote-commit"),
+              id: `${key}:commit`,
               session_id: sessionId,
               device_id: p.deviceId,
               display_name: "参加者",
@@ -774,7 +774,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           return;
         }
 
-        if (!p.points || p.points.length < 2) return;
+        if (!p.points || p.points.length < 1) return;
 
         const prev = remoteProgressRef.current[key] ?? [];
         const nextPoints = [...prev];
@@ -798,28 +798,28 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         redrawScene();
       })
       .on("broadcast", { event: "chalk_clear" }, ({ payload }) => {
-  const p = payload as BroadcastClearPayload;
-  console.log("[chalk] recv chalk_clear", p);
+        const p = payload as BroadcastClearPayload;
+        console.log("[chalk] recv chalk_clear", p);
 
-  if (!p || p.sessionId !== sessionId) return;
-  if (p.deviceId === deviceIdRef.current) return;
+        if (!p || p.sessionId !== sessionId) return;
+        if (p.deviceId === deviceIdRef.current) return;
 
-  clearRemoteOnly();
+        clearRemoteOnly();
 
-  remoteCommittedRef.current["__remote_clear__"] = {
-    id: `remote-clear-${p.clearAt}`,
-    session_id: sessionId,
-    device_id: p.deviceId,
-    display_name: "参加者",
-    color: BOARD_BG,
-    width: 1,
-    points: [],
-    kind: "clear",
-    created_at: new Date(p.clearAt).toISOString(),
-  };
+        remoteCommittedRef.current["__remote_clear__"] = {
+          id: `remote-clear-${p.clearAt}`,
+          session_id: sessionId,
+          device_id: p.deviceId,
+          display_name: "参加者",
+          color: BOARD_BG,
+          width: 1,
+          points: [],
+          kind: "clear",
+          created_at: new Date(p.clearAt).toISOString(),
+        };
 
-  redrawScene();
-})
+        redrawScene();
+      })
       .on(
         "postgres_changes",
         {
@@ -872,6 +872,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         setInfo("黒板Realtimeタイムアウト");
       } else if (status === "SUBSCRIBED") {
         setInfo("");
+        void loadAll();
       }
     });
 
@@ -905,6 +906,25 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    if (fullSyncTimerRef.current) {
+      window.clearInterval(fullSyncTimerRef.current);
+    }
+
+    fullSyncTimerRef.current = window.setInterval(() => {
+      void loadAll();
+    }, FULL_SYNC_INTERVAL_MS);
+
+    return () => {
+      if (fullSyncTimerRef.current) {
+        window.clearInterval(fullSyncTimerRef.current);
+        fullSyncTimerRef.current = null;
+      }
+    };
   }, [sessionId]);
 
   const getBoardPoint = (e: PointerEvent): StrokePoint | null => {
@@ -944,6 +964,21 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     ctx.save();
     applyStrokeStyle(ctx, strokeColor, strokeWidth);
 
+    if (from.x === to.x && from.y === to.y) {
+      ctx.beginPath();
+      ctx.arc(
+        mapX(to.x),
+        mapY(to.y),
+        Math.max(1, strokeWidth / 2),
+        0,
+        Math.PI * 2
+      );
+      ctx.fillStyle = strokeColor;
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
     ctx.beginPath();
     ctx.moveTo(mapX(from.x), mapY(from.y));
     ctx.lineTo(mapX(to.x), mapY(to.y));
@@ -952,7 +987,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   };
 
   const persistWholeStroke = async (pts: StrokePoint[]) => {
-    if (!pts || pts.length < 2) return;
+    if (!pts || pts.length < 1) return;
 
     const safeName = sanitizeDisplayName(displayNameRef.current);
 
@@ -1016,6 +1051,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     redrawScene();
     setInfo("");
+
+    // 念のため完全同期
+    void loadAll();
   };
 
   useEffect(() => {
@@ -1049,7 +1087,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
       resetDrawingState();
 
-      if (finalPoints.length >= 2) {
+      if (finalPoints.length >= 1) {
         await sendBroadcastStroke({
           sessionId,
           deviceId: deviceIdRef.current,
@@ -1091,6 +1129,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       strokeIdRef.current = makeStrokeId();
 
       lastInputAtRef.current = performance.now();
+
+      // 点だけでもローカルに見えるようにする
+      redrawScene();
 
       const now = performance.now();
       if (now - lastKonkonRef.current > 400) {
@@ -1140,10 +1181,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       if (prev) {
         const { w, h } = getCanvasSize();
         const dt = Math.max(1, now - prev.t);
-        const dxPx =
-          ((p.x - prev.x) / BOARD_LOGICAL_WIDTH) * w;
-        const dyPx =
-          ((p.y - prev.y) / BOARD_LOGICAL_HEIGHT) * h;
+        const dxPx = ((p.x - prev.x) / BOARD_LOGICAL_WIDTH) * w;
+        const dyPx = ((p.y - prev.y) / BOARD_LOGICAL_HEIGHT) * h;
         const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
 
         const speed01 = Math.max(0, Math.min(1, (distPx / dt) / 1.8));
@@ -1198,6 +1237,16 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       void finalizeAndSend();
     };
 
+    const onPageHide = () => {
+      if (!drawingRef.current) return;
+      void finalizeAndSend();
+    };
+
+    const onPointerLeave = () => {
+      if (!drawingRef.current) return;
+      void finalizeAndSend();
+    };
+
     const onVis = () => {
       if (!document.hidden) return;
       if (!drawingRef.current) return;
@@ -1217,11 +1266,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     canvas.addEventListener("lostpointercapture", onCancel as EventListener, {
       passive: false,
     });
+    canvas.addEventListener("pointerleave", onPointerLeave, { passive: false });
     canvas.addEventListener("contextmenu", onCtx as EventListener, { passive: false });
 
     window.addEventListener("pointerup", onUp, { passive: false });
     window.addEventListener("pointercancel", onCancel as EventListener, { passive: false });
     window.addEventListener("blur", onBlur);
+    window.addEventListener("pagehide", onPageHide);
     document.addEventListener("visibilitychange", onVis);
 
     return () => {
@@ -1230,11 +1281,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onCancel as EventListener);
       canvas.removeEventListener("lostpointercapture", onCancel as EventListener);
+      canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("contextmenu", onCtx as EventListener);
 
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel as EventListener);
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener("pagehide", onPageHide);
       document.removeEventListener("visibilitychange", onVis);
 
       if (watchdogRef.current) window.clearInterval(watchdogRef.current);
@@ -1312,6 +1365,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     redrawScene();
     setInfo("");
+    void loadAll();
   };
 
   return (
@@ -1539,8 +1593,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
                 tool === "eraser"
                   ? "cell"
                   : isTouchLike && touchMode === "pan"
-                  ? "grab"
-                  : "crosshair",
+                    ? "grab"
+                    : "crosshair",
             }}
           />
         </div>
