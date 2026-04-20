@@ -75,6 +75,15 @@ type SessionStatusResponse = {
   error?: string;
 };
 
+type MineClassRow = {
+  class_id?: string;
+  id?: string;
+  name?: string;
+  topic_key?: string | null;
+  topic_title?: string | null;
+  description?: string;
+};
+
 function normalizeName(v: string | null | undefined) {
   return String(v ?? "").trim();
 }
@@ -129,6 +138,43 @@ function writeStoredDisplayName(deviceId: string, name: string) {
   localStorage.setItem(legacy, normalizedName);
 }
 
+function formatTopicTitleFromClassRow(c: MineClassRow | null | undefined) {
+  const direct = String(c?.topic_title ?? "").trim();
+  if (direct) return direct;
+
+  const topicKey = String(c?.topic_key ?? "").trim();
+  if (!topicKey) return "フリー";
+
+  if (topicKey === "free") return "フリー";
+  if (topicKey === "woman") return "女子校";
+  if (topicKey === "man") return "男子校";
+
+  return topicKey;
+}
+
+function formatClassLabelFromClassRow(c: MineClassRow | null | undefined) {
+  const raw = String(c?.name ?? "").trim();
+  if (raw) return raw;
+
+  const topicKey = String(c?.topic_key ?? "").trim();
+  if (!topicKey) return "フリークラス";
+
+  if (topicKey === "free") return "フリークラス";
+  if (topicKey === "woman") return "女子校";
+  if (topicKey === "man") return "男子校";
+
+  return `${topicKey}クラス`;
+}
+
+async function readJsonSafe(res: Response) {
+  const raw = await res.text().catch(() => "");
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
 function dedupeMembers(
   list: MemberRow[],
   myDeviceId: string,
@@ -153,10 +199,10 @@ function dedupeMembers(
         : null;
     const joinedAt = String(row.joined_at ?? "").trim();
 
-   const isMeByDevice =
-  !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
+    const isMeByDevice =
+      !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
 
-if (isMeByDevice) {
+    if (isMeByDevice) {
       if (!me) {
         me = {
           device_id: did || normalizedMyDeviceId,
@@ -315,6 +361,7 @@ export default function RoomClient() {
   const [msgs, setMsgs] = useState<RoomMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [topicTitle, setTopicTitle] = useState("ルーム");
+  const [classLabel, setClassLabel] = useState("");
   const [err, setErr] = useState("");
   const [memberCount, setMemberCount] = useState(0);
   const [status, setStatus] = useState("forming");
@@ -334,6 +381,11 @@ export default function RoomClient() {
 
   const statusFailCountRef = useRef(0);
   const messagesFailCountRef = useRef(0);
+
+  const publicStorageBase =
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos`
+      : "";
 
   function scrollToBottom(behavior: ScrollBehavior = "smooth") {
     messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
@@ -374,7 +426,7 @@ export default function RoomClient() {
   }
 
   useEffect(() => {
-    const id = getDeviceId();
+    const id = String(getDeviceId() ?? "").trim();
     setDeviceId(id);
   }, []);
 
@@ -442,14 +494,51 @@ export default function RoomClient() {
     };
   }, [deviceId, displayName]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadClassMeta() {
+      if (!deviceId || !classId) return;
+
+      try {
+        const res = await fetch(
+          `/api/class/mine?deviceId=${encodeURIComponent(deviceId)}`,
+          { cache: "no-store" }
+        );
+        const json = await readJsonSafe(res);
+
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) return;
+
+        const classes = Array.isArray(json?.classes) ? json.classes : [];
+        const matched = classes.find(
+          (c: MineClassRow) =>
+            String(c?.id ?? "").trim() === classId ||
+            String(c?.class_id ?? "").trim() === classId
+        ) as MineClassRow | undefined;
+
+        if (!matched) return;
+
+        const nextTopicTitle = formatTopicTitleFromClassRow(matched);
+        const nextClassLabel = formatClassLabelFromClassRow(matched);
+
+        if (nextTopicTitle) setTopicTitle(nextTopicTitle);
+        if (nextClassLabel) setClassLabel(nextClassLabel);
+      } catch (e) {
+        console.error("[room] class meta load failed", e);
+      }
+    }
+
+    void loadClassMeta();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, classId]);
+
   const visibleMembers = useMemo(() => {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
-
-  const publicStorageBase =
-  process.env.NEXT_PUBLIC_SUPABASE_URL
-    ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos`
-    : "";
 
   const fetchStatus = useCallback(async () => {
     if (!sessionId || !classId) return;
@@ -485,7 +574,7 @@ export default function RoomClient() {
         return incomingMembers;
       });
 
-      if (json.session?.topic) {
+      if (!topicTitle && json.session?.topic) {
         setTopicTitle(String(json.session.topic).trim() || "ルーム");
       }
       if (json.session?.status) {
@@ -501,7 +590,7 @@ export default function RoomClient() {
     } catch {
       setSoftConnectionError("status");
     }
-  }, [sessionId, classId, pathname]);
+  }, [sessionId, classId, pathname, topicTitle]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -522,12 +611,12 @@ export default function RoomClient() {
     pushRecentClass(
       {
         id: classId || sessionId,
-        title: topicTitle || "ルーム",
+        title: topicTitle || classLabel || "ルーム",
         url: roomUrl,
       },
       20
     );
-  }, [classId, sessionId, topicTitle, devSuffix]);
+  }, [classId, sessionId, topicTitle, classLabel, devSuffix]);
 
   useEffect(() => {
     joinedSessionKeyRef.current = null;
@@ -582,7 +671,9 @@ export default function RoomClient() {
 
       if (cancelled) return;
 
-      if (json.topic) setTopicTitle(String(json.topic).trim());
+      if (!topicTitle && json.topic) {
+        setTopicTitle(String(json.topic).trim());
+      }
       if (json.status) setStatus(String(json.status));
       if (Number.isFinite(Number(json.capacity)) && Number(json.capacity) > 0) {
         setCapacity(Number(json.capacity));
@@ -604,7 +695,7 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, classId, deviceId, displayName, pathname, fetchStatus]);
+  }, [sessionId, classId, deviceId, displayName, pathname, fetchStatus, topicTitle]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;
@@ -789,6 +880,12 @@ export default function RoomClient() {
   }
 
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
+
+  const shellTitle = topicTitle || "ルーム";
+  const shellSubtitle = classLabel
+    ? `${classLabel} / ${subtitle}`
+    : subtitle;
+
   return (
     <>
       {showDevBanner && (
@@ -814,19 +911,19 @@ export default function RoomClient() {
       )}
 
       <div style={{ paddingTop: showDevBanner ? 28 : 0 }}>
-       <ChalkboardRoomShell
-  title={topicTitle || "ルーム"}
-  subtitle={subtitle}
-  lines={
-    err
-      ? [err]
-      : status === "forming"
-      ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
-      : status === "active"
-      ? ["通話を開始できます。"]
-      : []
-  }
-  onBack={() => router.push(backToSelectUrl)}
+        <ChalkboardRoomShell
+          title={shellTitle}
+          subtitle={shellSubtitle}
+          lines={
+            err
+              ? [err]
+              : status === "forming"
+                ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+                : status === "active"
+                  ? ["通話を開始できます。"]
+                  : []
+          }
+          onBack={() => router.push(backToSelectUrl)}
           onStartCall={() =>
             router.push(
               `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
@@ -836,82 +933,82 @@ export default function RoomClient() {
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
-  <div
-    style={{
-      border: "1px solid #e5e7eb",
-      borderRadius: 14,
-      padding: 12,
-      background: "#fff",
-    }}
-  >
-    <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
-
-    {visibleMembers.length === 0 ? (
-      <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
-    ) : (
-      <div style={{ display: "grid", gap: 8 }}>
-        {visibleMembers.map((m) => {
-          const isMe =
-            String(m.device_id ?? "").trim() ===
-            String(deviceId ?? "").trim();
-
-          const label = isMe
-            ? normalizeName(displayName) ||
-              normalizeName(m.display_name) ||
-              "参加者"
-            : normalizeName(m.display_name) || "参加者";
-
-          return (
             <div
-              key={String(m.device_id ?? "unknown")}
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 12px",
-                borderRadius: 12,
                 border: "1px solid #e5e7eb",
-                background: "#fafafa",
+                borderRadius: 14,
+                padding: 12,
+                background: "#fff",
               }}
             >
-             <MemberAvatar
-  src={
-    m.avatar_url ||
-    (m.photo_path
-      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos/${m.photo_path}`
-      : null)
-  }
-  label={label}
-  isMe={isMe}
-/>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
 
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div
-                  style={{
-                    fontWeight: 800,
-                    color: "#111827",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {label}
-                </div>
+              {visibleMembers.length === 0 ? (
+                <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {visibleMembers.map((m) => {
+                    const isMe =
+                      String(m.device_id ?? "").trim() ===
+                      String(deviceId ?? "").trim();
 
-                <div
-                  style={{
-                    marginTop: 4,
-                    fontSize: 12,
-                    color: "#6b7280",
-                  }}
-                >
-                  {isMe ? "自分" : "参加中"}
+                    const label = isMe
+                      ? normalizeName(displayName) ||
+                        normalizeName(m.display_name) ||
+                        "参加者"
+                      : normalizeName(m.display_name) || "参加者";
+
+                    return (
+                      <div
+                        key={String(m.device_id ?? "unknown")}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 12,
+                          border: "1px solid #e5e7eb",
+                          background: "#fafafa",
+                        }}
+                      >
+                        <MemberAvatar
+                          src={
+                            m.avatar_url ||
+                            (m.photo_path && publicStorageBase
+                              ? `${publicStorageBase}/${m.photo_path}`
+                              : null)
+                          }
+                          label={label}
+                          isMe={isMe}
+                        />
+
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              color: "#111827",
+                              lineHeight: 1.2,
+                            }}
+                          >
+                            {label}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 12,
+                              color: "#6b7280",
+                            }}
+                          >
+                            {isMe ? "自分" : "参加中"}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              </div>
+              )}
             </div>
-          );
-        })}
-      </div>
-    )}
-  </div>
 
             <div
               style={{
