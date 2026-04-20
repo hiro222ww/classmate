@@ -52,14 +52,17 @@ const BOARD_OUTER_BG = "#08271e";
 const ERASER_WIDTH = 28;
 
 /**
- * 以前: 1000 x 700
- * 変更後: より横長にして、PCではかなり画面いっぱいに見えるようにする
+ * 実際に描ける気持ちよさを優先して、
+ * 横だけでなく高さも増やして窮屈さを減らす。
  */
-const BOARD_LOGICAL_WIDTH = 1600;
-const BOARD_LOGICAL_HEIGHT = 700;
+const BOARD_LOGICAL_WIDTH = 2200;
+const BOARD_LOGICAL_HEIGHT = 1100;
 
-const MOBILE_MIN_BOARD_WIDTH_PX = 920;
-const FULL_SYNC_INTERVAL_MS = 4000;
+/**
+ * モバイルでも横スクロールで広く使えるようにする。
+ * PCではかなり大きく表示されるように、最小表示幅も広げる。
+ */
+const MOBILE_MIN_BOARD_WIDTH_PX = 1200;
 
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
@@ -486,13 +489,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const lastKonkonRef = useRef(0);
 
   const watchdogRef = useRef<number | null>(null);
-  const lastInputAtRef = useRef(0);
-  const fullSyncTimerRef = useRef<number | null>(null);
 
   const remoteProgressRef = useRef<Record<string, StrokePoint[]>>({});
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
     {}
   );
+  const remoteStrokeQueueByDeviceRef = useRef<Record<string, string[]>>({});
   const channelRef = useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
 
   const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
@@ -549,7 +551,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     const rect = boardSurface.getBoundingClientRect();
     const w = Math.max(320, Math.floor(rect.width));
-    const h = Math.max(220, Math.floor(rect.height));
+    const h = Math.max(240, Math.floor(rect.height));
 
     canvas.width = w;
     canvas.height = h;
@@ -591,6 +593,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const clearRemoteOnly = () => {
     remoteProgressRef.current = {};
     remoteStyleRef.current = {};
+    remoteStrokeQueueByDeviceRef.current = {};
   };
 
   const redrawScene = () => {
@@ -747,7 +750,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          // DB INSERT で正式確定されるまでここでは消さない
+          // DB INSERT で正式反映されるまでここでは消さない
           return;
         }
 
@@ -758,6 +761,12 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
         if (nextPoints.length === 0) {
           nextPoints.push(...p.points);
+
+          const queue = remoteStrokeQueueByDeviceRef.current[p.deviceId] ?? [];
+          if (!queue.includes(key)) {
+            queue.push(key);
+            remoteStrokeQueueByDeviceRef.current[p.deviceId] = queue;
+          }
         } else {
           const tail = p.points[p.points.length - 1];
           const last = nextPoints[nextPoints.length - 1];
@@ -807,14 +816,16 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
           persistedRowsRef.current = upsertRows(persistedRowsRef.current, [row]);
 
-          const devicePrefix = `${String(row.device_id ?? "").trim()}:`;
-          for (const key of Object.keys(remoteProgressRef.current)) {
-            if (key.startsWith(devicePrefix)) {
-              delete remoteProgressRef.current[key];
-              delete remoteStyleRef.current[key];
-            }
+          const deviceId = String(row.device_id ?? "").trim();
+          const queue = remoteStrokeQueueByDeviceRef.current[deviceId] ?? [];
+          const targetKey = queue.shift();
+
+          if (targetKey) {
+            delete remoteProgressRef.current[targetKey];
+            delete remoteStyleRef.current[targetKey];
           }
 
+          remoteStrokeQueueByDeviceRef.current[deviceId] = queue;
           redrawScene();
         }
       );
@@ -870,23 +881,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId) return;
-
-    if (fullSyncTimerRef.current) {
-      window.clearInterval(fullSyncTimerRef.current);
-    }
-
-    fullSyncTimerRef.current = window.setInterval(() => {
-      if (drawingRef.current) return;
-      void loadAll();
-    }, FULL_SYNC_INTERVAL_MS);
-
-    return () => {
-      if (fullSyncTimerRef.current) {
-        window.clearInterval(fullSyncTimerRef.current);
-        fullSyncTimerRef.current = null;
+    const onFocus = () => {
+      if (!drawingRef.current) {
+        void loadAll();
       }
     };
+
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [sessionId]);
 
   const getBoardPoint = (e: PointerEvent): StrokePoint | null => {
@@ -1034,7 +1036,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     redrawScene();
     setInfo("");
-    void loadAll();
   };
 
   useEffect(() => {
@@ -1109,7 +1110,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       lastMoveRef.current = { t: performance.now(), x: p.x, y: p.y };
       strokeIdRef.current = makeStrokeId();
 
-      lastInputAtRef.current = performance.now();
       redrawScene();
 
       const now = performance.now();
@@ -1174,7 +1174,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       }
 
       lastMoveRef.current = { t: now, x: p.x, y: p.y };
-      lastInputAtRef.current = now;
     };
 
     const onUp = (ev: PointerEvent) => {
@@ -1234,9 +1233,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     if (watchdogRef.current) window.clearInterval(watchdogRef.current);
     watchdogRef.current = window.setInterval(() => {
-      const dt = performance.now() - lastInputAtRef.current;
-      if (dt > 220) sounds.dispose();
-    }, 140);
+      if (!drawingRef.current) sounds.dispose();
+    }, 160);
 
     canvas.addEventListener("pointerdown", onDown, { passive: false });
     canvas.addEventListener("pointermove", onMove, { passive: false });
@@ -1347,7 +1345,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     redrawScene();
     setInfo("");
-    void loadAll();
   };
 
   return (
@@ -1531,7 +1528,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           borderRadius: 16,
           border: "1px solid rgba(0,0,0,0.08)",
           background: BOARD_OUTER_BG,
-          padding: 8,
+          padding: 10,
           overflowX: "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
@@ -1545,9 +1542,10 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           style={{
             position: "relative",
             width: "100%",
-            maxWidth: "1500px",
+            maxWidth: "none",
             margin: "0 auto",
             minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
+            minHeight: isTouchLike ? 420 : 620,
             aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
             borderRadius: 16,
             border: "2px solid #073126",
