@@ -1033,92 +1033,95 @@ export default function RoomClient() {
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {visibleMembers.map((m) => {
-                    const isMe =
-                      String(m.device_id ?? "").trim() ===
-                      String(deviceId ?? "").trim();
+  const isMe =
+    String(m.device_id ?? "").trim() ===
+    String(deviceId ?? "").trim();
 
-                    const label = isMe
-                      ? normalizeName(displayName) ||
-                        normalizeName(m.display_name) ||
-                        "参加者"
-                      : normalizeName(m.display_name) || "参加者";
+  const label = isMe
+    ? normalizeName(displayName) ||
+      normalizeName(m.display_name) ||
+      "参加者"
+    : normalizeName(m.display_name) || "参加者";
 
-                    const presence =
-                      presenceMap[String(m.device_id ?? "").trim()]?.status ?? "offline";
-                    const pill = statusStyle(presence);
+  // 待機ルームのメンバー一覧は current session の参加者そのものなので、
+  // class 全体 presence ではなく room の状態から直接出す
+  const memberStatus: PresenceStatus =
+    status === "active" ? "active" : "waiting";
 
-                    return (
-                      <div
-                        key={String(m.device_id ?? "unknown")}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid #e5e7eb",
-                          background: "#fafafa",
-                        }}
-                      >
-                        <MemberAvatar
-                          src={
-                            m.avatar_url ||
-                            (m.photo_path && publicStorageBase
-                              ? `${publicStorageBase}/${m.photo_path}`
-                              : null)
-                          }
-                          label={label}
-                          isMe={isMe}
-                        />
+  const pill = statusStyle(memberStatus);
 
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div
-                            style={{
-                              fontWeight: 800,
-                              color: "#111827",
-                              lineHeight: 1.2,
-                            }}
-                          >
-                            {label}
-                          </div>
+  return (
+    <div
+      key={String(m.device_id ?? "unknown")}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: "1px solid #e5e7eb",
+        background: "#fafafa",
+      }}
+    >
+      <MemberAvatar
+        src={
+          m.avatar_url ||
+          (m.photo_path && publicStorageBase
+            ? `${publicStorageBase}/${m.photo_path}`
+            : null)
+        }
+        label={label}
+        isMe={isMe}
+      />
 
-                          <div
-                            style={{
-                              marginTop: 4,
-                              display: "flex",
-                              gap: 8,
-                              alignItems: "center",
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            {isMe ? (
-                              <span
-                                style={{
-                                  fontSize: 12,
-                                  color: "#6b7280",
-                                }}
-                              >
-                                自分
-                              </span>
-                            ) : null}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            fontWeight: 800,
+            color: "#111827",
+            lineHeight: 1.2,
+          }}
+        >
+          {label}
+        </div>
 
-                            <span
-                              style={{
-                                ...pill,
-                                fontSize: 11,
-                                fontWeight: 900,
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {statusLabel(presence)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+        <div
+          style={{
+            marginTop: 4,
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          {isMe ? (
+            <span
+              style={{
+                fontSize: 12,
+                color: "#6b7280",
+              }}
+            >
+              自分
+            </span>
+          ) : null}
+
+          <span
+            style={{
+              ...pill,
+              fontSize: 11,
+              fontWeight: 900,
+              padding: "4px 8px",
+              borderRadius: 999,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {statusLabel(memberStatus)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+})}
                 </div>
               )}
             </div>
