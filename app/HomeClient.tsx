@@ -18,6 +18,8 @@ type MineClass = {
   description: string;
   world_key: string | null;
   topic_key: string | null;
+  topic_title?: string | null;
+  topic_description?: string | null;
   min_age: number;
   is_sensitive: boolean;
   is_user_created: boolean;
@@ -49,7 +51,21 @@ type ClassMessage = {
   created_at?: string | null;
 };
 
-function formatClassTitle(c: MineClass): string {
+function formatTopicTitle(c: MineClass): string {
+  const direct = String(c.topic_title ?? "").trim();
+  if (direct) return direct;
+
+  const topicKey = String(c.topic_key || "").trim();
+  if (!topicKey) return "フリー";
+
+  if (topicKey === "free") return "フリー";
+  if (topicKey === "woman") return "女子校";
+  if (topicKey === "man") return "男子校";
+
+  return topicKey;
+}
+
+function formatClassLabel(c: MineClass): string {
   const raw = String(c.name || "").trim();
   if (raw) return raw;
 
@@ -188,24 +204,24 @@ export default function HomeClient() {
 
         const id = String(getDeviceId() ?? "").trim();
 
-if (!cancelled) setDeviceId(id);
+        if (!cancelled) setDeviceId(id);
 
-if (!id) {
-  console.warn("[home] deviceId missing on init");
-  setProfile(null);
-  setClasses([]);
-  setError("device_id_missing");
-  return;
-}
+        if (!id) {
+          console.warn("[home] deviceId missing on init");
+          setProfile(null);
+          setClasses([]);
+          setError("device_id_missing");
+          return;
+        }
 
-const [profileRes, classesRes] = await Promise.all([
-  fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
-    cache: "no-store",
-  }),
-  fetch(`/api/class/mine?deviceId=${encodeURIComponent(id)}`, {
-    cache: "no-store",
-  }),
-]);
+        const [profileRes, classesRes] = await Promise.all([
+          fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
+            cache: "no-store",
+          }),
+          fetch(`/api/class/mine?deviceId=${encodeURIComponent(id)}`, {
+            cache: "no-store",
+          }),
+        ]);
 
         if (cancelled) return;
 
@@ -310,7 +326,7 @@ const [profileRes, classesRes] = await Promise.all([
 
         for (const c of classes) {
           const classId = c.id;
-          const classTitle = formatClassTitle(c);
+          const classTitle = formatTopicTitle(c);
           const currentPresenceMap = nextPresenceByClass[classId] ?? {};
           const prevPresenceMap = prev[classId] ?? {};
           const members = nextMembersByClass[classId] ?? [];
@@ -381,7 +397,7 @@ const [profileRes, classesRes] = await Promise.all([
 
             return {
               classId: c.id,
-              classTitle: formatClassTitle(c),
+              classTitle: formatTopicTitle(c),
               messages: Array.isArray(json?.messages) ? json.messages : [],
             };
           })
@@ -465,7 +481,11 @@ const [profileRes, classesRes] = await Promise.all([
     try {
       setOpeningClassId(target.id);
 
-      const currentDeviceId = getDeviceId();
+      const currentDeviceId = String(getDeviceId() ?? "").trim();
+      if (!currentDeviceId) {
+        alert("device_id_missing");
+        return;
+      }
 
       const res = await fetch("/api/class/match-join", {
         method: "POST",
@@ -510,7 +530,11 @@ const [profileRes, classesRes] = await Promise.all([
     try {
       setQuickBusy(true);
 
-      const currentDeviceId = getDeviceId();
+      const currentDeviceId = String(getDeviceId() ?? "").trim();
+      if (!currentDeviceId) {
+        alert("device_id_missing");
+        return;
+      }
 
       const res = await fetch("/api/class/match-join", {
         method: "POST",
@@ -551,7 +575,7 @@ const [profileRes, classesRes] = await Promise.all([
   }
 
   async function leaveClass(target: MineClass) {
-    const title = formatClassTitle(target);
+    const title = formatTopicTitle(target);
 
     if (!confirm(`「${title}」を抜けますか？`)) {
       return;
@@ -560,7 +584,11 @@ const [profileRes, classesRes] = await Promise.all([
     try {
       setLeavingClassId(target.id);
 
-      const currentDeviceId = getDeviceId();
+      const currentDeviceId = String(getDeviceId() ?? "").trim();
+      if (!currentDeviceId) {
+        alert("device_id_missing");
+        return;
+      }
 
       const res = await fetch("/api/class/leave", {
         method: "POST",
@@ -701,6 +729,8 @@ const [profileRes, classesRes] = await Promise.all([
               const opening = openingClassId === c.id;
               const members = membersByClass[c.id] ?? [];
               const presenceMap = presenceByClass[c.id] ?? {};
+              const topicTitle = formatTopicTitle(c);
+              const classLabel = formatClassLabel(c);
 
               return (
                 <div
@@ -713,8 +743,19 @@ const [profileRes, classesRes] = await Promise.all([
                     background: "#fff",
                   }}
                 >
-                  <div style={{ fontWeight: 900, color: "#111" }}>
-                    {formatClassTitle(c)}
+                  <div style={{ fontWeight: 900, color: "#111", fontSize: 16 }}>
+                    {topicTitle}
+                  </div>
+
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "#6b7280",
+                      fontWeight: 800,
+                      marginTop: 4,
+                    }}
+                  >
+                    {classLabel}
                   </div>
 
                   <div

@@ -71,13 +71,14 @@ export async function GET(req: Request) {
         debug: {
           membershipCount: 0,
           classRowCount: 0,
+          topicRowCount: 0,
           joinFailedCount: 0,
           legacyFilteredCount: 0,
         },
       });
     }
 
-    // 2) classes を別取得
+    // 2) classes を取得
     const { data: classRows, error: classesErr } = await supabaseAdmin
       .from("classes")
       .select(
@@ -113,9 +114,49 @@ export async function GET(req: Request) {
       (classRows ?? []).map((c: any) => [String(c.id).trim(), c])
     );
 
-    // 3) merge
+    // 3) topic_key 一覧を抽出
+    const topicKeys = Array.from(
+      new Set(
+        (classRows ?? [])
+          .map((c: any) => String(c.topic_key ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    // 4) topics を別取得
+    let topicRows: any[] = [];
+    if (topicKeys.length > 0) {
+      const { data: topicsData, error: topicsErr } = await supabaseAdmin
+        .from("topics")
+        .select("topic_key,title,description")
+        .in("topic_key", topicKeys);
+
+      console.log("[class/mine] topics error =", topicsErr);
+      console.log("[class/mine] topics data =", topicsData);
+
+      if (topicsErr) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "class_mine_topics_failed",
+            detail: topicsErr.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      topicRows = topicsData ?? [];
+    }
+
+    const topicMap = new Map(
+      topicRows.map((t: any) => [String(t.topic_key).trim(), t])
+    );
+
+    // 5) merge
     const merged = classIds.map((classId) => {
       const c = classMap.get(classId);
+      const topicKey = String(c?.topic_key ?? "").trim();
+      const topic = topicKey ? topicMap.get(topicKey) : null;
 
       return {
         class_id: classId,
@@ -125,6 +166,8 @@ export async function GET(req: Request) {
         description: c?.description ?? "",
         world_key: c?.world_key ?? null,
         topic_key: c?.topic_key ?? null,
+        topic_title: topic?.title ?? null,
+        topic_description: topic?.description ?? null,
         min_age: Number(c?.min_age ?? 0),
         is_sensitive: Boolean(c?.is_sensitive),
         is_user_created: Boolean(c?.is_user_created),
@@ -132,7 +175,7 @@ export async function GET(req: Request) {
       };
     });
 
-    // 4) レガシー入口クラスを除外
+    // 6) レガシー入口クラスを除外
     const classes = merged.filter((c: any) => !isLegacyEntryClassName(c?.name));
     const legacyFilteredCount = merged.length - classes.length;
 
@@ -146,6 +189,7 @@ export async function GET(req: Request) {
       debug: {
         membershipCount: memberships?.length ?? 0,
         classRowCount: classRows?.length ?? 0,
+        topicRowCount: topicRows?.length ?? 0,
         joinFailedCount: classes.filter((c: any) => !c.join_ok).length,
         legacyFilteredCount,
       },
