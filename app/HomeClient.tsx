@@ -76,7 +76,6 @@ function getEffectiveStatus(p?: PresenceRow): PresenceStatus {
 
   const diff = Date.now() - t;
 
-  // 10秒以上更新がなければ offline 扱い
   if (diff > 10000) return "offline";
 
   if (p.status === "active") return "active";
@@ -269,6 +268,49 @@ export default function HomeClient() {
       cancelled = true;
     };
   }, [dev]);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    if (!classes.length) return;
+
+    const timer = window.setInterval(() => {
+      classes.forEach((c) => {
+        fetch("/api/class/presence", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            classId: c.id,
+            deviceId,
+            screen: "home",
+            sessionId: null,
+          }),
+          cache: "no-store",
+        }).catch((e) => {
+          console.warn("[home] presence heartbeat failed", c.id, e);
+        });
+      });
+    }, 5000);
+
+    classes.forEach((c) => {
+      fetch("/api/class/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId: c.id,
+          deviceId,
+          screen: "home",
+          sessionId: null,
+        }),
+        cache: "no-store",
+      }).catch((e) => {
+        console.warn("[home] initial presence heartbeat failed", c.id, e);
+      });
+    });
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [deviceId, classes]);
 
   useEffect(() => {
     if (!classes.length) return;
