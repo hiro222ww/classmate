@@ -51,32 +51,12 @@ type ClassMessage = {
   created_at?: string | null;
 };
 
-function formatTopicTitle(c: MineClass): string {
-  const direct = String(c.topic_title ?? "").trim();
-  if (direct) return direct;
-
-  const topicKey = String(c.topic_key || "").trim();
-  if (!topicKey) return "フリー";
-
-  if (topicKey === "free") return "フリー";
-  if (topicKey === "woman") return "女子校";
-  if (topicKey === "man") return "男子校";
-
-  return topicKey;
-}
-
 function formatClassLabel(c: MineClass): string {
   const raw = String(c.name || "").trim();
-  if (raw) return raw;
+  if (!raw) return "クラス";
 
-  const topicKey = String(c.topic_key || "").trim();
-  if (!topicKey) return "フリークラス";
-
-  if (topicKey === "free") return "フリークラス";
-  if (topicKey === "woman") return "女子校";
-  if (topicKey === "man") return "男子校";
-
-  return `${topicKey}クラス`;
+  const match = raw.match(/クラス\d+[A-Z]/);
+  return match ? match[0] : raw;
 }
 
 async function readJsonSafe(res: Response) {
@@ -86,6 +66,22 @@ async function readJsonSafe(res: Response) {
   } catch {
     return {};
   }
+}
+
+function getEffectiveStatus(p?: PresenceRow): PresenceStatus {
+  if (!p?.updated_at) return "offline";
+
+  const t = new Date(p.updated_at).getTime();
+  if (!Number.isFinite(t)) return "offline";
+
+  const diff = Date.now() - t;
+
+  // 10秒以上更新がなければ offline 扱い
+  if (diff > 10000) return "offline";
+
+  if (p.status === "active") return "active";
+  if (p.status === "waiting") return "waiting";
+  return "offline";
 }
 
 function statusLabel(status: PresenceStatus) {
@@ -326,7 +322,7 @@ export default function HomeClient() {
 
         for (const c of classes) {
           const classId = c.id;
-          const classTitle = formatTopicTitle(c);
+          const classTitle = formatClassLabel(c);
           const currentPresenceMap = nextPresenceByClass[classId] ?? {};
           const prevPresenceMap = prev[classId] ?? {};
           const members = nextMembersByClass[classId] ?? [];
@@ -335,8 +331,8 @@ export default function HomeClient() {
             const memberId = String(member.device_id ?? "").trim();
             if (!memberId || memberId === deviceId) continue;
 
-            const prevStatus = prevPresenceMap[memberId]?.status ?? "offline";
-            const nextStatus = currentPresenceMap[memberId]?.status ?? "offline";
+            const prevStatus = getEffectiveStatus(prevPresenceMap[memberId]);
+            const nextStatus = getEffectiveStatus(currentPresenceMap[memberId]);
 
             if (prevStatus !== "active" && nextStatus === "active") {
               pushBrowserNotification(
@@ -397,7 +393,7 @@ export default function HomeClient() {
 
             return {
               classId: c.id,
-              classTitle: formatTopicTitle(c),
+              classTitle: formatClassLabel(c),
               messages: Array.isArray(json?.messages) ? json.messages : [],
             };
           })
@@ -575,7 +571,7 @@ export default function HomeClient() {
   }
 
   async function leaveClass(target: MineClass) {
-    const title = formatTopicTitle(target);
+    const title = formatClassLabel(target);
 
     if (!confirm(`「${title}」を抜けますか？`)) {
       return;
@@ -729,7 +725,6 @@ export default function HomeClient() {
               const opening = openingClassId === c.id;
               const members = membersByClass[c.id] ?? [];
               const presenceMap = presenceByClass[c.id] ?? {};
-              const topicTitle = formatTopicTitle(c);
               const classLabel = formatClassLabel(c);
 
               return (
@@ -737,36 +732,22 @@ export default function HomeClient() {
                   key={`${c.id}`}
                   style={{
                     textAlign: "left",
-                    padding: "12px 12px",
-                    borderRadius: 12,
+                    padding: "14px 14px",
+                    borderRadius: 14,
                     border: "1px solid #ddd",
                     background: "#fff",
                   }}
                 >
-                  <div style={{ fontWeight: 900, color: "#111", fontSize: 16 }}>
-                    {topicTitle}
-                  </div>
-
                   <div
                     style={{
-                      fontSize: 12,
-                      color: "#6b7280",
-                      fontWeight: 800,
-                      marginTop: 4,
+                      fontWeight: 900,
+                      color: "#111",
+                      fontSize: 24,
+                      lineHeight: 1.2,
+                      letterSpacing: "0.02em",
                     }}
                   >
                     {classLabel}
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "#6b7280",
-                      fontWeight: 800,
-                      marginTop: 4,
-                    }}
-                  >
-                    開くか、不要なら抜けられます
                   </div>
 
                   {c.description ? (
@@ -775,7 +756,7 @@ export default function HomeClient() {
                         fontSize: 12,
                         color: "#6b7280",
                         fontWeight: 700,
-                        marginTop: 6,
+                        marginTop: 8,
                       }}
                     >
                       {c.description}
@@ -801,7 +782,8 @@ export default function HomeClient() {
                       <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                         {members.map((m) => {
                           const isMe = m.device_id === deviceId;
-                          const presence = presenceMap[m.device_id]?.status ?? "offline";
+                          const rawPresence = presenceMap[m.device_id];
+                          const presence = getEffectiveStatus(rawPresence);
                           const pill = statusStyle(presence);
 
                           return (
