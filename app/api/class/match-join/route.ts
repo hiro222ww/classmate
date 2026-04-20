@@ -44,6 +44,27 @@ function calcAgeFromBirthDate(birthDate: string | null | undefined) {
   return age >= 0 ? age : null;
 }
 
+function isDeadlinePassed(matchDeadlineAt?: string | null) {
+  if (!matchDeadlineAt) return false;
+
+  const deadline = new Date(matchDeadlineAt).getTime();
+  if (!Number.isFinite(deadline)) return false;
+
+  return Date.now() > deadline;
+}
+
+function deadlineError(matchDeadlineAt?: string | null) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "match_deadline_passed",
+      matchDeadlineAt: matchDeadlineAt ?? null,
+      message: "このマッチングは締め切られました",
+    },
+    { status: 400 }
+  );
+}
+
 type ProfileRow = {
   device_id: string;
   birth_date?: string | null;
@@ -56,6 +77,20 @@ type AtomicMatchRow = {
   session_status: string | null;
   session_created_at: string | null;
   reused: boolean;
+};
+
+type ClassDeadlineRow = {
+  id: string;
+  name?: string | null;
+  world_key?: string | null;
+  topic_key?: string | null;
+  match_deadline_at?: string | null;
+};
+
+type TopicDeadlineRow = {
+  key?: string | null;
+  world_key?: string | null;
+  match_deadline_at?: string | null;
 };
 
 async function getProfile(deviceId: string) {
@@ -221,6 +256,134 @@ async function ensureMembership(params: {
   };
 }
 
+async function getForcedClassWithDeadline(classId: string) {
+  const { data, error } = await supabase
+    .from("classes")
+    .select("id,name,world_key,topic_key,match_deadline_at")
+    .eq("id", classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "forced_class_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  if (!data) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "forced_class_not_found",
+          classId,
+        },
+        { status: 404 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    row: data as ClassDeadlineRow,
+  };
+}
+
+async function getTopicDeadline(params: {
+  worldKey: string;
+  topicKey: string | null;
+}) {
+  const { worldKey, topicKey } = params;
+
+  if (!topicKey) {
+    return {
+      ok: true as const,
+      row: null,
+    };
+  }
+
+  let query = supabase
+    .from("topics")
+    .select("key,world_key,match_deadline_at")
+    .eq("key", topicKey)
+    .limit(1);
+
+  // world_key が topics にある前提で絞る。無くても通常は key 一意なら問題ない。
+  if (worldKey) {
+    query = query.eq("world_key", worldKey);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "topic_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    row: (data as TopicDeadlineRow | null) ?? null,
+  };
+}
+
+async function getClassDeadlineById(classId: string) {
+  const { data, error } = await supabase
+    .from("classes")
+    .select("id,name,world_key,topic_key,match_deadline_at")
+    .eq("id", classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "matched_class_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  if (!data) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "matched_class_not_found",
+          classId,
+        },
+        { status: 404 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    row: data as ClassDeadlineRow,
+  };
+}
+
 async function runAtomicMatch(params: {
   worldKey: string;
   topicKey: string | null;
@@ -255,6 +418,13 @@ async function runAtomicMatch(params: {
 
   if (error) {
     console.error("❌ RPC ERROR FULL", error);
+
+    if (String(error.message ?? "").includes("match_deadline_passed")) {
+      return {
+        ok: false as const,
+        response: deadlineError(null),
+      };
+    }
 
     return {
       ok: false as const,
@@ -301,7 +471,7 @@ export async function POST(req: Request) {
     const requestedCapacity = normalizeCapacity(body.capacity);
     const forcedClassId = String(body.classId ?? "").trim();
 
-    console.log("🔥 MATCH JOIN ATOMIC VERSION LOADED");
+    console.log("🔥 MATCH JOIN DEADLINE VERSION LOADED");
     console.log("[class/match-join] body =", body);
     console.log("[class/match-join] deviceId =", deviceId);
     console.log("[class/match-join] topicKey =", topicKey);
@@ -365,40 +535,28 @@ export async function POST(req: Request) {
     let reused = false;
 
     if (forcedClassId) {
-      const { data: existingClass, error: classErr } = await supabase
-        .from("classes")
-        .select("id,name")
-        .eq("id", forcedClassId)
-        .maybeSingle();
+      const forcedRes = await getForcedClassWithDeadline(forcedClassId);
+      if (!forcedRes.ok) return forcedRes.response;
 
-      if (classErr) {
-        console.error("[match-join] forced class lookup failed", {
-          forcedClassId,
-          message: classErr.message,
-          details: (classErr as any)?.details ?? null,
-          hint: (classErr as any)?.hint ?? null,
-          code: (classErr as any)?.code ?? null,
+      const existingClass = forcedRes.row;
+
+      console.log("[match-join] deadline check", {
+        branch: "forcedClassId",
+        forcedClassId,
+        classId: existingClass.id,
+        topicKey: existingClass.topic_key ?? null,
+        worldKey: existingClass.world_key ?? null,
+        matchDeadlineAt: existingClass.match_deadline_at ?? null,
+        now: new Date().toISOString(),
+      });
+
+      if (isDeadlinePassed(existingClass.match_deadline_at ?? null)) {
+        console.log("[match-join] deadline blocked", {
+          branch: "forcedClassId",
+          classId: existingClass.id,
+          matchDeadlineAt: existingClass.match_deadline_at ?? null,
         });
-
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "forced_class_lookup_failed",
-            detail: classErr.message,
-          },
-          { status: 500 }
-        );
-      }
-
-      if (!existingClass) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "forced_class_not_found",
-            classId: forcedClassId,
-          },
-          { status: 404 }
-        );
+        return deadlineError(existingClass.match_deadline_at ?? null);
       }
 
       classId = String(existingClass.id);
@@ -458,6 +616,30 @@ export async function POST(req: Request) {
         reused = false;
       }
     } else {
+      // 候補 class がまだ route 側では見えないので、
+      // topic に締切がある場合は最低限ここで先に弾く
+      const topicRes = await getTopicDeadline({ worldKey, topicKey });
+      if (!topicRes.ok) return topicRes.response;
+
+      if (topicRes.row?.match_deadline_at) {
+        console.log("[match-join] deadline check", {
+          branch: "topic-before-atomic",
+          topicKey,
+          worldKey,
+          matchDeadlineAt: topicRes.row.match_deadline_at,
+          now: new Date().toISOString(),
+        });
+
+        if (isDeadlinePassed(topicRes.row.match_deadline_at)) {
+          console.log("[match-join] deadline blocked", {
+            branch: "topic-before-atomic",
+            topicKey,
+            matchDeadlineAt: topicRes.row.match_deadline_at,
+          });
+          return deadlineError(topicRes.row.match_deadline_at);
+        }
+      }
+
       const atomicRes = await runAtomicMatch({
         worldKey,
         topicKey,
@@ -474,6 +656,28 @@ export async function POST(req: Request) {
       sessionStatus = String(atomicRes.row.session_status ?? "forming");
       sessionCreatedAt = atomicRes.row.session_created_at ?? null;
       reused = Boolean(atomicRes.row.reused);
+
+      // 最終保険: atomic 後に class の締切をもう一度確認
+      const matchedClassRes = await getClassDeadlineById(classId);
+      if (!matchedClassRes.ok) return matchedClassRes.response;
+
+      console.log("[match-join] deadline check", {
+        branch: "post-atomic-class",
+        classId: matchedClassRes.row.id,
+        topicKey: matchedClassRes.row.topic_key ?? null,
+        worldKey: matchedClassRes.row.world_key ?? null,
+        matchDeadlineAt: matchedClassRes.row.match_deadline_at ?? null,
+        now: new Date().toISOString(),
+      });
+
+      if (isDeadlinePassed(matchedClassRes.row.match_deadline_at ?? null)) {
+        console.log("[match-join] deadline blocked", {
+          branch: "post-atomic-class",
+          classId: matchedClassRes.row.id,
+          matchDeadlineAt: matchedClassRes.row.match_deadline_at ?? null,
+        });
+        return deadlineError(matchedClassRes.row.match_deadline_at ?? null);
+      }
     }
 
     const membershipRes = await ensureMembership({
