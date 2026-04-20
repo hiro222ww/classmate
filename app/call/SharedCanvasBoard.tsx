@@ -684,8 +684,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       rows: incoming.length,
     });
 
-    persistedRowsRef.current = upsertRows([], incoming);
-    redrawScene();
+    persistedRowsRef.current = upsertRows(persistedRowsRef.current, incoming);
+redrawScene();
     setInfo("");
   };
 
@@ -877,9 +877,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       } else if (status === "TIMED_OUT") {
         setInfo("黒板Realtimeタイムアウト");
       } else if (status === "SUBSCRIBED") {
-        setInfo("");
-        void loadAll();
-      }
+  setInfo("");
+  if (!drawingRef.current) {
+    void loadAll();
+  }
+}
     });
 
     channelRef.current = ch;
@@ -922,8 +924,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     }
 
     fullSyncTimerRef.current = window.setInterval(() => {
-      void loadAll();
-    }, FULL_SYNC_INTERVAL_MS);
+  if (drawingRef.current) return;
+  void loadAll();
+}, FULL_SYNC_INTERVAL_MS);
 
     return () => {
       if (fullSyncTimerRef.current) {
