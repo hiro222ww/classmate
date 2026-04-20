@@ -5,17 +5,27 @@ export const dynamic = "force-dynamic";
 
 type PresenceStatus = "offline" | "waiting" | "active";
 
-type PresenceRow = {
-  device_id: string;
-  status: PresenceStatus;
-  session_id: string | null;
-  updated_at: string | null;
-};
+const ONLINE_WINDOW_MS = 15_000;
 
-function rankStatus(status: PresenceStatus) {
-  if (status === "active") return 2;
-  if (status === "waiting") return 1;
-  return 0;
+function getPresenceStatus(params: {
+  lastSeenAt?: string | null;
+  screen?: string | null;
+}) {
+  const { lastSeenAt, screen } = params;
+
+  if (!lastSeenAt) return "offline" as const;
+
+  const ts = new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(ts)) return "offline" as const;
+
+  const alive = Date.now() - ts <= ONLINE_WINDOW_MS;
+  if (!alive) return "offline" as const;
+
+  if (String(screen ?? "").trim() === "call") {
+    return "active" as const;
+  }
+
+  return "waiting" as const;
 }
 
 export async function GET(req: Request) {
@@ -56,120 +66,64 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, presence: [] });
     }
 
-    const { data: sessions, error: sessionsError } = await sb
-      .from("sessions")
-      .select("id, status")
+    const { data: presenceRows, error: presenceError } = await sb
+      .from("class_presence")
+      .select("device_id, screen, session_id, last_seen_at")
       .eq("class_id", classId)
-      .in("status", ["forming", "waiting", "active"]);
+      .in("device_id", memberIds);
 
-    if (sessionsError) {
+    if (presenceError) {
       return NextResponse.json(
         {
           ok: false,
-          error: "sessions_lookup_failed",
-          detail: sessionsError.message,
+          error: "class_presence_lookup_failed",
+          detail: presenceError.message,
         },
         { status: 500 }
       );
     }
 
-    const sessionIds = (sessions ?? [])
-      .map((s: any) => String(s.id ?? "").trim())
-      .filter(Boolean);
-
-    if (sessionIds.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        presence: memberIds.map((device_id) => ({
-          device_id,
-          status: "offline",
-          session_id: null,
-          updated_at: null,
-        })),
-      });
-    }
-
-    const sessionStatusMap = new Map<string, PresenceStatus>();
-    for (const s of sessions ?? []) {
-      const sessionId = String(s.id ?? "").trim();
-      const raw = String(s.status ?? "").trim();
-
-      const status: PresenceStatus =
-        raw === "active"
-          ? "active"
-          : raw === "forming" || raw === "waiting"
-            ? "waiting"
-            : "offline";
-
-      if (sessionId) {
-        sessionStatusMap.set(sessionId, status);
+    const byDevice = new Map<
+      string,
+      {
+        device_id: string;
+        status: PresenceStatus;
+        session_id: string | null;
+        updated_at: string | null;
+        screen: string | null;
       }
-    }
+    >();
 
-    const { data: sessionMembers, error: membersError } = await sb
-      .from("session_members")
-      .select("device_id, session_id, joined_at")
-      .in("session_id", sessionIds);
+    for (const row of presenceRows ?? []) {
+      const deviceId = String((row as any).device_id ?? "").trim();
+      if (!deviceId) continue;
 
-    if (membersError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "session_members_lookup_failed",
-          detail: membersError.message,
-        },
-        { status: 500 }
-      );
-    }
+      const lastSeenAt = (row as any).last_seen_at ?? null;
+      const screen = String((row as any).screen ?? "").trim() || null;
+      const sessionId = (row as any).session_id
+        ? String((row as any).session_id).trim()
+        : null;
 
-    const bestPresenceByDevice = new Map<string, PresenceRow>();
-
-    for (const row of sessionMembers ?? []) {
-      const deviceId = String(row.device_id ?? "").trim();
-      const sessionId = String(row.session_id ?? "").trim();
-      if (!deviceId || !sessionId) continue;
-
-      const status = sessionStatusMap.get(sessionId) ?? "offline";
-      const updatedAt = row.joined_at ?? null;
-
-      const nextRow: PresenceRow = {
+      byDevice.set(deviceId, {
         device_id: deviceId,
-        status,
+        status: getPresenceStatus({
+          lastSeenAt,
+          screen,
+        }),
         session_id: sessionId,
-        updated_at: updatedAt,
-      };
-
-      const prev = bestPresenceByDevice.get(deviceId);
-      if (!prev) {
-        bestPresenceByDevice.set(deviceId, nextRow);
-        continue;
-      }
-
-      const prevRank = rankStatus(prev.status);
-      const nextRank = rankStatus(nextRow.status);
-
-      if (nextRank > prevRank) {
-        bestPresenceByDevice.set(deviceId, nextRow);
-        continue;
-      }
-
-      if (nextRank === prevRank) {
-        const prevTs = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
-        const nextTs = nextRow.updated_at ? new Date(nextRow.updated_at).getTime() : 0;
-
-        if (nextTs > prevTs) {
-          bestPresenceByDevice.set(deviceId, nextRow);
-        }
-      }
+        updated_at: lastSeenAt,
+        screen,
+      });
     }
 
     const presence = memberIds.map((device_id) => {
       return (
-        bestPresenceByDevice.get(device_id) ?? {
+        byDevice.get(device_id) ?? {
           device_id,
           status: "offline" as const,
           session_id: null,
           updated_at: null,
+          screen: null,
         }
       );
     });
@@ -177,6 +131,72 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       presence,
+      onlineWindowMs: ONLINE_WINDOW_MS,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "server_error",
+        detail: e?.message ?? String(e),
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json().catch(() => ({}));
+
+    const classId = String(body.classId ?? "").trim();
+    const deviceId = String(body.deviceId ?? "").trim();
+    const screen = String(body.screen ?? "").trim() || "room";
+    const sessionId = String(body.sessionId ?? "").trim() || null;
+
+    if (!classId) {
+      return NextResponse.json(
+        { ok: false, error: "class_id_required" },
+        { status: 400 }
+      );
+    }
+
+    if (!deviceId) {
+      return NextResponse.json(
+        { ok: false, error: "device_id_required" },
+        { status: 400 }
+      );
+    }
+
+    const sb = supabaseServer();
+
+    const payload = {
+      class_id: classId,
+      device_id: deviceId,
+      screen,
+      session_id: sessionId,
+      last_seen_at: new Date().toISOString(),
+    };
+
+    const { error } = await sb
+      .from("class_presence")
+      .upsert(payload, {
+        onConflict: "class_id,device_id",
+      });
+
+    if (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "class_presence_upsert_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
     });
   } catch (e: any) {
     return NextResponse.json(

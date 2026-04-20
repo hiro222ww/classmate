@@ -494,7 +494,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
     {}
   );
-  const remoteCommittedRef = useRef<Record<string, ChalkStrokeRow>>({});
   const channelRef = useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
 
   const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
@@ -593,7 +592,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const clearRemoteOnly = () => {
     remoteProgressRef.current = {};
     remoteStyleRef.current = {};
-    remoteCommittedRef.current = {};
   };
 
   const redrawScene = () => {
@@ -606,9 +604,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     paintBoardBase();
 
-    const committedRows = Object.values(remoteCommittedRef.current);
     const mergedRows = upsertRows(
-      upsertRows(persistedRowsRef.current, committedRows),
+      persistedRowsRef.current,
       pendingRowsRef.current
     );
 
@@ -685,7 +682,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     });
 
     persistedRowsRef.current = upsertRows(persistedRowsRef.current, incoming);
-redrawScene();
+    redrawScene();
     setInfo("");
   };
 
@@ -752,30 +749,8 @@ redrawScene();
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          const style = remoteStyleRef.current[key];
-
-          const finalPoints =
-            p.points && p.points.length >= 1
-              ? p.points
-              : remoteProgressRef.current[key] ?? [];
-
-          if (finalPoints.length >= 1) {
-            remoteCommittedRef.current[key] = {
-              id: `${key}:commit`,
-              session_id: sessionId,
-              device_id: p.deviceId,
-              display_name: "参加者",
-              color: style?.color ?? p.color ?? "#ffffff",
-              width: style?.width ?? p.width ?? 3,
-              points: [...finalPoints],
-              kind: "stroke",
-              created_at: new Date().toISOString(),
-            };
-          }
-
           delete remoteProgressRef.current[key];
           delete remoteStyleRef.current[key];
-
           redrawScene();
           return;
         }
@@ -812,18 +787,6 @@ redrawScene();
 
         clearRemoteOnly();
 
-        remoteCommittedRef.current["__remote_clear__"] = {
-          id: `remote-clear-${p.clearAt}`,
-          session_id: sessionId,
-          device_id: p.deviceId,
-          display_name: "参加者",
-          color: BOARD_BG,
-          width: 1,
-          points: [],
-          kind: "clear",
-          created_at: new Date(p.clearAt).toISOString(),
-        };
-
         redrawScene();
       })
       .on(
@@ -856,11 +819,6 @@ redrawScene();
               delete remoteStyleRef.current[key];
             }
           }
-          for (const key of Object.keys(remoteCommittedRef.current)) {
-            if (key.startsWith(devicePrefix)) {
-              delete remoteCommittedRef.current[key];
-            }
-          }
 
           redrawScene();
         }
@@ -877,11 +835,11 @@ redrawScene();
       } else if (status === "TIMED_OUT") {
         setInfo("黒板Realtimeタイムアウト");
       } else if (status === "SUBSCRIBED") {
-  setInfo("");
-  if (!drawingRef.current) {
-    void loadAll();
-  }
-}
+        setInfo("");
+        if (!drawingRef.current) {
+          void loadAll();
+        }
+      }
     });
 
     channelRef.current = ch;
@@ -924,9 +882,9 @@ redrawScene();
     }
 
     fullSyncTimerRef.current = window.setInterval(() => {
-  if (drawingRef.current) return;
-  void loadAll();
-}, FULL_SYNC_INTERVAL_MS);
+      if (drawingRef.current) return;
+      void loadAll();
+    }, FULL_SYNC_INTERVAL_MS);
 
     return () => {
       if (fullSyncTimerRef.current) {
@@ -1024,10 +982,7 @@ redrawScene();
       created_at: new Date().toISOString(),
     };
 
-    // まず自分側に確定行を入れる
     persistedRowsRef.current = upsertRows(persistedRowsRef.current, [localCommittedRow]);
-
-    // pending も入れて、DB返却まで見た目を安定させる
     pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
     redrawScene();
 
@@ -1055,7 +1010,6 @@ redrawScene();
       });
       setInfo(`保存失敗: ${error.message}`);
 
-      // エラー時は local commit は残しておく
       pendingRowsRef.current = pendingRowsRef.current.filter(
         (row) => row.id !== optimisticRow.id
       );
@@ -1070,26 +1024,21 @@ redrawScene();
         pointCount: pts.length,
       });
 
-      // DB正式行を入れる
       persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
         data as ChalkStrokeRow,
       ]);
 
-      // 仮の local commit を掃除
       persistedRowsRef.current = persistedRowsRef.current.filter(
         (row) => row.id !== localCommittedRow.id
       );
     }
 
-    // 最後に pending を消す
     pendingRowsRef.current = pendingRowsRef.current.filter(
       (row) => row.id !== optimisticRow.id
     );
 
     redrawScene();
     setInfo("");
-
-    // 念のため完全同期
     void loadAll();
   };
 
@@ -1167,7 +1116,6 @@ redrawScene();
 
       lastInputAtRef.current = performance.now();
 
-      // 点だけでも自分には残す
       redrawScene();
 
       const now = performance.now();
