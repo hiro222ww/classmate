@@ -50,8 +50,14 @@ const CHALK_COLORS = [
 const BOARD_BG = "#0b3b2e";
 const BOARD_OUTER_BG = "#08271e";
 const ERASER_WIDTH = 28;
-const BOARD_LOGICAL_WIDTH = 1000;
+
+/**
+ * 以前: 1000 x 700
+ * 変更後: より横長にして、PCではかなり画面いっぱいに見えるようにする
+ */
+const BOARD_LOGICAL_WIDTH = 1600;
 const BOARD_LOGICAL_HEIGHT = 700;
+
 const MOBILE_MIN_BOARD_WIDTH_PX = 920;
 const INITIAL_STROKE_LOAD_LIMIT = 300;
 const FULL_SYNC_INTERVAL_MS = 4000;
@@ -991,6 +997,18 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     const safeName = sanitizeDisplayName(displayNameRef.current);
 
+    const localCommittedRow: ChalkStrokeRow = {
+      id: makeLocalRowId("local-commit"),
+      session_id: sessionId,
+      device_id: deviceIdRef.current,
+      display_name: safeName,
+      color: strokeColorRef.current,
+      width: strokeWidthRef.current,
+      points: pts,
+      kind: "stroke",
+      created_at: new Date().toISOString(),
+    };
+
     const optimisticRow: ChalkStrokeRow = {
       id: makeLocalRowId("stroke"),
       session_id: sessionId,
@@ -1003,6 +1021,10 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       created_at: new Date().toISOString(),
     };
 
+    // まず自分側に確定行を入れる
+    persistedRowsRef.current = upsertRows(persistedRowsRef.current, [localCommittedRow]);
+
+    // pending も入れて、DB返却まで見た目を安定させる
     pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
     redrawScene();
 
@@ -1022,10 +1044,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       )
       .single();
 
-    pendingRowsRef.current = pendingRowsRef.current.filter(
-      (row) => row.id !== optimisticRow.id
-    );
-
     if (error) {
       console.error("[chalk] persist stroke failed", {
         sessionId,
@@ -1033,6 +1051,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         pointCount: pts.length,
       });
       setInfo(`保存失敗: ${error.message}`);
+
+      // エラー時は local commit は残しておく
+      pendingRowsRef.current = pendingRowsRef.current.filter(
+        (row) => row.id !== optimisticRow.id
+      );
       redrawScene();
       return;
     }
@@ -1044,10 +1067,21 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         pointCount: pts.length,
       });
 
+      // DB正式行を入れる
       persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
         data as ChalkStrokeRow,
       ]);
+
+      // 仮の local commit を掃除
+      persistedRowsRef.current = persistedRowsRef.current.filter(
+        (row) => row.id !== localCommittedRow.id
+      );
     }
+
+    // 最後に pending を消す
+    pendingRowsRef.current = pendingRowsRef.current.filter(
+      (row) => row.id !== optimisticRow.id
+    );
 
     redrawScene();
     setInfo("");
@@ -1130,7 +1164,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
       lastInputAtRef.current = performance.now();
 
-      // 点だけでもローカルに見えるようにする
+      // 点だけでも自分には残す
       redrawScene();
 
       const now = performance.now();
@@ -1338,16 +1372,15 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       )
       .single();
 
-    pendingRowsRef.current = pendingRowsRef.current.filter(
-      (row) => row.id !== optimisticRow.id
-    );
-
     if (error) {
       console.error("[chalk] clear failed", {
         sessionId,
         message: error.message,
       });
       setInfo(`クリア送信失敗: ${error.message}`);
+      pendingRowsRef.current = pendingRowsRef.current.filter(
+        (row) => row.id !== optimisticRow.id
+      );
       redrawScene();
       return;
     }
@@ -1362,6 +1395,10 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         data as ChalkStrokeRow,
       ]);
     }
+
+    pendingRowsRef.current = pendingRowsRef.current.filter(
+      (row) => row.id !== optimisticRow.id
+    );
 
     redrawScene();
     setInfo("");
@@ -1563,6 +1600,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           style={{
             position: "relative",
             width: "100%",
+            maxWidth: "1500px",
+            margin: "0 auto",
             minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
             aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
             borderRadius: 16,
