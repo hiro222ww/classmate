@@ -20,7 +20,8 @@ export async function GET(req: Request) {
     const { data, error } = await sb
       .from("class_memberships")
       .select("device_id, joined_at, user_profiles(display_name, photo_path)")
-      .eq("class_id", classId);
+      .eq("class_id", classId)
+      .order("joined_at", { ascending: true });
 
     if (error) {
       return NextResponse.json(
@@ -30,9 +31,9 @@ export async function GET(req: Request) {
     }
 
     const members = (data ?? []).map((row: any) => ({
-      device_id: String(row.device_id ?? ""),
+      device_id: String(row.device_id ?? "").trim(),
       joined_at: row.joined_at ?? null,
-      display_name: row.user_profiles?.display_name ?? "メンバー",
+      display_name: String(row.user_profiles?.display_name ?? "").trim() || "メンバー",
       photo_path: row.user_profiles?.photo_path ?? null,
     }));
 

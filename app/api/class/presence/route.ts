@@ -3,6 +3,21 @@ import { supabaseServer } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
+type PresenceStatus = "offline" | "waiting" | "active";
+
+type PresenceRow = {
+  device_id: string;
+  status: PresenceStatus;
+  session_id: string | null;
+  updated_at: string | null;
+};
+
+function rankStatus(status: PresenceStatus) {
+  if (status === "active") return 2;
+  if (status === "waiting") return 1;
+  return 0;
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -74,9 +89,21 @@ export async function GET(req: Request) {
       });
     }
 
-    const sessionStatusMap = new Map<string, string>();
+    const sessionStatusMap = new Map<string, PresenceStatus>();
     for (const s of sessions ?? []) {
-      sessionStatusMap.set(String(s.id), String(s.status ?? ""));
+      const sessionId = String(s.id ?? "").trim();
+      const raw = String(s.status ?? "").trim();
+
+      const status: PresenceStatus =
+        raw === "active"
+          ? "active"
+          : raw === "forming" || raw === "waiting"
+            ? "waiting"
+            : "offline";
+
+      if (sessionId) {
+        sessionStatusMap.set(sessionId, status);
+      }
     }
 
     const { data: sessionMembers, error: membersError } = await sb
@@ -95,34 +122,52 @@ export async function GET(req: Request) {
       );
     }
 
-    const activeMap = new Map<string, any>();
+    const bestPresenceByDevice = new Map<string, PresenceRow>();
 
     for (const row of sessionMembers ?? []) {
       const deviceId = String(row.device_id ?? "").trim();
       const sessionId = String(row.session_id ?? "").trim();
-      if (!deviceId) continue;
+      if (!deviceId || !sessionId) continue;
 
-      const sessionStatus = sessionStatusMap.get(sessionId);
-      const status =
-        sessionStatus === "active"
-          ? "active"
-          : sessionStatus === "waiting" || sessionStatus === "forming"
-            ? "waiting"
-            : "offline";
+      const status = sessionStatusMap.get(sessionId) ?? "offline";
+      const updatedAt = row.joined_at ?? null;
 
-      activeMap.set(deviceId, {
+      const nextRow: PresenceRow = {
         device_id: deviceId,
         status,
-        session_id: sessionId || null,
-        updated_at: row.joined_at ?? null,
-      });
+        session_id: sessionId,
+        updated_at: updatedAt,
+      };
+
+      const prev = bestPresenceByDevice.get(deviceId);
+      if (!prev) {
+        bestPresenceByDevice.set(deviceId, nextRow);
+        continue;
+      }
+
+      const prevRank = rankStatus(prev.status);
+      const nextRank = rankStatus(nextRow.status);
+
+      if (nextRank > prevRank) {
+        bestPresenceByDevice.set(deviceId, nextRow);
+        continue;
+      }
+
+      if (nextRank === prevRank) {
+        const prevTs = prev.updated_at ? new Date(prev.updated_at).getTime() : 0;
+        const nextTs = nextRow.updated_at ? new Date(nextRow.updated_at).getTime() : 0;
+
+        if (nextTs > prevTs) {
+          bestPresenceByDevice.set(deviceId, nextRow);
+        }
+      }
     }
 
     const presence = memberIds.map((device_id) => {
       return (
-        activeMap.get(device_id) ?? {
+        bestPresenceByDevice.get(device_id) ?? {
           device_id,
-          status: "offline",
+          status: "offline" as const,
           session_id: null,
           updated_at: null,
         }

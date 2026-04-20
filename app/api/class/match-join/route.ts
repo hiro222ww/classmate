@@ -44,6 +44,25 @@ function calcAgeFromBirthDate(birthDate: string | null | undefined) {
   return age >= 0 ? age : null;
 }
 
+function isDeadlinePassed(matchDeadlineAt?: string | null) {
+  if (!matchDeadlineAt) return false;
+  const deadline = new Date(matchDeadlineAt).getTime();
+  if (!Number.isFinite(deadline)) return false;
+  return Date.now() > deadline;
+}
+
+function deadlineError(matchDeadlineAt?: string | null) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "match_deadline_passed",
+      matchDeadlineAt: matchDeadlineAt ?? null,
+      message: "このマッチングは締め切られました",
+    },
+    { status: 400 }
+  );
+}
+
 type ProfileRow = {
   device_id: string;
   birth_date?: string | null;
@@ -256,6 +275,15 @@ async function runAtomicMatch(params: {
   if (error) {
     console.error("❌ RPC ERROR FULL", error);
 
+    if (
+      String(error.message ?? "").includes("match_deadline_passed")
+    ) {
+      return {
+        ok: false as const,
+        response: deadlineError(null),
+      };
+    }
+
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -367,7 +395,7 @@ export async function POST(req: Request) {
     if (forcedClassId) {
       const { data: existingClass, error: classErr } = await supabase
         .from("classes")
-        .select("id,name")
+        .select("id,name,match_deadline_at,world_key,topic_key")
         .eq("id", forcedClassId)
         .maybeSingle();
 
@@ -391,6 +419,25 @@ export async function POST(req: Request) {
           },
           { status: 404 }
         );
+      }
+
+      console.log("[match-join] deadline check", {
+        branch: "forcedClassId",
+        forcedClassId,
+        classId: existingClass.id,
+        topicKey: existingClass.topic_key ?? null,
+        worldKey: existingClass.world_key ?? null,
+        matchDeadlineAt: (existingClass as any).match_deadline_at ?? null,
+        now: new Date().toISOString(),
+      });
+
+      if (isDeadlinePassed((existingClass as any).match_deadline_at ?? null)) {
+        console.log("[match-join] deadline blocked", {
+          branch: "forcedClassId",
+          classId: existingClass.id,
+          matchDeadlineAt: (existingClass as any).match_deadline_at ?? null,
+        });
+        return deadlineError((existingClass as any).match_deadline_at ?? null);
       }
 
       classId = String(existingClass.id);

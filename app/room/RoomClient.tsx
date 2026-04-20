@@ -26,6 +26,15 @@ type MemberRow = {
   joined_at?: string;
 };
 
+type PresenceStatus = "offline" | "waiting" | "active";
+
+type PresenceRow = {
+  device_id: string;
+  status: PresenceStatus;
+  session_id?: string | null;
+  updated_at?: string | null;
+};
+
 type RoomMessage = {
   id: string;
   session_id: string;
@@ -173,6 +182,36 @@ async function readJsonSafe(res: Response) {
   } catch {
     return {};
   }
+}
+
+function statusLabel(status: PresenceStatus) {
+  if (status === "active") return "通話中";
+  if (status === "waiting") return "オンライン";
+  return "オフライン";
+}
+
+function statusStyle(status: PresenceStatus) {
+  if (status === "active") {
+    return {
+      background: "#dcfce7",
+      color: "#166534",
+      border: "1px solid #86efac",
+    };
+  }
+
+  if (status === "waiting") {
+    return {
+      background: "#fef3c7",
+      color: "#92400e",
+      border: "1px solid #fcd34d",
+    };
+  }
+
+  return {
+    background: "#f3f4f6",
+    color: "#6b7280",
+    border: "1px solid #d1d5db",
+  };
 }
 
 function dedupeMembers(
@@ -358,6 +397,7 @@ export default function RoomClient() {
     : "/class/select";
 
   const [members, setMembers] = useState<MemberRow[]>([]);
+  const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
   const [msgs, setMsgs] = useState<RoomMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [topicTitle, setTopicTitle] = useState("ルーム");
@@ -593,6 +633,51 @@ export default function RoomClient() {
   }, [sessionId, classId, pathname, topicTitle]);
 
   useEffect(() => {
+    if (!classId) return;
+    if (pathname !== "/room") return;
+
+    let cancelled = false;
+
+    async function loadPresence() {
+      try {
+        const res = await fetch(
+          `/api/class/presence?classId=${encodeURIComponent(classId)}`,
+          { cache: "no-store" }
+        );
+
+        const json = await readJsonSafe(res);
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) return;
+
+        const list = Array.isArray(json?.presence) ? json.presence : [];
+        const nextMap: Record<string, PresenceRow> = {};
+
+        for (const row of list) {
+          const did = String(row?.device_id ?? "").trim();
+          if (!did) continue;
+          nextMap[did] = row;
+        }
+
+        setPresenceMap(nextMap);
+      } catch (e) {
+        console.error("[room] presence load failed", e);
+      }
+    }
+
+    void loadPresence();
+
+    const timer = window.setInterval(() => {
+      if (window.location.pathname !== "/room") return;
+      void loadPresence();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classId, pathname]);
+
+  useEffect(() => {
     if (!sessionId) {
       setErr("sessionId required");
       return;
@@ -714,7 +799,7 @@ export default function RoomClient() {
   }, [sessionId, classId, pathname, fetchStatus]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
 
     const channel = supabase
@@ -958,6 +1043,10 @@ export default function RoomClient() {
                         "参加者"
                       : normalizeName(m.display_name) || "参加者";
 
+                    const presence =
+                      presenceMap[String(m.device_id ?? "").trim()]?.status ?? "offline";
+                    const pill = statusStyle(presence);
+
                     return (
                       <div
                         key={String(m.device_id ?? "unknown")}
@@ -996,11 +1085,35 @@ export default function RoomClient() {
                           <div
                             style={{
                               marginTop: 4,
-                              fontSize: 12,
-                              color: "#6b7280",
+                              display: "flex",
+                              gap: 8,
+                              alignItems: "center",
+                              flexWrap: "wrap",
                             }}
                           >
-                            {isMe ? "自分" : "参加中"}
+                            {isMe ? (
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: "#6b7280",
+                                }}
+                              >
+                                自分
+                              </span>
+                            ) : null}
+
+                            <span
+                              style={{
+                                ...pill,
+                                fontSize: 11,
+                                fontWeight: 900,
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {statusLabel(presence)}
+                            </span>
                           </div>
                         </div>
                       </div>
