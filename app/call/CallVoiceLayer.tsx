@@ -79,6 +79,9 @@ export default function CallVoiceLayer({
   const offeredPeersRef = useRef<Set<string>>(new Set());
   const startedPeersRef = useRef<Set<string>>(new Set());
 
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const retrySubscribeTimerRef = useRef<number | null>(null);
+
   const [micReady, setMicReady] = useState(false);
   const [signalReady, setSignalReady] = useState(false);
   const [remoteAudios, setRemoteAudios] = useState<Record<string, RemoteAudioState>>(
@@ -157,6 +160,13 @@ export default function CallVoiceLayer({
     }
   }, []);
 
+  const clearRetrySubscribeTimer = useCallback(() => {
+    if (retrySubscribeTimerRef.current) {
+      window.clearTimeout(retrySubscribeTimerRef.current);
+      retrySubscribeTimerRef.current = null;
+    }
+  }, []);
+
   const getCurrentConnectionId = useCallback((remoteId: string) => {
     return connectionIdsRef.current.get(remoteId) ?? null;
   }, []);
@@ -197,22 +207,22 @@ export default function CallVoiceLayer({
   );
 
   const syncSendersMuted = useCallback(
-  async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
-    const localTrack = localAudioTrackRef.current;
-    if (!localTrack) return;
+    async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
+      const localTrack = localAudioTrackRef.current;
+      if (!localTrack) return;
 
-    localTrack.enabled = !muted;
+      localTrack.enabled = !muted;
 
-    console.log("[call] sender mute sync", {
-      remoteId,
-      muted,
-      localTrackId: localTrack.id,
-      enabled: localTrack.enabled,
-      readyState: localTrack.readyState,
-    });
-  },
-  []
-);
+      console.log("[call] sender mute sync", {
+        remoteId,
+        muted,
+        localTrackId: localTrack.id,
+        enabled: localTrack.enabled,
+        readyState: localTrack.readyState,
+      });
+    },
+    []
+  );
 
   const syncAllPeerSendersMuted = useCallback(
     async (muted: boolean) => {
@@ -313,6 +323,8 @@ export default function CallVoiceLayer({
         setCurrentConnectionId(remoteId, nextConnectionId);
 
         console.log("[call] reconnect prepared", remoteId, nextConnectionId);
+
+        void maybeStartOffer(remoteId);
       }, delay);
 
       reconnectTimersRef.current.set(remoteId, timer);
@@ -340,11 +352,11 @@ export default function CallVoiceLayer({
       });
 
       const localTrack = localAudioTrackRef.current;
-const localStream = localStreamRef.current;
+      const localStream = localStreamRef.current;
 
-if (localTrack && localStream) {
-  pc.addTrack(localTrack, localStream);
-}
+      if (localTrack && localStream) {
+        pc.addTrack(localTrack, localStream);
+      }
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
@@ -387,6 +399,18 @@ if (localTrack && localStream) {
       pc.oniceconnectionstatechange = () => {
         console.log("[call] ice state", remoteId, connectionId, pc.iceConnectionState);
         notifyStatus(`ice ${remoteId}: ${pc.iceConnectionState}`);
+
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) return;
+
+        if (
+          pc.iceConnectionState === "disconnected" ||
+          pc.iceConnectionState === "failed"
+        ) {
+          console.warn("[call] ICE dead → reconnect", remoteId, connectionId);
+          setPeerState(remoteId, "failed");
+          scheduleReconnect(remoteId, 900);
+        }
       };
 
       pc.onconnectionstatechange = () => {
@@ -438,7 +462,6 @@ if (localTrack && localStream) {
       clearReconnectTimer,
       closePeer,
       getCurrentConnectionId,
-      isMuted,
       notifyStatus,
       scheduleReconnect,
       sendSignal,
@@ -721,8 +744,8 @@ if (localTrack && localStream) {
         localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
 
         if (localAudioTrackRef.current) {
-  localAudioTrackRef.current.enabled = !isMuted;
-}
+          localAudioTrackRef.current.enabled = !isMuted;
+        }
 
         console.log("[call] local audio track", {
           deviceId,
@@ -746,6 +769,8 @@ if (localTrack && localStream) {
     return () => {
       mounted = false;
 
+      clearRetrySubscribeTimer();
+
       for (const remoteId of Array.from(reconnectTimersRef.current.keys())) {
         clearReconnectTimer(remoteId);
       }
@@ -761,6 +786,11 @@ if (localTrack && localStream) {
         closePeer(remoteId, { clearConnectionId: true });
       }
 
+      if (channelRef.current) {
+        void supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
@@ -769,6 +799,7 @@ if (localTrack && localStream) {
     };
   }, [
     clearReconnectTimer,
+    clearRetrySubscribeTimer,
     closePeer,
     deviceId,
     getCurrentConnectionId,
@@ -872,41 +903,73 @@ if (localTrack && localStream) {
       }
     };
 
-    subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
+    const startSubscribe = () => {
+      if (!alive) return;
+      if (channelRef.current) return;
 
-    const channel = supabase
-      .channel(`call-signals-${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "call_signals",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        async (payload) => {
-          const row = payload.new as SignalRow;
-          await handleSignal(row);
-        }
-      )
-      .subscribe(async (status) => {
-        console.log("[call] signal subscribe status", status);
+      subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
 
-        if (!alive) return;
+      const channel = supabase
+        .channel(`call-signals-${sessionId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "call_signals",
+            filter: `session_id=eq.${sessionId}`,
+          },
+          async (payload) => {
+            const row = payload.new as SignalRow;
+            await handleSignal(row);
+          }
+        )
+        .subscribe(async (status) => {
+          console.log("[call] signal subscribe status", status);
 
-        if (status === "SUBSCRIBED") {
-          await bootRecentSignals();
           if (!alive) return;
-          setSignalReady(true);
-        }
-      });
+
+          if (status === "SUBSCRIBED") {
+            clearRetrySubscribeTimer();
+            await bootRecentSignals();
+            if (!alive) return;
+            setSignalReady(true);
+            return;
+          }
+
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            console.warn("[call] signal channel unstable → retry", status);
+            setSignalReady(false);
+
+            if (channelRef.current) {
+              void supabase.removeChannel(channelRef.current);
+              channelRef.current = null;
+            }
+
+            clearRetrySubscribeTimer();
+            retrySubscribeTimerRef.current = window.setTimeout(() => {
+              retrySubscribeTimerRef.current = null;
+              startSubscribe();
+            }, 700);
+          }
+        });
+
+      channelRef.current = channel;
+    };
+
+    startSubscribe();
 
     return () => {
       alive = false;
       setSignalReady(false);
-      void supabase.removeChannel(channel);
+      clearRetrySubscribeTimer();
+
+      if (channelRef.current) {
+        void supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
-  }, [sessionId, deviceId, handleSignal]);
+  }, [sessionId, deviceId, handleSignal, clearRetrySubscribeTimer]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -975,6 +1038,43 @@ if (localTrack && localStream) {
       window.clearInterval(timer);
     };
   }, [members, micReady, signalReady, deviceId, maybeStartOffer]);
+
+  useEffect(() => {
+    if (!micReady) return;
+    if (!signalReady) return;
+
+    const timer = window.setInterval(() => {
+      const remoteIds = members
+        .map((m) => m.device_id)
+        .filter((id) => id && id !== deviceId);
+
+      for (const remoteId of remoteIds) {
+        const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
+        const pc = pcsRef.current.get(remoteId);
+
+        if (hasRemoteStream) continue;
+        if (!pc) continue;
+
+        const badState =
+          pc.connectionState === "failed" ||
+          pc.connectionState === "disconnected" ||
+          pc.iceConnectionState === "failed" ||
+          pc.iceConnectionState === "disconnected";
+
+        if (badState) {
+          console.warn("[call] watchdog reconnect", remoteId, {
+            connectionState: pc.connectionState,
+            iceConnectionState: pc.iceConnectionState,
+          });
+          scheduleReconnect(remoteId, 500);
+        }
+      }
+    }, 4000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [members, micReady, signalReady, deviceId, scheduleReconnect]);
 
   return (
     <>
