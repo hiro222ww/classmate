@@ -59,7 +59,6 @@ const BOARD_LOGICAL_WIDTH = 1600;
 const BOARD_LOGICAL_HEIGHT = 700;
 
 const MOBILE_MIN_BOARD_WIDTH_PX = 920;
-const INITIAL_STROKE_LOAD_LIMIT = 300;
 const FULL_SYNC_INTERVAL_MS = 4000;
 
 function sanitizeDisplayName(v: string | null | undefined) {
@@ -663,8 +662,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         "id, session_id, device_id, display_name, color, width, points, kind, created_at"
       )
       .eq("session_id", sessionId)
-      .order("created_at", { ascending: true })
-      .limit(INITIAL_STROKE_LOAD_LIMIT);
+      .order("created_at", { ascending: true });
 
     if (error) {
       console.error("[chalk] loadAll failed", {
@@ -749,9 +747,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          delete remoteProgressRef.current[key];
-          delete remoteStyleRef.current[key];
-          redrawScene();
+          // DB INSERT で正式確定されるまでここでは消さない
           return;
         }
 
@@ -786,7 +782,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         if (p.deviceId === deviceIdRef.current) return;
 
         clearRemoteOnly();
-
         redrawScene();
       })
       .on(
@@ -1115,7 +1110,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       strokeIdRef.current = makeStrokeId();
 
       lastInputAtRef.current = performance.now();
-
       redrawScene();
 
       const now = performance.now();
