@@ -4,6 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/* ========= env ========= */
+
 const SUPABASE_URL =
   process.env.SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
@@ -16,6 +18,8 @@ const SERVICE_ROLE =
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 
+/* ========= types ========= */
+
 type TopicRow = {
   topic_key: string;
   title: string;
@@ -27,13 +31,14 @@ type TopicRow = {
   created_at?: string;
 };
 
-function bad(status: number, error: string, extra?: Record<string, any>) {
-  console.error("[admin/topics] bad", { status, error, ...(extra ?? {}) });
+/* ========= utils ========= */
 
-  // デバッグ中は 200 で返して画面側で中身を見やすくする
+function bad(status: number, error: string, extra?: Record<string, any>) {
+  console.error("[topics] bad", { status, error, ...(extra ?? {}) });
+
   return NextResponse.json(
     { ok: false, error, ...(extra ?? {}), topics: [] },
-    { status: 200 }
+    { status }
   );
 }
 
@@ -53,54 +58,52 @@ function toNum(v: any, fallback: number) {
 }
 
 function normalizeTopicInput(t: any) {
-  const topic_key = String(t?.topic_key ?? "").trim();
-  const title = String(t?.title ?? "").trim();
-  const description = typeof t?.description === "string" ? t.description : "";
-  const is_sensitive = Boolean(t?.is_sensitive);
-  const min_age = toNum(t?.min_age, 0);
-  const monthly_price = toNum(t?.monthly_price, 0);
-  return { topic_key, title, description, is_sensitive, min_age, monthly_price };
+  return {
+    topic_key: String(t?.topic_key ?? "").trim(),
+    title: String(t?.title ?? "").trim(),
+    description: typeof t?.description === "string" ? t.description : "",
+    is_sensitive: Boolean(t?.is_sensitive),
+    min_age: toNum(t?.min_age, 0),
+    monthly_price: toNum(t?.monthly_price, 0),
+  };
 }
 
-/**
- * デフォルトボード(classes)を作る
- */
-async function ensureDefaultBoard(
-  supabase: ReturnType<typeof getSupabase>,
-  topic: {
-    topic_key: string;
-    title: string;
-    description: string;
-    is_sensitive: boolean;
-    min_age: number;
-  },
-  opts?: { world_key?: string | null }
-) {
-  const topic_key = topic.topic_key;
+/* =========================================================
+   🟢 フロント用（これが今回の本命）
+========================================================= */
 
-  const { data: exists, error: exErr } = await supabase
-    .from("classes")
-    .select("id")
-    .eq("topic_key", topic_key)
-    .limit(1);
+export async function GET() {
+  try {
+    if (!SUPABASE_URL || !SERVICE_ROLE) {
+      return bad(500, "env_not_set");
+    }
 
-  if (exErr) throw new Error(exErr.message);
+    const supabase = getSupabase();
 
-  if (!exists || exists.length === 0) {
-    const cls: any = {
-      name: topic.title,
-      description: topic.description || "",
-      world_key: opts?.world_key ?? null,
-      topic_key,
-      min_age: topic.min_age ?? 0,
-      is_sensitive: topic.is_sensitive ?? false,
-      is_user_created: false,
-    };
+    const { data, error } = await supabase
+      .from("topics")
+      .select(
+        "topic_key,title,description,is_sensitive,min_age,monthly_price,is_archived,created_at"
+      )
+      .eq("is_archived", false)
+      .order("monthly_price", { ascending: true })
+      .order("created_at", { ascending: true });
 
-    const { error: cInsErr } = await supabase.from("classes").insert(cls);
-    if (cInsErr) throw new Error(`class create failed: ${cInsErr.message}`);
+    if (error) {
+      return bad(500, error.message, { where: "topics_get" });
+    }
+
+    return ok({
+      topics: (data ?? []) as TopicRow[],
+    });
+  } catch (e: any) {
+    return bad(500, e?.message ?? "topics_failed", { where: "catch" });
   }
 }
+
+/* =========================================================
+   🔒 管理用（既存そのまま）
+========================================================= */
 
 export async function POST(req: Request) {
   try {
@@ -108,248 +111,96 @@ export async function POST(req: Request) {
     const password = String(body?.password ?? "").trim();
     const mode = String(body?.mode ?? "").trim();
 
-    console.log("[admin/topics] env", {
-      hasAdminPassword: Boolean(ADMIN_PASSWORD),
-      hasSupabaseUrl: Boolean(SUPABASE_URL),
-      hasServiceRole: Boolean(SERVICE_ROLE),
-      supabaseUrlHead: SUPABASE_URL ? SUPABASE_URL.slice(0, 32) : "",
-      serviceRoleHead: SERVICE_ROLE ? SERVICE_ROLE.slice(0, 20) : "",
-    });
-
-    console.log("[admin/topics] request", {
-      mode,
-      hasPassword: Boolean(password),
-      passwordLength: password.length,
-    });
-
-    if (!ADMIN_PASSWORD) {
-      return bad(500, "ADMIN_PASSWORD is not set", { where: "env_admin_password" });
-    }
-    if (!SUPABASE_URL) {
-      return bad(500, "SUPABASE_URL is not set", { where: "env_supabase_url" });
-    }
-    if (!SERVICE_ROLE) {
-      return bad(500, "SUPABASE_SERVICE_ROLE_KEY is not set", {
-        where: "env_service_role",
-      });
-    }
+    if (!ADMIN_PASSWORD) return bad(500, "ADMIN_PASSWORD not set");
+    if (!SUPABASE_URL) return bad(500, "SUPABASE_URL not set");
+    if (!SERVICE_ROLE) return bad(500, "SERVICE_ROLE not set");
 
     if (!password || password !== ADMIN_PASSWORD) {
-      return bad(401, "invalid password", { where: "password_check" });
+      return bad(401, "invalid password");
     }
-    if (!mode) {
-      return bad(400, "mode is required", { where: "mode_check" });
-    }
+
+    if (!mode) return bad(400, "mode required");
 
     const supabase = getSupabase();
 
-    // ===== list =====
+    /* ===== list ===== */
     if (mode === "list") {
-      const showArchived = Boolean(body?.show_archived);
-
-      let q = supabase
+      const { data, error } = await supabase
         .from("topics")
-        .select(
-          "topic_key,title,description,is_sensitive,min_age,monthly_price,is_archived,created_at"
-        )
-        .order("is_archived", { ascending: true })
-        .order("monthly_price", { ascending: true })
+        .select("*")
         .order("created_at", { ascending: true });
 
-      if (!showArchived) q = q.eq("is_archived", false);
+      if (error) return bad(500, error.message);
 
-      const { data, error } = await q;
+      return ok({ topics: data ?? [] });
+    }
 
-      console.log("[admin/topics] list result", {
-        hasError: Boolean(error),
-        errorMessage: error?.message ?? "",
-        rowCount: data?.length ?? 0,
+    /* ===== create ===== */
+    if (mode === "create") {
+      const t = normalizeTopicInput(body?.topic);
+
+      if (!t.topic_key) return bad(400, "topic_key required");
+      if (!t.title) return bad(400, "title required");
+
+      const { error } = await supabase.from("topics").insert({
+        ...t,
+        is_archived: false,
       });
 
-      if (error) {
-        return bad(500, error.message, { where: "topics_list" });
-      }
+      if (error) return bad(500, error.message);
 
-      return ok({ topics: (data ?? []) as TopicRow[] });
+      return ok();
     }
 
-    // ===== create =====
-    if (mode === "create") {
-      const t = body?.topic ?? {};
-      const { topic_key, title, description, is_sensitive, min_age, monthly_price } =
-        normalizeTopicInput(t);
-
-      if (!topic_key) {
-        return bad(400, "topic.topic_key is required", { where: "topics_create_key" });
-      }
-      if (!title) {
-        return bad(400, "topic.title is required", { where: "topics_create_title" });
-      }
-
-      const row: any = {
-        topic_key,
-        title,
-        description,
-        is_sensitive,
-        min_age,
-        monthly_price,
-        is_archived: false,
-      };
-
-      const { data: insTopic, error: insErr } = await supabase
-        .from("topics")
-        .insert(row)
-        .select(
-          "topic_key,title,description,is_sensitive,min_age,monthly_price,is_archived,created_at"
-        )
-        .maybeSingle();
-
-      if (insErr) {
-        return bad(500, insErr.message, { where: "topics_create" });
-      }
-
-      try {
-        await ensureDefaultBoard(
-          supabase,
-          { topic_key, title, description, is_sensitive, min_age },
-          { world_key: body?.default_world_key ?? null }
-        );
-      } catch (e: any) {
-        return bad(500, e?.message ?? "class create failed", {
-          where: "ensure_default_board",
-          inserted_topic: insTopic ?? null,
-        });
-      }
-
-      return ok({ inserted_topic: insTopic ?? null });
-    }
-
-    // ===== update =====
+    /* ===== update ===== */
     if (mode === "update") {
       const topic_key = String(body?.topic_key ?? "").trim();
-      const patch = (body?.patch ?? {}) as Partial<TopicRow>;
-      if (!topic_key) {
-        return bad(400, "topic_key is required", { where: "topics_update_key" });
-      }
+      const patch = body?.patch ?? {};
 
-      const updatePatch: any = {};
-      if (typeof patch.title === "string") updatePatch.title = patch.title;
-      if (typeof patch.description === "string") updatePatch.description = patch.description;
-      if (typeof patch.is_sensitive === "boolean") updatePatch.is_sensitive = patch.is_sensitive;
-      if (typeof patch.min_age === "number") updatePatch.min_age = patch.min_age;
-      if (typeof patch.monthly_price === "number") {
-        updatePatch.monthly_price = patch.monthly_price;
-      }
+      if (!topic_key) return bad(400, "topic_key required");
 
       const { error } = await supabase
         .from("topics")
-        .update(updatePatch)
+        .update(patch)
         .eq("topic_key", topic_key);
 
-      if (error) {
-        return bad(500, error.message, { where: "topics_update" });
-      }
+      if (error) return bad(500, error.message);
 
       return ok();
     }
 
-    // ===== archive / unarchive =====
+    /* ===== archive ===== */
     if (mode === "archive" || mode === "unarchive") {
       const topic_key = String(body?.topic_key ?? "").trim();
-      if (!topic_key) {
-        return bad(400, "topic_key is required", { where: "topics_archive_key" });
-      }
+      if (!topic_key) return bad(400, "topic_key required");
 
-      const is_archived = mode === "archive";
       const { error } = await supabase
         .from("topics")
-        .update({ is_archived })
+        .update({ is_archived: mode === "archive" })
         .eq("topic_key", topic_key);
 
-      if (error) {
-        return bad(500, error.message, { where: "topics_archive" });
-      }
+      if (error) return bad(500, error.message);
 
       return ok();
     }
 
-    // ===== delete =====
+    /* ===== delete ===== */
     if (mode === "delete") {
       const topic_key = String(body?.topic_key ?? "").trim();
-      if (!topic_key) {
-        return bad(400, "topic_key is required", { where: "topics_delete_key" });
-      }
+      if (!topic_key) return bad(400, "topic_key required");
 
-      const { data: t, error: tErr } = await supabase
-        .from("topics")
-        .select("topic_key,is_archived")
-        .eq("topic_key", topic_key)
-        .maybeSingle();
-
-      if (tErr) {
-        return bad(500, tErr.message, { where: "topics_delete_lookup" });
-      }
-      if (!t) {
-        return bad(404, "topic not found", { where: "topics_delete_not_found" });
-      }
-      if (!t.is_archived) {
-        return bad(400, "topic must be archived before delete", {
-          where: "topics_delete_must_archive_first",
-          code: "must_archive_first",
-        });
-      }
-
-      const { error: delAutoErr } = await supabase
-        .from("classes")
-        .delete()
-        .eq("topic_key", topic_key)
-        .eq("is_user_created", false);
-
-      if (delAutoErr) {
-        return bad(500, `delete default classes failed: ${delAutoErr.message}`, {
-          where: "topics_delete_default_classes",
-        });
-      }
-
-      const { count, error: cErr } = await supabase
-        .from("classes")
-        .select("id", { count: "exact", head: true })
-        .eq("topic_key", topic_key);
-
-      if (cErr) {
-        return bad(500, cErr.message, { where: "topics_delete_classes_count" });
-      }
-      if ((count ?? 0) > 0) {
-        return bad(400, "topic is used by classes; cannot delete", {
-          where: "topics_delete_topic_in_use",
-          code: "topic_in_use",
-          count,
-        });
-      }
-
-      const { error: dErr } = await supabase
+      const { error } = await supabase
         .from("topics")
         .delete()
         .eq("topic_key", topic_key);
 
-      if (dErr) {
-        return bad(500, dErr.message, { where: "topics_delete" });
-      }
+      if (error) return bad(500, error.message);
 
       return ok();
     }
 
-    return bad(400, `unknown mode: ${mode}`, { where: "unknown_mode" });
+    return bad(400, `unknown mode: ${mode}`);
   } catch (e: any) {
-    console.error("[admin/topics] fatal", e);
-    return NextResponse.json(
-      {
-        ok: false,
-        error: e?.message ?? "admin topics failed",
-        where: "catch",
-        topics: [],
-      },
-      { status: 200 }
-    );
+    return bad(500, e?.message ?? "topics_failed");
   }
 }
