@@ -134,6 +134,34 @@ async function getCurrentMemberships(deviceId: string) {
   return { ok: true as const, currentIds };
 }
 
+async function getMatchPrefs(deviceId: string) {
+  const { data, error } = await supabase
+    .from("user_match_prefs")
+    .select("min_age,max_age")
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "match_prefs_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    minAge: Number(data?.min_age ?? 18),
+    maxAge: Number(data?.max_age ?? 25),
+  };
+}
+
 async function ensureMembership(params: {
   deviceId: string;
   classId: string;
@@ -273,11 +301,6 @@ export async function POST(req: Request) {
     const requestedCapacity = normalizeCapacity(body.capacity);
     const forcedClassId = String(body.classId ?? "").trim();
 
-    const rawMinAge = normalizeAge(body.minAge, 18);
-    const rawMaxAge = normalizeAge(body.maxAge, 25);
-    const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
-    const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
-
     console.log("🔥 MATCH JOIN ATOMIC VERSION LOADED");
     console.log("[class/match-join] body =", body);
     console.log("[class/match-join] deviceId =", deviceId);
@@ -285,8 +308,6 @@ export async function POST(req: Request) {
     console.log("[class/match-join] worldKey =", worldKey);
     console.log("[class/match-join] requestedCapacity =", requestedCapacity);
     console.log("[class/match-join] forcedClassId =", forcedClassId);
-    console.log("[class/match-join] requestedMinAge =", requestedMinAge);
-    console.log("[class/match-join] requestedMaxAge =", requestedMaxAge);
 
     if (!deviceId) {
       return NextResponse.json(
@@ -294,6 +315,28 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    const prefsRes = await getMatchPrefs(deviceId);
+    if (!prefsRes.ok) return prefsRes.response;
+
+    const fallbackMinAge = normalizeAge(prefsRes.minAge, 18);
+    const fallbackMaxAge = normalizeAge(prefsRes.maxAge, 25);
+
+    const rawMinAge = normalizeAge(body.minAge, fallbackMinAge);
+    const rawMaxAge = normalizeAge(body.maxAge, fallbackMaxAge);
+    const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
+    const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
+
+    console.log("[class/match-join] prefs fallback =", {
+      minAge: fallbackMinAge,
+      maxAge: fallbackMaxAge,
+    });
+    console.log("[class/match-join] final ages =", {
+      bodyMinAge: body.minAge ?? null,
+      bodyMaxAge: body.maxAge ?? null,
+      requestedMinAge,
+      requestedMaxAge,
+    });
 
     const profileRes = await getProfile(deviceId);
     if (!profileRes.ok) return profileRes.response;

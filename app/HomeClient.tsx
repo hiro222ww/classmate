@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { DevPanel } from "@/components/DevPanel";
@@ -24,6 +24,31 @@ type MineClass = {
   created_at: string | null;
 };
 
+type ClassMember = {
+  device_id: string;
+  display_name: string;
+  photo_path?: string | null;
+  joined_at?: string | null;
+};
+
+type PresenceStatus = "offline" | "waiting" | "active";
+
+type PresenceRow = {
+  device_id: string;
+  status: PresenceStatus;
+  session_id?: string | null;
+  updated_at?: string | null;
+};
+
+type ClassMessage = {
+  id: number;
+  class_id: string;
+  device_id: string;
+  message: string;
+  msg_type?: string | null;
+  created_at?: string | null;
+};
+
 function formatClassTitle(c: MineClass): string {
   const raw = String(c.name || "").trim();
   if (raw) return raw;
@@ -45,6 +70,55 @@ async function readJsonSafe(res: Response) {
   } catch {
     return {};
   }
+}
+
+function statusLabel(status: PresenceStatus) {
+  if (status === "active") return "通話中";
+  if (status === "waiting") return "オンライン";
+  return "オフライン";
+}
+
+function statusStyle(status: PresenceStatus) {
+  if (status === "active") {
+    return {
+      background: "#dcfce7",
+      color: "#166534",
+      border: "1px solid #86efac",
+    };
+  }
+
+  if (status === "waiting") {
+    return {
+      background: "#fef3c7",
+      color: "#92400e",
+      border: "1px solid #fcd34d",
+    };
+  }
+
+  return {
+    background: "#f3f4f6",
+    color: "#6b7280",
+    border: "1px solid #d1d5db",
+  };
+}
+
+async function ensureNotificationPermission() {
+  if (typeof window === "undefined") return false;
+  if (!("Notification" in window)) return false;
+
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+
+  const result = await Notification.requestPermission();
+  return result === "granted";
+}
+
+function pushBrowserNotification(title: string, body: string) {
+  if (typeof window === "undefined") return;
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+
+  new Notification(title, { body });
 }
 
 export default function HomeClient() {
@@ -82,11 +156,22 @@ export default function HomeClient() {
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
-  // hydration対策: client mount後だけ DevPanel を出す
+  const [membersByClass, setMembersByClass] = useState<Record<string, ClassMember[]>>({});
+  const [presenceByClass, setPresenceByClass] = useState<
+    Record<string, Record<string, PresenceRow>>
+  >({});
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+
+  const prevPresenceRef = useRef<Record<string, Record<string, PresenceRow>>>({});
+  const prevMessageIdsRef = useRef<Record<string, number>>({});
+
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationsEnabled(Notification.permission === "granted");
+    }
   }, []);
 
   useEffect(() => {
@@ -98,38 +183,66 @@ export default function HomeClient() {
         setError("");
         setProfile(null);
         setClasses([]);
+        setMembersByClass({});
+        setPresenceByClass({});
 
-        const id = getDeviceId();
-        if (!cancelled) setDeviceId(id);
+        const id = String(getDeviceId() ?? "").trim();
 
-        const [profileRes, classesRes] = await Promise.all([
-          fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
-            cache: "no-store",
-          }),
-          fetch(`/api/class/mine?deviceId=${encodeURIComponent(id)}`, {
-            cache: "no-store",
-          }),
-        ]);
+if (!cancelled) setDeviceId(id);
+
+if (!id) {
+  console.warn("[home] deviceId missing on init");
+  setProfile(null);
+  setClasses([]);
+  setError("device_id_missing");
+  return;
+}
+
+const [profileRes, classesRes] = await Promise.all([
+  fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
+    cache: "no-store",
+  }),
+  fetch(`/api/class/mine?deviceId=${encodeURIComponent(id)}`, {
+    cache: "no-store",
+  }),
+]);
 
         if (cancelled) return;
 
         if (profileRes.ok) {
-          const profileJson = await profileRes.json();
-          setProfile(profileJson);
+          const profileJson = await readJsonSafe(profileRes);
+          const nextProfile =
+            profileJson?.profile && typeof profileJson.profile === "object"
+              ? profileJson.profile
+              : profileJson?.device_id
+                ? profileJson
+                : null;
+
+          setProfile(nextProfile);
         } else {
           setProfile(null);
         }
 
-        const classesJson = await classesRes.json();
+        const classesJson = await readJsonSafe(classesRes);
 
         if (!classesRes.ok || !classesJson?.ok) {
           throw new Error(classesJson?.error || "class_mine_failed");
         }
 
-        setClasses(Array.isArray(classesJson.classes) ? classesJson.classes : []);
+        const nextClasses = Array.isArray(classesJson.classes)
+          ? classesJson.classes
+          : [];
+
+        setClasses((prev) => {
+          if (prev.length > 0 && nextClasses.length === 0) {
+            console.warn("[home] ignore empty classes snapshot once");
+            return prev;
+          }
+          return nextClasses;
+        });
       } catch (e: any) {
+        console.error("[home] load error", e);
         if (!cancelled) {
-          console.error("[home] load error", e);
           setError(e?.message || "読み込みに失敗しました");
           setClasses([]);
         }
@@ -145,6 +258,188 @@ export default function HomeClient() {
     };
   }, [dev]);
 
+  useEffect(() => {
+    if (!classes.length) return;
+
+    let cancelled = false;
+
+    async function loadMembersAndPresence() {
+      const classIds = classes.map((c) => c.id).filter(Boolean);
+
+      try {
+        const results = await Promise.all(
+          classIds.map(async (classId) => {
+            const [membersRes, presenceRes] = await Promise.all([
+              fetch(`/api/class/members?classId=${encodeURIComponent(classId)}`, {
+                cache: "no-store",
+              }),
+              fetch(`/api/class/presence?classId=${encodeURIComponent(classId)}`, {
+                cache: "no-store",
+              }),
+            ]);
+
+            const membersJson = await readJsonSafe(membersRes);
+            const presenceJson = await readJsonSafe(presenceRes);
+
+            return {
+              classId,
+              members: Array.isArray(membersJson?.members) ? membersJson.members : [],
+              presence: Array.isArray(presenceJson?.presence) ? presenceJson.presence : [],
+            };
+          })
+        );
+
+        if (cancelled) return;
+
+        const nextMembersByClass: Record<string, ClassMember[]> = {};
+        const nextPresenceByClass: Record<string, Record<string, PresenceRow>> = {};
+
+        for (const row of results) {
+          nextMembersByClass[row.classId] = row.members;
+
+          const presenceMap: Record<string, PresenceRow> = {};
+          for (const p of row.presence) {
+            const key = String(p.device_id ?? "").trim();
+            if (!key) continue;
+            presenceMap[key] = p;
+          }
+          nextPresenceByClass[row.classId] = presenceMap;
+        }
+
+        const prev = prevPresenceRef.current;
+
+        for (const c of classes) {
+          const classId = c.id;
+          const classTitle = formatClassTitle(c);
+          const currentPresenceMap = nextPresenceByClass[classId] ?? {};
+          const prevPresenceMap = prev[classId] ?? {};
+          const members = nextMembersByClass[classId] ?? [];
+
+          for (const member of members) {
+            const memberId = String(member.device_id ?? "").trim();
+            if (!memberId || memberId === deviceId) continue;
+
+            const prevStatus = prevPresenceMap[memberId]?.status ?? "offline";
+            const nextStatus = currentPresenceMap[memberId]?.status ?? "offline";
+
+            if (prevStatus !== "active" && nextStatus === "active") {
+              pushBrowserNotification(
+                "通話が始まりました",
+                `${member.display_name}さんが「${classTitle}」で通話中です`
+              );
+            }
+
+            if (
+              prevStatus === "offline" &&
+              (nextStatus === "waiting" || nextStatus === "active")
+            ) {
+              pushBrowserNotification(
+                "クラスメートがオンラインになりました",
+                `${member.display_name}さんが「${classTitle}」に来ています`
+              );
+            }
+          }
+        }
+
+        prevPresenceRef.current = nextPresenceByClass;
+        setMembersByClass(nextMembersByClass);
+        setPresenceByClass(nextPresenceByClass);
+      } catch (e) {
+        console.error("[home] members/presence load failed", e);
+      }
+    }
+
+    void loadMembersAndPresence();
+    const timer = window.setInterval(loadMembersAndPresence, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classes, deviceId]);
+
+  useEffect(() => {
+    if (!classes.length || !deviceId) return;
+
+    let cancelled = false;
+
+    async function pollMessages() {
+      try {
+        const results = await Promise.all(
+          classes.map(async (c) => {
+            const res = await fetch("/api/class/messages", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                classId: c.id,
+                limit: 20,
+              }),
+              cache: "no-store",
+            });
+
+            const json = await readJsonSafe(res);
+
+            return {
+              classId: c.id,
+              classTitle: formatClassTitle(c),
+              messages: Array.isArray(json?.messages) ? json.messages : [],
+            };
+          })
+        );
+
+        if (cancelled) return;
+
+        for (const row of results) {
+          const messages = row.messages as ClassMessage[];
+          if (!messages.length) continue;
+
+          const latest = messages[messages.length - 1];
+          const latestId = Number(latest?.id ?? 0);
+          const prevId = Number(prevMessageIdsRef.current[row.classId] ?? 0);
+
+          if (!prevId) {
+            prevMessageIdsRef.current[row.classId] = latestId;
+            continue;
+          }
+
+          if (latestId > prevId) {
+            const newMessages = messages.filter((m) => Number(m.id) > prevId);
+
+            for (const msg of newMessages) {
+              const senderId = String(msg.device_id ?? "").trim();
+              if (!senderId || senderId === deviceId) continue;
+
+              const members = membersByClass[row.classId] ?? [];
+              const sender =
+                members.find((m) => m.device_id === senderId)?.display_name ||
+                "クラスメート";
+
+              const body =
+                String(msg.message ?? "").trim() || "新しいメッセージがあります";
+
+              pushBrowserNotification(
+                `新着メッセージ（${row.classTitle}）`,
+                `${sender}: ${body}`
+              );
+            }
+
+            prevMessageIdsRef.current[row.classId] = latestId;
+          }
+        }
+      } catch (e) {
+        console.error("[home] message polling failed", e);
+      }
+    }
+
+    void pollMessages();
+    const timer = window.setInterval(pollMessages, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classes, deviceId, membersByClass]);
+
   const visible = useMemo(() => {
     const arr = [...classes];
     arr.sort((a, b) => {
@@ -154,6 +449,17 @@ export default function HomeClient() {
     });
     return arr;
   }, [classes]);
+
+  const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
+
+  async function enableNotifications() {
+    const ok = await ensureNotificationPermission();
+    setNotificationsEnabled(ok);
+
+    if (!ok) {
+      alert("通知が許可されていません。ブラウザ設定を確認してください。");
+    }
+  }
 
   async function openClass(target: MineClass) {
     try {
@@ -283,6 +589,16 @@ export default function HomeClient() {
       }
 
       setClasses((prev) => prev.filter((c) => String(c.id) !== String(target.id)));
+      setMembersByClass((prev) => {
+        const next = { ...prev };
+        delete next[target.id];
+        return next;
+      });
+      setPresenceByClass((prev) => {
+        const next = { ...prev };
+        delete next[target.id];
+        return next;
+      });
     } catch (e: any) {
       console.error("[home leave] error =", e);
       alert(e?.message || "leave_failed");
@@ -297,13 +613,9 @@ export default function HomeClient() {
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
-      {profile ? (
-        <p style={{ margin: 0 }}>
-          ようこそ、<b>{profile.display_name}</b> さん
-        </p>
-      ) : (
-        <p style={{ margin: 0 }}>はじめにプロフィール登録が必要です。</p>
-      )}
+      <p style={{ margin: 0 }}>
+        ようこそ、<b>{welcomeName}</b> さん
+      </p>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button
@@ -336,6 +648,21 @@ export default function HomeClient() {
           }}
         >
           {quickBusy ? "参加中…" : "フリーですぐ入る"}
+        </button>
+
+        <button
+          onClick={() => void enableNotifications()}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: notificationsEnabled ? "#dcfce7" : "#fff",
+            color: "#111",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          {notificationsEnabled ? "通知ON" : "通知を有効化"}
         </button>
 
         {!profile ? (
@@ -372,6 +699,8 @@ export default function HomeClient() {
             {visible.map((c) => {
               const leaving = leavingClassId === c.id;
               const opening = openingClassId === c.id;
+              const members = membersByClass[c.id] ?? [];
+              const presenceMap = presenceByClass[c.id] ?? {};
 
               return (
                 <div
@@ -412,12 +741,78 @@ export default function HomeClient() {
                     </div>
                   ) : null}
 
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, color: "#111" }}>
+                      クラスメート
+                    </div>
+
+                    {members.length === 0 ? (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#6b7280",
+                          marginTop: 6,
+                        }}
+                      >
+                        まだ表示できるクラスメートがいません
+                      </div>
+                    ) : (
+                      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                        {members.map((m) => {
+                          const isMe = m.device_id === deviceId;
+                          const presence = presenceMap[m.device_id]?.status ?? "offline";
+                          const pill = statusStyle(presence);
+
+                          return (
+                            <div
+                              key={`${c.id}-${m.device_id}`}
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: "8px 10px",
+                                borderRadius: 10,
+                                background: "#fafafa",
+                                border: "1px solid #eee",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: 800,
+                                  color: "#111",
+                                }}
+                              >
+                                {m.display_name || "メンバー"}
+                                {isMe ? "（あなた）" : ""}
+                              </div>
+
+                              <span
+                                style={{
+                                  ...pill,
+                                  fontSize: 11,
+                                  fontWeight: 900,
+                                  padding: "4px 8px",
+                                  borderRadius: 999,
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {statusLabel(presence)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
                   <div
                     style={{
                       display: "flex",
                       gap: 8,
                       flexWrap: "wrap",
-                      marginTop: 10,
+                      marginTop: 12,
                     }}
                   >
                     <button

@@ -30,7 +30,6 @@ export function getDeviceId(): string {
     if (devId && devId.trim()) {
       return devId.trim();
     }
-    return "";
   }
 
   return getOrCreateDeviceId();

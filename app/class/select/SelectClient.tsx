@@ -165,6 +165,7 @@ export default function SelectClient() {
   const [, setClasses] = useState<ClassRow[]>([]);
 
   const [prefs, setPrefs] = useState<MatchPrefs>({ min_age: 18, max_age: 25 });
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
 
   const [wFilter, setWFilter] = useState<string>("all");
@@ -349,6 +350,7 @@ export default function SelectClient() {
       setProfile(null);
       setEnt(null);
       setPrefs({ min_age: 18, max_age: 25 });
+      setPrefsLoaded(false);
       setWorlds([]);
       setTopics([]);
       setClasses([]);
@@ -445,10 +447,17 @@ export default function SelectClient() {
           if (pr.ok && pj?.prefs) {
             if (!alive) return;
 
-            setPrefs({
+            const nextPrefs = {
               min_age: Number(pj.prefs.min_age ?? 18),
               max_age: Number(pj.prefs.max_age ?? 25),
+            };
+
+            console.log("[class/select] match-prefs loaded", {
+              deviceId: id,
+              nextPrefs,
             });
+
+            setPrefs(nextPrefs);
           } else {
             console.warn("[class/select] match-prefs get skipped", {
               status: pr.status,
@@ -459,6 +468,10 @@ export default function SelectClient() {
           }
         } catch (e) {
           console.warn("[class/select] match-prefs get failed (non-fatal)", e);
+        } finally {
+          if (alive) {
+            setPrefsLoaded(true);
+          }
         }
 
         if (!alive) return;
@@ -500,7 +513,15 @@ export default function SelectClient() {
 
       try {
         const j = await readJsonOrThrow(r, "match_prefs_save");
-        setPrefs({ min_age: j.minAge, max_age: j.maxAge });
+        const savedPrefs = { min_age: j.minAge, max_age: j.maxAge };
+
+        console.log("[class/select] match-prefs saved", {
+          deviceId,
+          savedPrefs,
+        });
+
+        setPrefs(savedPrefs);
+        setPrefsLoaded(true);
       } catch (e: any) {
         alert(e?.message ?? "failed");
       }
@@ -597,6 +618,11 @@ export default function SelectClient() {
       return;
     }
 
+    if (!prefsLoaded) {
+      alert("年齢設定を読み込み中です。少し待ってからもう一度お試しください。");
+      return;
+    }
+
     if (hasProfile === false) {
       goProfileIfNeeded();
       return;
@@ -620,6 +646,16 @@ export default function SelectClient() {
         return;
       }
 
+      const finalMinAge = Math.min(prefs.min_age, prefs.max_age);
+      const finalMaxAge = Math.max(prefs.min_age, prefs.max_age);
+
+      console.log("[select] match request ages =", {
+        prefs,
+        finalMinAge,
+        finalMaxAge,
+        prefsLoaded,
+      });
+
       const matchRes = await fetch("/api/class/match-join", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -630,8 +666,8 @@ export default function SelectClient() {
           capacity: 5,
           preferJoinedClass: false,
           classId: forcedClassId ?? undefined,
-          minAge: Math.min(prefs.min_age, prefs.max_age),
-          maxAge: Math.max(prefs.min_age, prefs.max_age),
+          minAge: finalMinAge,
+          maxAge: finalMaxAge,
         }),
         cache: "no-store",
       });
@@ -779,7 +815,7 @@ export default function SelectClient() {
 
         <button
           onClick={() => void joinMatchedBoard(b)}
-          disabled={busy || loading || !deviceId || profileMissing}
+          disabled={busy || loading || !deviceId || profileMissing || !prefsLoaded}
           style={{
             width: "100%",
             padding: "10px 12px",
@@ -789,16 +825,18 @@ export default function SelectClient() {
             color: profileMissing ? "#666" : locked ? "#111" : "#fff",
             fontWeight: 900,
             cursor:
-              busy || loading || !deviceId || profileMissing
+              busy || loading || !deviceId || profileMissing || !prefsLoaded
                 ? "not-allowed"
                 : "pointer",
           }}
         >
           {profileMissing
             ? "プロフィール登録が必要"
-            : locked
-              ? `参加（要：${tierName(b.monthly_price)}以上）`
-              : "参加する"}
+            : !prefsLoaded
+              ? "設定を読み込み中..."
+              : locked
+                ? `参加（要：${tierName(b.monthly_price)}以上）`
+                : "参加する"}
         </button>
 
         {b.monthly_price > 0 ? (
@@ -833,17 +871,17 @@ export default function SelectClient() {
         }}
       >
         <div>
-         <h1
-  style={{
-    margin: 0,
-    fontSize: 22,
-    fontWeight: 900,
-    color: "#111",
-    letterSpacing: 0.5,
-  }}
->
-  classmate
-</h1>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 900,
+              color: "#111",
+              letterSpacing: 0.5,
+            }}
+          >
+            classmate
+          </h1>
         </div>
 
         <div
@@ -937,6 +975,11 @@ export default function SelectClient() {
           <div>deviceId: {deviceId || "-"}</div>
           <div>profile.device_id: {debugProfileDeviceId}</div>
           <div>display_name: {debugDisplayName}</div>
+          <div>prefsLoaded: {String(prefsLoaded)}</div>
+          <div>
+            prefs: {Math.min(prefs.min_age, prefs.max_age)}〜
+            {Math.max(prefs.min_age, prefs.max_age)}
+          </div>
         </section>
       )}
 
@@ -1032,6 +1075,7 @@ export default function SelectClient() {
         <Pill>クラス枠: {slots}</Pill>
         <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
         {loading ? <Pill>読み込み中…</Pill> : null}
+        {!prefsLoaded ? <Pill>年齢設定を読み込み中…</Pill> : null}
         <button
           onClick={() => void reloadCatalog()}
           disabled={loading}
@@ -1161,7 +1205,7 @@ export default function SelectClient() {
 
           <button
             onClick={() => void enterQuickFreeTheme()}
-            disabled={busy || loading || !deviceId || hasProfile === false}
+            disabled={busy || loading || !deviceId || hasProfile === false || !prefsLoaded}
             style={{
               padding: "12px 14px",
               borderRadius: 14,
@@ -1170,14 +1214,18 @@ export default function SelectClient() {
               color: hasProfile === false ? "#666" : "#fff",
               fontWeight: 900,
               cursor:
-                busy || loading || !deviceId || hasProfile === false
+                busy || loading || !deviceId || hasProfile === false || !prefsLoaded
                   ? "not-allowed"
                   : "pointer",
               whiteSpace: "nowrap",
-              opacity: busy || loading || !deviceId ? 0.6 : 1,
+              opacity: busy || loading || !deviceId || !prefsLoaded ? 0.6 : 1,
             }}
           >
-            {hasProfile === false ? "プロフィール登録が必要" : "入る"}
+            {hasProfile === false
+              ? "プロフィール登録が必要"
+              : !prefsLoaded
+                ? "設定を読み込み中..."
+                : "入る"}
           </button>
         </div>
 
