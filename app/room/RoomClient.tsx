@@ -184,6 +184,19 @@ async function readJsonSafe(res: Response) {
   }
 }
 
+function getFreshPresenceStatus(p?: PresenceRow): PresenceStatus {
+  if (!p?.updated_at) return "offline";
+
+  const t = new Date(p.updated_at).getTime();
+  if (!Number.isFinite(t)) return "offline";
+
+  if (Date.now() - t > 15_000) return "offline";
+
+  if (p.status === "active") return "active";
+  if (p.status === "waiting") return "waiting";
+  return "offline";
+}
+
 function statusLabel(status: PresenceStatus) {
   if (status === "active") return "通話中";
   if (status === "waiting") return "オンライン";
@@ -209,8 +222,8 @@ function statusStyle(status: PresenceStatus) {
 
   return {
     background: "#f3f4f6",
-      color: "#6b7280",
-      border: "1px solid #d1d5db",
+    color: "#6b7280",
+    border: "1px solid #d1d5db",
   };
 }
 
@@ -228,11 +241,11 @@ function dedupeMembers(
   for (const row of list) {
     const did = String(row.device_id ?? "").trim();
     const name = normalizeName(row.display_name);
-    const photoPath: string | null =
+    const photoPath =
       row.photo_path && String(row.photo_path).trim()
         ? String(row.photo_path).trim()
         : null;
-    const avatarUrl: string | null =
+    const avatarUrl =
       row.avatar_url && String(row.avatar_url).trim()
         ? String(row.avatar_url).trim()
         : null;
@@ -250,60 +263,6 @@ function dedupeMembers(
           avatar_url: avatarUrl,
           joined_at: joinedAt,
         };
-      } else {
-        const prevDid = String(me.device_id ?? "").trim();
-        const prevJoinedAt = String(me.joined_at ?? "").trim();
-        const prevPhotoPath: string | null =
-          me.photo_path && String(me.photo_path).trim()
-            ? String(me.photo_path).trim()
-            : null;
-        const prevAvatarUrl: string | null =
-          me.avatar_url && String(me.avatar_url).trim()
-            ? String(me.avatar_url).trim()
-            : null;
-        const prevName = normalizeName(me.display_name);
-
-        if (!prevDid && did) {
-          me = {
-            device_id: did,
-            display_name: name || prevName || normalizedMyName || "",
-            photo_path: photoPath || prevPhotoPath,
-            avatar_url: avatarUrl || prevAvatarUrl,
-            joined_at: joinedAt || prevJoinedAt,
-          };
-        } else if (!prevJoinedAt && joinedAt) {
-          me = {
-            device_id: me.device_id,
-            display_name: me.display_name,
-            photo_path: me.photo_path ?? photoPath,
-            avatar_url: me.avatar_url ?? avatarUrl,
-            joined_at: joinedAt,
-          };
-        } else if (!prevPhotoPath && photoPath) {
-          me = {
-            device_id: me.device_id,
-            display_name: me.display_name,
-            photo_path: photoPath,
-            avatar_url: me.avatar_url ?? avatarUrl,
-            joined_at: me.joined_at,
-          };
-        } else if (!prevAvatarUrl && avatarUrl) {
-          me = {
-            device_id: me.device_id,
-            display_name: me.display_name,
-            photo_path: me.photo_path,
-            avatar_url: avatarUrl,
-            joined_at: me.joined_at,
-          };
-        } else if (!prevName && name) {
-          me = {
-            device_id: me.device_id,
-            display_name: name,
-            photo_path: me.photo_path,
-            avatar_url: me.avatar_url,
-            joined_at: me.joined_at,
-          };
-        }
       }
       continue;
     }
@@ -447,12 +406,8 @@ export default function RoomClient() {
   }
 
   function clearSoftConnectionError(kind?: "status" | "messages") {
-    if (!kind || kind === "status") {
-      statusFailCountRef.current = 0;
-    }
-    if (!kind || kind === "messages") {
-      messagesFailCountRef.current = 0;
-    }
+    if (!kind || kind === "status") statusFailCountRef.current = 0;
+    if (!kind || kind === "messages") messagesFailCountRef.current = 0;
 
     setErr((prev) => {
       if (
@@ -625,9 +580,7 @@ export default function RoomClient() {
         if (!topicTitle && json.session?.topic) {
           setTopicTitle(String(json.session.topic).trim() || "ルーム");
         }
-        if (json.session?.status) {
-          setStatus(String(json.session.status));
-        }
+        if (json.session?.status) setStatus(String(json.session.status));
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
         }
@@ -636,15 +589,46 @@ export default function RoomClient() {
         setMemberCount(Math.max(nextCount, 0));
         clearSoftConnectionError("status");
       } catch (e: any) {
-        if (e?.name !== "AbortError") {
-          setSoftConnectionError("status");
-        }
+        if (e?.name !== "AbortError") setSoftConnectionError("status");
       } finally {
         window.clearTimeout(timer);
       }
     },
     [sessionId, classId, pathname, topicTitle]
   );
+
+  // ✅ 待機ルームにいる間、presence を waiting 扱いで送る
+  useEffect(() => {
+    if (!classId || !sessionId || !deviceId) return;
+    if (pathname !== "/room") return;
+
+    async function sendPresence() {
+      await fetch("/api/class/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId,
+          deviceId,
+          screen: "room",
+          sessionId: null,
+        }),
+        cache: "no-store",
+      }).catch((e) => {
+        console.warn("[room] presence heartbeat failed", e);
+      });
+    }
+
+    void sendPresence();
+
+    const timer = window.setInterval(() => {
+      if (window.location.pathname !== "/room") return;
+      void sendPresence();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [classId, sessionId, deviceId, pathname]);
 
   useEffect(() => {
     if (!classId) return;
@@ -671,9 +655,7 @@ export default function RoomClient() {
           }
         );
 
-        if (!res.ok) {
-          return;
-        }
+        if (!res.ok) return;
 
         const json = await readJsonSafe(res);
         if (cancelled) return;
@@ -707,7 +689,7 @@ export default function RoomClient() {
     const timer = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void loadPresence();
-    }, 10000);
+    }, 5000);
 
     const onVisible = () => {
       if (document.hidden) return;
@@ -755,10 +737,7 @@ export default function RoomClient() {
   }, [sessionId, deviceId]);
 
   useEffect(() => {
-    if (!sessionId) return;
-    if (!classId) return;
-    if (!deviceId) return;
-    if (!displayName) return;
+    if (!sessionId || !classId || !deviceId || !displayName) return;
     if (pathname !== "/room") return;
 
     const joinKey = `${sessionId}:${deviceId}`;
@@ -802,9 +781,7 @@ export default function RoomClient() {
 
       if (cancelled) return;
 
-      if (!topicTitle && json.topic) {
-        setTopicTitle(String(json.topic).trim());
-      }
+      if (!topicTitle && json.topic) setTopicTitle(String(json.topic).trim());
       if (json.status) setStatus(String(json.status));
       if (Number.isFinite(Number(json.capacity)) && Number(json.capacity) > 0) {
         setCapacity(Number(json.capacity));
@@ -818,9 +795,7 @@ export default function RoomClient() {
     }
 
     void join().catch((e: any) => {
-      if (!cancelled) {
-        setErr(e?.message ?? "session_join_failed");
-      }
+      if (!cancelled) setErr(e?.message ?? "session_join_failed");
     });
 
     return () => {
@@ -928,9 +903,7 @@ export default function RoomClient() {
 
         clearSoftConnectionError("messages");
       } catch {
-        if (!cancelled) {
-          setSoftConnectionError("messages");
-        }
+        if (!cancelled) setSoftConnectionError("messages");
       }
     }
 
@@ -985,9 +958,7 @@ export default function RoomClient() {
     const nearBottom =
       box.scrollHeight - box.scrollTop - box.clientHeight < 120;
 
-    if (nearBottom) {
-      scrollToBottom("smooth");
-    }
+    if (nearBottom) scrollToBottom("smooth");
   }, [msgs]);
 
   async function sendMessage() {
@@ -1024,7 +995,6 @@ export default function RoomClient() {
       setErr("送信に失敗しました。通信状況をご確認ください。");
       setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
       setDraft(text);
-      return;
     }
   }
 
@@ -1097,9 +1067,8 @@ export default function RoomClient() {
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {visibleMembers.map((m) => {
-                    const isMe =
-                      String(m.device_id ?? "").trim() ===
-                      String(deviceId ?? "").trim();
+                    const did = String(m.device_id ?? "").trim();
+                    const isMe = did === String(deviceId ?? "").trim();
 
                     const label = isMe
                       ? normalizeName(displayName) ||
@@ -1107,14 +1076,15 @@ export default function RoomClient() {
                         "参加者"
                       : normalizeName(m.display_name) || "参加者";
 
-                    const memberStatus: PresenceStatus =
-                      status === "active" ? "active" : "waiting";
+                    const memberStatus = isMe
+                      ? "waiting"
+                      : getFreshPresenceStatus(presenceMap[did]);
 
                     const pill = statusStyle(memberStatus);
 
                     return (
                       <div
-                        key={String(m.device_id ?? "unknown")}
+                        key={did || "unknown"}
                         style={{
                           display: "flex",
                           alignItems: "center",
