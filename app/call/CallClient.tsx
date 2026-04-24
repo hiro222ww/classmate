@@ -40,10 +40,7 @@ function getAvatarUrl(photoPath?: string | null) {
 
   if (!normalized) return "/default-avatar.jpg";
 
-  if (
-    normalized.startsWith("http://") ||
-    normalized.startsWith("https://")
-  ) {
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
     return normalized;
   }
 
@@ -137,8 +134,6 @@ export default function CallClient() {
       }
 
       const incoming = Array.isArray(json.members) ? json.members : [];
-      console.log("[call] incoming members", incoming);
-
       const nextMembers: Member[] = [];
 
       for (const m of incoming) {
@@ -152,7 +147,6 @@ export default function CallClient() {
         });
       }
 
-      console.log("[call] nextMembers", nextMembers);
       setMembers(nextMembers);
 
       if (Number.isFinite(Number(json.session?.capacity))) {
@@ -168,6 +162,37 @@ export default function CallClient() {
   useEffect(() => {
     void fetchMembers();
   }, [fetchMembers]);
+
+  // ✅ 通話ルームにいる間、presence を active 扱いで送る
+  useEffect(() => {
+    if (!classId || !sessionId || !deviceId) return;
+
+    async function sendPresence() {
+      await fetch("/api/class/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId,
+          deviceId,
+          screen: "call",
+          sessionId,
+        }),
+        cache: "no-store",
+      }).catch((e) => {
+        console.warn("[call] presence heartbeat failed", e);
+      });
+    }
+
+    void sendPresence();
+
+    const timer = window.setInterval(() => {
+      void sendPresence();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [classId, sessionId, deviceId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -226,6 +251,7 @@ export default function CallClient() {
 
   useEffect(() => {
     const memberIds = new Set(members.map((m) => m.device_id));
+
     setPeerStates((prev) => {
       const next: Record<string, PeerState> = {};
       for (const [id, state] of Object.entries(prev)) {
@@ -254,6 +280,7 @@ export default function CallClient() {
       }
 
       const isMe = member.device_id === deviceId;
+
       if (isMe) {
         return {
           text: isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
@@ -412,20 +439,8 @@ export default function CallClient() {
                       src={avatarUrl}
                       alt={member.display_name}
                       onError={(e) => {
-                        console.log("[call avatar ng]", {
-                          display_name: member.display_name,
-                          photo_path: member.photo_path,
-                          avatarUrl,
-                        });
                         e.currentTarget.onerror = null;
                         e.currentTarget.src = "/default-avatar.jpg";
-                      }}
-                      onLoad={() => {
-                        console.log("[call avatar ok]", {
-                          display_name: member.display_name,
-                          photo_path: member.photo_path,
-                          avatarUrl,
-                        });
                       }}
                       style={{
                         width: "100%",

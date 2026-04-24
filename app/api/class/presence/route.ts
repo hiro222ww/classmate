@@ -5,27 +5,40 @@ export const dynamic = "force-dynamic";
 
 type PresenceStatus = "offline" | "waiting" | "active";
 
-const ONLINE_WINDOW_MS = 15_000;
+const ONLINE_WINDOW_MS = 15000;
 
 function getPresenceStatus(params: {
   lastSeenAt?: string | null;
   screen?: string | null;
+  sessionId?: string | null;
 }) {
-  const { lastSeenAt, screen } = params;
+  const { lastSeenAt, screen, sessionId } = params;
 
-  if (!lastSeenAt) return "offline" as const;
+  if (!lastSeenAt) return "offline";
 
   const ts = new Date(lastSeenAt).getTime();
-  if (!Number.isFinite(ts)) return "offline" as const;
+  if (!Number.isFinite(ts)) return "offline";
 
   const alive = Date.now() - ts <= ONLINE_WINDOW_MS;
-  if (!alive) return "offline" as const;
+  if (!alive) return "offline";
 
-  if (String(screen ?? "").trim() === "call") {
-    return "active" as const;
+  // 🔥 最優先：session_id があるなら通話中
+  if (sessionId) {
+    return "active";
   }
 
-  return "waiting" as const;
+  const normalized = String(screen ?? "").trim().toLowerCase();
+
+  if (normalized === "call") {
+    return "active";
+  }
+
+  if (normalized === "room" || normalized === "home") {
+    return "waiting";
+  }
+
+  // 🔥 不明値でもオンライン扱い（安全側）
+  return "waiting";
 }
 
 export async function GET(req: Request) {
@@ -99,17 +112,22 @@ export async function GET(req: Request) {
       if (!deviceId) continue;
 
       const lastSeenAt = (row as any).last_seen_at ?? null;
-      const screen = String((row as any).screen ?? "").trim() || null;
+      const screenRaw = String((row as any).screen ?? "").trim();
+      const screen = screenRaw || null;
+
       const sessionId = (row as any).session_id
         ? String((row as any).session_id).trim()
         : null;
 
+      const status = getPresenceStatus({
+        lastSeenAt,
+        screen,
+        sessionId,
+      });
+
       byDevice.set(deviceId, {
         device_id: deviceId,
-        status: getPresenceStatus({
-          lastSeenAt,
-          screen,
-        }),
+        status,
         session_id: sessionId,
         updated_at: lastSeenAt,
         screen,
@@ -178,6 +196,8 @@ export async function POST(req: Request) {
       last_seen_at: new Date().toISOString(),
     };
 
+    console.log("[presence POST]", payload);
+
     const { error } = await sb
       .from("class_presence")
       .upsert(payload, {
@@ -195,9 +215,7 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({
-      ok: true,
-    });
+    return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json(
       {
