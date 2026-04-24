@@ -209,8 +209,8 @@ function statusStyle(status: PresenceStatus) {
 
   return {
     background: "#f3f4f6",
-    color: "#6b7280",
-    border: "1px solid #d1d5db",
+      color: "#6b7280",
+      border: "1px solid #d1d5db",
   };
 }
 
@@ -580,57 +580,71 @@ export default function RoomClient() {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
 
-  const fetchStatus = useCallback(async () => {
-    if (!sessionId || !classId) return;
-    if (pathname !== "/room") return;
-
-    try {
-      const qs = new URLSearchParams({ sessionId, classId });
-
-      const res = await fetch(`/api/session/status?${qs.toString()}`, {
-        cache: "no-store",
-      });
-
-      const rawText = await res.text().catch(() => "");
-      let json: SessionStatusResponse | null = null;
-
-      try {
-        json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
-      } catch {
-        json = null;
-      }
-
-      if (!res.ok || !json?.ok) {
-        setSoftConnectionError("status");
+  const fetchStatus = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!sessionId || !classId) return;
+      if (pathname !== "/room") return;
+      if (!opts?.force && typeof document !== "undefined" && document.hidden) {
         return;
       }
 
-      const incomingMembers = Array.isArray(json.members) ? json.members : [];
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 8000);
 
-      setMembers((prev) => {
-        const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
-        const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
-        if (prevNorm === nextNorm) return prev;
-        return incomingMembers;
-      });
+      try {
+        const qs = new URLSearchParams({ sessionId, classId });
 
-      if (!topicTitle && json.session?.topic) {
-        setTopicTitle(String(json.session.topic).trim() || "ルーム");
-      }
-      if (json.session?.status) {
-        setStatus(String(json.session.status));
-      }
-      if (Number.isFinite(Number(json.session?.capacity))) {
-        setCapacity(Number(json.session?.capacity));
-      }
+        const res = await fetch(`/api/session/status?${qs.toString()}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
-      const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
-      setMemberCount(Math.max(nextCount, 0));
-      clearSoftConnectionError("status");
-    } catch {
-      setSoftConnectionError("status");
-    }
-  }, [sessionId, classId, pathname, topicTitle]);
+        const rawText = await res.text().catch(() => "");
+        let json: SessionStatusResponse | null = null;
+
+        try {
+          json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
+        } catch {
+          json = null;
+        }
+
+        if (!res.ok || !json?.ok) {
+          setSoftConnectionError("status");
+          return;
+        }
+
+        const incomingMembers = Array.isArray(json.members) ? json.members : [];
+
+        setMembers((prev) => {
+          const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
+          const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
+          if (prevNorm === nextNorm) return prev;
+          return incomingMembers;
+        });
+
+        if (!topicTitle && json.session?.topic) {
+          setTopicTitle(String(json.session.topic).trim() || "ルーム");
+        }
+        if (json.session?.status) {
+          setStatus(String(json.session.status));
+        }
+        if (Number.isFinite(Number(json.session?.capacity))) {
+          setCapacity(Number(json.session?.capacity));
+        }
+
+        const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
+        setMemberCount(Math.max(nextCount, 0));
+        clearSoftConnectionError("status");
+      } catch (e: any) {
+        if (e?.name !== "AbortError") {
+          setSoftConnectionError("status");
+        }
+      } finally {
+        window.clearTimeout(timer);
+      }
+    },
+    [sessionId, classId, pathname, topicTitle]
+  );
 
   useEffect(() => {
     if (!classId) return;
@@ -638,16 +652,32 @@ export default function RoomClient() {
 
     let cancelled = false;
 
-    async function loadPresence() {
+    async function loadPresence(opts?: { force?: boolean }) {
+      if (!classId) return;
+      if (pathname !== "/room") return;
+      if (!opts?.force && typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 8000);
+
       try {
         const res = await fetch(
           `/api/class/presence?classId=${encodeURIComponent(classId)}`,
-          { cache: "no-store" }
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
         );
+
+        if (!res.ok) {
+          return;
+        }
 
         const json = await readJsonSafe(res);
         if (cancelled) return;
-        if (!res.ok || !json?.ok) return;
+        if (!json?.ok) return;
 
         const list = Array.isArray(json?.presence) ? json.presence : [];
         const nextMap: Record<string, PresenceRow> = {};
@@ -658,22 +688,38 @@ export default function RoomClient() {
           nextMap[did] = row;
         }
 
-        setPresenceMap(nextMap);
-      } catch (e) {
-        console.error("[room] presence load failed", e);
+        setPresenceMap((prev) => {
+          const prevStr = JSON.stringify(prev);
+          const nextStr = JSON.stringify(nextMap);
+          return prevStr === nextStr ? prev : nextMap;
+        });
+      } catch (e: any) {
+        if (e?.name !== "AbortError") {
+          console.warn("[room] presence load failed", e);
+        }
+      } finally {
+        window.clearTimeout(timer);
       }
     }
 
-    void loadPresence();
+    void loadPresence({ force: true });
 
     const timer = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void loadPresence();
-    }, 5000);
+    }, 10000);
+
+    const onVisible = () => {
+      if (document.hidden) return;
+      void loadPresence({ force: true });
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [classId, pathname]);
 
@@ -768,7 +814,7 @@ export default function RoomClient() {
       }
 
       setErr("");
-      await fetchStatus();
+      await fetchStatus({ force: true });
     }
 
     void join().catch((e: any) => {
@@ -786,15 +832,23 @@ export default function RoomClient() {
     if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
 
-    void fetchStatus();
+    void fetchStatus({ force: true });
 
     const interval = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void fetchStatus();
-    }, 2000);
+    }, 5000);
+
+    const onVisible = () => {
+      if (document.hidden) return;
+      void fetchStatus({ force: true });
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [sessionId, classId, pathname, fetchStatus]);
 
@@ -814,7 +868,7 @@ export default function RoomClient() {
         },
         async () => {
           if (window.location.pathname !== "/room") return;
-          await fetchStatus();
+          await fetchStatus({ force: true });
         }
       )
       .subscribe();
@@ -822,7 +876,7 @@ export default function RoomClient() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [sessionId, pathname, fetchStatus]);
+  }, [sessionId, classId, pathname, fetchStatus]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;
@@ -847,6 +901,8 @@ export default function RoomClient() {
     let cancelled = false;
 
     async function loadMessages() {
+      if (typeof document !== "undefined" && document.hidden) return;
+
       try {
         const { data, error } = await supabase
           .from("room_messages")
@@ -883,7 +939,14 @@ export default function RoomClient() {
     const poll = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void loadMessages();
-    }, 2000);
+    }, 5000);
+
+    const onVisible = () => {
+      if (document.hidden) return;
+      void loadMessages();
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
 
     const channel = supabase
       .channel(`room_messages:${sessionId}`)
@@ -910,6 +973,7 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
       window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
       void supabase.removeChannel(channel);
     };
   }, [sessionId, pathname]);
@@ -1033,95 +1097,93 @@ export default function RoomClient() {
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {visibleMembers.map((m) => {
-  const isMe =
-    String(m.device_id ?? "").trim() ===
-    String(deviceId ?? "").trim();
+                    const isMe =
+                      String(m.device_id ?? "").trim() ===
+                      String(deviceId ?? "").trim();
 
-  const label = isMe
-    ? normalizeName(displayName) ||
-      normalizeName(m.display_name) ||
-      "参加者"
-    : normalizeName(m.display_name) || "参加者";
+                    const label = isMe
+                      ? normalizeName(displayName) ||
+                        normalizeName(m.display_name) ||
+                        "参加者"
+                      : normalizeName(m.display_name) || "参加者";
 
-  // 待機ルームのメンバー一覧は current session の参加者そのものなので、
-  // class 全体 presence ではなく room の状態から直接出す
-  const memberStatus: PresenceStatus =
-    status === "active" ? "active" : "waiting";
+                    const memberStatus: PresenceStatus =
+                      status === "active" ? "active" : "waiting";
 
-  const pill = statusStyle(memberStatus);
+                    const pill = statusStyle(memberStatus);
 
-  return (
-    <div
-      key={String(m.device_id ?? "unknown")}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "10px 12px",
-        borderRadius: 12,
-        border: "1px solid #e5e7eb",
-        background: "#fafafa",
-      }}
-    >
-      <MemberAvatar
-        src={
-          m.avatar_url ||
-          (m.photo_path && publicStorageBase
-            ? `${publicStorageBase}/${m.photo_path}`
-            : null)
-        }
-        label={label}
-        isMe={isMe}
-      />
+                    return (
+                      <div
+                        key={String(m.device_id ?? "unknown")}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          borderRadius: 12,
+                          border: "1px solid #e5e7eb",
+                          background: "#fafafa",
+                        }}
+                      >
+                        <MemberAvatar
+                          src={
+                            m.avatar_url ||
+                            (m.photo_path && publicStorageBase
+                              ? `${publicStorageBase}/${m.photo_path}`
+                              : null)
+                          }
+                          label={label}
+                          isMe={isMe}
+                        />
 
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div
-          style={{
-            fontWeight: 800,
-            color: "#111827",
-            lineHeight: 1.2,
-          }}
-        >
-          {label}
-        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              color: "#111827",
+                              lineHeight: 1.2,
+                            }}
+                          >
+                            {label}
+                          </div>
 
-        <div
-          style={{
-            marginTop: 4,
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          {isMe ? (
-            <span
-              style={{
-                fontSize: 12,
-                color: "#6b7280",
-              }}
-            >
-              自分
-            </span>
-          ) : null}
+                          <div
+                            style={{
+                              marginTop: 4,
+                              display: "flex",
+                              gap: 8,
+                              alignItems: "center",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {isMe ? (
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: "#6b7280",
+                                }}
+                              >
+                                自分
+                              </span>
+                            ) : null}
 
-          <span
-            style={{
-              ...pill,
-              fontSize: 11,
-              fontWeight: 900,
-              padding: "4px 8px",
-              borderRadius: 999,
-              whiteSpace: "nowrap",
-            }}
-          >
-            {statusLabel(memberStatus)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-})}
+                            <span
+                              style={{
+                                ...pill,
+                                fontSize: 11,
+                                fontWeight: 900,
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {statusLabel(memberStatus)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

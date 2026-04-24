@@ -24,6 +24,12 @@ type MineClass = {
   is_sensitive: boolean;
   is_user_created: boolean;
   created_at: string | null;
+
+  match_deadline_at?: string | null;
+  has_active_session?: boolean;
+  session_id?: string | null;
+  session_status?: string | null;
+  session_created_at?: string | null;
 };
 
 type ClassMember = {
@@ -113,6 +119,74 @@ function statusStyle(status: PresenceStatus) {
   };
 }
 
+function getClassStatusLabel(c: MineClass) {
+  const sessionStatus = String(c.session_status ?? "").trim();
+  const hasActiveSession = Boolean(c.has_active_session);
+
+  if (sessionStatus === "active") {
+    return "通話中";
+  }
+
+  const deadlineMs = c.match_deadline_at
+    ? new Date(c.match_deadline_at).getTime()
+    : NaN;
+
+  if (Number.isFinite(deadlineMs)) {
+    if (deadlineMs > Date.now() && hasActiveSession) {
+      return "募集中";
+    }
+    if (deadlineMs <= Date.now()) {
+      return "募集締切";
+    }
+  }
+
+  if (hasActiveSession) {
+    return "待機中";
+  }
+
+  return "休止中";
+}
+
+function getClassStatusStyle(label: string) {
+  if (label === "通話中") {
+    return {
+      background: "#dcfce7",
+      color: "#166534",
+      border: "1px solid #86efac",
+    };
+  }
+
+  if (label === "募集中") {
+    return {
+      background: "#dbeafe",
+      color: "#1d4ed8",
+      border: "1px solid #93c5fd",
+    };
+  }
+
+  if (label === "募集締切") {
+    return {
+      background: "#f3f4f6",
+      color: "#6b7280",
+      border: "1px solid #d1d5db",
+    };
+  }
+
+  if (label === "待機中") {
+    return {
+      background: "#fef3c7",
+      color: "#92400e",
+      border: "1px solid #fcd34d",
+    };
+  }
+
+  return {
+    background: "#f9fafb",
+    color: "#6b7280",
+    border: "1px solid #e5e7eb",
+  };
+}
+
 async function ensureNotificationPermission() {
   if (typeof window === "undefined") return false;
   if (!("Notification" in window)) return false;
@@ -124,7 +198,12 @@ async function ensureNotificationPermission() {
   return result === "granted";
 }
 
-function pushBrowserNotification(title: string, body: string) {
+function pushBrowserNotification(
+  enabled: boolean,
+  title: string,
+  body: string
+) {
+  if (!enabled) return;
   if (typeof window === "undefined") return;
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
@@ -180,8 +259,10 @@ export default function HomeClient() {
 
   useEffect(() => {
     setMounted(true);
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setNotificationsEnabled(Notification.permission === "granted");
+
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("notifications_enabled");
+      setNotificationsEnabled(saved === "true");
     }
   }, []);
 
@@ -378,6 +459,7 @@ export default function HomeClient() {
 
             if (prevStatus !== "active" && nextStatus === "active") {
               pushBrowserNotification(
+                notificationsEnabled,
                 "通話が始まりました",
                 `${member.display_name}さんが「${classTitle}」で通話中です`
               );
@@ -388,6 +470,7 @@ export default function HomeClient() {
               (nextStatus === "waiting" || nextStatus === "active")
             ) {
               pushBrowserNotification(
+                notificationsEnabled,
                 "クラスメートがオンラインになりました",
                 `${member.display_name}さんが「${classTitle}」に来ています`
               );
@@ -410,7 +493,7 @@ export default function HomeClient() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [classes, deviceId]);
+  }, [classes, deviceId, notificationsEnabled]);
 
   useEffect(() => {
     if (!classes.length || !deviceId) return;
@@ -472,6 +555,7 @@ export default function HomeClient() {
                 String(msg.message ?? "").trim() || "新しいメッセージがあります";
 
               pushBrowserNotification(
+                notificationsEnabled,
                 `新着メッセージ（${row.classTitle}）`,
                 `${sender}: ${body}`
               );
@@ -492,10 +576,25 @@ export default function HomeClient() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [classes, deviceId, membersByClass]);
+  }, [classes, deviceId, membersByClass, notificationsEnabled]);
 
   const visible = useMemo(() => {
-    const arr = [...classes];
+    const byId = new Map<string, MineClass>();
+
+    for (const c of classes) {
+      const id = String(c.id ?? "").trim();
+      if (!id) continue;
+
+      const prev = byId.get(id);
+      const prevTime = prev?.created_at ? new Date(prev.created_at).getTime() : 0;
+      const nextTime = c.created_at ? new Date(c.created_at).getTime() : 0;
+
+      if (!prev || nextTime >= prevTime) {
+        byId.set(id, c);
+      }
+    }
+
+    const arr = Array.from(byId.values());
     arr.sort((a, b) => {
       const at = a.created_at ? new Date(a.created_at).getTime() : 0;
       const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -506,13 +605,29 @@ export default function HomeClient() {
 
   const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
 
-  async function enableNotifications() {
+  async function toggleNotifications() {
+    if (typeof window === "undefined") return;
+
+    if (!("Notification" in window)) {
+      alert("このブラウザは通知に対応していません");
+      return;
+    }
+
+    if (notificationsEnabled) {
+      localStorage.setItem("notifications_enabled", "false");
+      setNotificationsEnabled(false);
+      return;
+    }
+
     const ok = await ensureNotificationPermission();
-    setNotificationsEnabled(ok);
 
     if (!ok) {
       alert("通知が許可されていません。ブラウザ設定を確認してください。");
+      return;
     }
+
+    localStorage.setItem("notifications_enabled", "true");
+    setNotificationsEnabled(true);
   }
 
   async function openClass(target: MineClass) {
@@ -717,7 +832,7 @@ export default function HomeClient() {
         </button>
 
         <button
-          onClick={() => void enableNotifications()}
+          onClick={() => void toggleNotifications()}
           style={{
             padding: "12px 16px",
             borderRadius: 12,
@@ -728,7 +843,7 @@ export default function HomeClient() {
             cursor: "pointer",
           }}
         >
-          {notificationsEnabled ? "通知ON" : "通知を有効化"}
+          {notificationsEnabled ? "通知OFF" : "通知を有効化"}
         </button>
 
         {!profile ? (
@@ -768,6 +883,8 @@ export default function HomeClient() {
               const members = membersByClass[c.id] ?? [];
               const presenceMap = presenceByClass[c.id] ?? {};
               const classLabel = formatClassLabel(c);
+              const classStatusLabel = getClassStatusLabel(c);
+              const classStatusPill = getClassStatusStyle(classStatusLabel);
 
               return (
                 <div
@@ -782,14 +899,37 @@ export default function HomeClient() {
                 >
                   <div
                     style={{
-                      fontWeight: 900,
-                      color: "#111",
-                      fontSize: 24,
-                      lineHeight: 1.2,
-                      letterSpacing: "0.02em",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      flexWrap: "wrap",
                     }}
                   >
-                    {classLabel}
+                    <div
+                      style={{
+                        fontWeight: 900,
+                        color: "#111",
+                        fontSize: 24,
+                        lineHeight: 1.2,
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      {classLabel}
+                    </div>
+
+                    <span
+                      style={{
+                        ...classStatusPill,
+                        fontSize: 12,
+                        fontWeight: 900,
+                        padding: "6px 10px",
+                        borderRadius: 999,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {classStatusLabel}
+                    </span>
                   </div>
 
                   {c.description ? (

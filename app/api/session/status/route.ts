@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 function isUuid(v: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     v
@@ -15,10 +18,20 @@ function admin() {
     process.env.SERVICE_ROLE_KEY;
 
   if (!url || !key) throw new Error("missing_supabase_service_role");
-  return createClient(url, key, { auth: { persistSession: false } });
+
+  return createClient(url, key, {
+    auth: { persistSession: false },
+  });
 }
 
-export const dynamic = "force-dynamic";
+type SessionRow = {
+  id: string;
+  class_id?: string | null;
+  topic?: string | null;
+  status?: string | null;
+  capacity?: number | null;
+  created_at?: string | null;
+};
 
 type SessionMemberRow = {
   device_id?: string | null;
@@ -50,6 +63,129 @@ function normalizePhotoPath(v: string | null | undefined) {
   }
 
   return s || null;
+}
+
+async function getSession(
+  sb: ReturnType<typeof admin>,
+  sessionId: string
+) {
+  const { data, error } = await sb
+    .from("sessions")
+    .select("id,class_id,topic,status,capacity,created_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  if (!data) {
+    return {
+      ok: false as const,
+      error: new Error("session_not_found"),
+    };
+  }
+
+  return {
+    ok: true as const,
+    session: data as SessionRow,
+  };
+}
+
+async function getRawMembers(
+  sb: ReturnType<typeof admin>,
+  sessionId: string
+) {
+  const { data, error } = await sb
+    .from("session_members")
+    .select("device_id,display_name,joined_at")
+    .eq("session_id", sessionId)
+    .not("device_id", "is", null)
+    .neq("device_id", "")
+    .order("joined_at", { ascending: true });
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  return {
+    ok: true as const,
+    members: (Array.isArray(data) ? data : []) as SessionMemberRow[],
+  };
+}
+
+async function getPhotoPathMap(
+  sb: ReturnType<typeof admin>,
+  deviceIds: string[]
+) {
+  if (deviceIds.length === 0) {
+    return {
+      ok: true as const,
+      photoPathMap: new Map<string, string | null>(),
+    };
+  }
+
+  const { data, error } = await sb
+    .from("user_profiles")
+    .select("device_id,photo_path")
+    .in("device_id", deviceIds);
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  const map = new Map<string, string | null>();
+
+  for (const row of (Array.isArray(data) ? data : []) as UserProfileRow[]) {
+    const did = String(row.device_id ?? "").trim();
+    if (!did) continue;
+    map.set(did, normalizePhotoPath(row.photo_path));
+  }
+
+  return {
+    ok: true as const,
+    photoPathMap: map,
+  };
+}
+
+function buildMembers(
+  rawMembers: SessionMemberRow[],
+  photoPathMap: Map<string, string | null>
+) {
+  const byDevice = new Map<
+    string,
+    {
+      device_id: string;
+      display_name: string;
+      photo_path: string | null;
+      avatar_url: null;
+      joined_at: string;
+    }
+  >();
+
+  for (const row of rawMembers) {
+    const deviceId = String(row.device_id ?? "").trim();
+    if (!deviceId) continue;
+
+    const displayName = sanitizeDisplayName(row.display_name);
+    const joinedAt =
+      String(row.joined_at ?? "").trim() || new Date(0).toISOString();
+
+    const prev = byDevice.get(deviceId);
+    if (prev && prev.joined_at <= joinedAt) continue;
+
+    byDevice.set(deviceId, {
+      device_id: deviceId,
+      display_name: displayName,
+      photo_path: photoPathMap.get(deviceId) ?? null,
+      avatar_url: null,
+      joined_at: joinedAt,
+    });
+  }
+
+  return Array.from(byDevice.values()).sort((a, b) =>
+    a.joined_at.localeCompare(b.joined_at)
+  );
 }
 
 export async function GET(req: Request) {
@@ -94,130 +230,64 @@ export async function GET(req: Request) {
 
     const sb = admin();
 
-    const s = await sb
-      .from("sessions")
-      .select("id, class_id, topic, status, capacity, created_at")
-      .eq("id", sessionIdRaw)
-      .maybeSingle();
-
-    if (s.error) {
+    const sessionRes = await getSession(sb, sessionIdRaw);
+    if (!sessionRes.ok) {
+      const msg = sessionRes.error?.message ?? "session_lookup_failed";
       return NextResponse.json(
-        { ok: false, error: s.error.message },
-        { status: 500 }
+        { ok: false, error: msg },
+        { status: msg === "session_not_found" ? 404 : 500 }
       );
     }
 
-    if (!s.data) {
-      return NextResponse.json(
-        { ok: false, error: "session_not_found" },
-        { status: 404 }
-      );
-    }
+    const session = sessionRes.session;
 
-    if (String(s.data.class_id ?? "").trim() !== classIdRaw) {
+    if (String(session.class_id ?? "").trim() !== classIdRaw) {
       console.warn("[session/status] class mismatch", {
         sessionIdRaw,
         classIdRaw,
-        sessionClassId: String(s.data.class_id ?? "").trim(),
+        sessionClassId: String(session.class_id ?? "").trim(),
       });
     }
 
-    const m = await sb
-      .from("session_members")
-      .select("device_id, display_name, joined_at")
-      .eq("session_id", sessionIdRaw)
-      .not("device_id", "is", null)
-      .neq("device_id", "")
-      .order("joined_at", { ascending: true });
-
-    if (m.error) {
+    const rawMembersRes = await getRawMembers(sb, sessionIdRaw);
+    if (!rawMembersRes.ok) {
       return NextResponse.json(
-        { ok: false, error: m.error.message },
+        { ok: false, error: rawMembersRes.error.message },
         { status: 500 }
       );
     }
 
-    const rawMembers = (Array.isArray(m.data) ? m.data : []) as SessionMemberRow[];
-
     const deviceIds = Array.from(
       new Set(
-        rawMembers
+        rawMembersRes.members
           .map((row) => String(row.device_id ?? "").trim())
           .filter(Boolean)
       )
     );
 
-    const photoPathMap = new Map<string, string | null>();
-
-    if (deviceIds.length > 0) {
-      const p = await sb
-        .from("user_profiles")
-        .select("device_id, photo_path")
-        .in("device_id", deviceIds);
-
-      if (p.error) {
-        return NextResponse.json(
-          { ok: false, error: p.error.message },
-          { status: 500 }
-        );
-      }
-
-      const rawProfiles = (Array.isArray(p.data) ? p.data : []) as UserProfileRow[];
-
-      for (const row of rawProfiles) {
-        const did = String(row.device_id ?? "").trim();
-        if (!did) continue;
-        photoPathMap.set(did, normalizePhotoPath(row.photo_path));
-      }
+    const photoMapRes = await getPhotoPathMap(sb, deviceIds);
+    if (!photoMapRes.ok) {
+      return NextResponse.json(
+        { ok: false, error: photoMapRes.error.message },
+        { status: 500 }
+      );
     }
 
-    const byDevice = new Map<
-      string,
-      {
-        device_id: string;
-        display_name: string;
-        photo_path: string | null;
-        avatar_url: null;
-        joined_at: string;
-      }
-    >();
-
-    for (const row of rawMembers) {
-      const deviceId = String(row.device_id ?? "").trim();
-      if (!deviceId) continue;
-
-      const displayName = sanitizeDisplayName(row.display_name);
-      const joinedAt =
-        String(row.joined_at ?? "").trim() || new Date(0).toISOString();
-      const photoPath = photoPathMap.get(deviceId) ?? null;
-
-      const prev = byDevice.get(deviceId);
-
-      if (!prev || joinedAt < prev.joined_at) {
-        byDevice.set(deviceId, {
-          device_id: deviceId,
-          display_name: displayName,
-          photo_path: photoPath,
-          avatar_url: null,
-          joined_at: joinedAt,
-        });
-      }
-    }
-
-    const members = Array.from(byDevice.values()).sort((a, b) =>
-      a.joined_at.localeCompare(b.joined_at)
+    const members = buildMembers(
+      rawMembersRes.members,
+      photoMapRes.photoPathMap
     );
 
     return NextResponse.json(
       {
         ok: true,
         session: {
-          id: String(s.data.id),
-          class_id: String(s.data.class_id ?? ""),
-          topic: String(s.data.topic ?? "").trim(),
-          status: String(s.data.status ?? "forming"),
-          capacity: Number(s.data.capacity ?? 5),
-          created_at: s.data.created_at ?? null,
+          id: String(session.id),
+          class_id: String(session.class_id ?? ""),
+          topic: String(session.topic ?? "").trim(),
+          status: String(session.status ?? "forming"),
+          capacity: Number(session.capacity ?? 5),
+          created_at: session.created_at ?? null,
         },
         members,
         memberCount: members.length,

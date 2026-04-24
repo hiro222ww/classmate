@@ -40,7 +40,7 @@ export async function GET(req: Request) {
       );
     }
 
-    // 1) class_memberships を取得
+    // 1) class_memberships を取得（所属一覧）
     const { data: memberships, error: membershipsErr } = await supabaseAdmin
       .from("class_memberships")
       .select("class_id")
@@ -60,9 +60,13 @@ export async function GET(req: Request) {
       );
     }
 
-    const classIds = (memberships ?? [])
+    const classIds = Array.from(
+  new Set(
+    (memberships ?? [])
       .map((row: any) => String(row.class_id ?? "").trim())
-      .filter(Boolean);
+      .filter(Boolean)
+  )
+);
 
     if (classIds.length === 0) {
       return NextResponse.json({
@@ -72,13 +76,14 @@ export async function GET(req: Request) {
           membershipCount: 0,
           classRowCount: 0,
           topicRowCount: 0,
+          sessionRowCount: 0,
           joinFailedCount: 0,
           legacyFilteredCount: 0,
         },
       });
     }
 
-    // 2) classes を取得
+    // 2) classes を取得（deadlineは表示用に持つが、絞り込みには使わない）
     const { data: classRows, error: classesErr } = await supabaseAdmin
       .from("classes")
       .select(
@@ -91,7 +96,8 @@ export async function GET(req: Request) {
         min_age,
         is_sensitive,
         is_user_created,
-        created_at
+        created_at,
+        match_deadline_at
       `
       )
       .in("id", classIds);
@@ -152,11 +158,55 @@ export async function GET(req: Request) {
       topicRows.map((t: any) => [String(t.topic_key).trim(), t])
     );
 
-    // 5) merge
+    // 5) sessions を取得（状態表示用）
+    const { data: sessionRows, error: sessionsErr } = await supabaseAdmin
+      .from("sessions")
+      .select("id,class_id,status,created_at")
+      .in("class_id", classIds)
+      .in("status", ["forming", "waiting", "active"]);
+
+    console.log("[class/mine] sessions error =", sessionsErr);
+    console.log("[class/mine] sessions data =", sessionRows);
+
+    if (sessionsErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "class_mine_sessions_failed",
+          detail: sessionsErr.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    const sessionMap = new Map<
+      string,
+      { id: string; status: string; created_at: string | null }
+    >();
+
+    for (const row of sessionRows ?? []) {
+      const classId = String((row as any)?.class_id ?? "").trim();
+      if (!classId) continue;
+
+      const current = sessionMap.get(classId);
+      const nextCreatedAt = String((row as any)?.created_at ?? "").trim() || "";
+      const currentCreatedAt = String(current?.created_at ?? "").trim() || "";
+
+      if (!current || nextCreatedAt > currentCreatedAt) {
+        sessionMap.set(classId, {
+          id: String((row as any)?.id ?? "").trim(),
+          status: String((row as any)?.status ?? "").trim(),
+          created_at: (row as any)?.created_at ?? null,
+        });
+      }
+    }
+
+    // 6) merge
     const merged = classIds.map((classId) => {
       const c = classMap.get(classId);
       const topicKey = String(c?.topic_key ?? "").trim();
       const topic = topicKey ? topicMap.get(topicKey) : null;
+      const session = sessionMap.get(classId);
 
       return {
         class_id: classId,
@@ -172,11 +222,18 @@ export async function GET(req: Request) {
         is_sensitive: Boolean(c?.is_sensitive),
         is_user_created: Boolean(c?.is_user_created),
         created_at: c?.created_at ?? null,
+        match_deadline_at: c?.match_deadline_at ?? null,
+        has_active_session: Boolean(session?.id),
+        session_id: session?.id ?? null,
+        session_status: session?.status ?? null,
+        session_created_at: session?.created_at ?? null,
       };
     });
 
-    // 6) レガシー入口クラスを除外
-    const classes = merged.filter((c: any) => !isLegacyEntryClassName(c?.name));
+    // 7) レガシー入口クラスだけ除外
+    const classes = merged.filter(
+      (c: any) => !isLegacyEntryClassName(c?.name)
+    );
     const legacyFilteredCount = merged.length - classes.length;
 
     console.log("[class/mine] merged classes =", merged);
@@ -190,6 +247,7 @@ export async function GET(req: Request) {
         membershipCount: memberships?.length ?? 0,
         classRowCount: classRows?.length ?? 0,
         topicRowCount: topicRows?.length ?? 0,
+        sessionRowCount: sessionRows?.length ?? 0,
         joinFailedCount: classes.filter((c: any) => !c.join_ok).length,
         legacyFilteredCount,
       },

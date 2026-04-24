@@ -2,11 +2,13 @@ export function isBrowser(): boolean {
   return typeof window !== "undefined";
 }
 
+/**
+ * 開発機能UIを表示するか
+ * - ローカルでは NEXT_PUBLIC_DEV_MODE=true で有効
+ * - 本番では基本 hidden のまま
+ */
 export function isDevFeatureEnabled(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" &&
-    process.env.NEXT_PUBLIC_DEV_MODE === "true"
-  );
+  return process.env.NEXT_PUBLIC_DEV_MODE === "true";
 }
 
 export function isAdminUnlocked(): boolean {
@@ -34,9 +36,12 @@ export function lockAdmin() {
   localStorage.removeItem("classmate_dev_user");
 }
 
+/**
+ * URL の ?dev= を最優先で使う
+ * これは本番でも効かせる
+ */
 export function getDevUserKeyFromUrl(): string {
   if (!isBrowser()) return "";
-  if (!isDevFeatureEnabled()) return "";
 
   const params = new URLSearchParams(window.location.search);
   return (params.get("dev") ?? "").trim();
@@ -76,7 +81,6 @@ export function clearDevUserKey() {
  */
 export function getDevUserKey(): string {
   if (!isBrowser()) return "";
-  if (!isDevFeatureEnabled()) return "";
   return getDevUserKeyFromUrl();
 }
 

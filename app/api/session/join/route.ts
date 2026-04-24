@@ -16,101 +16,6 @@ function sanitizeDisplayName(v: string | null | undefined) {
   return s;
 }
 
-async function cleanupGhostMembers(sessionId: string) {
-  const { error } = await supabaseAdmin
-    .from("session_members")
-    .delete()
-    .eq("session_id", sessionId)
-    .or("device_id.is.null,device_id.eq.");
-
-  if (error) return { ok: false as const, error };
-  return { ok: true as const };
-}
-
-async function cleanupOldSelfRows(
-  sessionId: string,
-  deviceId: string,
-  name: string
-) {
-  const trimmedName = sanitizeDisplayName(name);
-  if (!trimmedName) return { ok: true as const };
-
-  const { error } = await supabaseAdmin
-    .from("session_members")
-    .delete()
-    .eq("session_id", sessionId)
-    .eq("display_name", trimmedName)
-    .neq("device_id", deviceId);
-
-  if (error) {
-    console.error("[session/join] cleanup old self rows error:", error);
-    return { ok: false as const, error };
-  }
-
-  return { ok: true as const };
-}
-
-async function cleanupSameDeviceFromOtherSessions(
-  sessionId: string,
-  deviceId: string
-) {
-  const { error } = await supabaseAdmin
-    .from("session_members")
-    .delete()
-    .eq("device_id", deviceId)
-    .neq("session_id", sessionId);
-
-  if (error) {
-    console.error(
-      "[session/join] cleanup same device from other sessions error:",
-      error
-    );
-    return { ok: false as const, error };
-  }
-
-  return { ok: true as const };
-}
-
-async function countValidMembers(sessionId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("session_members")
-    .select("device_id")
-    .eq("session_id", sessionId)
-    .not("device_id", "is", null)
-    .neq("device_id", "");
-
-  if (error) return { ok: false as const, error };
-
-  const uniqueIds = new Set(
-    (data ?? [])
-      .map((r: any) => String(r.device_id ?? "").trim())
-      .filter(Boolean)
-  );
-
-  return {
-    ok: true as const,
-    count: uniqueIds.size,
-  };
-}
-
-async function upsertMember(
-  sessionId: string,
-  deviceId: string,
-  name: string
-) {
-  const safeName = sanitizeDisplayName(name);
-
-  return await supabaseAdmin.from("session_members").upsert(
-    {
-      session_id: sessionId,
-      device_id: deviceId,
-      display_name: safeName,
-      joined_at: new Date().toISOString(),
-    },
-    { onConflict: "session_id,device_id" }
-  );
-}
-
 async function ensureJoinableSession(params: {
   sessionId: string;
   capacity: number;
@@ -168,6 +73,60 @@ async function ensureJoinableSession(params: {
       status: String(existing.status ?? "forming"),
     },
   };
+}
+
+async function getExistingMine(sessionId: string, deviceId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("session_members")
+    .select("device_id")
+    .eq("session_id", sessionId)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (error) return { ok: false as const, error };
+
+  return {
+    ok: true as const,
+    alreadyInSession: !!data,
+  };
+}
+
+async function countMembers(sessionId: string) {
+  const { count, error } = await supabaseAdmin
+    .from("session_members")
+    .select("device_id", { count: "exact", head: true })
+    .eq("session_id", sessionId)
+    .not("device_id", "is", null)
+    .neq("device_id", "");
+
+  if (error) return { ok: false as const, error };
+
+  return {
+    ok: true as const,
+    count: Number(count ?? 0),
+  };
+}
+
+async function upsertMember(
+  sessionId: string,
+  deviceId: string,
+  name: string
+) {
+  const safeName = sanitizeDisplayName(name);
+
+  const { error } = await supabaseAdmin.from("session_members").upsert(
+    {
+      session_id: sessionId,
+      device_id: deviceId,
+      display_name: safeName,
+      joined_at: new Date().toISOString(),
+    },
+    { onConflict: "session_id,device_id" }
+  );
+
+  if (error) return { ok: false as const, error };
+
+  return { ok: true as const };
 }
 
 export async function POST(req: Request) {
@@ -254,83 +213,53 @@ export async function POST(req: Request) {
       );
     }
 
-    const ghostCleanup = await cleanupGhostMembers(sessionIdRaw);
-    if (!ghostCleanup.ok) {
-      return NextResponse.json(
-        { ok: false, error: ghostCleanup.error.message },
-        { status: 500 }
-      );
-    }
-
-    const oldSelfCleanup = await cleanupOldSelfRows(sessionIdRaw, deviceId, name);
-    if (!oldSelfCleanup.ok) {
-      return NextResponse.json(
-        { ok: false, error: oldSelfCleanup.error.message },
-        { status: 500 }
-      );
-    }
-
-    const otherSessionCleanup = await cleanupSameDeviceFromOtherSessions(
-      sessionIdRaw,
-      deviceId
-    );
-    if (!otherSessionCleanup.ok) {
-      return NextResponse.json(
-        { ok: false, error: otherSessionCleanup.error.message },
-        { status: 500 }
-      );
-    }
-
-    const countedBefore = await countValidMembers(sessionIdRaw);
-    if (!countedBefore.ok) {
-      return NextResponse.json(
-        { ok: false, error: countedBefore.error.message },
-        { status: 500 }
-      );
-    }
-
     const actualCapacity =
       Number.isFinite(session.capacity) && session.capacity > 0
         ? session.capacity
         : resolvedCapacity;
 
-    const { data: existingMine, error: existingMineErr } = await supabaseAdmin
-      .from("session_members")
-      .select("device_id")
-      .eq("session_id", sessionIdRaw)
-      .eq("device_id", deviceId)
-      .maybeSingle();
-
-    if (existingMineErr) {
+    const existingMineRes = await getExistingMine(sessionIdRaw, deviceId);
+    if (!existingMineRes.ok) {
       return NextResponse.json(
-        { ok: false, error: existingMineErr.message },
+        { ok: false, error: existingMineRes.error.message },
         { status: 500 }
       );
     }
 
-    const alreadyInSession = !!existingMine;
+    const alreadyInSession = existingMineRes.alreadyInSession;
 
-    if (!alreadyInSession && countedBefore.count >= actualCapacity) {
-      return NextResponse.json(
-        { ok: false, error: "session_full" },
-        { status: 400 }
-      );
+    if (!alreadyInSession) {
+      const countBeforeRes = await countMembers(sessionIdRaw);
+      if (!countBeforeRes.ok) {
+        return NextResponse.json(
+          { ok: false, error: countBeforeRes.error.message },
+          { status: 500 }
+        );
+      }
+
+      if (countBeforeRes.count >= actualCapacity) {
+        return NextResponse.json(
+          { ok: false, error: "session_full" },
+          { status: 400 }
+        );
+      }
     }
 
-    const { error: memberErr } = await upsertMember(
-      sessionIdRaw,
-      deviceId,
-      name
-    );
-
-    if (memberErr) {
+    const upsertRes = await upsertMember(sessionIdRaw, deviceId, name);
+    if (!upsertRes.ok) {
       return NextResponse.json(
-        { ok: false, error: memberErr.message },
+        { ok: false, error: upsertRes.error.message },
         { status: 500 }
       );
     }
 
-    const countedAfter = await countValidMembers(sessionIdRaw);
+    const countAfterRes = await countMembers(sessionIdRaw);
+    if (!countAfterRes.ok) {
+      return NextResponse.json(
+        { ok: false, error: countAfterRes.error.message },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       ok: true,
@@ -338,7 +267,7 @@ export async function POST(req: Request) {
       classId: classIdRaw,
       topic: session.topic || "クラス",
       capacity: actualCapacity,
-      memberCount: countedAfter.ok ? countedAfter.count : 1,
+      memberCount: countAfterRes.count,
       status: session.status || "forming",
       alreadyInSession,
     });

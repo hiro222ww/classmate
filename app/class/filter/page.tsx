@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { getDeviceId } from "@/lib/device";
 
 type World = {
   world_key: string;
@@ -78,7 +78,7 @@ function ClassFilterPageInner() {
   const [step, setStep] = useState<"root" | "creative" | "relation">("root");
 
   useEffect(() => {
-    getOrCreateDeviceId();
+    getDeviceId();
 
     (async () => {
       const r = await fetch("/api/class/list");

@@ -1,65 +1,64 @@
-// app/billing/page.tsx
 "use client";
 
 import { useState } from "react";
 import Link from "next/link";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { getDeviceId } from "@/lib/device";
 
 export default function BillingPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
   async function openBillingPortal() {
-  try {
-    setLoading(true);
-    setMsg("");
-
-    const deviceId = getOrCreateDeviceId();
-
-    const r = await fetch("/api/billing/create-portal-session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deviceId }),
-      cache: "no-store",
-    });
-
-    const text = await r.text();
-    console.log("[billing portal] status:", r.status, "body:", text);
-
-    let j: any = null;
     try {
-      j = JSON.parse(text);
-    } catch {
-      j = null;
-    }
+      setLoading(true);
+      setMsg("");
 
-    if (!r.ok) {
-      const errMsg =
-        j?.error ??
-        (r.status === 404
-          ? "api/billing/create-portal-session が見つかりません"
-          : `billing_portal_failed:${r.status}`);
-      setMsg(String(errMsg));
-      alert(String(errMsg));
-      return;
-    }
+      const deviceId = getDeviceId();
 
-    if (j?.url) {
-      window.location.href = j.url;
-      return;
-    }
+      const r = await fetch("/api/billing/create-portal-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+        cache: "no-store",
+      });
 
-    setMsg("billing portal url missing");
-    alert("billing portal url missing");
-  } catch (e: any) {
-    const m = String(e?.message ?? "billing_portal_failed");
-    console.error(e);
-    setMsg(m);
-    alert(m);
-  } finally {
-    setLoading(false);
+      const text = await r.text();
+      console.log("[billing portal] status:", r.status, "body:", text);
+
+      let j: any = null;
+      try {
+        j = JSON.parse(text);
+      } catch {
+        j = null;
+      }
+
+      if (!r.ok) {
+        const errMsg =
+          j?.error ??
+          (r.status === 404
+            ? "api/billing/create-portal-session が見つかりません"
+            : `billing_portal_failed:${r.status}`);
+        setMsg(String(errMsg));
+        alert(String(errMsg));
+        return;
+      }
+
+      if (j?.url) {
+        window.location.href = j.url;
+        return;
+      }
+
+      setMsg("billing portal url missing");
+      alert("billing portal url missing");
+    } catch (e: any) {
+      const m = String(e?.message ?? "billing_portal_failed");
+      console.error(e);
+      setMsg(m);
+      alert(m);
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
   return (
     <main className="max-w-md mx-auto px-5 py-10 space-y-8">

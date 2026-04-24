@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getOrCreateDeviceId } from "@/lib/device";
+import { getDeviceId } from "@/lib/device";
 
 type Entitlements = {
   plan?: string;
@@ -166,7 +166,7 @@ export default function PremiumPage() {
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    setDeviceId(getOrCreateDeviceId());
+    setDeviceId(getDeviceId());
   }, []);
 
   useEffect(() => {

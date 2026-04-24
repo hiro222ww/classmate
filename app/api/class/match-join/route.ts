@@ -53,6 +53,13 @@ function isDeadlinePassed(matchDeadlineAt?: string | null) {
   return Date.now() > deadline;
 }
 
+function isFutureIso(v?: string | null) {
+  if (!v) return false;
+  const t = new Date(v).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t > Date.now();
+}
+
 function deadlineError(matchDeadlineAt?: string | null) {
   return NextResponse.json(
     {
@@ -146,25 +153,88 @@ async function getClassSlots(deviceId: string) {
   };
 }
 
+/**
+ * 今も有効な membership だけ返す
+ * 条件:
+ * - classes.match_deadline_at が未来
+ * - sessions に forming / waiting がある
+ */
 async function getCurrentMemberships(deviceId: string) {
-  const { data, error } = await supabase
+  const { data: memberships, error: membershipsErr } = await supabase
     .from("class_memberships")
     .select("class_id")
     .eq("device_id", deviceId);
 
-  if (error) {
+  if (membershipsErr) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { ok: false, error: "memberships_lookup_failed", detail: error.message },
+        { ok: false, error: "memberships_lookup_failed", detail: membershipsErr.message },
         { status: 500 }
       ),
     };
   }
 
-  const currentIds = (data ?? [])
+  const rawClassIds = (memberships ?? [])
     .map((x: any) => String(x.class_id ?? "").trim())
     .filter(Boolean);
+
+  if (rawClassIds.length === 0) {
+    return { ok: true as const, currentIds: [] as string[] };
+  }
+
+  const { data: classRows, error: classErr } = await supabase
+    .from("classes")
+    .select("id,match_deadline_at")
+    .in("id", rawClassIds);
+
+  if (classErr) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, error: "memberships_classes_lookup_failed", detail: classErr.message },
+        { status: 500 }
+      ),
+    };
+  }
+
+  const classMap = new Map<string, { match_deadline_at?: string | null }>();
+  for (const row of classRows ?? []) {
+    const id = String((row as any)?.id ?? "").trim();
+    if (!id) continue;
+    classMap.set(id, {
+      match_deadline_at: (row as any)?.match_deadline_at ?? null,
+    });
+  }
+
+  const { data: sessionRows, error: sessionErr } = await supabase
+    .from("sessions")
+    .select("class_id,status,created_at")
+    .in("class_id", rawClassIds)
+    .in("status", ["forming", "waiting"]);
+
+  if (sessionErr) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, error: "memberships_sessions_lookup_failed", detail: sessionErr.message },
+        { status: 500 }
+      ),
+    };
+  }
+
+  const activeSessionClassIds = new Set(
+    (sessionRows ?? [])
+      .map((s: any) => String(s.class_id ?? "").trim())
+      .filter(Boolean)
+  );
+
+  const currentIds = rawClassIds.filter((classId) => {
+    const row = classMap.get(classId);
+    const deadlineOk = isFutureIso(row?.match_deadline_at ?? null);
+    const sessionOk = activeSessionClassIds.has(classId);
+    return deadlineOk && sessionOk;
+  });
 
   return { ok: true as const, currentIds };
 }
@@ -192,8 +262,8 @@ async function getMatchPrefs(deviceId: string) {
 
   return {
     ok: true as const,
-    minAge: Number(data?.min_age ?? 18),
-    maxAge: Number(data?.max_age ?? 25),
+    minAge: Number(data?.min_age ?? 0),
+    maxAge: Number(data?.max_age ?? 120),
   };
 }
 
@@ -297,6 +367,34 @@ async function getForcedClassWithDeadline(classId: string) {
   };
 }
 
+async function hasMembership(deviceId: string, classId: string) {
+  const { data, error } = await supabase
+    .from("class_memberships")
+    .select("class_id")
+    .eq("device_id", deviceId)
+    .eq("class_id", classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "membership_check_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    isMember: Boolean(data),
+  };
+}
+
 async function getTopicDeadline(params: {
   worldKey: string;
   topicKey: string | null;
@@ -316,7 +414,6 @@ async function getTopicDeadline(params: {
     .eq("key", topicKey)
     .limit(1);
 
-  // world_key が topics にある前提で絞る。無くても通常は key 一意なら問題ない。
   if (worldKey) {
     query = query.eq("world_key", worldKey);
   }
@@ -489,8 +586,8 @@ export async function POST(req: Request) {
     const prefsRes = await getMatchPrefs(deviceId);
     if (!prefsRes.ok) return prefsRes.response;
 
-    const fallbackMinAge = normalizeAge(prefsRes.minAge, 18);
-    const fallbackMaxAge = normalizeAge(prefsRes.maxAge, 25);
+    const fallbackMinAge = normalizeAge(prefsRes.minAge, 0);
+    const fallbackMaxAge = normalizeAge(prefsRes.maxAge, 120);
 
     const rawMinAge = normalizeAge(body.minAge, fallbackMinAge);
     const rawMaxAge = normalizeAge(body.maxAge, fallbackMaxAge);
@@ -550,7 +647,21 @@ export async function POST(req: Request) {
         now: new Date().toISOString(),
       });
 
-      if (isDeadlinePassed(existingClass.match_deadline_at ?? null)) {
+      const membershipCheck = await hasMembership(deviceId, forcedClassId);
+      if (!membershipCheck.ok) return membershipCheck.response;
+
+      const isExistingMember = membershipCheck.isMember;
+
+      console.log("[match-join] forced membership check", {
+        deviceId,
+        forcedClassId,
+        isExistingMember,
+      });
+
+      if (
+        !isExistingMember &&
+        isDeadlinePassed(existingClass.match_deadline_at ?? null)
+      ) {
         console.log("[match-join] deadline blocked", {
           branch: "forcedClassId",
           classId: existingClass.id,
@@ -566,7 +677,7 @@ export async function POST(req: Request) {
         .from("sessions")
         .select("id,status,created_at,capacity")
         .eq("class_id", classId)
-        .in("status", ["forming", "waiting"])
+        .in("status", ["forming", "waiting", "active"])
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle();
@@ -616,8 +727,6 @@ export async function POST(req: Request) {
         reused = false;
       }
     } else {
-      // 候補 class がまだ route 側では見えないので、
-      // topic に締切がある場合は最低限ここで先に弾く
       const topicRes = await getTopicDeadline({ worldKey, topicKey });
       if (!topicRes.ok) return topicRes.response;
 
@@ -657,7 +766,6 @@ export async function POST(req: Request) {
       sessionCreatedAt = atomicRes.row.session_created_at ?? null;
       reused = Boolean(atomicRes.row.reused);
 
-      // 最終保険: atomic 後に class の締切をもう一度確認
       const matchedClassRes = await getClassDeadlineById(classId);
       if (!matchedClassRes.ok) return matchedClassRes.response;
 
