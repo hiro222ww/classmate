@@ -295,12 +295,18 @@ async function ensureMembership(params: {
   }
 
   const { data: inserted, error: insErr } = await supabase
-    .from("class_memberships")
-    .insert({
+  .from("class_memberships")
+  .upsert(
+    {
       device_id: deviceId,
       class_id: classId,
-    })
-    .select("device_id,class_id");
+    },
+    {
+      onConflict: "device_id,class_id",
+      ignoreDuplicates: true,
+    }
+  )
+  .select("device_id,class_id");
 
   if (insErr) {
     return {

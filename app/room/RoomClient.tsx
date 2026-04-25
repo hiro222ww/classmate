@@ -854,20 +854,43 @@ export default function RoomClient() {
   }, [sessionId, classId, pathname, fetchStatus]);
 
   useEffect(() => {
-    if (!sessionId || !classId) return;
-    if (pathname !== "/room") return;
-    if (!autojoin) return;
-    if (status !== "active") return;
+  if (!sessionId || !classId) return;
+  if (pathname !== "/room") return;
+  if (!autojoin) return;
 
-    const moveKey = `${sessionId}:${classId}:autojoin`;
-    if (autoMovedRef.current === moveKey) return;
+  const shouldAutoStart = status === "active" || memberCount >= 2;
+  if (!shouldAutoStart) return;
 
-    autoMovedRef.current = moveKey;
+  const moveKey = `${sessionId}:${classId}:first-auto-call`;
+  if (autoMovedRef.current === moveKey) return;
 
-    router.replace(
-      `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
-    );
-  }, [status, sessionId, classId, pathname, router, devSuffix, autojoin]);
+  if (typeof window !== "undefined") {
+    const storageKey = `classmate_auto_call_moved:${moveKey}`;
+
+    if (sessionStorage.getItem(storageKey) === "1") {
+      return;
+    }
+
+    sessionStorage.setItem(storageKey, "1");
+  }
+
+  autoMovedRef.current = moveKey;
+
+  router.replace(
+    `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
+      classId
+    )}${devSuffix}`
+  );
+}, [
+  status,
+  memberCount,
+  sessionId,
+  classId,
+  pathname,
+  router,
+  devSuffix,
+  autojoin,
+]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -1034,14 +1057,20 @@ export default function RoomClient() {
           title={shellTitle}
           subtitle={shellSubtitle}
           lines={
-            err
-              ? [err]
-              : status === "forming"
-                ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
-                : status === "active"
-                  ? ["通話を開始できます。"]
-                  : []
-          }
+  err
+    ? [err]
+    : autoMovedRef.current === `${sessionId}:${classId}:first-auto-call` ||
+        (typeof window !== "undefined" &&
+          sessionStorage.getItem(
+            `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
+          ) === "1")
+      ? ["通話開始ボタンを押して、通話を開始してください。"]
+      : status === "forming"
+        ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+        : status === "active"
+          ? ["通話を開始できます。"]
+          : []
+}
           onBack={() => router.push(backToSelectUrl)}
           onStartCall={() =>
             router.push(
