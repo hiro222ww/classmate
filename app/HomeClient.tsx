@@ -487,7 +487,7 @@ export default function HomeClient() {
     }
 
     void loadMembersAndPresence();
-    const timer = window.setInterval(loadMembersAndPresence, 5000);
+    const timer = window.setInterval(loadMembersAndPresence, 10000);
 
     return () => {
       cancelled = true;
@@ -570,7 +570,7 @@ export default function HomeClient() {
     }
 
     void pollMessages();
-    const timer = window.setInterval(pollMessages, 5000);
+    const timer = window.setInterval(pollMessages, 15000);
 
     return () => {
       cancelled = true;
@@ -658,9 +658,18 @@ export default function HomeClient() {
       console.log("[home openClass] match-join response =", json);
 
       if (!res.ok || !json?.ok) {
-        alert(json?.error || "open_class_failed");
-        return;
-      }
+  if (json?.error === "class_slots_limit") {
+    alert(
+      `クラス参加上限に達しています。現在のプランでは最大 ${
+        json?.classSlots ?? "指定"
+      } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
+    );
+    return;
+  }
+
+  alert(json?.error || "open_class_failed");
+  return;
+}
 
       const classId = String(json?.classId ?? "").trim();
       const sessionId = String(json?.sessionId ?? "").trim();
@@ -706,9 +715,18 @@ export default function HomeClient() {
       console.log("[home quick free] response =", json);
 
       if (!res.ok || !json?.ok) {
-        alert(json?.error || "quick_join_failed");
-        return;
-      }
+  if (json?.error === "class_slots_limit") {
+    alert(
+      `クラス参加上限に達しています。現在のプランでは最大 ${
+        json?.classSlots ?? "指定"
+      } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
+    );
+    return;
+  }
+
+  alert(json?.error || "quick_join_failed");
+  return;
+}
 
       const classId = String(json?.classId ?? "").trim();
       const sessionId = String(json?.sessionId ?? "").trim();
