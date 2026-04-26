@@ -362,20 +362,48 @@ export default function CallClient() {
           </div>
         </div>
 
-        <button
-          style={{
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #fca5a5",
-            background: "#fee2e2",
-            color: "#7f1d1d",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-          onClick={() => router.push(returnTo)}
-        >
-          退出
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={async () => {
+              const inviteUrl =
+                `${window.location.origin}/room?invite=1&autojoin=1` +
+                `&classId=${encodeURIComponent(classId)}` +
+                `&sessionId=${encodeURIComponent(sessionId)}`;
+
+              await navigator.clipboard.writeText(inviteUrl);
+              alert("招待リンクをコピーしました");
+            }}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #111827",
+              background: "#111827",
+              color: "#fff",
+              fontWeight: 900,
+              fontSize: 13,
+              cursor: "pointer",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+            }}
+          >
+            友達を招待
+          </button>
+
+          <button
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #e5e7eb",
+              background: "#fff",
+              color: "#374151",
+              fontWeight: 900,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+            onClick={() => router.push(returnTo)}
+          >
+            退出
+          </button>
+        </div>
       </div>
 
       <section

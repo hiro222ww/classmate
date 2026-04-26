@@ -43,7 +43,7 @@ async function ensureJoinableSession(params: {
     updates.capacity = capacity;
   }
 
-  if (existing.status === "closed") {
+  if (existing.status === "closed" || existing.status === "ended") {
     return {
       ok: false as const,
       error: new Error("session_closed"),
@@ -139,6 +139,10 @@ export async function POST(req: Request) {
     const name = sanitizeDisplayName(rawName);
     const deviceId = String(body.deviceId ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
+
+    // 招待リンク経由かどうか
+    // 現時点では締切チェックが未実装なので、将来用のフラグとして受け取る
+    const invite = Boolean(body.invite);
 
     if (!name) {
       return NextResponse.json(
@@ -245,6 +249,18 @@ export async function POST(req: Request) {
       }
     }
 
+    // 将来、通常募集の締切を入れるならここ
+    // invite=true の場合だけ締切を無視できる
+    if (!invite) {
+      // 例:
+      // if (session.match_deadline_at && new Date(session.match_deadline_at) < new Date()) {
+      //   return NextResponse.json(
+      //     { ok: false, error: "session_recruitment_closed" },
+      //     { status: 409 }
+      //   );
+      // }
+    }
+
     const upsertRes = await upsertMember(sessionIdRaw, deviceId, name);
     if (!upsertRes.ok) {
       return NextResponse.json(
@@ -270,6 +286,7 @@ export async function POST(req: Request) {
       memberCount: countAfterRes.count,
       status: session.status || "forming",
       alreadyInSession,
+      invite,
     });
   } catch (e: any) {
     console.error("[session/join] server error:", e);
