@@ -101,23 +101,28 @@ export default function PremiumPage() {
     setDeviceId(getDeviceId());
   }, []);
 
+  // 🔥 entitlement取得
   useEffect(() => {
     if (!deviceId) return;
 
     (async () => {
-      const r = await fetch("/api/user/entitlements", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deviceId }),
-      });
-
-      const j = await r.json().catch(() => null);
-
-      if (r.ok && j) {
-        setEnt({
-          class_slots: Number(j?.class_slots ?? 1),
-          topic_plan: Number(j?.topic_plan ?? 0),
+      try {
+        const r = await fetch("/api/user/entitlements", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ deviceId }),
         });
+
+        const j = await r.json().catch(() => null);
+
+        if (r.ok && j) {
+          setEnt({
+            class_slots: Number(j?.class_slots ?? 1),
+            topic_plan: Number(j?.topic_plan ?? 0),
+          });
+        }
+      } catch {
+        // silent
       }
     })();
   }, [deviceId]);
@@ -128,26 +133,33 @@ export default function PremiumPage() {
   const canClick = useMemo(() => !!deviceId && !busyKey, [deviceId, busyKey]);
 
   async function start(body: any) {
-    setBusyKey(JSON.stringify(body));
+    try {
+      setBusyKey(JSON.stringify(body));
 
-    const dev =
-      typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("dev") ?? ""
-        : "";
+      const dev =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("dev") ?? ""
+          : "";
 
-    const r = await fetch("/api/billing/create-checkout-session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deviceId, ...body, dev }),
-    });
+      const r = await fetch("/api/billing/create-checkout-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceId, ...body, dev }),
+      });
 
-    const j = await r.json();
+      const j = await r.json().catch(() => null);
 
-    if (j?.url) {
-      window.location.href = j.url;
+      if (j?.url) {
+        window.location.href = j.url;
+        return;
+      }
+
+      alert("決済ページの作成に失敗しました");
+    } catch {
+      alert("通信エラーが発生しました");
+    } finally {
+      setBusyKey("");
     }
-
-    setBusyKey("");
   }
 
   return (
@@ -162,7 +174,6 @@ export default function PremiumPage() {
     >
       <header style={{ display: "flex", justifyContent: "space-between" }}>
         <h1 style={{ fontSize: 28, fontWeight: 900 }}>プラン</h1>
-
         <Link href={withDev("/billing")}>支払い管理</Link>
       </header>
 
@@ -173,6 +184,7 @@ export default function PremiumPage() {
         <div style={{ marginTop: 8, fontWeight: 900 }}>
           テーマ：{currentTopic || "無料"}
         </div>
+
         <div style={{ marginTop: 4, fontWeight: 900 }}>
           クラス枠：{currentSlots}
         </div>
