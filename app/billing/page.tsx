@@ -38,15 +38,23 @@ function BillingPageInner() {
       }
 
       if (!r.ok) {
-        const errMsg =
-          j?.error ??
-          (r.status === 404
-            ? "api/billing/create-portal-session が見つかりません"
-            : `billing_portal_failed:${r.status}`);
-        setMsg(String(errMsg));
-        alert(String(errMsg));
-        return;
-      }
+  const errMsg =
+    j?.error ??
+    (r.status === 404
+      ? "api/billing/create-portal-session が見つかりません"
+      : `billing_portal_failed:${r.status}`);
+
+  // 🔥 ここ追加
+  if (errMsg === "customer_not_found") {
+    alert("まだ契約がありません。プランを選択してください。");
+    window.location.href = `/premium${devQuery}`;
+    return;
+  }
+
+  setMsg(String(errMsg));
+  alert(String(errMsg));
+  return;
+}
 
       if (j?.url) {
         window.top!.location.href = j.url;
