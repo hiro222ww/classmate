@@ -53,13 +53,6 @@ function isDeadlinePassed(matchDeadlineAt?: string | null) {
   return Date.now() > deadline;
 }
 
-function isFutureIso(v?: string | null) {
-  if (!v) return false;
-  const t = new Date(v).getTime();
-  if (!Number.isFinite(t)) return false;
-  return t > Date.now();
-}
-
 function deadlineError(matchDeadlineAt?: string | null) {
   return NextResponse.json(
     {
@@ -153,94 +146,6 @@ async function getClassSlots(deviceId: string) {
   };
 }
 
-/**
- * 表示・有効判定用:
- * 今も有効な membership だけ返す
- */
-async function getCurrentMemberships(deviceId: string) {
-  const { data: memberships, error: membershipsErr } = await supabase
-    .from("class_memberships")
-    .select("class_id")
-    .eq("device_id", deviceId);
-
-  if (membershipsErr) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, error: "memberships_lookup_failed", detail: membershipsErr.message },
-        { status: 500 }
-      ),
-    };
-  }
-
-  const rawClassIds = (memberships ?? [])
-    .map((x: any) => String(x.class_id ?? "").trim())
-    .filter(Boolean);
-
-  if (rawClassIds.length === 0) {
-    return { ok: true as const, currentIds: [] as string[] };
-  }
-
-  const { data: classRows, error: classErr } = await supabase
-    .from("classes")
-    .select("id,match_deadline_at")
-    .in("id", rawClassIds);
-
-  if (classErr) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, error: "memberships_classes_lookup_failed", detail: classErr.message },
-        { status: 500 }
-      ),
-    };
-  }
-
-  const classMap = new Map<string, { match_deadline_at?: string | null }>();
-  for (const row of classRows ?? []) {
-    const id = String((row as any)?.id ?? "").trim();
-    if (!id) continue;
-    classMap.set(id, {
-      match_deadline_at: (row as any)?.match_deadline_at ?? null,
-    });
-  }
-
-  const { data: sessionRows, error: sessionErr } = await supabase
-    .from("sessions")
-    .select("class_id,status,created_at")
-    .in("class_id", rawClassIds)
-    .in("status", ["forming", "waiting"]);
-
-  if (sessionErr) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { ok: false, error: "memberships_sessions_lookup_failed", detail: sessionErr.message },
-        { status: 500 }
-      ),
-    };
-  }
-
-  const activeSessionClassIds = new Set(
-    (sessionRows ?? [])
-      .map((s: any) => String(s.class_id ?? "").trim())
-      .filter(Boolean)
-  );
-
-  const currentIds = rawClassIds.filter((classId) => {
-    const row = classMap.get(classId);
-    const deadlineOk = isFutureIso(row?.match_deadline_at ?? null);
-    const sessionOk = activeSessionClassIds.has(classId);
-    return deadlineOk && sessionOk;
-  });
-
-  return { ok: true as const, currentIds };
-}
-
-/**
- * 上限判定用:
- * 期限切れでも所属している限り枠を使う
- */
 async function getAllMembershipIds(deviceId: string) {
   const { data, error } = await supabase
     .from("class_memberships")
@@ -302,23 +207,49 @@ async function getMatchPrefs(deviceId: string) {
 async function ensureMembership(params: {
   deviceId: string;
   classId: string;
-  allMembershipIds: string[];
   classSlots: number;
 }) {
-  const { deviceId, classId, allMembershipIds, classSlots } = params;
+  const { deviceId, classId, classSlots } = params;
 
-  if (allMembershipIds.includes(classId)) {
-    return { ok: true as const, alreadyJoined: true, inserted: [] };
+  const { data: memberships, error } = await supabase
+    .from("class_memberships")
+    .select("class_id")
+    .eq("device_id", deviceId);
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "memberships_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
   }
 
-  if (allMembershipIds.length >= classSlots) {
+  const ids = (memberships ?? [])
+    .map((x: any) => String(x.class_id ?? "").trim())
+    .filter(Boolean);
+
+  if (ids.includes(classId)) {
+    return {
+      ok: true as const,
+      alreadyJoined: true,
+      currentCount: ids.length,
+    };
+  }
+
+  if (ids.length >= classSlots) {
     return {
       ok: false as const,
       response: NextResponse.json(
         {
           ok: false,
           error: "class_slots_limit",
-          currentCount: allMembershipIds.length,
+          currentCount: ids.length,
           classSlots,
         },
         { status: 400 }
@@ -361,6 +292,7 @@ async function ensureMembership(params: {
     ok: true as const,
     alreadyJoined: false,
     inserted: inserted ?? [],
+    currentCount: ids.length + 1,
   };
 }
 
@@ -554,7 +486,33 @@ async function runAtomicMatch(params: {
   if (error) {
     console.error("❌ RPC ERROR FULL", error);
 
-    if (String(error.message ?? "").includes("match_deadline_passed")) {
+    const message = String(error.message ?? "");
+    const detail = String((error as any).details ?? (error as any).detail ?? "");
+
+    if (message.includes("class_slots_limit")) {
+      let parsed: any = null;
+
+      try {
+        parsed = detail ? JSON.parse(detail) : null;
+      } catch {
+        parsed = null;
+      }
+
+      return {
+        ok: false as const,
+        response: NextResponse.json(
+          {
+            ok: false,
+            error: "class_slots_limit",
+            currentCount: parsed?.currentCount ?? null,
+            classSlots: parsed?.classSlots ?? null,
+          },
+          { status: 400 }
+        ),
+      };
+    }
+
+    if (message.includes("match_deadline_passed")) {
       return {
         ok: false as const,
         response: deadlineError(null),
@@ -606,7 +564,7 @@ export async function POST(req: Request) {
     const requestedCapacity = normalizeCapacity(body.capacity);
     const forcedClassId = String(body.classId ?? "").trim();
 
-    console.log("🔥 MATCH JOIN DEADLINE VERSION LOADED");
+    console.log("🔥 MATCH JOIN ATOMIC MEMBERSHIP VERSION LOADED");
     console.log("[class/match-join] body =", body);
     console.log("[class/match-join] deviceId =", deviceId);
     console.log("[class/match-join] topicKey =", topicKey);
@@ -660,7 +618,7 @@ export async function POST(req: Request) {
 
     const allMembershipsRes = await getAllMembershipIds(deviceId);
     if (!allMembershipsRes.ok) return allMembershipsRes.response;
-    const allMembershipIds = allMembershipsRes.ids;
+    const allMembershipIdsBefore = allMembershipsRes.ids;
 
     let classId = "";
     let className = "";
@@ -668,6 +626,8 @@ export async function POST(req: Request) {
     let sessionStatus = "forming";
     let sessionCreatedAt: string | null = null;
     let reused = false;
+    let alreadyJoined = false;
+    let currentCount = allMembershipIdsBefore.length;
 
     if (forcedClassId) {
       const forcedRes = await getForcedClassWithDeadline(forcedClassId);
@@ -710,6 +670,16 @@ export async function POST(req: Request) {
 
       classId = String(existingClass.id);
       className = String(existingClass.name ?? "").trim() || "クラス";
+
+      const membershipRes = await ensureMembership({
+        deviceId,
+        classId,
+        classSlots,
+      });
+      if (!membershipRes.ok) return membershipRes.response;
+
+      alreadyJoined = membershipRes.alreadyJoined;
+      currentCount = membershipRes.currentCount;
 
       const { data: existingSession, error: sessionErr } = await supabase
         .from("sessions")
@@ -824,15 +794,18 @@ export async function POST(req: Request) {
         });
         return deadlineError(matchedClassRes.row.match_deadline_at ?? null);
       }
-    }
 
-    const membershipRes = await ensureMembership({
-      deviceId,
-      classId,
-      allMembershipIds,
-      classSlots,
-    });
-    if (!membershipRes.ok) return membershipRes.response;
+      const afterMembershipsRes = await getAllMembershipIds(deviceId);
+      if (afterMembershipsRes.ok) {
+        currentCount = afterMembershipsRes.ids.length;
+        alreadyJoined = allMembershipIdsBefore.includes(classId);
+      } else {
+        currentCount = allMembershipIdsBefore.includes(classId)
+          ? allMembershipIdsBefore.length
+          : allMembershipIdsBefore.length + 1;
+        alreadyJoined = allMembershipIdsBefore.includes(classId);
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -845,11 +818,9 @@ export async function POST(req: Request) {
       requestedMinAge,
       requestedMaxAge,
       selfAge,
-      alreadyJoined: membershipRes.alreadyJoined,
+      alreadyJoined,
       reused,
-      currentCount: allMembershipIds.includes(classId)
-        ? allMembershipIds.length
-        : allMembershipIds.length + 1,
+      currentCount,
       classSlots,
     });
   } catch (e: any) {

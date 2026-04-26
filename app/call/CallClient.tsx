@@ -6,6 +6,7 @@ import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
+import { withDev } from "@/lib/withDev";
 
 type Member = {
   device_id: string;
@@ -68,13 +69,14 @@ export default function CallClient() {
 
   const sessionId = searchParams.get("sessionId") || "";
   const classId = searchParams.get("classId") || "";
-  const dev = searchParams.get("dev") || "";
 
   const deviceId = useMemo(() => getDeviceId(), []);
 
-  const returnTo = `/room?sessionId=${sessionId}&classId=${classId}${
-    dev ? `&dev=${dev}` : ""
-  }`;
+  const returnTo = withDev(
+    `/room?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
+      classId
+    )}`
+  );
 
   const [members, setMembers] = useState<Member[]>([]);
   const [isMuted, setIsMuted] = useState(true);
@@ -163,7 +165,6 @@ export default function CallClient() {
     void fetchMembers();
   }, [fetchMembers]);
 
-  // ✅ 通話ルームにいる間、presence を active 扱いで送る
   useEffect(() => {
     if (!classId || !sessionId || !deviceId) return;
 

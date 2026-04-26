@@ -17,6 +17,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
+import { withDev } from "@/lib/withDev";
 
 type MemberRow = {
   device_id?: string;
@@ -350,10 +351,6 @@ export default function RoomClient() {
     (searchParams.get("session") ?? "").trim();
   const autojoin = (searchParams.get("autojoin") ?? "").trim() === "1";
   const dev = (searchParams.get("dev") ?? "").trim();
-  const devSuffix = dev ? `&dev=${encodeURIComponent(dev)}` : "";
-  const backToSelectUrl = dev
-    ? `/class/select?dev=${encodeURIComponent(dev)}`
-    : "/class/select";
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -423,7 +420,7 @@ export default function RoomClient() {
   useEffect(() => {
     const id = String(getDeviceId() ?? "").trim();
     setDeviceId(id);
-  }, []);
+  }, [dev]);
 
   useEffect(() => {
     const active = isDevMode();
@@ -597,7 +594,6 @@ export default function RoomClient() {
     [sessionId, classId, pathname, topicTitle]
   );
 
-  // ✅ 待機ルームにいる間、presence を waiting 扱いで送る
   useEffect(() => {
     if (!classId || !sessionId || !deviceId) return;
     if (pathname !== "/room") return;
@@ -623,7 +619,7 @@ export default function RoomClient() {
     const timer = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void sendPresence();
-    }, 5000);
+    }, 10000);
 
     return () => {
       window.clearInterval(timer);
@@ -716,10 +712,10 @@ export default function RoomClient() {
       return;
     }
 
-    const roomUrl =
+    const roomUrl = withDev(
       `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-      `&sessionId=${encodeURIComponent(sessionId)}` +
-      devSuffix;
+        `&sessionId=${encodeURIComponent(sessionId)}`
+    );
 
     pushRecentClass(
       {
@@ -729,7 +725,7 @@ export default function RoomClient() {
       },
       20
     );
-  }, [classId, sessionId, topicTitle, classLabel, devSuffix]);
+  }, [classId, sessionId, topicTitle, classLabel]);
 
   useEffect(() => {
     joinedSessionKeyRef.current = null;
@@ -812,7 +808,7 @@ export default function RoomClient() {
     const interval = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void fetchStatus();
-    }, 5000);
+    }, 10000);
 
     const onVisible = () => {
       if (document.hidden) return;
@@ -854,43 +850,44 @@ export default function RoomClient() {
   }, [sessionId, classId, pathname, fetchStatus]);
 
   useEffect(() => {
-  if (!sessionId || !classId) return;
-  if (pathname !== "/room") return;
-  if (!autojoin) return;
+    if (!sessionId || !classId) return;
+    if (pathname !== "/room") return;
+    if (!autojoin) return;
 
-  const shouldAutoStart = status === "active" || memberCount >= 2;
-  if (!shouldAutoStart) return;
+    const shouldAutoStart = status === "active" || memberCount >= 2;
+    if (!shouldAutoStart) return;
 
-  const moveKey = `${sessionId}:${classId}:first-auto-call`;
-  if (autoMovedRef.current === moveKey) return;
+    const moveKey = `${sessionId}:${classId}:first-auto-call`;
+    if (autoMovedRef.current === moveKey) return;
 
-  if (typeof window !== "undefined") {
-    const storageKey = `classmate_auto_call_moved:${moveKey}`;
+    if (typeof window !== "undefined") {
+      const storageKey = `classmate_auto_call_moved:${moveKey}`;
 
-    if (sessionStorage.getItem(storageKey) === "1") {
-      return;
+      if (sessionStorage.getItem(storageKey) === "1") {
+        return;
+      }
+
+      sessionStorage.setItem(storageKey, "1");
     }
 
-    sessionStorage.setItem(storageKey, "1");
-  }
+    autoMovedRef.current = moveKey;
 
-  autoMovedRef.current = moveKey;
-
-  router.replace(
-    `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
-      classId
-    )}${devSuffix}`
-  );
-}, [
-  status,
-  memberCount,
-  sessionId,
-  classId,
-  pathname,
-  router,
-  devSuffix,
-  autojoin,
-]);
+    router.replace(
+      withDev(
+        `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
+          classId
+        )}`
+      )
+    );
+  }, [
+    status,
+    memberCount,
+    sessionId,
+    classId,
+    pathname,
+    router,
+    autojoin,
+  ]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -935,7 +932,7 @@ export default function RoomClient() {
     const poll = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
       void loadMessages();
-    }, 5000);
+    }, 15000);
 
     const onVisible = () => {
       if (document.hidden) return;
@@ -1057,24 +1054,28 @@ export default function RoomClient() {
           title={shellTitle}
           subtitle={shellSubtitle}
           lines={
-  err
-    ? [err]
-    : autoMovedRef.current === `${sessionId}:${classId}:first-auto-call` ||
-        (typeof window !== "undefined" &&
-          sessionStorage.getItem(
-            `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
-          ) === "1")
-      ? ["通話開始ボタンを押して、通話を開始してください。"]
-      : status === "forming"
-        ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
-        : status === "active"
-          ? ["通話を開始できます。"]
-          : []
-}
-          onBack={() => router.push(backToSelectUrl)}
+            err
+              ? [err]
+              : autoMovedRef.current === `${sessionId}:${classId}:first-auto-call` ||
+                  (typeof window !== "undefined" &&
+                    sessionStorage.getItem(
+                      `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
+                    ) === "1")
+                ? ["通話開始ボタンを押して、通話を開始してください。"]
+                : status === "forming"
+                  ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+                  : status === "active"
+                    ? ["通話を開始できます。"]
+                    : []
+          }
+          onBack={() => router.push(withDev("/class/select"))}
           onStartCall={() =>
             router.push(
-              `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}${devSuffix}`
+              withDev(
+                `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
+                  classId
+                )}`
+              )
             )
           }
           startDisabled={!sessionId || !classId}

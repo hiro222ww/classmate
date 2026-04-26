@@ -15,9 +15,7 @@ const supabaseAdmin = createClient(
 
 function mustGetDeviceId(req: Request) {
   const deviceId =
-    req.headers.get("x-device-id") ||
-    req.headers.get("X-Device-Id");
-
+    req.headers.get("x-device-id") || req.headers.get("X-Device-Id");
   return deviceId || null;
 }
 
@@ -61,9 +59,25 @@ function resolvePlan(params: { class_slots: number; topic_plan: number }) {
   return "free";
 }
 
+async function upsertBillingCustomer(deviceId: string, customerId: string) {
+  const { error } = await supabaseAdmin.from("user_billing_customers").upsert(
+    {
+      device_id: deviceId,
+      stripe_customer_id: customerId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "device_id" }
+  );
+
+  if (error) {
+    throw new Error(`billing_customer_upsert_failed:${error.message}`);
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const deviceId = mustGetDeviceId(req);
+
     if (!deviceId) {
       return NextResponse.json(
         { error: "missing_x_device_id" },
@@ -85,6 +99,28 @@ export async function POST(req: Request) {
       expand: ["subscription", "subscription.items.data.price"],
     });
 
+    // ✅ 支払い完了チェック
+    if (session.payment_status !== "paid") {
+      return NextResponse.json(
+        {
+          error: "payment_not_completed",
+          payment_status: session.payment_status,
+        },
+        { status: 402 }
+      );
+    }
+
+    // ✅ 他人のCheckout Sessionを使った反映防止
+    if (session.client_reference_id !== deviceId) {
+      return NextResponse.json(
+        {
+          error: "device_mismatch",
+          session_client_reference_id: session.client_reference_id,
+        },
+        { status: 403 }
+      );
+    }
+
     const customerId =
       typeof session.customer === "string"
         ? session.customer
@@ -97,41 +133,49 @@ export async function POST(req: Request) {
       );
     }
 
-    const sub = session.subscription as Stripe.Subscription | null;
-    if (!sub) {
+    const sessionSub = session.subscription as Stripe.Subscription | null;
+
+    if (!sessionSub) {
       return NextResponse.json(
         { error: "subscription_missing_in_session" },
         { status: 400 }
       );
     }
 
-    if (!(sub.status === "active" || sub.status === "trialing")) {
+    if (!(sessionSub.status === "active" || sessionSub.status === "trialing")) {
       return NextResponse.json(
         {
           error: "subscription_not_active",
-          stripe_status: sub.status,
+          stripe_status: sessionSub.status,
         },
         { status: 409 }
       );
     }
 
-    const priceIds =
-      sub.items.data
-        ?.map((item) => item.price?.id)
-        .filter((x): x is string => !!x) ?? [];
+    await upsertBillingCustomer(deviceId, customerId);
 
-    if (priceIds.length === 0) {
-      return NextResponse.json(
-        { error: "price_missing_in_subscription" },
-        { status: 400 }
-      );
-    }
+    const subs = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 100,
+      expand: ["data.items.data.price"],
+    });
+
+    const activeSubs = subs.data.filter(
+      (s) => s.status === "active" || s.status === "trialing"
+    );
+
+    const priceIds = activeSubs.flatMap((sub) =>
+      sub.items.data
+        .map((item) => item.price?.id)
+        .filter((x): x is string => !!x)
+    );
 
     const topic_plan = resolveTopicPlan(priceIds);
     const class_slots = resolveClassSlots(priceIds);
 
-    // 何にもマッチしないなら、環境変数とStripeのpriceがズレている
     const hasKnownPrice = topic_plan > 0 || class_slots > 1;
+
     if (!hasKnownPrice) {
       return NextResponse.json(
         {
@@ -158,9 +202,18 @@ export async function POST(req: Request) {
     console.log("[billing/finalize] deviceId =", deviceId);
     console.log("[billing/finalize] session_id =", session_id);
     console.log("[billing/finalize] customerId =", customerId);
-    console.log("[billing/finalize] subscriptionId =", sub.id);
-    console.log("[billing/finalize] sub.status =", sub.status);
-    console.log("[billing/finalize] priceIds =", priceIds);
+    console.log("[billing/finalize] sessionSubId =", sessionSub.id);
+    console.log(
+      "[billing/finalize] active subscriptions =",
+      activeSubs.map((s) => ({
+        id: s.id,
+        status: s.status,
+        priceIds: s.items.data
+          .map((item) => item.price?.id)
+          .filter((x): x is string => !!x),
+      }))
+    );
+    console.log("[billing/finalize] merged priceIds =", priceIds);
     console.log("[billing/finalize] resolved =", {
       plan,
       class_slots,
@@ -168,27 +221,6 @@ export async function POST(req: Request) {
       can_create_classes,
       theme_pass,
     });
-
-    const { error: billingErr } = await supabaseAdmin
-      .from("user_billing_customers")
-      .upsert(
-        {
-          device_id: deviceId,
-          stripe_customer_id: customerId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "device_id" }
-      );
-
-    if (billingErr) {
-      return NextResponse.json(
-        {
-          error: "billing_customer_upsert_failed",
-          detail: billingErr.message,
-        },
-        { status: 500 }
-      );
-    }
 
     const { data: ent, error: entErr } = await supabaseAdmin
       .from("user_entitlements")
@@ -200,12 +232,13 @@ export async function POST(req: Request) {
           can_create_classes,
           topic_plan,
           theme_pass,
+          manual_override: false,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "device_id" }
       )
       .select(
-        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at"
+        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override"
       )
       .maybeSingle();
 
@@ -223,15 +256,16 @@ export async function POST(req: Request) {
       ok: true,
       deviceId,
       customerId,
-      subscription: {
-        id: sub.id,
-        status: sub.status,
-      },
+      activeSubscriptions: activeSubs.map((s) => ({
+        id: s.id,
+        status: s.status,
+      })),
       priceIds,
       entitlements: ent,
     });
   } catch (e: any) {
     console.error("[billing/finalize] fatal", e);
+
     return NextResponse.json(
       { error: e?.message ?? "finalize_failed" },
       { status: 500 }

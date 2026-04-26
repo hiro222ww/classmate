@@ -25,6 +25,19 @@ export function getOrCreateDeviceId(): string {
 export function getDeviceId(): string {
   if (!isBrowser()) return "";
 
+  // 🔥 ① URLの dev を最優先（最重要）
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const devFromUrl = params.get("dev");
+
+    if (devFromUrl && /^\d+$/.test(devFromUrl)) {
+      return `test-device-${devFromUrl}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  // ② devMode（iframeなど）
   if (isDevFeatureEnabled()) {
     const devId = getDevDeviceId();
     if (devId && devId.trim()) {
@@ -32,6 +45,7 @@ export function getDeviceId(): string {
     }
   }
 
+  // ③ 通常ユーザー
   return getOrCreateDeviceId();
 }
 

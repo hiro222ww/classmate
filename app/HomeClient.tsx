@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { DevPanel } from "@/components/DevPanel";
+import { withDev } from "@/lib/withDev";
 
 type Profile = {
   device_id: string;
@@ -216,25 +217,13 @@ export default function HomeClient() {
   const searchParams = useSearchParams();
 
   const dev = (searchParams.get("dev") ?? "").trim();
-  const devQuery = dev ? `dev=${encodeURIComponent(dev)}` : "";
-
-  const withDev = (path: string) => {
-    if (!devQuery) return path;
-    return `${path}${path.includes("?") ? "&" : "?"}${devQuery}`;
-  };
 
   function buildRoomUrl(classId: string, sessionId: string) {
-    const qs = new URLSearchParams({
-      autojoin: "1",
-      classId,
-      sessionId,
-    });
-
-    if (dev) {
-      qs.set("dev", dev);
-    }
-
-    return `/room?${qs.toString()}`;
+    return withDev(
+      `/room?autojoin=1&classId=${encodeURIComponent(
+        classId
+      )}&sessionId=${encodeURIComponent(sessionId)}`
+    );
   }
 
   const [deviceId, setDeviceId] = useState("");
@@ -658,18 +647,18 @@ export default function HomeClient() {
       console.log("[home openClass] match-join response =", json);
 
       if (!res.ok || !json?.ok) {
-  if (json?.error === "class_slots_limit") {
-    alert(
-      `クラス参加上限に達しています。現在のプランでは最大 ${
-        json?.classSlots ?? "指定"
-      } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
-    );
-    return;
-  }
+        if (json?.error === "class_slots_limit") {
+          alert(
+            `クラス参加上限に達しています。現在のプランでは最大 ${
+              json?.classSlots ?? "指定"
+            } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
+          );
+          return;
+        }
 
-  alert(json?.error || "open_class_failed");
-  return;
-}
+        alert(json?.error || "open_class_failed");
+        return;
+      }
 
       const classId = String(json?.classId ?? "").trim();
       const sessionId = String(json?.sessionId ?? "").trim();
@@ -715,18 +704,18 @@ export default function HomeClient() {
       console.log("[home quick free] response =", json);
 
       if (!res.ok || !json?.ok) {
-  if (json?.error === "class_slots_limit") {
-    alert(
-      `クラス参加上限に達しています。現在のプランでは最大 ${
-        json?.classSlots ?? "指定"
-      } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
-    );
-    return;
-  }
+        if (json?.error === "class_slots_limit") {
+          alert(
+            `クラス参加上限に達しています。現在のプランでは最大 ${
+              json?.classSlots ?? "指定"
+            } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
+          );
+          return;
+        }
 
-  alert(json?.error || "quick_join_failed");
-  return;
-}
+        alert(json?.error || "quick_join_failed");
+        return;
+      }
 
       const classId = String(json?.classId ?? "").trim();
       const sessionId = String(json?.sessionId ?? "").trim();
