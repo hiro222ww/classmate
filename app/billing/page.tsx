@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 
-export default function BillingPage() {
+function BillingPageInner() {
   const searchParams = useSearchParams();
   const dev = (searchParams.get("dev") ?? "").trim();
   const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
@@ -239,5 +239,13 @@ export default function BillingPage() {
         </Link>
       </div>
     </main>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>読み込み中...</main>}>
+      <BillingPageInner />
+    </Suspense>
   );
 }
