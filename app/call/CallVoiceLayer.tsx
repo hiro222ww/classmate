@@ -1141,12 +1141,29 @@ function RemoteAudio({
 }) {
   const ref = useRef<HTMLAudioElement | null>(null);
   const lastStreamRef = useRef<MediaStream | null>(null);
+  const [blocked, setBlocked] = useState(false);
+
+  const playAudio = async () => {
+    const el = ref.current;
+    if (!el) return;
+
+    try {
+      await el.play();
+      setBlocked(false);
+      console.log("[call] remote audio playing", remoteId);
+    } catch (e: any) {
+      if (e?.name === "NotAllowedError") {
+        setBlocked(true);
+        console.warn("[call] autoplay blocked", remoteId);
+        return;
+      }
+      console.error("[call] remote audio play error", remoteId, e);
+    }
+  };
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-
-    let cancelled = false;
 
     if (lastStreamRef.current !== stream || el.srcObject !== stream) {
       el.srcObject = stream;
@@ -1158,58 +1175,36 @@ function RemoteAudio({
     el.volume = 1;
     el.setAttribute("playsinline", "true");
 
-    const tryPlay = async () => {
-      try {
-        if (!el.paused) return;
-
-        await el.play();
-
-        if (!cancelled) {
-          console.log("[call] remote audio playing", remoteId, {
-            readyState: el.readyState,
-            paused: el.paused,
-            muted: el.muted,
-            volume: el.volume,
-            tracks: stream.getAudioTracks().map((t) => ({
-              enabled: t.enabled,
-              muted: t.muted,
-              readyState: t.readyState,
-              label: t.label,
-            })),
-          });
-        }
-      } catch (e: any) {
-        if (e?.name === "AbortError") {
-          console.warn("[call] remote audio play aborted", remoteId);
-          return;
-        }
-        console.error("[call] remote audio play error", remoteId, e);
-      }
-    };
-
-    const onCanPlay = () => {
-      console.log("[call] audio canplay", remoteId);
-      void tryPlay();
-    };
-
-    const onLoadedMetadata = () => {
-      console.log("[call] audio loadedmetadata", remoteId, {
-        readyState: el.readyState,
-        paused: el.paused,
-      });
-      void tryPlay();
-    };
-
-    el.addEventListener("canplay", onCanPlay);
-    el.addEventListener("loadedmetadata", onLoadedMetadata);
-    void tryPlay();
-
-    return () => {
-      cancelled = true;
-      el.removeEventListener("canplay", onCanPlay);
-      el.removeEventListener("loadedmetadata", onLoadedMetadata);
-    };
+    void playAudio();
   }, [stream, remoteId]);
 
-  return <audio ref={ref} autoPlay playsInline controls style={{ width: 220 }} />;
+  return (
+    <>
+      <audio
+        ref={ref}
+        autoPlay
+        playsInline
+        controls
+        style={{ width: 220 }}
+      />
+
+      {blocked && (
+        <button
+          type="button"
+          onClick={playAudio}
+          style={{
+            marginTop: 8,
+            padding: "8px 12px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.35)",
+            background: "rgba(255,255,255,0.16)",
+            color: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          🔊 音声を有効にする
+        </button>
+      )}
+    </>
+  );
 }
