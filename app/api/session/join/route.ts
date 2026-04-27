@@ -5,14 +5,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function isUuid(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     s
   );
 }
 
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
-  if (!s || s === "You") return "参加者";
+  if (!s || s === "You" || s === "undefined" || s === "null") return "参加者";
   return s;
 }
 
@@ -31,17 +31,11 @@ async function ensureJoinableSession(params: {
   if (error) return { ok: false as const, error };
 
   if (!existing) {
-    return {
-      ok: false as const,
-      error: new Error("session_not_found"),
-    };
+    return { ok: false as const, error: new Error("session_not_found") };
   }
 
   if (existing.status === "closed" || existing.status === "ended") {
-    return {
-      ok: false as const,
-      error: new Error("session_closed"),
-    };
+    return { ok: false as const, error: new Error("session_closed") };
   }
 
   const updates: Record<string, any> = {};
@@ -75,113 +69,48 @@ async function ensureJoinableSession(params: {
   };
 }
 
-async function getExistingMine(sessionId: string, deviceId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("session_members")
-    .select("device_id")
-    .eq("session_id", sessionId)
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  if (error) return { ok: false as const, error };
-
-  return {
-    ok: true as const,
-    alreadyInSession: !!data,
-  };
-}
-
 async function countMembers(sessionId: string) {
   const { count, error } = await supabaseAdmin
     .from("session_members")
     .select("device_id", { count: "exact", head: true })
-    .eq("session_id", sessionId)
-    .not("device_id", "is", null)
-    .neq("device_id", "");
+    .eq("session_id", sessionId);
 
   if (error) return { ok: false as const, error };
 
-  return {
-    ok: true as const,
-    count: Number(count ?? 0),
-  };
-}
-
-async function upsertSessionMember(params: {
-  sessionId: string;
-  deviceId: string;
-  name: string;
-}) {
-  const { sessionId, deviceId, name } = params;
-  const safeName = sanitizeDisplayName(name);
-
-  const { error } = await supabaseAdmin.from("session_members").upsert(
-    {
-      session_id: sessionId,
-      device_id: deviceId,
-      display_name: safeName,
-      joined_at: new Date().toISOString(),
-    },
-    { onConflict: "session_id,device_id" }
-  );
-
-  if (error) return { ok: false as const, error };
-  return { ok: true as const };
-}
-
-async function upsertClassMembership(params: {
-  classId: string;
-  deviceId: string;
-}) {
-  const { classId, deviceId } = params;
-
-  const { error } = await supabaseAdmin.from("class_memberships").upsert(
-    {
-      class_id: classId,
-      device_id: deviceId,
-      joined_at: new Date().toISOString(),
-    },
-    { onConflict: "class_id,device_id" }
-  );
-
-  if (error) return { ok: false as const, error };
-  return { ok: true as const };
-}
-
-async function upsertClassPresence(params: {
-  classId: string;
-  sessionId: string;
-  deviceId: string;
-  status: "waiting" | "active";
-}) {
-  const { classId, sessionId, deviceId, status } = params;
-
-  const { error } = await supabaseAdmin.from("class_presence").upsert(
-    {
-      class_id: classId,
-      device_id: deviceId,
-      status,
-      session_id: sessionId,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "class_id,device_id" }
-  );
-
-  if (error) return { ok: false as const, error };
-  return { ok: true as const };
+  return { ok: true as const, count: Number(count ?? 0) };
 }
 
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as any;
 
-    const sessionIdRaw = String(body.sessionId ?? "").trim();
-    const classIdRaw = String(body.classId ?? "").trim();
+    const sessionIdRaw = String(
+      body.sessionId ?? body.session_id ?? body.session ?? ""
+    ).trim();
+
+    const classIdRaw = String(
+      body.classId ?? body.class_id ?? body.class ?? ""
+    ).trim();
+
     const rawName = String(body.name ?? body.displayName ?? "").trim();
     const name = sanitizeDisplayName(rawName);
-    const deviceId = String(body.deviceId ?? "").trim();
+
+    const deviceId = String(
+      body.deviceId ?? body.device_id ?? ""
+    ).trim();
+
     const capacity = Number(body.capacity ?? 0);
     const invite = Boolean(body.invite);
+
+    console.log("[session/join] parsed", {
+      sessionIdRaw,
+      classIdRaw,
+      deviceId,
+      name,
+      invite,
+    });
+
+    // ===== バリデーション =====
 
     if (!deviceId) {
       return NextResponse.json(
@@ -218,19 +147,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const resolvedCapacity =
-      Number.isFinite(capacity) && capacity > 0 ? capacity : 5;
+    // ===== セッション確認 =====
 
     const ensured = await ensureJoinableSession({
       sessionId: sessionIdRaw,
-      capacity: resolvedCapacity,
+      capacity: capacity || 5,
     });
 
     if (!ensured.ok) {
-      const msg = ensured.error?.message ?? "ensure_session_failed";
       return NextResponse.json(
-        { ok: false, error: msg },
-        { status: msg === "session_not_found" ? 404 : 400 }
+        { ok: false, error: ensured.error.message },
+        { status: 400 }
       );
     }
 
@@ -238,123 +165,105 @@ export async function POST(req: Request) {
 
     if (String(session.class_id ?? "").trim() !== classIdRaw) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "session_class_mismatch",
-          sessionId: sessionIdRaw,
-          classId: classIdRaw,
-          sessionClassId: String(session.class_id ?? "").trim(),
-        },
+        { ok: false, error: "session_class_mismatch" },
         { status: 400 }
       );
     }
 
-    const actualCapacity =
-      Number.isFinite(session.capacity) && session.capacity > 0
-        ? session.capacity
-        : resolvedCapacity;
+    // ===== 二重join防止（最重要） =====
 
-    const existingMineRes = await getExistingMine(sessionIdRaw, deviceId);
+    const existing = await supabaseAdmin
+      .from("session_members")
+      .select("device_id")
+      .eq("session_id", sessionIdRaw)
+      .eq("device_id", deviceId)
+      .maybeSingle();
 
-    if (!existingMineRes.ok) {
+    if (existing.data) {
+      console.log("[session/join] already in session");
+
+      return NextResponse.json({
+        ok: true,
+        sessionId: sessionIdRaw,
+        classId: classIdRaw,
+        alreadyInSession: true,
+      });
+    }
+
+    // ===== 定員チェック =====
+
+    const countRes = await countMembers(sessionIdRaw);
+
+    if (!countRes.ok) {
       return NextResponse.json(
-        { ok: false, error: existingMineRes.error.message },
+        { ok: false, error: countRes.error.message },
         { status: 500 }
       );
     }
 
-    const alreadyInSession = existingMineRes.alreadyInSession;
-
-    if (!alreadyInSession) {
-      const countBeforeRes = await countMembers(sessionIdRaw);
-
-      if (!countBeforeRes.ok) {
-        return NextResponse.json(
-          { ok: false, error: countBeforeRes.error.message },
-          { status: 500 }
-        );
-      }
-
-      if (countBeforeRes.count >= actualCapacity) {
-        return NextResponse.json(
-          { ok: false, error: "session_full" },
-          { status: 409 }
-        );
-      }
-    }
-
-    // 通常参加の締切チェックを入れるならここ。
-    // invite=true の招待参加は、sessionId固定で入れる想定。
-    if (!invite) {
-      // 例:
-      // if (session.recruitment_closed) {
-      //   return NextResponse.json(
-      //     { ok: false, error: "session_recruitment_closed" },
-      //     { status: 409 }
-      //   );
-      // }
-    }
-
-    const memberRes = await upsertSessionMember({
-      sessionId: sessionIdRaw,
-      deviceId,
-      name,
-    });
-
-    if (!memberRes.ok) {
+    if (countRes.count >= session.capacity) {
       return NextResponse.json(
-        { ok: false, error: memberRes.error.message },
+        { ok: false, error: "session_full" },
+        { status: 409 }
+      );
+    }
+
+    // ===== メンバー追加 =====
+
+    const { error: memberErr } = await supabaseAdmin
+      .from("session_members")
+      .upsert(
+        {
+          session_id: sessionIdRaw,
+          device_id: deviceId,
+          display_name: name,
+          joined_at: new Date().toISOString(),
+        },
+        { onConflict: "session_id,device_id" }
+      );
+
+    if (memberErr) {
+      console.error("[session/join] member error", memberErr);
+      return NextResponse.json(
+        { ok: false, error: memberErr.message },
         { status: 500 }
       );
     }
 
-    const membershipRes = await upsertClassMembership({
-      classId: classIdRaw,
-      deviceId,
-    });
+    // ===== クラス所属 =====
 
-    if (!membershipRes.ok) {
-      return NextResponse.json(
-        { ok: false, error: membershipRes.error.message },
-        { status: 500 }
-      );
-    }
+    await supabaseAdmin.from("class_memberships").upsert(
+      {
+        class_id: classIdRaw,
+        device_id: deviceId,
+        joined_at: new Date().toISOString(),
+      },
+      { onConflict: "class_id,device_id" }
+    );
 
-    const presenceStatus =
-      session.status === "active" ? "active" : "waiting";
+    // ===== presence =====
 
-    const presenceRes = await upsertClassPresence({
-      classId: classIdRaw,
-      sessionId: sessionIdRaw,
-      deviceId,
-      status: presenceStatus,
-    });
+    await supabaseAdmin.from("class_presence").upsert(
+      {
+        class_id: classIdRaw,
+        device_id: deviceId,
+        session_id: sessionIdRaw,
+        status: session.status === "active" ? "active" : "waiting",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "class_id,device_id" }
+    );
 
-    if (!presenceRes.ok) {
-      return NextResponse.json(
-        { ok: false, error: presenceRes.error.message },
-        { status: 500 }
-      );
-    }
-
-    const countAfterRes = await countMembers(sessionIdRaw);
-
-    if (!countAfterRes.ok) {
-      return NextResponse.json(
-        { ok: false, error: countAfterRes.error.message },
-        { status: 500 }
-      );
-    }
+    // ===== 最終レスポンス =====
 
     return NextResponse.json({
       ok: true,
       sessionId: sessionIdRaw,
       classId: classIdRaw,
       topic: session.topic || "クラス",
-      capacity: actualCapacity,
-      memberCount: countAfterRes.count,
-      status: session.status || "forming",
-      alreadyInSession,
+      capacity: session.capacity,
+      memberCount: countRes.count + 1,
+      status: session.status,
       invite,
     });
   } catch (e: any) {

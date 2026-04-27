@@ -1135,32 +1135,33 @@ export default function RoomClient() {
 
   <button
     onClick={async () => {
-      const inviteUrl =
-        `${location.origin}/room?invite=1&autojoin=1` +
-        `&classId=${encodeURIComponent(classId)}` +
-        `&sessionId=${encodeURIComponent(sessionId)}`;
-
-      try {
-  if (navigator.share) {
-    await navigator.share({
-      title: "classmate",
-      text: "このクラスに参加しよう",
-      url: inviteUrl,
-    });
+  if (!sessionId || !classId) {
+    alert("まだ招待リンクを作れません。ルームに入り直してください。");
     return;
   }
 
-  await navigator.clipboard.writeText(inviteUrl);
-  alert("招待リンクをコピーしました");
-} catch (e) {
-  console.warn("[invite] copy failed", e);
+  if (!isUuidLike(sessionId) || !isUuidLike(classId)) {
+    alert("招待リンクを作れません。ルーム情報が正しくありません。");
+    return;
+  }
 
-  window.prompt(
-    "コピーできませんでした。下のリンクをコピーしてください。",
-    inviteUrl
-  );
-}
-    }}
+  const inviteUrl =
+    `${location.origin}/room?invite=1&autojoin=1` +
+    `&sessionId=${encodeURIComponent(sessionId)}` +
+    `&classId=${encodeURIComponent(classId)}`;
+
+  try {
+    await navigator.clipboard.writeText(inviteUrl);
+    alert("招待リンクをコピーしました");
+  } catch (e) {
+    console.warn("[invite] copy failed", e);
+    window.prompt(
+      "コピーできませんでした。下のリンクをコピーしてください。",
+      inviteUrl
+    );
+  }
+}}
+
     disabled={!sessionId || !classId}
     style={{
       border: "none",

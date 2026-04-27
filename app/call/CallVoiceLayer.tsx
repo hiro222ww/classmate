@@ -214,14 +214,40 @@ export default function CallVoiceLayer({
   );
 
   const syncSendersMuted = useCallback(
-    async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
-      const localTrack = localAudioTrackRef.current;
-      if (!localTrack) return;
+  async (pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
+    const localTrack = localAudioTrackRef.current;
+    const localStream = localStreamRef.current;
 
-      localTrack.enabled = !muted;
-    },
-    []
-  );
+    if (!localTrack || !localStream) return;
+
+    localTrack.enabled = !muted;
+
+    const sender = pc
+      .getSenders()
+      .find((s) => s.track?.kind === "audio" || s.track === null);
+
+    try {
+      if (sender) {
+        // ミュート解除時に相手側へ音声trackを再同期
+        await sender.replaceTrack(localTrack);
+      } else {
+        pc.addTrack(localTrack, localStream);
+      }
+    } catch (e) {
+      console.warn("[call] replaceTrack failed", remoteId, e);
+    }
+
+    console.log("[call] sender mute sync", {
+      remoteId,
+      muted,
+      localTrackId: localTrack.id,
+      enabled: localTrack.enabled,
+      readyState: localTrack.readyState,
+      senderCount: pc.getSenders().length,
+    });
+  },
+  []
+);
 
   const syncAllPeerSendersMuted = useCallback(
     async (muted: boolean) => {
@@ -239,6 +265,10 @@ export default function CallVoiceLayer({
   const closePeer = useCallback(
     (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
+
+      console.log("[call] close peer", remoteId, {
+        clearConnectionId: shouldClearConnectionId,
+      });
 
       const pc = pcsRef.current.get(remoteId);
 
@@ -287,6 +317,8 @@ export default function CallVoiceLayer({
       const queued = pendingIceRef.current.get(remoteId) ?? [];
       if (!queued.length) return;
 
+      console.log("[call] flush pending ice", remoteId, connectionId, queued.length);
+
       for (const candidate of queued) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -303,12 +335,19 @@ export default function CallVoiceLayer({
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
       if (!localAudioTrackRef.current && !localStreamRef.current) {
+        console.log("[call] skip offer: local audio not ready", remoteId);
         return;
       }
 
       const iAmOfferer = deviceId < remoteId;
 
-     // if (!iAmOfferer) return;
+      console.log("[call] offer role check", {
+        deviceId,
+        remoteId,
+        iAmOfferer,
+      });
+
+     if (!iAmOfferer) return;
 
       let connectionId = getCurrentConnectionId(remoteId);
 
@@ -320,10 +359,17 @@ export default function CallVoiceLayer({
       const pc = createPeerConnection(remoteId, connectionId);
 
       if (offeredPeersRef.current.has(remoteId)) {
+        console.log("[call] skip offer: already offered", remoteId, connectionId);
         return;
       }
 
       if (pc.signalingState !== "stable") {
+        console.log(
+          "[call] skip offer: non-stable",
+          remoteId,
+          connectionId,
+          pc.signalingState
+        );
         return;
       }
 
@@ -331,6 +377,12 @@ export default function CallVoiceLayer({
         pc.connectionState === "connecting" ||
         pc.connectionState === "connected"
       ) {
+        console.log(
+          "[call] skip offer: already connecting/connected",
+          remoteId,
+          connectionId,
+          pc.connectionState
+        );
         return;
       }
 
@@ -339,6 +391,7 @@ export default function CallVoiceLayer({
       setPeerState(remoteId, "connecting");
 
       try {
+        console.log("[call] create offer start", remoteId, connectionId);
 
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
@@ -368,6 +421,8 @@ export default function CallVoiceLayer({
           connectionId,
           sdp: pc.localDescription,
         });
+
+        console.log("[call] offer sent", remoteId, connectionId);
       } catch (e) {
         offeredPeersRef.current.delete(remoteId);
         console.error("[call] create offer error", remoteId, connectionId, e);
@@ -389,6 +444,8 @@ export default function CallVoiceLayer({
       if (!iAmOfferer) return;
       if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
+      console.log("[call] schedule reconnect", remoteId, { delay });
+
       clearReconnectTimer(remoteId);
 
       const timer = window.setTimeout(() => {
@@ -397,6 +454,8 @@ export default function CallVoiceLayer({
         const nextConnectionId = makeConnectionId(deviceId, remoteId);
         closePeer(remoteId, { clearConnectionId: false });
         setCurrentConnectionId(remoteId, nextConnectionId);
+
+        console.log("[call] reconnect prepared", remoteId, nextConnectionId);
 
         void maybeStartOffer(remoteId);
       }, delay);
@@ -459,13 +518,25 @@ export default function CallVoiceLayer({
         const stream = event.streams?.[0];
         if (!stream) return;
 
+        console.log("[call] ontrack", remoteId, connectionId, {
+          trackCount: stream.getTracks().length,
+          audioTracks: stream.getAudioTracks().map((t) => ({
+            enabled: t.enabled,
+            muted: t.muted,
+            readyState: t.readyState,
+            label: t.label,
+          })),
+        });
+
         upsertRemoteAudio(remoteId, stream);
       };
 
       pc.onsignalingstatechange = () => {
+        console.log("[call] signaling state", remoteId, connectionId, pc.signalingState);
       };
 
       pc.oniceconnectionstatechange = () => {
+        console.log("[call] ice state", remoteId, connectionId, pc.iceConnectionState);
         notifyStatus(`ice ${remoteId}: ${pc.iceConnectionState}`);
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
@@ -483,6 +554,8 @@ export default function CallVoiceLayer({
 
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
+
+        console.log("[call] connection state", remoteId, connectionId, state);
 
         if (
           state === "failed" ||
@@ -539,6 +612,14 @@ export default function CallVoiceLayer({
 
   const handleSignal = useCallback(
     async (row: SignalRow) => {
+      console.log("[call] signal received raw", {
+      id: row.id,
+      type: row.signal_type,
+      from: row.from_device_id,
+      to: row.to_device_id,
+      me: deviceId,
+      session: row.session_id,
+    });
 
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
       processedSignalIdsRef.current.add(row.id);
@@ -552,6 +633,7 @@ export default function CallVoiceLayer({
       const incomingConnectionId = payload.connectionId;
 
       if (row.signal_type === "leave") {
+        console.log("[call] leave received", remoteId);
         closePeer(remoteId, { clearConnectionId: true });
         return;
       }
@@ -565,6 +647,10 @@ export default function CallVoiceLayer({
 
       if (row.signal_type === "offer") {
         if (currentConnectionId !== incomingConnectionId) {
+          console.log("[call] new offer connection id", remoteId, {
+            currentConnectionId,
+            incomingConnectionId,
+          });
           closePeer(remoteId, { clearConnectionId: false });
           setCurrentConnectionId(remoteId, incomingConnectionId);
           currentConnectionId = incomingConnectionId;
@@ -596,6 +682,8 @@ export default function CallVoiceLayer({
             return;
           }
 
+          console.log("[call] applying offer", remoteId, incomingConnectionId);
+
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
 
@@ -608,6 +696,8 @@ export default function CallVoiceLayer({
             connectionId: incomingConnectionId,
             sdp: pc.localDescription,
           });
+
+          console.log("[call] answer sent", remoteId, incomingConnectionId);
           return;
         }
 
@@ -625,8 +715,12 @@ export default function CallVoiceLayer({
             return;
           }
 
+          console.log("[call] applying answer", remoteId, incomingConnectionId);
+
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
+
+          console.log("[call] answer applied", remoteId, incomingConnectionId);
           return;
         }
 
@@ -638,6 +732,13 @@ export default function CallVoiceLayer({
             const queued = pendingIceRef.current.get(remoteId) ?? [];
             queued.push(candidate);
             pendingIceRef.current.set(remoteId, queued);
+
+            console.log(
+              "[call] queue ice before remoteDescription",
+              remoteId,
+              incomingConnectionId,
+              queued.length
+            );
 
             return;
           }
@@ -709,6 +810,12 @@ export default function CallVoiceLayer({
           localAudioTrackRef.current.enabled = !isMuted;
         }
 
+        console.log("[call] local audio track", {
+          deviceId,
+          trackId: localAudioTrackRef.current?.id ?? null,
+          label: localAudioTrackRef.current?.label ?? null,
+        });
+
         setMicReady(true);
         onMicReadyChange?.(true);
         notifyStatus("");
@@ -767,8 +874,19 @@ export default function CallVoiceLayer({
   ]);
 
   useEffect(() => {
-    void syncAllPeerSendersMuted(isMuted);
-  }, [isMuted, syncAllPeerSendersMuted]);
+  void syncAllPeerSendersMuted(isMuted);
+
+  // ミュート解除直後にもう一度だけ同期して、相手側の無音遅れを潰す
+  if (!isMuted) {
+    const timer = window.setTimeout(() => {
+      void syncAllPeerSendersMuted(false);
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }
+}, [isMuted, syncAllPeerSendersMuted]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -874,6 +992,11 @@ export default function CallVoiceLayer({
       isSubscribingRef.current = true;
       subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
 
+      console.log("🔥 SUBSCRIBE CREATED", {
+        sessionId,
+        deviceId,
+      });
+
       const channel = supabase
   .channel(`call-signals-${sessionId}`)
   .on(
@@ -890,6 +1013,7 @@ export default function CallVoiceLayer({
     }
   )
         .subscribe(async (status) => {
+          console.log("[call] signal subscribe status", status);
 
           if (!alive) return;
 
@@ -958,6 +1082,12 @@ export default function CallVoiceLayer({
   }, [sessionId, deviceId, clearRetrySubscribeTimer]);
 
   useEffect(() => {
+    console.log("[call] offer effect check", {
+      micReady,
+      signalReady,
+      deviceId,
+      members: members.map((m) => m.device_id),
+    });
 
     if (!micReady) return;
     if (!signalReady) return;
@@ -965,6 +1095,10 @@ export default function CallVoiceLayer({
     const remoteIds = members
       .map((m) => m.device_id)
       .filter((id) => id && id !== deviceId);
+
+    console.log("[call] remoteIds for offer", {
+      remoteIds,
+    });
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
@@ -983,6 +1117,11 @@ export default function CallVoiceLayer({
       if (!getCurrentConnectionId(remoteId)) {
         setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
       }
+
+      console.log("[call] try maybeStartOffer", {
+        remoteId,
+        deviceId,
+      });
 
       void maybeStartOffer(remoteId);
     }
@@ -1089,13 +1228,32 @@ function RemoteAudio({
   const lastStreamRef = useRef<MediaStream | null>(null);
   const [blocked, setBlocked] = useState(false);
 
-  const playAudio = async () => {
+  const playAudio = useCallback(async () => {
     const el = ref.current;
     if (!el) return;
 
     try {
+      // 自分のマイクミュートとは無関係。
+      // これは「相手の音を再生するaudio要素」の設定。
+      el.muted = false;
+      el.volume = 1;
+
       await el.play();
+
       setBlocked(false);
+
+      console.log("[call] remote audio playing", remoteId, {
+        readyState: el.readyState,
+        paused: el.paused,
+        muted: el.muted,
+        volume: el.volume,
+        tracks: stream.getAudioTracks().map((t) => ({
+          enabled: t.enabled,
+          muted: t.muted,
+          readyState: t.readyState,
+          label: t.label,
+        })),
+      });
     } catch (e: any) {
       if (e?.name === "NotAllowedError") {
         setBlocked(true);
@@ -1110,7 +1268,7 @@ function RemoteAudio({
 
       console.error("[call] remote audio play error", remoteId, e);
     }
-  };
+  }, [remoteId, stream]);
 
   useEffect(() => {
     const el = ref.current;
@@ -1122,33 +1280,40 @@ function RemoteAudio({
     }
 
     el.autoplay = true;
-    el.muted = false;
-    el.volume = 1;
     el.setAttribute("playsinline", "true");
+    el.volume = 1;
 
-    const onCanPlay = () => {
+    const tryPlay = () => {
+      console.log("[call] try play", remoteId, {
+        readyState: el.readyState,
+        paused: el.paused,
+      });
+
       void playAudio();
     };
 
-    const onLoadedMetadata = () => {
-
-      void playAudio();
-    };
-
-    el.addEventListener("canplay", onCanPlay);
-    el.addEventListener("loadedmetadata", onLoadedMetadata);
+    el.addEventListener("canplay", tryPlay);
+    el.addEventListener("loadedmetadata", tryPlay);
 
     void playAudio();
 
     return () => {
-      el.removeEventListener("canplay", onCanPlay);
-      el.removeEventListener("loadedmetadata", onLoadedMetadata);
+      el.removeEventListener("canplay", tryPlay);
+      el.removeEventListener("loadedmetadata", tryPlay);
     };
-  }, [stream, remoteId]);
+  }, [stream, remoteId, playAudio]);
 
   return (
     <>
-      <audio ref={ref} autoPlay playsInline controls style={{ width: 220 }} />
+      <audio
+        ref={ref}
+        autoPlay
+        playsInline
+        controls
+        style={{
+          width: 220,
+        }}
+      />
 
       {blocked && (
         <button
@@ -1164,7 +1329,7 @@ function RemoteAudio({
             cursor: "pointer",
           }}
         >
-          🔊 音声を有効にする
+          🔊 音声を再生する
         </button>
       )}
     </>

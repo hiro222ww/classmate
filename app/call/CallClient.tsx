@@ -252,7 +252,7 @@ export default function CallClient() {
 
     const timer = window.setInterval(() => {
       void sendPresence();
-    }, 5000);
+    }, 15000);
 
     return () => {
       window.clearInterval(timer);
@@ -321,7 +321,7 @@ export default function CallClient() {
 
     const timer = window.setInterval(() => {
       void fetchMembers("poll");
-    }, 3000);
+    }, 10000);
 
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers]);
