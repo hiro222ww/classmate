@@ -214,18 +214,19 @@ export default function CallVoiceLayer({
   );
 
   const syncSendersMuted = useCallback(
-  async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
-    const localTrack = localAudioTrackRef.current;
-    if (!localTrack) return;
+  async (pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
+    const senders = pc.getSenders();
 
-    localTrack.enabled = !muted;
+    senders.forEach((sender) => {
+      if (sender.track?.kind === "audio") {
+        sender.track.enabled = !muted;
 
-    console.log("[call] sender mute sync", {
-      remoteId,
-      muted,
-      localTrackId: localTrack.id,
-      enabled: localTrack.enabled,
-      readyState: localTrack.readyState,
+        console.log("[call] sender mute sync", {
+          remoteId,
+          enabled: sender.track.enabled,
+          trackId: sender.track.id,
+        });
+      }
     });
   },
   []
@@ -888,16 +889,18 @@ export default function CallVoiceLayer({
   useEffect(() => {
   void syncAllPeerSendersMuted(isMuted);
 
-  // ミュート解除直後にもう一度だけ同期して、相手側の無音遅れを潰す
-  if (!isMuted) {
-    const timer = window.setTimeout(() => {
-      void syncAllPeerSendersMuted(false);
-    }, 250);
+  const t1 = setTimeout(() => {
+    void syncAllPeerSendersMuted(isMuted);
+  }, 300);
 
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }
+  const t2 = setTimeout(() => {
+    void syncAllPeerSendersMuted(isMuted);
+  }, 1500);
+
+  return () => {
+    clearTimeout(t1);
+    clearTimeout(t2);
+  };
 }, [isMuted, syncAllPeerSendersMuted]);
 
   useEffect(() => {

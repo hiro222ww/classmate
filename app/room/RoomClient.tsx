@@ -737,83 +737,97 @@ export default function RoomClient() {
   }, [classId, sessionId, topicTitle, classLabel]);
 
   useEffect(() => {
-    joinedSessionKeyRef.current = null;
-    autoMovedRef.current = null;
-  }, [sessionId, deviceId]);
-
-  useEffect(() => {
   if (pathname !== "/room") return;
-  if (!deviceId || !displayName) return;
+  if (!sessionId || !classId || !deviceId || !displayName) return;
 
-  // ❗ここ追加（超重要）
-  if (pathname !== "/room") return;
+  const rawName = displayName || "参加者";
+  const name = rawName === "You" ? "参加者" : rawName;
 
-if (!deviceId || !displayName || !sessionId || !classId) {
-  return;
-}
+  const joinKey = `${sessionId}:${classId}:${deviceId}:${name}`;
 
-const joinKey = `${sessionId}:${deviceId}:${displayName}`;
   if (joinedSessionKeyRef.current === joinKey) return;
 
-  joinedSessionKeyRef.current = joinKey;
   let cancelled = false;
 
   async function join() {
-    const rawName = displayName || "参加者";
-    const name = rawName === "You" ? "参加者" : rawName;
-
-    const res = await fetch("/api/session/join", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sessionId,
-        classId,
-        deviceId,
-        name,
-        capacity: 5,
-        invite: searchParams.get("invite") === "1",
-      }),
-      cache: "no-store",
-    });
-
-    const rawText = await res.text().catch(() => "");
-    let json: any = null;
-
     try {
-      json = rawText ? JSON.parse(rawText) : null;
-    } catch {}
+      const res = await fetch("/api/session/join", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionId,
+          classId,
+          deviceId,
+          name,
+          capacity: 5,
+          invite: searchParams.get("invite") === "1",
+        }),
+        cache: "no-store",
+      });
 
-    if (!res.ok || !json?.ok) {
+      const rawText = await res.text().catch(() => "");
+      let json: SessionJoinResponse | null = null;
+
+      try {
+        json = rawText ? (JSON.parse(rawText) as SessionJoinResponse) : null;
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok || !json?.ok) {
+        const error = json?.error || rawText;
+
+        if (error === "session_full") {
+          throw new Error("このクラスは満員です");
+        }
+
+        if (error === "session_not_found") {
+          throw new Error("ルームが見つかりません");
+        }
+
+        if (error === "session_closed") {
+          throw new Error("このルームは終了しています");
+        }
+
+        if (error === "session_class_mismatch") {
+          throw new Error("招待リンクが壊れています");
+        }
+
+        if (error === "sessionId must be uuid") {
+          throw new Error("招待リンクが壊れています");
+        }
+
+        if (error === "classId must be uuid") {
+          throw new Error("招待リンクが壊れています");
+        }
+
+        if (error === "class_slots_limit") {
+          throw new Error("参加できるクラス数の上限に達しています");
+        }
+
+        throw new Error("参加に失敗しました");
+      }
+
+      if (cancelled) return;
+
+      // ✅ 成功した後だけ固定する
+      joinedSessionKeyRef.current = joinKey;
+
+      setErr("");
+      await fetchStatus({ force: true });
+    } catch (e: any) {
+      if (cancelled) return;
+
+      // ✅ 失敗時は再試行できるように固定しない
       joinedSessionKeyRef.current = null;
 
-      const error = json?.error || rawText;
-
-      if (error === "session_full") {
-        throw new Error("このクラスは満員です");
-      }
-
-      if (error === "session_not_found") {
-        throw new Error("ルームが見つかりません");
-      }
-
-      if (error === "sessionId must be uuid") {
-        throw new Error("招待リンクが壊れています");
-      }
-
-      throw new Error("参加に失敗しました");
+      setErr(e?.message ?? "参加に失敗しました");
     }
-
-    if (cancelled) return;
-
-    setErr("");
-    await fetchStatus({ force: true });
   }
 
-  void join().catch((e: any) => {
-    if (!cancelled) setErr(e?.message ?? "参加に失敗しました");
-  });
+  void join();
 
   return () => {
     cancelled = true;
@@ -825,7 +839,6 @@ const joinKey = `${sessionId}:${deviceId}:${displayName}`;
   displayName,
   pathname,
   fetchStatus,
-  topicTitle,
   searchParams,
 ]);
 
