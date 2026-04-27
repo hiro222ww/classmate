@@ -71,7 +71,6 @@ export default function CallVoiceLayer({
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const processedSignalIdsRef = useRef<Set<number>>(new Set());
   const reconnectTimersRef = useRef<Map<string, number>>(new Map());
-  const subscribedAtRef = useRef<string>("");
   const peerStatesRef = useRef<Map<string, PeerState>>(new Map());
 
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
@@ -81,7 +80,6 @@ export default function CallVoiceLayer({
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retrySubscribeTimerRef = useRef<number | null>(null);
-  const isSubscribingRef = useRef(false);
 
   const handleSignalRef = useRef<(row: SignalRow) => Promise<void> | void>(
     () => {}
@@ -846,17 +844,10 @@ export default function CallVoiceLayer({
       mounted = false;
 
       clearRetrySubscribeTimer();
-      isSubscribingRef.current = false;
+      
 
       for (const remoteId of Array.from(reconnectTimersRef.current.keys())) {
         clearReconnectTimer(remoteId);
-      }
-
-      for (const remoteId of Array.from(pcsRef.current.keys())) {
-        try {
-          const connectionId = getCurrentConnectionId(remoteId) ?? undefined;
-          void sendSignal(remoteId, "leave", { connectionId });
-        } catch {}
       }
 
       for (const remoteId of Array.from(pcsRef.current.keys())) {
