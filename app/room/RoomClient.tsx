@@ -98,11 +98,6 @@ function normalizeName(v: string | null | undefined) {
   return String(v ?? "").trim();
 }
 
-function isUuidLike(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-    s
-  );
-}
 
 function normalizeMemberCompare(list: MemberRow[]) {
   return list.map((m) => ({
@@ -357,9 +352,9 @@ export default function RoomClient() {
     (searchParams.get("session") ?? "").trim();
   const autojoin = (searchParams.get("autojoin") ?? "").trim() === "1";
   const dev = (searchParams.get("dev") ?? "").trim();
-　
+  
   const invite = (searchParams.get("invite") ?? "").trim() === "1";
-　const inviter = normalizeName(searchParams.get("inviter"));
+  const inviter = normalizeName(searchParams.get("inviter"));
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -738,7 +733,11 @@ export default function RoomClient() {
 
   useEffect(() => {
   if (pathname !== "/room") return;
-  if (!sessionId || !classId || !deviceId || !displayName) return;
+
+  if (!sessionId || !classId || !deviceId || !displayName) {
+    joinedSessionKeyRef.current = null;
+    return;
+  }
 
   const rawName = displayName || "参加者";
   const name = rawName === "You" ? "参加者" : rawName;
