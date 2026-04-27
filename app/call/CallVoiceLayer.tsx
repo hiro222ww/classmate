@@ -88,8 +88,11 @@ export default function CallVoiceLayer({
   const [micReady, setMicReady] = useState(false);
   const [signalReady, setSignalReady] = useState(false);
   const [remoteAudios, setRemoteAudios] = useState<
-    Record<string, RemoteAudioState>
-  >({});
+  Record<string, RemoteAudioState>
+>({});
+
+const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+const [selectedMicId, setSelectedMicId] = useState("");
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -743,18 +746,58 @@ export default function CallVoiceLayer({
   }, [handleSignal]);
 
   useEffect(() => {
+  async function loadDevices() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((d) => d.kind === "audioinput");
+
+      setAudioInputs(inputs);
+
+      const nonVirtual = inputs.find((d) => {
+  if (!d.label) return false; // ⭐ これ追加
+
+  const label = d.label.toLowerCase();
+
+  return (
+    !label.includes("steam") &&
+    !label.includes("virtual") &&
+    !label.includes("obs") &&
+    !label.includes("discord")
+  );
+});
+
+      if (nonVirtual) {
+        setSelectedMicId(nonVirtual.deviceId);
+      } else if (inputs[0]) {
+        setSelectedMicId(inputs[0].deviceId);
+      }
+    } catch (e) {
+      console.warn("[call] load audio devices failed", e);
+    }
+  }
+
+  void loadDevices();
+}, []);
+
+  useEffect(() => {
     let mounted = true;
 
     const init = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
+  try {
+    if (!selectedMicId) {
+      console.log("[call] skip getUserMedia: mic not selected yet");
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: { exact: selectedMicId },
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
 
         if (!mounted) {
           stream.getTracks().forEach((t) => t.stop());
@@ -814,15 +857,16 @@ export default function CallVoiceLayer({
       localAudioTrackRef.current = null;
     };
   }, [
-    clearReconnectTimer,
-    clearRetrySubscribeTimer,
-    closePeer,
-    deviceId,
-    getCurrentConnectionId,
-    notifyStatus,
-    onMicReadyChange,
-    sendSignal,
-  ]);
+  selectedMicId,
+  clearReconnectTimer,
+  clearRetrySubscribeTimer,
+  closePeer,
+  deviceId,
+  getCurrentConnectionId,
+  notifyStatus,
+  onMicReadyChange,
+  sendSignal,
+]);
 
   useEffect(() => {
   const track = localAudioTrackRef.current;
@@ -1100,8 +1144,29 @@ if (ctx.state === "suspended") {
   }, [members, micReady, signalReady, deviceId, scheduleReconnect]);
 
   return (
-    <>
-      {Object.entries(remoteAudios).map(([remoteId, state]) => (
+  <>
+    {audioInputs.length > 0 && (
+      <div style={{ marginBottom: 8 }}>
+        <select
+          value={selectedMicId}
+          onChange={(e) => setSelectedMicId(e.target.value)}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 10,
+            border: "1px solid #d1d5db",
+            fontSize: 12,
+          }}
+        >
+          {audioInputs.map((d) => (
+            <option key={d.deviceId} value={d.deviceId}>
+              {d.label || "マイク"}
+            </option>
+          ))}
+        </select>
+      </div>
+    )}
+
+    {Object.entries(remoteAudios).map(([remoteId, state]) => (
         <RemoteAudio key={remoteId} stream={state.stream} remoteId={remoteId} />
       ))}
     </>
