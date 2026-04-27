@@ -93,7 +93,10 @@ export default function CallVoiceLayer({
 >({});
 
 const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
-const [selectedMicId, setSelectedMicId] = useState("");
+const [selectedMicId, setSelectedMicId] = useState(() => {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("selected_mic_id") ?? "";
+});
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -794,7 +797,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        deviceId: selectedMicId,
+        deviceId: selectedMicId || undefined,
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
@@ -1155,7 +1158,12 @@ if (ctx.state === "suspended") {
       <div style={{ marginBottom: 8 }}>
         <select
           value={selectedMicId}
-          onChange={(e) => setSelectedMicId(e.target.value)}
+          onChange={(e) => {
+  const id = e.target.value;
+  localStorage.setItem("selected_mic_id", id);
+  setSelectedMicId(id);
+  window.location.reload();
+}}
           style={{
             padding: "8px 10px",
             borderRadius: 10,
