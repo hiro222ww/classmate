@@ -749,7 +749,7 @@ export default function RoomClient() {
 
   const joinKey = `${sessionId}:${classId}:${deviceId}:${name}`;
 
-  if (joinedSessionKeyRef.current === joinKey) return;
+  if (joinedSessionKeyRef.current === joinKey && !err) return;
 
   let cancelled = false;
 
@@ -762,7 +762,9 @@ console.log("[room join] payload", {
 
   async function join() {
     try {
-      const res = await fetch("/api/session/join", {
+      const res = await fetch(
+  `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
+  {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1185,6 +1187,7 @@ if (!shouldAutoStart) return;
 const inviteUrl =
   `${location.origin}/room?invite=1&autojoin=1` +
   `&sessionId=${encodeURIComponent(sessionId)}` +
+  `&classId=${encodeURIComponent(classId)}` +
   `&inviter=${encodeURIComponent(inviterName)}`;
 
   try {

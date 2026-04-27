@@ -678,8 +678,25 @@ export default function HomeClient() {
         return;
       }
 
-      const classId = String(json?.classId ?? "").trim();
-      const sessionId = String(json?.sessionId ?? "").trim();
+      const row = Array.isArray(json?.data) ? json.data[0] : json;
+
+const classId = String(
+  json?.classId ??
+    json?.class_id ??
+    row?.classId ??
+    row?.class_id ??
+    ""
+).trim();
+
+const sessionId = String(
+  json?.sessionId ??
+    json?.session_id ??
+    row?.sessionId ??
+    row?.session_id ??
+    ""
+).trim();
+
+console.log("[home] resolved ids", { classId, sessionId, json });
 
       if (!classId || !sessionId) {
         alert("open_class_missing_ids");
@@ -735,8 +752,25 @@ export default function HomeClient() {
         return;
       }
 
-      const classId = String(json?.classId ?? "").trim();
-      const sessionId = String(json?.sessionId ?? "").trim();
+     const row = Array.isArray(json?.data) ? json.data[0] : json;
+
+const classId = String(
+  json?.classId ??
+    json?.class_id ??
+    row?.classId ??
+    row?.class_id ??
+    ""
+).trim();
+
+const sessionId = String(
+  json?.sessionId ??
+    json?.session_id ??
+    row?.sessionId ??
+    row?.session_id ??
+    ""
+).trim();
+
+console.log("[home quick] resolved ids", { classId, sessionId, json });
 
       if (!classId || !sessionId) {
         alert("quick_join_missing_ids");

@@ -698,39 +698,11 @@ export default function SelectClient() {
       }
 
       const classId = safeTrim(matchJson?.classId);
-      const sessionId = safeTrim(matchJson?.sessionId);
+const sessionId = safeTrim(matchJson?.sessionId);
 
-      if (!classId || !sessionId) {
-        throw new Error("match_join_missing_ids");
-      }
-
-      const joinRes = await fetch("/api/session/join", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          classId,
-          deviceId,
-          name: displayName,
-          capacity: 5,
-        }),
-        cache: "no-store",
-      });
-
-      const joinRaw = await joinRes.text();
-      let joinJson: any = {};
-      try {
-        joinJson = joinRaw ? JSON.parse(joinRaw) : {};
-      } catch {
-        throw new Error("non_json_response");
-      }
-
-      console.log("[select] session/join response =", joinJson);
-
-      if (!joinRes.ok || !joinJson?.ok) {
-        alert(joinJson?.error ?? "session_join_failed");
-        return;
-      }
+if (!classId || !sessionId) {
+  throw new Error("match_join_missing_ids");
+}
 
       const roomUrl =
         `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
