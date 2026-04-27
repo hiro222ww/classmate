@@ -757,7 +757,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
       const nonVirtual = inputs.find((d) => {
   if (!d.label) return false; 
 
-  const label = d.label.toLowerCase();
+  const label = (d.label || "").toLowerCase();
 
   return (
     !label.includes("steam") &&
@@ -797,8 +797,8 @@ currentMicIdRef.current = selectedMicId || null;
       : undefined;
 
     const stream = await navigator.mediaDevices.getUserMedia({
-  audio: {
-    deviceId: selectedMicId ? { exact: selectedMicId } : undefined,
+ audio: {
+  deviceId: deviceConstraint,
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
