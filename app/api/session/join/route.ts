@@ -76,14 +76,17 @@ export async function POST(req: Request) {
     const body = (await req.json().catch(() => ({}))) as any;
     const url = new URL(req.url);
 
-    // 🔥 UUID抽出で絶対壊れない
     const sessionIdRaw = extractUuid(
-      body.sessionId ??
-        body.session_id ??
-        body.session ??
-        url.searchParams.get("sessionId") ??
-        url.searchParams.get("session")
-    );
+  body.sessionId ??
+    body.session_id ??
+    body.session ??
+    body.sessionID ??
+    body.roomSessionId ??
+    body.session_id_raw ??
+    url.searchParams.get("sessionId") ??
+    url.searchParams.get("session_id") ??
+    url.searchParams.get("session")
+);
 
     const deviceId = String(
       body.deviceId ?? body.device_id ?? ""
