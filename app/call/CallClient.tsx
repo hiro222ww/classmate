@@ -118,6 +118,8 @@ export default function CallClient() {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
+  const [inviteChecking, setInviteChecking] = useState(false);
+const [inviteError, setInviteError] = useState<string | null>(null);
 
   const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [showRoomMessages, setShowRoomMessages] = useState(false);
@@ -498,27 +500,52 @@ export default function CallClient() {
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
-  async function sendRoomMessage() {
-  const text = draft.trim();
-  if (!text || !sessionId || !deviceId) return;
+    async function sendRoomMessage() {
+    const text = draft.trim();
+    if (!text || !sessionId || !deviceId) return;
 
-  const me = members.find((m) => m.device_id === deviceId);
-  const displayName = me?.display_name || "参加者";
+    const me = members.find((m) => m.device_id === deviceId);
+    const displayName = me?.display_name || "参加者";
 
-  setDraft("");
+    const tempMessage: RoomMessage = {
+      id: `temp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      session_id: sessionId,
+      device_id: deviceId,
+      display_name: displayName,
+      message: text,
+      created_at: new Date().toISOString(),
+    };
 
-  const { error } = await supabase.from("room_messages").insert({
-    session_id: sessionId,
-    device_id: deviceId,
-    display_name: displayName,
-    message: text,
-  });
+    setDraft("");
+    setRoomMessages((prev) => [...prev, tempMessage]);
 
-  if (error) {
-    console.warn("[call] room message send failed", error);
-    setDraft(text);
+    const { data, error } = await supabase
+      .from("room_messages")
+      .insert({
+        session_id: sessionId,
+        device_id: deviceId,
+        display_name: displayName,
+        message: text,
+      })
+      .select("id, session_id, device_id, display_name, message, created_at")
+      .single();
+
+    if (error) {
+      console.warn("[call] room message send failed", error);
+      setRoomMessages((prev) => prev.filter((m) => m.id !== tempMessage.id));
+      setDraft(text);
+      return;
+    }
+
+    if (data?.id) {
+      setRoomMessages((prev) =>
+        dedupeRoomMessages([
+          ...prev.filter((m) => m.id !== tempMessage.id),
+          data as RoomMessage,
+        ])
+      );
+    }
   }
-}
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
@@ -932,8 +959,6 @@ export default function CallClient() {
 })
 )}
 
-/* 🔥 ここを追加 */
-{/* 🔥 ここを追加 */}
 <div
   style={{
     marginTop: 10,
@@ -946,7 +971,9 @@ export default function CallClient() {
     value={draft}
     onChange={(e) => setDraft(e.target.value)}
     onKeyDown={(e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+  if (e.nativeEvent.isComposing) return;
+
+  if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         void sendRoomMessage();
       }
