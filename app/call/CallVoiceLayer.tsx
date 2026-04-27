@@ -1042,6 +1042,13 @@ if (ctx.state === "suspended") {
   };
 }, [sessionId, deviceId]);
   
+const remoteIds = members
+  .map((m) => m.device_id)
+  .filter((id) => id && id !== deviceId)
+  .sort();
+
+const remoteIdsKey = remoteIds.join("|");
+
   useEffect(() => {
     console.log("[call] offer effect check", {
       micReady,
@@ -1053,13 +1060,9 @@ if (ctx.state === "suspended") {
     if (!micReady) return;
     if (!signalReady) return;
 
-    const remoteIds = members
-      .map((m) => m.device_id)
-      .filter((id) => id && id !== deviceId);
-
     console.log("[call] remoteIds for offer", {
-      remoteIds,
-    });
+  remoteIds,
+});
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
@@ -1090,16 +1093,16 @@ if (ctx.state === "suspended") {
   void maybeStartOffer(remoteId);
 }
   }, [
-    members,
-    micReady,
-    signalReady,
-    deviceId,
-    closePeer,
-    emitPeerStates,
-    getCurrentConnectionId,
-    maybeStartOffer,
-    setCurrentConnectionId,
-  ]);
+  remoteIdsKey,
+  micReady,
+  signalReady,
+  deviceId,
+  closePeer,
+  emitPeerStates,
+  getCurrentConnectionId,
+  maybeStartOffer,
+  setCurrentConnectionId,
+]);
 
   useEffect(() => {
     if (!micReady) return;
