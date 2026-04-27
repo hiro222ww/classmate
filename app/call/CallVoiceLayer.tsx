@@ -83,11 +83,15 @@ export default function CallVoiceLayer({
   const retrySubscribeTimerRef = useRef<number | null>(null);
   const isSubscribingRef = useRef(false);
 
+  const handleSignalRef = useRef<
+    (row: SignalRow) => Promise<void> | void
+  >(() => {});
+
   const [micReady, setMicReady] = useState(false);
   const [signalReady, setSignalReady] = useState(false);
-  const [remoteAudios, setRemoteAudios] = useState<Record<string, RemoteAudioState>>(
-    {}
-  );
+  const [remoteAudios, setRemoteAudios] = useState<
+    Record<string, RemoteAudioState>
+  >({});
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -723,6 +727,10 @@ export default function CallVoiceLayer({
   );
 
   useEffect(() => {
+    handleSignalRef.current = handleSignal;
+  }, [handleSignal]);
+
+  useEffect(() => {
     let mounted = true;
 
     const init = async () => {
@@ -797,6 +805,7 @@ export default function CallVoiceLayer({
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
       }
+
       localAudioTrackRef.current = null;
     };
   }, [
@@ -899,9 +908,10 @@ export default function CallVoiceLayer({
       }
 
       for (const row of (data ?? []) as SignalRow[]) {
+        if (!alive) return;
         if (row.from_device_id === deviceId) continue;
         if (row.to_device_id && row.to_device_id !== deviceId) continue;
-        await handleSignal(row);
+        await handleSignalRef.current(row);
       }
     };
 
@@ -912,6 +922,11 @@ export default function CallVoiceLayer({
 
       isSubscribingRef.current = true;
       subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
+
+      console.log("🔥 SUBSCRIBE CREATED", {
+        sessionId,
+        deviceId,
+      });
 
       const channel = supabase
         .channel(`call-signals-${sessionId}`)
@@ -925,7 +940,7 @@ export default function CallVoiceLayer({
           },
           async (payload) => {
             const row = payload.new as SignalRow;
-            await handleSignal(row);
+            await handleSignalRef.current(row);
           }
         )
         .subscribe(async (status) => {
@@ -936,25 +951,22 @@ export default function CallVoiceLayer({
           if (status === "SUBSCRIBED") {
             isSubscribingRef.current = false;
             clearRetrySubscribeTimer();
+
             await bootRecentSignals();
+
             if (!alive) return;
             setSignalReady(true);
             return;
           }
 
-          if (
-            status === "CHANNEL_ERROR" ||
-            status === "TIMED_OUT" ||
-            status === "CLOSED"
-          ) {
-            console.warn("[call] signal channel unstable → retry", status);
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn("[call] signal channel error → retry", status);
 
             isSubscribingRef.current = false;
             setSignalReady(false);
 
-            // CLOSED / ERROR のコールバック中では removeChannel しない
-            // ここで remove すると再帰的に CLOSED が連鎖して stack overflow しやすい
             if (channelRef.current === channel) {
+              void supabase.removeChannel(channelRef.current);
               channelRef.current = null;
             }
 
@@ -962,7 +974,25 @@ export default function CallVoiceLayer({
             retrySubscribeTimerRef.current = window.setTimeout(() => {
               retrySubscribeTimerRef.current = null;
               startSubscribe();
-            }, 700);
+            }, 1000);
+
+            return;
+          }
+
+          if (status === "CLOSED") {
+            console.warn("[call] signal channel closed");
+
+            isSubscribingRef.current = false;
+            setSignalReady(false);
+
+            if (channelRef.current === channel) {
+              channelRef.current = null;
+            }
+
+            // 重要：
+            // CLOSED は cleanup や再描画由来でも出るので、ここでは retry しない。
+            // CHANNEL_ERROR / TIMED_OUT のみ retry する。
+            return;
           }
         });
 
@@ -982,7 +1012,7 @@ export default function CallVoiceLayer({
         channelRef.current = null;
       }
     };
-  }, [sessionId, deviceId, handleSignal, clearRetrySubscribeTimer]);
+  }, [sessionId, deviceId, clearRetrySubscribeTimer]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1039,7 +1069,11 @@ export default function CallVoiceLayer({
 
         if (hasRemoteStream) continue;
         if (pc && pc.signalingState !== "stable") continue;
-        if (pc && (pc.connectionState === "connecting" || pc.connectionState === "connected")) {
+        if (
+          pc &&
+          (pc.connectionState === "connecting" ||
+            pc.connectionState === "connected")
+        ) {
           continue;
         }
 
@@ -1177,13 +1211,5 @@ function RemoteAudio({
     };
   }, [stream, remoteId]);
 
-  return (
-    <audio
-      ref={ref}
-      autoPlay
-      playsInline
-      controls
-      style={{ width: 220 }}
-    />
-  );
+  return <audio ref={ref} autoPlay playsInline controls style={{ width: 220 }} />;
 }
