@@ -83,9 +83,9 @@ export default function CallVoiceLayer({
   const retrySubscribeTimerRef = useRef<number | null>(null);
   const isSubscribingRef = useRef(false);
 
-  const handleSignalRef = useRef<
-    (row: SignalRow) => Promise<void> | void
-  >(() => {});
+  const handleSignalRef = useRef<(row: SignalRow) => Promise<void> | void>(
+    () => {}
+  );
 
   const [micReady, setMicReady] = useState(false);
   const [signalReady, setSignalReady] = useState(false);
@@ -145,10 +145,12 @@ export default function CallVoiceLayer({
   useEffect(() => {
     setRemoteAudios((prev) => {
       const next: Record<string, RemoteAudioState> = {};
+
       for (const [remoteId, state] of Object.entries(prev)) {
         const member = members.find((m) => m.device_id === remoteId);
         next[remoteId] = { ...state, member };
       }
+
       return next;
     });
   }, [members]);
@@ -232,6 +234,7 @@ export default function CallVoiceLayer({
   const syncAllPeerSendersMuted = useCallback(
     async (muted: boolean) => {
       const entries = Array.from(pcsRef.current.entries());
+
       await Promise.all(
         entries.map(async ([remoteId, pc]) => {
           await syncSendersMuted(pc, remoteId, muted);
@@ -250,6 +253,7 @@ export default function CallVoiceLayer({
       });
 
       const pc = pcsRef.current.get(remoteId);
+
       if (pc) {
         try {
           pc.onicecandidate = null;
@@ -310,6 +314,112 @@ export default function CallVoiceLayer({
     [getCurrentConnectionId]
   );
 
+  const maybeStartOffer = useCallback(
+    async (remoteId: string) => {
+      if (!localAudioTrackRef.current && !localStreamRef.current) {
+        console.log("[call] skip offer: local audio not ready", remoteId);
+        return;
+      }
+
+      const iAmOfferer = deviceId < remoteId;
+
+      console.log("[call] offer role check", {
+        deviceId,
+        remoteId,
+        iAmOfferer,
+      });
+
+      if (!iAmOfferer) return;
+
+      let connectionId = getCurrentConnectionId(remoteId);
+
+      if (!connectionId) {
+        connectionId = makeConnectionId(deviceId, remoteId);
+        setCurrentConnectionId(remoteId, connectionId);
+      }
+
+      const pc = createPeerConnection(remoteId, connectionId);
+
+      if (offeredPeersRef.current.has(remoteId)) {
+        console.log("[call] skip offer: already offered", remoteId, connectionId);
+        return;
+      }
+
+      if (pc.signalingState !== "stable") {
+        console.log(
+          "[call] skip offer: non-stable",
+          remoteId,
+          connectionId,
+          pc.signalingState
+        );
+        return;
+      }
+
+      if (
+        pc.connectionState === "connecting" ||
+        pc.connectionState === "connected"
+      ) {
+        console.log(
+          "[call] skip offer: already connecting/connected",
+          remoteId,
+          connectionId,
+          pc.connectionState
+        );
+        return;
+      }
+
+      offeredPeersRef.current.add(remoteId);
+      clearReconnectTimer(remoteId);
+      setPeerState(remoteId, "connecting");
+
+      try {
+        console.log("[call] create offer start", remoteId, connectionId);
+
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+        });
+
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+
+        if (!activeConnectionId || activeConnectionId !== connectionId) {
+          offeredPeersRef.current.delete(remoteId);
+          return;
+        }
+
+        if (pc.signalingState !== "stable") {
+          console.warn(
+            "[call] abort offer before setLocalDescription",
+            remoteId,
+            connectionId,
+            pc.signalingState
+          );
+          offeredPeersRef.current.delete(remoteId);
+          return;
+        }
+
+        await pc.setLocalDescription(offer);
+
+        await sendSignal(remoteId, "offer", {
+          connectionId,
+          sdp: pc.localDescription,
+        });
+
+        console.log("[call] offer sent", remoteId, connectionId);
+      } catch (e) {
+        offeredPeersRef.current.delete(remoteId);
+        console.error("[call] create offer error", remoteId, connectionId, e);
+      }
+    },
+    [
+      clearReconnectTimer,
+      deviceId,
+      getCurrentConnectionId,
+      sendSignal,
+      setCurrentConnectionId,
+      setPeerState,
+    ]
+  );
+
   const scheduleReconnect = useCallback(
     (remoteId: string, delay = 800) => {
       const iAmOfferer = deviceId < remoteId;
@@ -334,7 +444,13 @@ export default function CallVoiceLayer({
 
       reconnectTimersRef.current.set(remoteId, timer);
     },
-    [clearReconnectTimer, closePeer, deviceId, setCurrentConnectionId]
+    [
+      clearReconnectTimer,
+      closePeer,
+      deviceId,
+      maybeStartOffer,
+      setCurrentConnectionId,
+    ]
   );
 
   const createPeerConnection = useCallback(
@@ -476,96 +592,6 @@ export default function CallVoiceLayer({
     ]
   );
 
-  const maybeStartOffer = useCallback(
-    async (remoteId: string) => {
-      if (!localAudioTrackRef.current && !localStreamRef.current) return;
-
-      const iAmOfferer = deviceId < remoteId;
-      if (!iAmOfferer) return;
-
-      let connectionId = getCurrentConnectionId(remoteId);
-      if (!connectionId) {
-        connectionId = makeConnectionId(deviceId, remoteId);
-        setCurrentConnectionId(remoteId, connectionId);
-      }
-
-      const pc = createPeerConnection(remoteId, connectionId);
-
-      if (offeredPeersRef.current.has(remoteId)) {
-        console.log("[call] skip offer: already offered", remoteId, connectionId);
-        return;
-      }
-
-      if (pc.signalingState !== "stable") {
-        console.log("[call] skip offer: non-stable", remoteId, connectionId, pc.signalingState);
-        return;
-      }
-
-      if (
-        pc.connectionState === "connecting" ||
-        pc.connectionState === "connected"
-      ) {
-        console.log(
-          "[call] skip offer: already connecting/connected",
-          remoteId,
-          connectionId,
-          pc.connectionState
-        );
-        return;
-      }
-
-      offeredPeersRef.current.add(remoteId);
-      clearReconnectTimer(remoteId);
-      setPeerState(remoteId, "connecting");
-
-      try {
-        console.log("[call] create offer start", remoteId, connectionId);
-
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-        });
-
-        const activeConnectionId = getCurrentConnectionId(remoteId);
-        if (!activeConnectionId || activeConnectionId !== connectionId) {
-          offeredPeersRef.current.delete(remoteId);
-          return;
-        }
-
-        if (pc.signalingState !== "stable") {
-          console.warn(
-            "[call] abort offer before setLocalDescription",
-            remoteId,
-            connectionId,
-            pc.signalingState
-          );
-          offeredPeersRef.current.delete(remoteId);
-          return;
-        }
-
-        await pc.setLocalDescription(offer);
-
-        await sendSignal(remoteId, "offer", {
-          connectionId,
-          sdp: pc.localDescription,
-        });
-
-        console.log("[call] offer sent", remoteId, connectionId);
-      } catch (e) {
-        offeredPeersRef.current.delete(remoteId);
-        console.error("[call] create offer error", remoteId, connectionId, e);
-      }
-    },
-    [
-      clearReconnectTimer,
-      createPeerConnection,
-      deviceId,
-      getCurrentConnectionId,
-      sendSignal,
-      setCurrentConnectionId,
-      setPeerState,
-    ]
-  );
-
   const handleSignal = useCallback(
     async (row: SignalRow) => {
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
@@ -604,14 +630,12 @@ export default function CallVoiceLayer({
           offeredPeersRef.current.delete(remoteId);
           startedPeersRef.current.add(remoteId);
         }
-      } else {
-        if (!currentConnectionId || currentConnectionId !== incomingConnectionId) {
-          console.warn("[call] ignore stale signal", row.signal_type, remoteId, {
-            currentConnectionId,
-            incomingConnectionId,
-          });
-          return;
-        }
+      } else if (!currentConnectionId || currentConnectionId !== incomingConnectionId) {
+        console.warn("[call] ignore stale signal", row.signal_type, remoteId, {
+          currentConnectionId,
+          incomingConnectionId,
+        });
+        return;
       }
 
       const pc = createPeerConnection(remoteId, incomingConnectionId);
@@ -681,12 +705,14 @@ export default function CallVoiceLayer({
             const queued = pendingIceRef.current.get(remoteId) ?? [];
             queued.push(candidate);
             pendingIceRef.current.set(remoteId, queued);
+
             console.log(
               "[call] queue ice before remoteDescription",
               remoteId,
               incomingConnectionId,
               queued.length
             );
+
             return;
           }
 
@@ -695,6 +721,7 @@ export default function CallVoiceLayer({
           } catch (e) {
             console.warn("[call] addIceCandidate ignored", remoteId, incomingConnectionId, e);
           }
+
           return;
         }
       } catch (e) {
@@ -849,6 +876,7 @@ export default function CallVoiceLayer({
           analyser.getByteTimeDomainData(data);
 
           let sum = 0;
+
           for (let i = 0; i < data.length; i++) {
             const v = (data[i] - 128) / 128;
             sum += v * v;
@@ -869,10 +897,13 @@ export default function CallVoiceLayer({
 
     return () => {
       closed = true;
+
       if (raf) cancelAnimationFrame(raf);
+
       if (ctx) {
         void ctx.close().catch(() => {});
       }
+
       if (audioCtxRef.current === ctx) {
         audioCtxRef.current = null;
       }
@@ -971,6 +1002,7 @@ export default function CallVoiceLayer({
             }
 
             clearRetrySubscribeTimer();
+
             retrySubscribeTimerRef.current = window.setTimeout(() => {
               retrySubscribeTimerRef.current = null;
               startSubscribe();
@@ -989,9 +1021,6 @@ export default function CallVoiceLayer({
               channelRef.current = null;
             }
 
-            // 重要：
-            // CLOSED は cleanup や再描画由来でも出るので、ここでは retry しない。
-            // CHANNEL_ERROR / TIMED_OUT のみ retry する。
             return;
           }
         });
@@ -1015,12 +1044,23 @@ export default function CallVoiceLayer({
   }, [sessionId, deviceId, clearRetrySubscribeTimer]);
 
   useEffect(() => {
+    console.log("[call] offer effect check", {
+      micReady,
+      signalReady,
+      deviceId,
+      members: members.map((m) => m.device_id),
+    });
+
     if (!micReady) return;
     if (!signalReady) return;
 
     const remoteIds = members
       .map((m) => m.device_id)
       .filter((id) => id && id !== deviceId);
+
+    console.log("[call] remoteIds for offer", {
+      remoteIds,
+    });
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
@@ -1039,6 +1079,11 @@ export default function CallVoiceLayer({
       if (!getCurrentConnectionId(remoteId)) {
         setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
       }
+
+      console.log("[call] try maybeStartOffer", {
+        remoteId,
+        deviceId,
+      });
 
       void maybeStartOffer(remoteId);
     }
@@ -1069,6 +1114,7 @@ export default function CallVoiceLayer({
 
         if (hasRemoteStream) continue;
         if (pc && pc.signalingState !== "stable") continue;
+
         if (
           pc &&
           (pc.connectionState === "connecting" ||
@@ -1113,6 +1159,7 @@ export default function CallVoiceLayer({
             connectionState: pc.connectionState,
             iceConnectionState: pc.iceConnectionState,
           });
+
           scheduleReconnect(remoteId, 500);
         }
       }
@@ -1150,13 +1197,31 @@ function RemoteAudio({
     try {
       await el.play();
       setBlocked(false);
-      console.log("[call] remote audio playing", remoteId);
+
+      console.log("[call] remote audio playing", remoteId, {
+        readyState: el.readyState,
+        paused: el.paused,
+        muted: el.muted,
+        volume: el.volume,
+        tracks: stream.getAudioTracks().map((t) => ({
+          enabled: t.enabled,
+          muted: t.muted,
+          readyState: t.readyState,
+          label: t.label,
+        })),
+      });
     } catch (e: any) {
       if (e?.name === "NotAllowedError") {
         setBlocked(true);
         console.warn("[call] autoplay blocked", remoteId);
         return;
       }
+
+      if (e?.name === "AbortError") {
+        console.warn("[call] remote audio play aborted", remoteId);
+        return;
+      }
+
       console.error("[call] remote audio play error", remoteId, e);
     }
   };
@@ -1175,18 +1240,34 @@ function RemoteAudio({
     el.volume = 1;
     el.setAttribute("playsinline", "true");
 
+    const onCanPlay = () => {
+      console.log("[call] audio canplay", remoteId);
+      void playAudio();
+    };
+
+    const onLoadedMetadata = () => {
+      console.log("[call] audio loadedmetadata", remoteId, {
+        readyState: el.readyState,
+        paused: el.paused,
+      });
+
+      void playAudio();
+    };
+
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("loadedmetadata", onLoadedMetadata);
+
     void playAudio();
+
+    return () => {
+      el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("loadedmetadata", onLoadedMetadata);
+    };
   }, [stream, remoteId]);
 
   return (
     <>
-      <audio
-        ref={ref}
-        autoPlay
-        playsInline
-        controls
-        style={{ width: 220 }}
-      />
+      <audio ref={ref} autoPlay playsInline controls style={{ width: 220 }} />
 
       {blocked && (
         <button
