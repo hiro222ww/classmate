@@ -211,51 +211,7 @@ export default function CallVoiceLayer({
     [sessionId, deviceId, notifyStatus]
   );
 
-  const syncSendersMuted = useCallback(
-  async (pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
-    const senders = pc.getSenders();
 
-    senders.forEach((sender) => {
-      if (sender.track?.kind === "audio") {
-        sender.track.enabled = !muted;
-
-        console.log("[call] sender mute sync", {
-          remoteId,
-          enabled: sender.track.enabled,
-          trackId: sender.track.id,
-        });
-      }
-    });
-  },
-  []
-);
-
-  const syncAllPeerSendersMuted = useCallback(
-  async (muted: boolean) => {
-    const localTrack = localAudioTrackRef.current;
-
-    // まず自分のマイクtrackを必ず復帰/停止する
-    if (localTrack) {
-      localTrack.enabled = !muted;
-
-      console.log("[call] local track mute sync", {
-        muted,
-        enabled: localTrack.enabled,
-        readyState: localTrack.readyState,
-        trackId: localTrack.id,
-      });
-    }
-
-    const entries = Array.from(pcsRef.current.entries());
-
-    await Promise.all(
-      entries.map(async ([remoteId, pc]) => {
-        await syncSendersMuted(pc, remoteId, muted);
-      })
-    );
-  },
-  [syncSendersMuted]
-);
 
   const closePeer = useCallback(
     (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
@@ -491,20 +447,12 @@ export default function CallVoiceLayer({
       if (localTrack && localStream) {
   pc.addTrack(localTrack, localStream);
 
-  // 🔥 即時反映
-  localTrack.enabled = !isMuted;
-
-  // 🔥 これを追加（ここ！！！）
-  setTimeout(() => {
-    localTrack.enabled = !isMuted;
-
-    console.log("[call] sync after addTrack (delayed)", {
-      remoteId,
-      muted: isMuted,
-      enabled: localTrack.enabled,
-      readyState: localTrack.readyState,
-    });
-  }, 0);
+  console.log("[call] add local track", {
+  remoteId,
+  enabled: localTrack.enabled,
+  readyState: localTrack.readyState,
+  trackId: localTrack.id,
+});
 }
 
       pc.onicecandidate = (event) => {
@@ -611,7 +559,6 @@ export default function CallVoiceLayer({
   clearReconnectTimer,
   closePeer,
   getCurrentConnectionId,
-  isMuted,
   notifyStatus,
   scheduleReconnect,
   sendSignal,
@@ -878,21 +825,18 @@ export default function CallVoiceLayer({
   ]);
 
   useEffect(() => {
-  void syncAllPeerSendersMuted(isMuted);
+  const track = localAudioTrackRef.current;
+  if (!track) return;
 
-  const t1 = setTimeout(() => {
-    void syncAllPeerSendersMuted(isMuted);
-  }, 300);
+  track.enabled = !isMuted;
 
-  const t2 = setTimeout(() => {
-    void syncAllPeerSendersMuted(isMuted);
-  }, 1500);
-
-  return () => {
-    clearTimeout(t1);
-    clearTimeout(t2);
-  };
-}, [isMuted, syncAllPeerSendersMuted]);
+  console.log("[call] mute changed", {
+    muted: isMuted,
+    enabled: track.enabled,
+    readyState: track.readyState,
+    trackId: track.id,
+  });
+}, [isMuted]);
 
   useEffect(() => {
     if (!micReady) return;
