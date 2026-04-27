@@ -232,17 +232,31 @@ export default function CallVoiceLayer({
 );
 
   const syncAllPeerSendersMuted = useCallback(
-    async (muted: boolean) => {
-      const entries = Array.from(pcsRef.current.entries());
+  async (muted: boolean) => {
+    const localTrack = localAudioTrackRef.current;
 
-      await Promise.all(
-        entries.map(async ([remoteId, pc]) => {
-          await syncSendersMuted(pc, remoteId, muted);
-        })
-      );
-    },
-    [syncSendersMuted]
-  );
+    // まず自分のマイクtrackを必ず復帰/停止する
+    if (localTrack) {
+      localTrack.enabled = !muted;
+
+      console.log("[call] local track mute sync", {
+        muted,
+        enabled: localTrack.enabled,
+        readyState: localTrack.readyState,
+        trackId: localTrack.id,
+      });
+    }
+
+    const entries = Array.from(pcsRef.current.entries());
+
+    await Promise.all(
+      entries.map(async ([remoteId, pc]) => {
+        await syncSendersMuted(pc, remoteId, muted);
+      })
+    );
+  },
+  [syncSendersMuted]
+);
 
   const closePeer = useCallback(
     (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
