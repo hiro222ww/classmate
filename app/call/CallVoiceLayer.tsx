@@ -490,8 +490,23 @@ export default function CallVoiceLayer({
       const localStream = localStreamRef.current;
 
       if (localTrack && localStream) {
-        pc.addTrack(localTrack, localStream);
-      }
+  pc.addTrack(localTrack, localStream);
+
+  // 🔥 即時反映
+  localTrack.enabled = !isMuted;
+
+  // 🔥 これを追加（ここ！！！）
+  setTimeout(() => {
+    localTrack.enabled = !isMuted;
+
+    console.log("[call] sync after addTrack (delayed)", {
+      remoteId,
+      muted: isMuted,
+      enabled: localTrack.enabled,
+      readyState: localTrack.readyState,
+    });
+  }, 0);
+}
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
@@ -594,16 +609,17 @@ export default function CallVoiceLayer({
       return pc;
     },
     [
-      clearReconnectTimer,
-      closePeer,
-      getCurrentConnectionId,
-      notifyStatus,
-      scheduleReconnect,
-      sendSignal,
-      setCurrentConnectionId,
-      setPeerState,
-      upsertRemoteAudio,
-    ]
+  clearReconnectTimer,
+  closePeer,
+  getCurrentConnectionId,
+  isMuted,
+  notifyStatus,
+  scheduleReconnect,
+  sendSignal,
+  setCurrentConnectionId,
+  setPeerState,
+  upsertRemoteAudio,
+]
   );
 
   const handleSignal = useCallback(
