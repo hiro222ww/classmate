@@ -746,12 +746,13 @@ export default function RoomClient() {
   if (!deviceId || !displayName) return;
 
   // ❗ここ追加（超重要）
-  if (!sessionId || !classId) {
-  setErr("招待リンクが正しくありません。");
+  if (pathname !== "/room") return;
+
+if (!deviceId || !displayName || !sessionId || !classId) {
   return;
 }
 
-  const joinKey = `${sessionId}:${deviceId}`;
+const joinKey = `${sessionId}:${deviceId}:${displayName}`;
   if (joinedSessionKeyRef.current === joinKey) return;
 
   joinedSessionKeyRef.current = joinKey;

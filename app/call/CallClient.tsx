@@ -481,7 +481,21 @@ export default function CallClient() {
               fontSize: 13,
               cursor: "pointer",
             }}
-            onClick={() => router.push(returnTo)}
+            onClick={async () => {
+  await fetch("/api/session/leave", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sessionId,
+      deviceId,
+    }),
+    cache: "no-store",
+  }).catch((e) => {
+    console.warn("[call] leave failed", e);
+  });
+
+  router.push(returnTo);
+}}
           >
             退出
           </button>
