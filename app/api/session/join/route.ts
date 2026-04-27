@@ -143,17 +143,25 @@ export async function POST(req: Request) {
 
     const session = ensured.session;
 
-    // classId がURL/POST bodyにない場合は、sessionから補完する
-    if (!classIdRaw) {
-      classIdRaw = String(session.class_id ?? "").trim();
-    }
+// ✅ sessionIdから取得したclass_idを唯一の正解にする
+const sessionClassId = String(session.class_id ?? "").trim();
 
-    if (!classIdRaw) {
-      return NextResponse.json(
-        { ok: false, error: "classId required" },
-        { status: 400 }
-      );
-    }
+if (!sessionClassId) {
+  return NextResponse.json(
+    { ok: false, error: "session_class_missing" },
+    { status: 400 }
+  );
+}
+
+if (!isUuid(sessionClassId)) {
+  return NextResponse.json(
+    { ok: false, error: "session_class_id_invalid" },
+    { status: 400 }
+  );
+}
+
+// ✅ クライアントから来たclassIdは信用しない。ズレていてもsession側で上書きする
+classIdRaw = sessionClassId;
 
     if (!isUuid(classIdRaw)) {
       return NextResponse.json(
