@@ -170,12 +170,6 @@ classIdRaw = sessionClassId;
       );
     }
 
-    if (String(session.class_id ?? "").trim() !== classIdRaw) {
-      return NextResponse.json(
-        { ok: false, error: "session_class_mismatch" },
-        { status: 400 }
-      );
-    }
 
     const existingSessionMember = await supabaseAdmin
       .from("session_members")
