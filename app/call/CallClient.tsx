@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
@@ -85,85 +85,149 @@ export default function CallClient() {
   const [callInfo, setCallInfo] = useState("");
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
+  const [fetchErrorCount, setFetchErrorCount] = useState(0);
 
-  const fetchMembers = useCallback(async () => {
-    if (!sessionId || !classId) {
-      setMembers([]);
-      return;
+  const retryTimerRef = useRef<number | null>(null);
+  const fetchingRef = useRef(false);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
     }
+  }, []);
 
-    try {
-      const qs = new URLSearchParams({
-        sessionId,
-        classId,
-      });
+  const fetchMembers = useCallback(
+    async (reason = "manual") => {
+      if (!sessionId || !classId) {
+        setMembers([]);
+        return;
+      }
 
-      const res = await fetch(`/api/session/status?${qs.toString()}`, {
-        cache: "no-store",
-      });
+      if (fetchingRef.current) {
+        return;
+      }
 
-      const rawText = await res.text().catch(() => "");
-      let json: SessionStatusResponse | null = null;
+      fetchingRef.current = true;
 
       try {
-        json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
-      } catch {
-        json = null;
-      }
-
-      if (!res.ok) {
-        console.error("[call] session status fetch http error", {
-          status: res.status,
-          statusText: res.statusText,
-          rawText,
+        const qs = new URLSearchParams({
+          sessionId,
+          classId,
         });
-        return;
-      }
 
-      if (!json) {
-        console.warn("[call] session status non-json or empty response", {
-          rawText,
+        const res = await fetch(`/api/session/status?${qs.toString()}`, {
+          cache: "no-store",
         });
-        return;
-      }
 
-      if (!json.ok) {
-        console.warn("[call] session status api not ok", {
-          error: json.error || "session_status_failed",
-          rawText,
+        const rawText = await res.text().catch(() => "");
+        let json: SessionStatusResponse | null = null;
+
+        try {
+          json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
+        } catch {
+          json = null;
+        }
+
+        if (!res.ok) {
+          console.error("[call] session status fetch http error", {
+            reason,
+            status: res.status,
+            statusText: res.statusText,
+            rawText,
+          });
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        if (!json) {
+          console.warn("[call] session status non-json or empty response", {
+            reason,
+            rawText,
+          });
+          throw new Error("non_json_or_empty_response");
+        }
+
+        if (!json.ok) {
+          console.warn("[call] session status api not ok", {
+            reason,
+            error: json.error || "session_status_failed",
+            rawText,
+          });
+          throw new Error(json.error || "session_status_failed");
+        }
+
+        const incoming = Array.isArray(json.members) ? json.members : [];
+        const nextMembers: Member[] = [];
+
+        for (const m of incoming) {
+          const did = String(m.device_id ?? "").trim();
+          if (!did) continue;
+
+          nextMembers.push({
+            device_id: did,
+            display_name: String(m.display_name ?? "").trim() || "参加者",
+            photo_path: String(m.photo_path ?? "").trim() || null,
+          });
+        }
+
+        console.log("[call] fetchMembers success", {
+          reason,
+          count: nextMembers.length,
+          members: nextMembers.map((m) => m.device_id),
         });
-        return;
-      }
 
-      const incoming = Array.isArray(json.members) ? json.members : [];
-      const nextMembers: Member[] = [];
+        setMembers(nextMembers);
+        setFetchErrorCount(0);
+        clearRetryTimer();
 
-      for (const m of incoming) {
-        const did = String(m.device_id ?? "").trim();
-        if (!did) continue;
+        if (Number.isFinite(Number(json.session?.capacity))) {
+          setCapacity(Number(json.session?.capacity));
+        }
+      } catch (e: any) {
+        const message = e?.message ?? "unknown_error";
 
-        nextMembers.push({
-          device_id: did,
-          display_name: String(m.display_name ?? "").trim() || "参加者",
-          photo_path: String(m.photo_path ?? "").trim() || null,
+        console.warn("[call] fetchMembers unexpected error", {
+          reason,
+          message,
         });
-      }
 
-      setMembers(nextMembers);
+        setFetchErrorCount((prev) => prev + 1);
 
-      if (Number.isFinite(Number(json.session?.capacity))) {
-        setCapacity(Number(json.session?.capacity));
+        // 重要：
+        // 一時的な Load failed では members を空にしない。
+        // 既存の members を保持して、通話を壊さない。
+        clearRetryTimer();
+
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = null;
+          void fetchMembers("retry");
+        }, 1200);
+      } finally {
+        fetchingRef.current = false;
       }
-    } catch (e: any) {
-      console.error("[call] fetchMembers unexpected error", {
-        message: e?.message ?? "unknown_error",
-      });
-    }
-  }, [sessionId, classId]);
+    },
+    [sessionId, classId, clearRetryTimer]
+  );
 
   useEffect(() => {
-    void fetchMembers();
-  }, [fetchMembers]);
+    void fetchMembers("initial");
+
+    return () => {
+      clearRetryTimer();
+    };
+  }, [fetchMembers, clearRetryTimer]);
+
+  useEffect(() => {
+    console.log("[call] members state", {
+      count: members.length,
+      deviceId,
+      members: members.map((m) => ({
+        device_id: m.device_id,
+        display_name: m.display_name,
+        isMe: m.device_id === deviceId,
+      })),
+    });
+  }, [members, deviceId]);
 
   useEffect(() => {
     if (!classId || !sessionId || !deviceId) return;
@@ -209,10 +273,15 @@ export default function CallClient() {
           filter: `session_id=eq.${sessionId}`,
         },
         async () => {
-          await fetchMembers();
+          await fetchMembers("session_members_realtime");
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("[call] members subscribe status", {
+          sessionId,
+          status,
+        });
+      });
 
     return () => {
       void supabase.removeChannel(channel);
@@ -220,8 +289,10 @@ export default function CallClient() {
   }, [sessionId, fetchMembers]);
 
   useEffect(() => {
+    if (!sessionId) return;
+
     const channel = supabase
-      .channel(`call-profiles-${sessionId || "no-session"}`)
+      .channel(`call-profiles-${sessionId}`)
       .on(
         "postgres_changes",
         {
@@ -230,10 +301,15 @@ export default function CallClient() {
           table: "user_profiles",
         },
         async () => {
-          await fetchMembers();
+          await fetchMembers("profiles_realtime");
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("[call] profiles subscribe status", {
+          sessionId,
+          status,
+        });
+      });
 
     return () => {
       void supabase.removeChannel(channel);
@@ -244,8 +320,8 @@ export default function CallClient() {
     if (!sessionId) return;
 
     const timer = window.setInterval(() => {
-      void fetchMembers();
-    }, 2000);
+      void fetchMembers("poll");
+    }, 3000);
 
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers]);
@@ -334,6 +410,8 @@ export default function CallClient() {
     [deviceId, isMuted, peerStates]
   );
 
+  const hasOtherMember = members.some((m) => m.device_id !== deviceId);
+
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <CallVoiceLayer
@@ -409,6 +487,40 @@ export default function CallClient() {
           </button>
         </div>
       </div>
+
+      {fetchErrorCount > 0 && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "#fffbeb",
+            color: "#92400e",
+            border: "1px solid #fde68a",
+            fontSize: 13,
+            fontWeight: 800,
+          }}
+        >
+          通話メンバーの取得を再試行中です。接続中の通話は維持します。
+        </div>
+      )}
+
+      {!hasOtherMember && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "#f9fafb",
+            color: "#6b7280",
+            border: "1px solid #e5e7eb",
+            fontSize: 13,
+            fontWeight: 800,
+          }}
+        >
+          相手の参加を待っています。
+        </div>
+      )}
 
       <section
         style={{
