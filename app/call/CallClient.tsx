@@ -16,6 +16,15 @@ type Member = {
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
 
+type RoomMessage = {
+  id: string;
+  session_id: string;
+  device_id: string;
+  display_name: string;
+  message: string;
+  created_at: string;
+};
+
 type SessionStatusResponse = {
   ok?: boolean;
   session?: {
@@ -35,6 +44,16 @@ type SessionStatusResponse = {
   memberCount?: number;
   error?: string;
 };
+
+function formatTime(v: string) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function getAvatarUrl(photoPath?: string | null) {
   let normalized = String(photoPath ?? "").trim();
@@ -63,6 +82,19 @@ function getAvatarUrl(photoPath?: string | null) {
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
+function dedupeRoomMessages(list: RoomMessage[]) {
+  const map = new Map<string, RoomMessage>();
+
+  for (const m of list) {
+    if (!m?.id) continue;
+    map.set(m.id, m);
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
+  );
+}
+
 export default function CallClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -86,6 +118,9 @@ export default function CallClient() {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
+
+  const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
+  const [showRoomMessages, setShowRoomMessages] = useState(false);
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
@@ -193,9 +228,6 @@ export default function CallClient() {
 
         setFetchErrorCount((prev) => prev + 1);
 
-        // 重要：
-        // 一時的な Load failed では members を空にしない。
-        // 既存の members を保持して、通話を壊さない。
         clearRetryTimer();
 
         retryTimerRef.current = window.setTimeout(() => {
@@ -327,6 +359,61 @@ export default function CallClient() {
   }, [sessionId, fetchMembers]);
 
   useEffect(() => {
+    if (!sessionId) return;
+
+    let cancelled = false;
+
+    async function loadRoomMessages() {
+      const { data, error } = await supabase
+        .from("room_messages")
+        .select("id, session_id, device_id, display_name, message, created_at")
+        .eq("session_id", sessionId)
+        .order("created_at", { ascending: true })
+        .limit(100);
+
+      if (cancelled) return;
+
+      if (error) {
+        console.warn("[call] room messages load failed", error);
+        return;
+      }
+
+      setRoomMessages(dedupeRoomMessages((data ?? []) as RoomMessage[]));
+    }
+
+    void loadRoomMessages();
+
+    const channel = supabase
+      .channel(`call-room-messages-${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "room_messages",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        (payload: any) => {
+          const row = payload?.new as RoomMessage;
+          if (!row?.id) return;
+
+          setRoomMessages((prev) => dedupeRoomMessages([...prev, row]));
+        }
+      )
+      .subscribe((status) => {
+        console.log("[call] room messages subscribe status", {
+          sessionId,
+          status,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
     const memberIds = new Set(members.map((m) => m.device_id));
 
     setPeerStates((prev) => {
@@ -338,9 +425,7 @@ export default function CallClient() {
     });
   }, [members]);
 
-  const handleRemoteCountChange = useCallback((_count: number) => {
-    // 今は表示には使わない
-  }, []);
+  const handleRemoteCountChange = useCallback((_count: number) => {}, []);
 
   const filled = members.length;
 
@@ -447,13 +532,25 @@ export default function CallClient() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             onClick={async () => {
+              if (!sessionId || !classId) {
+                alert("まだ招待リンクを作れません。");
+                return;
+              }
+
               const inviteUrl =
                 `${window.location.origin}/room?invite=1&autojoin=1` +
                 `&classId=${encodeURIComponent(classId)}` +
                 `&sessionId=${encodeURIComponent(sessionId)}`;
 
-              await navigator.clipboard.writeText(inviteUrl);
-              alert("招待リンクをコピーしました");
+              try {
+                await navigator.clipboard.writeText(inviteUrl);
+                alert("招待リンクをコピーしました");
+              } catch {
+                window.prompt(
+                  "コピーできませんでした。下のリンクをコピーしてください。",
+                  inviteUrl
+                );
+              }
             }}
             style={{
               padding: "10px 14px",
@@ -482,20 +579,20 @@ export default function CallClient() {
               cursor: "pointer",
             }}
             onClick={async () => {
-  await fetch("/api/session/leave", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      sessionId,
-      deviceId,
-    }),
-    cache: "no-store",
-  }).catch((e) => {
-    console.warn("[call] leave failed", e);
-  });
+              await fetch("/api/session/leave", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  sessionId,
+                  deviceId,
+                }),
+                cache: "no-store",
+              }).catch((e) => {
+                console.warn("[call] leave failed", e);
+              });
 
-  router.push(returnTo);
-}}
+              router.push(returnTo);
+            }}
           >
             退出
           </button>
@@ -719,6 +816,100 @@ export default function CallClient() {
 
       <section style={{ marginTop: 16 }}>
         {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
+      </section>
+
+      <section
+        style={{
+          marginTop: 16,
+          padding: 14,
+          border: "1px solid #e5e7eb",
+          borderRadius: 18,
+          background: "#fff",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setShowRoomMessages((prev) => !prev)}
+          style={{
+            width: "100%",
+            border: "none",
+            background: "transparent",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            fontWeight: 900,
+            fontSize: 15,
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          <span>待機ルームのメッセージ</span>
+          <span style={{ color: "#6b7280", fontSize: 12 }}>
+            {roomMessages.length}件 {showRoomMessages ? "▲" : "▼"}
+          </span>
+        </button>
+
+        {showRoomMessages && (
+          <div
+            style={{
+              marginTop: 12,
+              display: "grid",
+              gap: 8,
+              maxHeight: 240,
+              overflowY: "auto",
+            }}
+          >
+            {roomMessages.length === 0 ? (
+              <div style={{ color: "#6b7280", fontSize: 13 }}>
+                まだメッセージはありません
+              </div>
+            ) : (
+              roomMessages.map((m) => {
+                const isMe =
+                  String(m.device_id ?? "").trim() ===
+                  String(deviceId ?? "").trim();
+
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: "grid",
+                      gap: 3,
+                      justifyItems: isMe ? "end" : "start",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "#6b7280",
+                        fontWeight: 800,
+                      }}
+                    >
+                      {isMe ? "自分" : m.display_name || "参加者"}・
+                      {formatTime(m.created_at)}
+                    </div>
+
+                    <div
+                      style={{
+                        maxWidth: "78%",
+                        padding: "9px 11px",
+                        borderRadius: 14,
+                        background: isMe ? "#dcfce7" : "#f9fafb",
+                        border: "1px solid #e5e7eb",
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {m.message}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </section>
     </main>
   );
