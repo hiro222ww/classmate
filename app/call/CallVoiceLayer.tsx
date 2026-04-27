@@ -810,7 +810,7 @@ localStreamRef.current = stream;
 localAudioTrackRef.current = track;
 
 if (track) {
-  track.enabled = !isMuted;
+  track.enabled = true;
 }
 
 console.log("[call] local audio track", {
