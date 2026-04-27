@@ -65,7 +65,7 @@ export default function CallVoiceLayer({
 }: CallVoiceLayerProps) {
  const localStreamRef = useRef<MediaStream | null>(null);
  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
- const hasInitRef = useRef(false); 
+ const currentMicIdRef = useRef<string | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -768,7 +768,8 @@ const [selectedMicId, setSelectedMicId] = useState("");
 });
 
       if (nonVirtual) {
-        setSelectedMicId(nonVirtual.deviceId);
+        // ⭐ 自動選択やめる
+setSelectedMicId(inputs[0]?.deviceId ?? "");
       } else if (inputs[0]) {
         setSelectedMicId(inputs[0].deviceId);
       }
@@ -785,34 +786,54 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const init = async () => {
   try {
-    if (hasInitRef.current) return;
-    hasInitRef.current = true;
+    if (currentMicIdRef.current === selectedMicId && localStreamRef.current) {
+  return;
+}
+
+currentMicIdRef.current = selectedMicId || null;
 
     const deviceConstraint = selectedMicId
       ? { exact: selectedMicId }
       : undefined;
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceConstraint,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
+  audio: {
+    deviceId: selectedMicId ? { exact: selectedMicId } : undefined,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+  video: false,
+});
+
+// ⭐ ここ追加
+const track = stream.getAudioTracks()[0];
+
+console.log("[call] using mic", {
+  selectedMicId,
+  label: track?.label,
+  enabled: track?.enabled,
+  readyState: track?.readyState,
+});
+
+const newTrack = track ?? null;
+
+localStreamRef.current?.getTracks().forEach((t) => t.stop());
+
+localStreamRef.current = stream;
+localAudioTrackRef.current = newTrack;
+
+if (newTrack) {
+  newTrack.enabled = !isMuted;
+
+  pcsRef.current.forEach((pc) => {
+    pc.getSenders().forEach((sender) => {
+      if (sender.track?.kind === "audio") {
+        void sender.replaceTrack(newTrack);
+      }
     });
-
-        if (!mounted) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        localStreamRef.current = stream;
-        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
-
-        if (localAudioTrackRef.current) {
-          localAudioTrackRef.current.enabled = !isMuted;
-        }
+  });
+}
 
         console.log("[call] local audio track", {
           deviceId,
