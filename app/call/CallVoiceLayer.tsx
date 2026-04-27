@@ -628,7 +628,7 @@ export default function CallVoiceLayer({
       processedSignalIdsRef.current.add(row.id);
 
       if (row.from_device_id === deviceId) return;
-      //if (row.to_device_id && row.to_device_id !== deviceId) return;
+      if (row.to_device_id && row.to_device_id !== deviceId) return;
       if (row.session_id !== sessionId) return;
 
       const remoteId = row.from_device_id;
