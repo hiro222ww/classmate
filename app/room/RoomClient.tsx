@@ -752,13 +752,13 @@ export default function RoomClient() {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-  sessionId,
-  classId,
-  deviceId,
-  name,
-  capacity: 5,
-  invite: searchParams.get("invite") === "1", // ←追加
-}),
+          sessionId,
+          classId,
+          deviceId,
+          name,
+          capacity: 5,
+          invite: searchParams.get("invite") === "1",
+        }),
         cache: "no-store",
       });
 
@@ -798,7 +798,16 @@ export default function RoomClient() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, classId, deviceId, displayName, pathname, fetchStatus, topicTitle]);
+  }, [
+    sessionId,
+    classId,
+    deviceId,
+    displayName,
+    pathname,
+    fetchStatus,
+    topicTitle,
+    searchParams,
+  ]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;

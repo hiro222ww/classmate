@@ -262,6 +262,10 @@ export default function CallClient() {
     });
   }, [members]);
 
+  const handleRemoteCountChange = useCallback((_count: number) => {
+    // 今は表示には使わない
+  }, []);
+
   const filled = members.length;
 
   const muteButtonLabel = useMemo(() => {
@@ -339,7 +343,7 @@ export default function CallClient() {
         isMuted={isMuted}
         onMicReadyChange={setMicReady}
         onMicLevelChange={setMicLevel}
-        onRemoteCountChange={() => {}}
+        onRemoteCountChange={handleRemoteCountChange}
         onStatusChange={setCallInfo}
         onPeerStatesChange={setPeerStates}
       />
