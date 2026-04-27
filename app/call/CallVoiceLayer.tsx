@@ -794,7 +794,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        deviceId: deviceConstraint,
+        deviceId: selectedMicId,
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
