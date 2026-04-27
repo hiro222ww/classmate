@@ -121,6 +121,7 @@ export default function CallClient() {
 
   const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [showRoomMessages, setShowRoomMessages] = useState(false);
+  const [draft, setDraft] = useState("");
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
@@ -497,6 +498,28 @@ export default function CallClient() {
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
+  async function sendRoomMessage() {
+  const text = draft.trim();
+  if (!text || !sessionId || !deviceId) return;
+
+  const me = members.find((m) => m.device_id === deviceId);
+  const displayName = me?.display_name || "参加者";
+
+  setDraft("");
+
+  const { error } = await supabase.from("room_messages").insert({
+    session_id: sessionId,
+    device_id: deviceId,
+    display_name: displayName,
+    message: text,
+  });
+
+  if (error) {
+    console.warn("[call] room message send failed", error);
+    setDraft(text);
+  }
+}
+
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <CallVoiceLayer
@@ -843,7 +866,7 @@ export default function CallClient() {
             padding: 0,
           }}
         >
-          <span>待機ルームのメッセージ</span>
+          <span>メッセージ</span>
           <span style={{ color: "#6b7280", fontSize: 12 }}>
             {roomMessages.length}件 {showRoomMessages ? "▲" : "▼"}
           </span>
@@ -860,54 +883,101 @@ export default function CallClient() {
             }}
           >
             {roomMessages.length === 0 ? (
-              <div style={{ color: "#6b7280", fontSize: 13 }}>
-                まだメッセージはありません
-              </div>
-            ) : (
-              roomMessages.map((m) => {
-                const isMe =
-                  String(m.device_id ?? "").trim() ===
-                  String(deviceId ?? "").trim();
+  <div style={{ color: "#6b7280", fontSize: 13 }}>
+    まだメッセージはありません
+  </div>
+) : (
+  roomMessages.map((m) => {
+  const isMe =
+    String(m.device_id ?? "").trim() ===
+    String(deviceId ?? "").trim();
 
-                return (
-                  <div
-                    key={m.id}
-                    style={{
-                      display: "grid",
-                      gap: 3,
-                      justifyItems: isMe ? "end" : "start",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "#6b7280",
-                        fontWeight: 800,
-                      }}
-                    >
-                      {isMe ? "自分" : m.display_name || "参加者"}・
-                      {formatTime(m.created_at)}
-                    </div>
+  return (
+    <div
+      key={m.id}
+      style={{
+        display: "grid",
+        gap: 3,
+        justifyItems: isMe ? "end" : "start",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: "#6b7280",
+          fontWeight: 800,
+        }}
+      >
+        {isMe ? "自分" : m.display_name || "参加者"}・
+        {formatTime(m.created_at)}
+      </div>
 
-                    <div
-                      style={{
-                        maxWidth: "78%",
-                        padding: "9px 11px",
-                        borderRadius: 14,
-                        background: isMe ? "#dcfce7" : "#f9fafb",
-                        border: "1px solid #e5e7eb",
-                        whiteSpace: "pre-wrap",
-                        overflowWrap: "anywhere",
-                        fontSize: 13,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {m.message}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+      <div
+        style={{
+          maxWidth: "78%",
+          padding: "9px 11px",
+          borderRadius: 14,
+          background: isMe ? "#dcfce7" : "#f9fafb",
+          border: "1px solid #e5e7eb",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}
+      >
+        {m.message}
+      </div>
+    </div>
+  );
+})
+)}
+
+/* 🔥 ここを追加 */
+<div
+  style={{
+    marginTop: 10,
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+  }}
+>
+  <input
+    value={draft}
+    onChange={(e) => setDraft(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        void sendRoomMessage();
+      }
+    }}
+    placeholder="メッセージを入力"
+    style={{
+      flex: 1,
+      border: "1px solid #d1d5db",
+      borderRadius: 999,
+      padding: "10px 12px",
+      background: "#fff",
+    }}
+  />
+
+  <button
+    type="button"
+    onClick={() => void sendRoomMessage()}
+    disabled={!draft.trim()}
+    style={{
+      border: "none",
+      borderRadius: 999,
+      padding: "10px 14px",
+      background: !draft.trim() ? "#9ca3af" : "#22c55e",
+      color: "#fff",
+      fontWeight: 900,
+      cursor: !draft.trim() ? "not-allowed" : "pointer",
+      whiteSpace: "nowrap",
+    }}
+  >
+    送信
+  </button>
+</div>
           </div>
         )}
       </section>
