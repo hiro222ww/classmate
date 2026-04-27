@@ -222,20 +222,23 @@ export default function CallVoiceLayer({
 
     localTrack.enabled = !muted;
 
-    const sender = pc
-      .getSenders()
-      .find((s) => s.track?.kind === "audio" || s.track === null);
+    const syncSendersMuted = useCallback(
+  async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
+    const localTrack = localAudioTrackRef.current;
+    if (!localTrack) return;
 
-    try {
-      if (sender) {
-        // ミュート解除時に相手側へ音声trackを再同期
-        await sender.replaceTrack(localTrack);
-      } else {
-        pc.addTrack(localTrack, localStream);
-      }
-    } catch (e) {
-      console.warn("[call] replaceTrack failed", remoteId, e);
-    }
+    localTrack.enabled = !muted;
+
+    console.log("[call] sender mute sync", {
+      remoteId,
+      muted,
+      localTrackId: localTrack.id,
+      enabled: localTrack.enabled,
+      readyState: localTrack.readyState,
+    });
+  },
+  []
+);
 
     console.log("[call] sender mute sync", {
       remoteId,
@@ -949,138 +952,75 @@ export default function CallVoiceLayer({
   }, [micReady, onMicLevelChange]);
 
   useEffect(() => {
-    if (!sessionId || !deviceId) return;
+  if (!sessionId || !deviceId) return;
 
-    let alive = true;
-    setSignalReady(false);
+  let alive = true;
 
-    const bootRecentSignals = async () => {
-      const since = subscribedAtRef.current;
-      if (!since) return;
+  setSignalReady(false);
 
-      const { data, error } = await supabase
-        .from("call_signals")
-        .select("*")
-        .eq("session_id", sessionId)
-        .gte("created_at", since)
-        .order("created_at", { ascending: true })
-        .limit(100);
+  if (channelRef.current) {
+    void supabase.removeChannel(channelRef.current);
+    channelRef.current = null;
+  }
 
-      if (error) {
-        console.warn("[call] boot recent signals skipped", {
-          message: error.message,
-          details: (error as any)?.details ?? null,
-          hint: (error as any)?.hint ?? null,
-          code: (error as any)?.code ?? null,
-        });
+  console.log("🔥 SUBSCRIBE CREATED", {
+    sessionId,
+    deviceId,
+  });
+
+  const channel = supabase
+    .channel(`call-signals-${sessionId}-${deviceId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "call_signals",
+        filter: `session_id=eq.${sessionId}`,
+      },
+      async (payload) => {
+        if (!alive) return;
+        const row = payload.new as SignalRow;
+        await handleSignalRef.current(row);
+      }
+    )
+    .subscribe((status) => {
+      console.log("[call] signal subscribe status", status);
+
+      if (!alive) return;
+
+      if (status === "SUBSCRIBED") {
+        setSignalReady(true);
         return;
       }
 
-      for (const row of (data ?? []) as SignalRow[]) {
-        if (!alive) return;
-        if (row.from_device_id === deviceId) continue;
-        //if (row.to_device_id && row.to_device_id !== deviceId) continue;
-        await handleSignalRef.current(row);
+      if (
+        status === "CLOSED" ||
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT"
+      ) {
+        console.warn("[call] signal channel dead → reload", status);
+        setSignalReady(false);
+
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 1000);
       }
-    };
+    });
 
-    const startSubscribe = () => {
-      if (!alive) return;
-      if (channelRef.current) return;
-      if (isSubscribingRef.current) return;
+  channelRef.current = channel;
 
-      isSubscribingRef.current = true;
-      subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
+  return () => {
+    alive = false;
+    setSignalReady(false);
 
-      console.log("🔥 SUBSCRIBE CREATED", {
-        sessionId,
-        deviceId,
-      });
-
-      const channel = supabase
-  .channel(`call-signals-${sessionId}`)
-  .on(
-    "postgres_changes",
-    {
-      event: "INSERT",
-      schema: "public",
-      table: "call_signals",
-      filter: `session_id=eq.${sessionId}`,
-    },
-    async (payload) => {
-      const row = payload.new as SignalRow;
-      await handleSignalRef.current(row);
+    if (channelRef.current) {
+      void supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
     }
-  )
-        .subscribe(async (status) => {
-          console.log("[call] signal subscribe status", status);
-
-          if (!alive) return;
-
-          if (status === "SUBSCRIBED") {
-            isSubscribingRef.current = false;
-            clearRetrySubscribeTimer();
-
-            await bootRecentSignals();
-
-            if (!alive) return;
-            setSignalReady(true);
-            return;
-          }
-
-          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-            console.warn("[call] signal channel error → retry", status);
-
-            isSubscribingRef.current = false;
-            setSignalReady(false);
-
-            if (channelRef.current === channel) {
-              void supabase.removeChannel(channelRef.current);
-              channelRef.current = null;
-            }
-
-            clearRetrySubscribeTimer();
-
-            retrySubscribeTimerRef.current = window.setTimeout(() => {
-              retrySubscribeTimerRef.current = null;
-              startSubscribe();
-            }, 1000);
-
-            return;
-          }
-
-          if (status === "CLOSED") {
-            console.warn("[call] signal channel closed");
-
-            isSubscribingRef.current = false;
-            setSignalReady(false);
-
-            if (channelRef.current === channel) {
-              channelRef.current = null;
-            }
-
-            return;
-          }
-        });
-
-      channelRef.current = channel;
-    };
-
-    startSubscribe();
-
-    return () => {
-      alive = false;
-      setSignalReady(false);
-      clearRetrySubscribeTimer();
-      isSubscribingRef.current = false;
-
-      if (channelRef.current) {
-        void supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
-  }, [sessionId, deviceId, clearRetrySubscribeTimer]);
-
+  };
+}, [sessionId, deviceId]);
+  
   useEffect(() => {
     console.log("[call] offer effect check", {
       micReady,
