@@ -950,7 +950,7 @@ export default function CallVoiceLayer({
       for (const row of (data ?? []) as SignalRow[]) {
         if (!alive) return;
         if (row.from_device_id === deviceId) continue;
-        if (row.to_device_id && row.to_device_id !== deviceId) continue;
+        //if (row.to_device_id && row.to_device_id !== deviceId) continue;
         await handleSignalRef.current(row);
       }
     };
@@ -969,14 +969,14 @@ export default function CallVoiceLayer({
       });
 
       const channel = supabase
-  .channel(`call-signals-${sessionId}-${deviceId}`)
+  .channel(`call-signals-${sessionId}`)
   .on(
     "postgres_changes",
     {
       event: "INSERT",
       schema: "public",
       table: "call_signals",
-      filter: `to_device_id=eq.${deviceId}`,
+      filter: `session_id=eq.${sessionId}`,
     },
     async (payload) => {
       const row = payload.new as SignalRow;
