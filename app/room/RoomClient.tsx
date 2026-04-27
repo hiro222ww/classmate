@@ -734,15 +734,15 @@ export default function RoomClient() {
   useEffect(() => {
   if (pathname !== "/room") return;
 
-  if (!sessionId || !classId || !deviceId) {
-    joinedSessionKeyRef.current = null;
+  if (!sessionId || !deviceId) {
+  joinedSessionKeyRef.current = null;
 
-    if (sessionId && classId) {
-      void fetchStatus({ force: true });
-    }
-
-    return;
+  if (sessionId) {
+    void fetchStatus({ force: true });
   }
+
+  return;
+}
 
   const rawName = displayName || "参加者";
   const name = rawName === "You" ? "参加者" : rawName;
@@ -761,8 +761,8 @@ export default function RoomClient() {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          sessionId,
-          classId,
+  sessionId,
+  classId: classId || undefined,
           deviceId,
           name,
           capacity: 5,
