@@ -413,7 +413,9 @@ const [selectedMicId, setSelectedMicId] = useState("");
         console.log("[call] reconnect prepared", remoteId, nextConnectionId);
 
         if (deviceId < remoteId) {
-  void maybeStartOffer(remoteId);
+  if (!startedPeersRef.current.has(remoteId)) {
+    void maybeStartOffer(remoteId);
+  }
 }
       }, delay);
 
@@ -1069,7 +1071,6 @@ if (ctx.state === "suspended") {
     }
 
     for (const remoteId of remoteIds) {
-  for (const remoteId of remoteIds) {
   const iAmOfferer = deviceId < remoteId;
   if (!iAmOfferer) continue;
 
@@ -1087,7 +1088,6 @@ if (ctx.state === "suspended") {
   });
 
   void maybeStartOffer(remoteId);
-}
 }
   }, [
     members,
