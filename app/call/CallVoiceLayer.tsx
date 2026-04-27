@@ -214,15 +214,6 @@ export default function CallVoiceLayer({
   );
 
   const syncSendersMuted = useCallback(
-  async (pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
-    const localTrack = localAudioTrackRef.current;
-    const localStream = localStreamRef.current;
-
-    if (!localTrack || !localStream) return;
-
-    localTrack.enabled = !muted;
-
-   const syncSendersMuted = useCallback(
   async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
     const localTrack = localAudioTrackRef.current;
     if (!localTrack) return;
@@ -235,18 +226,6 @@ export default function CallVoiceLayer({
       localTrackId: localTrack.id,
       enabled: localTrack.enabled,
       readyState: localTrack.readyState,
-    });
-  },
-  []
-);
-
-    console.log("[call] sender mute sync", {
-      remoteId,
-      muted,
-      localTrackId: localTrack.id,
-      enabled: localTrack.enabled,
-      readyState: localTrack.readyState,
-      senderCount: pc.getSenders().length,
     });
   },
   []
@@ -902,7 +881,11 @@ export default function CallVoiceLayer({
     const run = async () => {
       try {
         ctx = new AudioContext();
-        audioCtxRef.current = ctx;
+audioCtxRef.current = ctx;
+
+if (ctx.state === "suspended") {
+  await ctx.resume().catch(() => {});
+}
 
         const source = ctx.createMediaStreamSource(localStreamRef.current as MediaStream);
         const analyser = ctx.createAnalyser();
