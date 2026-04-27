@@ -807,18 +807,22 @@ const [selectedMicId, setSelectedMicId] = useState("");
           return;
         }
 
-        localStreamRef.current = stream;
-        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
+        const track = stream.getAudioTracks()[0] ?? null;
 
-        if (localAudioTrackRef.current) {
-          localAudioTrackRef.current.enabled = !isMuted;
-        }
+localStreamRef.current = stream;
+localAudioTrackRef.current = track;
 
-        console.log("[call] local audio track", {
-          deviceId,
-          trackId: localAudioTrackRef.current?.id ?? null,
-          label: localAudioTrackRef.current?.label ?? null,
-        });
+if (track) {
+  track.enabled = !isMuted;
+}
+
+console.log("[call] local audio track", {
+  deviceId,
+  trackId: track?.id ?? null,
+  label: track?.label ?? null,
+  enabled: track?.enabled ?? null,
+  readyState: track?.readyState ?? null,
+});
 
         setMicReady(true);
         onMicReadyChange?.(true);
