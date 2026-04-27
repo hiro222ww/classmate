@@ -357,6 +357,9 @@ export default function RoomClient() {
     (searchParams.get("session") ?? "").trim();
   const autojoin = (searchParams.get("autojoin") ?? "").trim() === "1";
   const dev = (searchParams.get("dev") ?? "").trim();
+　
+  const invite = (searchParams.get("invite") ?? "").trim() === "1";
+　const inviter = normalizeName(searchParams.get("inviter"));
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -744,14 +747,9 @@ export default function RoomClient() {
 
   // ❗ここ追加（超重要）
   if (!sessionId || !classId) {
-    setErr("招待リンクが正しくありません。");
-    return;
-  }
-
-  if (!isUuidLike(sessionId) || !isUuidLike(classId)) {
-    setErr("招待リンクが壊れています。");
-    return;
-  }
+  setErr("招待リンクが正しくありません。");
+  return;
+}
 
   const joinKey = `${sessionId}:${deviceId}`;
   if (joinedSessionKeyRef.current === joinKey) return;
@@ -1085,20 +1083,27 @@ export default function RoomClient() {
           title={shellTitle}
           subtitle={shellSubtitle}
           lines={
-            err
-              ? [err]
-              : autoMovedRef.current === `${sessionId}:${classId}:first-auto-call` ||
-                  (typeof window !== "undefined" &&
-                    sessionStorage.getItem(
-                      `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
-                    ) === "1")
-                ? ["通話開始ボタンを押して、通話を開始してください。"]
-                : status === "forming"
-                  ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
-                  : status === "active"
-                    ? ["通話を開始できます。"]
-                    : []
-          }
+  err
+    ? [err]
+    : invite
+      ? [
+          inviter
+            ? `${inviter}さんに招待されています`
+            : "このクラスに招待されています",
+          "参加中のメンバーと会話を始めましょう",
+        ]
+      : autoMovedRef.current === `${sessionId}:${classId}:first-auto-call` ||
+          (typeof window !== "undefined" &&
+            sessionStorage.getItem(
+              `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
+            ) === "1")
+        ? ["通話開始ボタンを押して、通話を開始してください。"]
+        : status === "forming"
+          ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+          : status === "active"
+            ? ["通話を開始できます。"]
+            : []
+}
           onBack={() => router.push(withDev("/class/select"))}
           onStartCall={() =>
             router.push(
@@ -1135,20 +1140,21 @@ export default function RoomClient() {
 
   <button
     onClick={async () => {
+  
+
   if (!sessionId || !classId) {
-    alert("まだ招待リンクを作れません。ルームに入り直してください。");
-    return;
-  }
+  alert("まだ招待リンクを作れません。");
+  return;
+}
 
-  if (!isUuidLike(sessionId) || !isUuidLike(classId)) {
-    alert("招待リンクを作れません。ルーム情報が正しくありません。");
-    return;
-  }
+  const inviterName =
+  normalizeName(displayName) || "友達";
 
-  const inviteUrl =
-    `${location.origin}/room?invite=1&autojoin=1` +
-    `&sessionId=${encodeURIComponent(sessionId)}` +
-    `&classId=${encodeURIComponent(classId)}`;
+const inviteUrl =
+  `${location.origin}/room?invite=1&autojoin=1` +
+  `&sessionId=${encodeURIComponent(sessionId)}` +
+  `&classId=${encodeURIComponent(classId)}` +
+  `&inviter=${encodeURIComponent(inviterName)}`;
 
   try {
     await navigator.clipboard.writeText(inviteUrl);
