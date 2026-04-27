@@ -416,12 +416,7 @@ export default function HomeClient() {
         ""
     ).trim();
 
-    const membersUrl =
-      `/api/class/members?classId=${encodeURIComponent(classId)}` +
-      (activeSessionId
-        ? `&sessionId=${encodeURIComponent(activeSessionId)}`
-        : "");
-
+    const membersUrl = `/api/class/members?classId=${encodeURIComponent(classId)}`;
     const membersRes = await fetch(membersUrl, {
       cache: "no-store",
     });
