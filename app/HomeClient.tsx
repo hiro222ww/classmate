@@ -391,33 +391,50 @@ export default function HomeClient() {
   const classIds = classes.map((c) => c.id).filter(Boolean);
 
   try {
+    
     const results = await Promise.all(
-      classIds.map(async (classId) => {
-        const targetClass = classes.find((c) => String(c.id) === String(classId));
-        const sessionId = String(targetClass?.session_id ?? "").trim();
+  classIds.map(async (classId) => {
+    const targetClass = classes.find((c) => String(c.id) === String(classId));
 
-        const membersUrl =
-          `/api/class/members?classId=${encodeURIComponent(classId)}` +
-          (sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : "");
+    const presenceRes = await fetch(
+      `/api/class/presence?classId=${encodeURIComponent(classId)}`,
+      {
+        cache: "no-store",
+      }
+    );
 
-        const [membersRes, presenceRes] = await Promise.all([
-          fetch(membersUrl, {
-            cache: "no-store",
-          }),
-          fetch(`/api/class/presence?classId=${encodeURIComponent(classId)}`, {
-            cache: "no-store",
-          }),
-        ]);
-            const membersJson = await readJsonSafe(membersRes);
-            const presenceJson = await readJsonSafe(presenceRes);
+    const presenceJson = await readJsonSafe(presenceRes);
 
-            return {
-              classId,
-              members: Array.isArray(membersJson?.members) ? membersJson.members : [],
-              presence: Array.isArray(presenceJson?.presence) ? presenceJson.presence : [],
-            };
-          })
-        );
+    const presenceList = Array.isArray(presenceJson?.presence)
+      ? presenceJson.presence
+      : [];
+
+    const activeSessionId = String(
+      presenceList.find((p: any) => String(p?.session_id ?? "").trim())
+        ?.session_id ??
+        targetClass?.session_id ??
+        ""
+    ).trim();
+
+    const membersUrl =
+      `/api/class/members?classId=${encodeURIComponent(classId)}` +
+      (activeSessionId
+        ? `&sessionId=${encodeURIComponent(activeSessionId)}`
+        : "");
+
+    const membersRes = await fetch(membersUrl, {
+      cache: "no-store",
+    });
+
+    const membersJson = await readJsonSafe(membersRes);
+
+    return {
+      classId,
+      members: Array.isArray(membersJson?.members) ? membersJson.members : [],
+      presence: presenceList,
+    };
+  })
+);
 
         if (cancelled) return;
 
