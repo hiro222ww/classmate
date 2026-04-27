@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ function normalizeName(v: unknown) {
 }
 
 async function loadProfiles(
-  sb: ReturnType<typeof supabaseServer>,
+  sb: typeof supabaseAdmin,
   deviceIds: string[]
 ) {
   const ids = Array.from(
@@ -67,10 +67,9 @@ export async function GET(req: Request) {
       );
     }
 
-    const sb = supabaseServer();
+    const sb = supabaseAdmin;
 
-    // sessionId がある場合：
-    // 今その通話/待機ルームにいる人を session_members から取る
+    // ===== session_members（今いる人） =====
     if (sessionId) {
       const { data: sessionRows, error: sessionErr } = await sb
         .from("session_members")
@@ -134,8 +133,7 @@ export async function GET(req: Request) {
       });
     }
 
-    // sessionId がない場合：
-    // 従来通り、そのクラスに所属している人を class_memberships から取る
+    // ===== class_memberships（所属者） =====
     const { data: membershipRows, error: membershipErr } = await sb
       .from("class_memberships")
       .select("device_id, joined_at")
