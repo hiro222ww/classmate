@@ -219,14 +219,6 @@ export default function CallVoiceLayer({
       if (!localTrack) return;
 
       localTrack.enabled = !muted;
-
-      console.log("[call] sender mute sync", {
-        remoteId,
-        muted,
-        localTrackId: localTrack.id,
-        enabled: localTrack.enabled,
-        readyState: localTrack.readyState,
-      });
     },
     []
   );
@@ -247,10 +239,6 @@ export default function CallVoiceLayer({
   const closePeer = useCallback(
     (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
-
-      console.log("[call] close peer", remoteId, {
-        clearConnectionId: shouldClearConnectionId,
-      });
 
       const pc = pcsRef.current.get(remoteId);
 
@@ -299,8 +287,6 @@ export default function CallVoiceLayer({
       const queued = pendingIceRef.current.get(remoteId) ?? [];
       if (!queued.length) return;
 
-      console.log("[call] flush pending ice", remoteId, connectionId, queued.length);
-
       for (const candidate of queued) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -317,17 +303,10 @@ export default function CallVoiceLayer({
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
       if (!localAudioTrackRef.current && !localStreamRef.current) {
-        console.log("[call] skip offer: local audio not ready", remoteId);
         return;
       }
 
       const iAmOfferer = deviceId < remoteId;
-
-      console.log("[call] offer role check", {
-        deviceId,
-        remoteId,
-        iAmOfferer,
-      });
 
      // if (!iAmOfferer) return;
 
@@ -341,17 +320,10 @@ export default function CallVoiceLayer({
       const pc = createPeerConnection(remoteId, connectionId);
 
       if (offeredPeersRef.current.has(remoteId)) {
-        console.log("[call] skip offer: already offered", remoteId, connectionId);
         return;
       }
 
       if (pc.signalingState !== "stable") {
-        console.log(
-          "[call] skip offer: non-stable",
-          remoteId,
-          connectionId,
-          pc.signalingState
-        );
         return;
       }
 
@@ -359,12 +331,6 @@ export default function CallVoiceLayer({
         pc.connectionState === "connecting" ||
         pc.connectionState === "connected"
       ) {
-        console.log(
-          "[call] skip offer: already connecting/connected",
-          remoteId,
-          connectionId,
-          pc.connectionState
-        );
         return;
       }
 
@@ -373,7 +339,6 @@ export default function CallVoiceLayer({
       setPeerState(remoteId, "connecting");
 
       try {
-        console.log("[call] create offer start", remoteId, connectionId);
 
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
@@ -403,8 +368,6 @@ export default function CallVoiceLayer({
           connectionId,
           sdp: pc.localDescription,
         });
-
-        console.log("[call] offer sent", remoteId, connectionId);
       } catch (e) {
         offeredPeersRef.current.delete(remoteId);
         console.error("[call] create offer error", remoteId, connectionId, e);
@@ -426,8 +389,6 @@ export default function CallVoiceLayer({
       if (!iAmOfferer) return;
       if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
-      console.log("[call] schedule reconnect", remoteId, { delay });
-
       clearReconnectTimer(remoteId);
 
       const timer = window.setTimeout(() => {
@@ -436,8 +397,6 @@ export default function CallVoiceLayer({
         const nextConnectionId = makeConnectionId(deviceId, remoteId);
         closePeer(remoteId, { clearConnectionId: false });
         setCurrentConnectionId(remoteId, nextConnectionId);
-
-        console.log("[call] reconnect prepared", remoteId, nextConnectionId);
 
         void maybeStartOffer(remoteId);
       }, delay);
@@ -500,25 +459,13 @@ export default function CallVoiceLayer({
         const stream = event.streams?.[0];
         if (!stream) return;
 
-        console.log("[call] ontrack", remoteId, connectionId, {
-          trackCount: stream.getTracks().length,
-          audioTracks: stream.getAudioTracks().map((t) => ({
-            enabled: t.enabled,
-            muted: t.muted,
-            readyState: t.readyState,
-            label: t.label,
-          })),
-        });
-
         upsertRemoteAudio(remoteId, stream);
       };
 
       pc.onsignalingstatechange = () => {
-        console.log("[call] signaling state", remoteId, connectionId, pc.signalingState);
       };
 
       pc.oniceconnectionstatechange = () => {
-        console.log("[call] ice state", remoteId, connectionId, pc.iceConnectionState);
         notifyStatus(`ice ${remoteId}: ${pc.iceConnectionState}`);
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
@@ -536,8 +483,6 @@ export default function CallVoiceLayer({
 
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-
-        console.log("[call] connection state", remoteId, connectionId, state);
 
         if (
           state === "failed" ||
@@ -594,14 +539,6 @@ export default function CallVoiceLayer({
 
   const handleSignal = useCallback(
     async (row: SignalRow) => {
-      console.log("[call] signal received raw", {
-      id: row.id,
-      type: row.signal_type,
-      from: row.from_device_id,
-      to: row.to_device_id,
-      me: deviceId,
-      session: row.session_id,
-    });
 
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
       processedSignalIdsRef.current.add(row.id);
@@ -615,7 +552,6 @@ export default function CallVoiceLayer({
       const incomingConnectionId = payload.connectionId;
 
       if (row.signal_type === "leave") {
-        console.log("[call] leave received", remoteId);
         closePeer(remoteId, { clearConnectionId: true });
         return;
       }
@@ -629,10 +565,6 @@ export default function CallVoiceLayer({
 
       if (row.signal_type === "offer") {
         if (currentConnectionId !== incomingConnectionId) {
-          console.log("[call] new offer connection id", remoteId, {
-            currentConnectionId,
-            incomingConnectionId,
-          });
           closePeer(remoteId, { clearConnectionId: false });
           setCurrentConnectionId(remoteId, incomingConnectionId);
           currentConnectionId = incomingConnectionId;
@@ -664,8 +596,6 @@ export default function CallVoiceLayer({
             return;
           }
 
-          console.log("[call] applying offer", remoteId, incomingConnectionId);
-
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
 
@@ -678,8 +608,6 @@ export default function CallVoiceLayer({
             connectionId: incomingConnectionId,
             sdp: pc.localDescription,
           });
-
-          console.log("[call] answer sent", remoteId, incomingConnectionId);
           return;
         }
 
@@ -697,12 +625,8 @@ export default function CallVoiceLayer({
             return;
           }
 
-          console.log("[call] applying answer", remoteId, incomingConnectionId);
-
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
-
-          console.log("[call] answer applied", remoteId, incomingConnectionId);
           return;
         }
 
@@ -714,13 +638,6 @@ export default function CallVoiceLayer({
             const queued = pendingIceRef.current.get(remoteId) ?? [];
             queued.push(candidate);
             pendingIceRef.current.set(remoteId, queued);
-
-            console.log(
-              "[call] queue ice before remoteDescription",
-              remoteId,
-              incomingConnectionId,
-              queued.length
-            );
 
             return;
           }
@@ -791,12 +708,6 @@ export default function CallVoiceLayer({
         if (localAudioTrackRef.current) {
           localAudioTrackRef.current.enabled = !isMuted;
         }
-
-        console.log("[call] local audio track", {
-          deviceId,
-          trackId: localAudioTrackRef.current?.id ?? null,
-          label: localAudioTrackRef.current?.label ?? null,
-        });
 
         setMicReady(true);
         onMicReadyChange?.(true);
@@ -963,11 +874,6 @@ export default function CallVoiceLayer({
       isSubscribingRef.current = true;
       subscribedAtRef.current = new Date(Date.now() - 15000).toISOString();
 
-      console.log("🔥 SUBSCRIBE CREATED", {
-        sessionId,
-        deviceId,
-      });
-
       const channel = supabase
   .channel(`call-signals-${sessionId}`)
   .on(
@@ -984,7 +890,6 @@ export default function CallVoiceLayer({
     }
   )
         .subscribe(async (status) => {
-          console.log("[call] signal subscribe status", status);
 
           if (!alive) return;
 
@@ -1053,12 +958,6 @@ export default function CallVoiceLayer({
   }, [sessionId, deviceId, clearRetrySubscribeTimer]);
 
   useEffect(() => {
-    console.log("[call] offer effect check", {
-      micReady,
-      signalReady,
-      deviceId,
-      members: members.map((m) => m.device_id),
-    });
 
     if (!micReady) return;
     if (!signalReady) return;
@@ -1066,10 +965,6 @@ export default function CallVoiceLayer({
     const remoteIds = members
       .map((m) => m.device_id)
       .filter((id) => id && id !== deviceId);
-
-    console.log("[call] remoteIds for offer", {
-      remoteIds,
-    });
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
@@ -1088,11 +983,6 @@ export default function CallVoiceLayer({
       if (!getCurrentConnectionId(remoteId)) {
         setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
       }
-
-      console.log("[call] try maybeStartOffer", {
-        remoteId,
-        deviceId,
-      });
 
       void maybeStartOffer(remoteId);
     }
@@ -1206,19 +1096,6 @@ function RemoteAudio({
     try {
       await el.play();
       setBlocked(false);
-
-      console.log("[call] remote audio playing", remoteId, {
-        readyState: el.readyState,
-        paused: el.paused,
-        muted: el.muted,
-        volume: el.volume,
-        tracks: stream.getAudioTracks().map((t) => ({
-          enabled: t.enabled,
-          muted: t.muted,
-          readyState: t.readyState,
-          label: t.label,
-        })),
-      });
     } catch (e: any) {
       if (e?.name === "NotAllowedError") {
         setBlocked(true);
@@ -1250,15 +1127,10 @@ function RemoteAudio({
     el.setAttribute("playsinline", "true");
 
     const onCanPlay = () => {
-      console.log("[call] audio canplay", remoteId);
       void playAudio();
     };
 
     const onLoadedMetadata = () => {
-      console.log("[call] audio loadedmetadata", remoteId, {
-        readyState: el.readyState,
-        paused: el.paused,
-      });
 
       void playAudio();
     };
