@@ -788,8 +788,6 @@ const [selectedMicId, setSelectedMicId] = useState(() => {
 
     const init = async () => {
   try {
-    if (hasInitRef.current) return;
-    hasInitRef.current = true;
 
 
     const stream = await navigator.mediaDevices.getUserMedia({
