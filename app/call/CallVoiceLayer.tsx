@@ -412,7 +412,9 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
         console.log("[call] reconnect prepared", remoteId, nextConnectionId);
 
-        void maybeStartOffer(remoteId);
+        if (deviceId < remoteId) {
+  void maybeStartOffer(remoteId);
+}
       }, delay);
 
       reconnectTimersRef.current.set(remoteId, timer);
@@ -1067,21 +1069,26 @@ if (ctx.state === "suspended") {
     }
 
     for (const remoteId of remoteIds) {
-      if (startedPeersRef.current.has(remoteId)) continue;
+  for (const remoteId of remoteIds) {
+  const iAmOfferer = deviceId < remoteId;
+  if (!iAmOfferer) continue;
 
-      startedPeersRef.current.add(remoteId);
+  if (startedPeersRef.current.has(remoteId)) continue;
 
-      if (!getCurrentConnectionId(remoteId)) {
-        setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
-      }
+  startedPeersRef.current.add(remoteId);
 
-      console.log("[call] try maybeStartOffer", {
-        remoteId,
-        deviceId,
-      });
+  if (!getCurrentConnectionId(remoteId)) {
+    setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
+  }
 
-      void maybeStartOffer(remoteId);
-    }
+  console.log("[call] try maybeStartOffer", {
+    remoteId,
+    deviceId,
+  });
+
+  void maybeStartOffer(remoteId);
+}
+}
   }, [
     members,
     micReady,
@@ -1118,7 +1125,9 @@ if (ctx.state === "suspended") {
           continue;
         }
 
-        void maybeStartOffer(remoteId);
+        if (deviceId < remoteId) {
+  void maybeStartOffer(remoteId);
+}
       }
     }, 3000);
 
@@ -1155,7 +1164,9 @@ if (ctx.state === "suspended") {
             iceConnectionState: pc.iceConnectionState,
           });
 
-          scheduleReconnect(remoteId, 500);
+          if (deviceId < remoteId) {
+  scheduleReconnect(remoteId, 500);
+}
         }
       }
     }, 4000);
