@@ -222,7 +222,7 @@ export default function CallVoiceLayer({
 
     localTrack.enabled = !muted;
 
-    const syncSendersMuted = useCallback(
+   const syncSendersMuted = useCallback(
   async (_pc: RTCPeerConnection, remoteId: string, muted: boolean) => {
     const localTrack = localAudioTrackRef.current;
     if (!localTrack) return;
