@@ -791,9 +791,6 @@ const [selectedMicId, setSelectedMicId] = useState(() => {
     if (hasInitRef.current) return;
     hasInitRef.current = true;
 
-    const deviceConstraint = selectedMicId
-      ? { exact: selectedMicId }
-      : undefined;
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
