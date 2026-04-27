@@ -102,13 +102,19 @@ export default function CallClient() {
   const sessionId = searchParams.get("sessionId") || "";
   const classId = searchParams.get("classId") || "";
 
-  const deviceId = useMemo(() => getDeviceId(), []);
+  const [deviceId, setDeviceId] = useState("");
 
-  const returnTo = withDev(
+useEffect(() => {
+  setDeviceId(getDeviceId());
+}, []);
+
+  const returnTo = useMemo(() => {
+  return withDev(
     `/room?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
       classId
     )}`
   );
+}, [sessionId, classId]);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [isMuted, setIsMuted] = useState(true);
@@ -118,9 +124,7 @@ export default function CallClient() {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
-  const [inviteChecking, setInviteChecking] = useState(false);
-const [inviteError, setInviteError] = useState<string | null>(null);
-
+  
   const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
   const [showRoomMessages, setShowRoomMessages] = useState(false);
   const [draft, setDraft] = useState("");
@@ -546,6 +550,10 @@ const [inviteError, setInviteError] = useState<string | null>(null);
       );
     }
   }
+
+  if (!deviceId) {
+  return null;
+}
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
