@@ -908,9 +908,16 @@ console.log("[room join] payload", {
     if (pathname !== "/room") return;
     if (!autojoin) return;
 
-    const shouldAutoStart = status === "active" || memberCount >= 2;
-    if (!shouldAutoStart) return;
+    const selfJoined = visibleMembers.some(
+  (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
+);
 
+const shouldAutoStart =
+  !err &&
+  selfJoined &&
+  (status === "active" || memberCount >= 2);
+
+if (!shouldAutoStart) return;
     const moveKey = `${sessionId}:${classId}:first-auto-call`;
     if (autoMovedRef.current === moveKey) return;
 
