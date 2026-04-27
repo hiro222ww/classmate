@@ -63,8 +63,9 @@ export default function CallVoiceLayer({
   onStatusChange,
   onPeerStatesChange,
 }: CallVoiceLayerProps) {
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+ const localStreamRef = useRef<MediaStream | null>(null);
+ const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+ const hasInitRef = useRef(false); 
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -754,7 +755,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
       setAudioInputs(inputs);
 
       const nonVirtual = inputs.find((d) => {
-  if (!d.label) return false; // ⭐ これ追加
+  if (!d.label) return false; 
 
   const label = d.label.toLowerCase();
 
@@ -784,14 +785,16 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const init = async () => {
   try {
-    if (!selectedMicId) {
-      console.log("[call] skip getUserMedia: mic not selected yet");
-      return;
-    }
+    if (hasInitRef.current) return;
+    hasInitRef.current = true;
+
+    const deviceConstraint = selectedMicId
+      ? { exact: selectedMicId }
+      : undefined;
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        deviceId: { exact: selectedMicId },
+        deviceId: deviceConstraint,
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
@@ -857,7 +860,6 @@ const [selectedMicId, setSelectedMicId] = useState("");
       localAudioTrackRef.current = null;
     };
   }, [
-  selectedMicId,
   clearReconnectTimer,
   clearRetrySubscribeTimer,
   closePeer,
