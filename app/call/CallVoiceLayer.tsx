@@ -969,20 +969,20 @@ export default function CallVoiceLayer({
       });
 
       const channel = supabase
-        .channel(`call-signals-${sessionId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "call_signals",
-            filter: `session_id=eq.${sessionId}`,
-          },
-          async (payload) => {
-            const row = payload.new as SignalRow;
-            await handleSignalRef.current(row);
-          }
-        )
+  .channel(`call-signals-${sessionId}-${deviceId}`)
+  .on(
+    "postgres_changes",
+    {
+      event: "INSERT",
+      schema: "public",
+      table: "call_signals",
+      filter: `to_device_id=eq.${deviceId}`,
+    },
+    async (payload) => {
+      const row = payload.new as SignalRow;
+      await handleSignalRef.current(row);
+    }
+  )
         .subscribe(async (status) => {
           console.log("[call] signal subscribe status", status);
 
