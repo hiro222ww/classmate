@@ -755,8 +755,6 @@ const [selectedMicId, setSelectedMicId] = useState("");
       setAudioInputs(inputs);
 
       const nonVirtual = inputs.find((d) => {
-  if (!d.label) return false; 
-
   const label = (d.label || "").toLowerCase();
 
   return (
