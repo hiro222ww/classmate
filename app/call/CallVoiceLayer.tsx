@@ -329,7 +329,7 @@ export default function CallVoiceLayer({
         iAmOfferer,
       });
 
-      if (!iAmOfferer) return;
+     // if (!iAmOfferer) return;
 
       let connectionId = getCurrentConnectionId(remoteId);
 
