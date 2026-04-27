@@ -594,6 +594,15 @@ export default function CallVoiceLayer({
 
   const handleSignal = useCallback(
     async (row: SignalRow) => {
+      console.log("[call] signal received raw", {
+      id: row.id,
+      type: row.signal_type,
+      from: row.from_device_id,
+      to: row.to_device_id,
+      me: deviceId,
+      session: row.session_id,
+    });
+    
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
       processedSignalIdsRef.current.add(row.id);
 
