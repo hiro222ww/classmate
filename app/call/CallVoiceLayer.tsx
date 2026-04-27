@@ -65,7 +65,7 @@ export default function CallVoiceLayer({
 }: CallVoiceLayerProps) {
  const localStreamRef = useRef<MediaStream | null>(null);
  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
- const currentMicIdRef = useRef<string | null>(null);
+ const hasInitRef = useRef(false); 
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -412,11 +412,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
         console.log("[call] reconnect prepared", remoteId, nextConnectionId);
 
-        if (deviceId < remoteId) {
-  if (!startedPeersRef.current.has(remoteId)) {
-    void maybeStartOffer(remoteId);
-  }
-}
+        void maybeStartOffer(remoteId);
       }, delay);
 
       reconnectTimersRef.current.set(remoteId, timer);
@@ -759,7 +755,9 @@ const [selectedMicId, setSelectedMicId] = useState("");
       setAudioInputs(inputs);
 
       const nonVirtual = inputs.find((d) => {
-  const label = (d.label || "").toLowerCase();
+  if (!d.label) return false; 
+
+  const label = d.label.toLowerCase();
 
   return (
     !label.includes("steam") &&
@@ -770,11 +768,10 @@ const [selectedMicId, setSelectedMicId] = useState("");
 });
 
       if (nonVirtual) {
-  setSelectedMicId(nonVirtual.deviceId);
-} else if (inputs[0]) {
-  setSelectedMicId(inputs[0].deviceId);
-}
-    
+        setSelectedMicId(nonVirtual.deviceId);
+      } else if (inputs[0]) {
+        setSelectedMicId(inputs[0].deviceId);
+      }
     } catch (e) {
       console.warn("[call] load audio devices failed", e);
     }
@@ -788,54 +785,34 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const init = async () => {
   try {
-    if (currentMicIdRef.current === selectedMicId && localStreamRef.current) {
-  return;
-}
-
-currentMicIdRef.current = selectedMicId || null;
+    if (hasInitRef.current) return;
+    hasInitRef.current = true;
 
     const deviceConstraint = selectedMicId
       ? { exact: selectedMicId }
       : undefined;
 
     const stream = await navigator.mediaDevices.getUserMedia({
- audio: {
-  deviceId: deviceConstraint,
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-  },
-  video: false,
-});
-
-// ⭐ ここ追加
-const track = stream.getAudioTracks()[0];
-
-console.log("[call] using mic", {
-  selectedMicId,
-  label: track?.label,
-  enabled: track?.enabled,
-  readyState: track?.readyState,
-});
-
-const newTrack = track ?? null;
-
-localStreamRef.current?.getTracks().forEach((t) => t.stop());
-
-localStreamRef.current = stream;
-localAudioTrackRef.current = newTrack;
-
-if (newTrack) {
-  newTrack.enabled = !isMuted;
-
-  pcsRef.current.forEach((pc) => {
-    pc.getSenders().forEach((sender) => {
-      if (sender.track?.kind === "audio") {
-        void sender.replaceTrack(newTrack);
-      }
+      audio: {
+        deviceId: deviceConstraint,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
     });
-  });
-}
+
+        if (!mounted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        localStreamRef.current = stream;
+        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
+
+        if (localAudioTrackRef.current) {
+          localAudioTrackRef.current.enabled = !isMuted;
+        }
 
         console.log("[call] local audio track", {
           deviceId,
@@ -883,7 +860,6 @@ if (newTrack) {
       localAudioTrackRef.current = null;
     };
   }, [
-  selectedMicId,
   clearReconnectTimer,
   clearRetrySubscribeTimer,
   closePeer,
@@ -1042,13 +1018,6 @@ if (ctx.state === "suspended") {
   };
 }, [sessionId, deviceId]);
   
-const remoteIds = members
-  .map((m) => m.device_id)
-  .filter((id) => id && id !== deviceId)
-  .sort();
-
-const remoteIdsKey = remoteIds.join("|");
-
   useEffect(() => {
     console.log("[call] offer effect check", {
       micReady,
@@ -1060,9 +1029,13 @@ const remoteIdsKey = remoteIds.join("|");
     if (!micReady) return;
     if (!signalReady) return;
 
+    const remoteIds = members
+      .map((m) => m.device_id)
+      .filter((id) => id && id !== deviceId);
+
     console.log("[call] remoteIds for offer", {
-  remoteIds,
-});
+      remoteIds,
+    });
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
@@ -1074,35 +1047,32 @@ const remoteIdsKey = remoteIds.join("|");
     }
 
     for (const remoteId of remoteIds) {
-  const iAmOfferer = deviceId < remoteId;
-  if (!iAmOfferer) continue;
+      if (startedPeersRef.current.has(remoteId)) continue;
 
-  if (startedPeersRef.current.has(remoteId)) continue;
+      startedPeersRef.current.add(remoteId);
 
-  startedPeersRef.current.add(remoteId);
+      if (!getCurrentConnectionId(remoteId)) {
+        setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
+      }
 
-  if (!getCurrentConnectionId(remoteId)) {
-    setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
-  }
+      console.log("[call] try maybeStartOffer", {
+        remoteId,
+        deviceId,
+      });
 
-  console.log("[call] try maybeStartOffer", {
-    remoteId,
-    deviceId,
-  });
-
-  void maybeStartOffer(remoteId);
-}
+      void maybeStartOffer(remoteId);
+    }
   }, [
-  remoteIdsKey,
-  micReady,
-  signalReady,
-  deviceId,
-  closePeer,
-  emitPeerStates,
-  getCurrentConnectionId,
-  maybeStartOffer,
-  setCurrentConnectionId,
-]);
+    members,
+    micReady,
+    signalReady,
+    deviceId,
+    closePeer,
+    emitPeerStates,
+    getCurrentConnectionId,
+    maybeStartOffer,
+    setCurrentConnectionId,
+  ]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1128,9 +1098,7 @@ const remoteIdsKey = remoteIds.join("|");
           continue;
         }
 
-        if (deviceId < remoteId) {
-  void maybeStartOffer(remoteId);
-}
+        void maybeStartOffer(remoteId);
       }
     }, 3000);
 
@@ -1167,9 +1135,7 @@ const remoteIdsKey = remoteIds.join("|");
             iceConnectionState: pc.iceConnectionState,
           });
 
-          if (deviceId < remoteId) {
-  scheduleReconnect(remoteId, 500);
-}
+          scheduleReconnect(remoteId, 500);
         }
       }
     }, 4000);
