@@ -65,7 +65,6 @@ export default function CallVoiceLayer({
 }: CallVoiceLayerProps) {
  const localStreamRef = useRef<MediaStream | null>(null);
  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
- const hasInitRef = useRef(false); 
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -862,6 +861,7 @@ console.log("[call] local audio track", {
       localAudioTrackRef.current = null;
     };
   }, [
+  selectedMicId,
   clearReconnectTimer,
   clearRetrySubscribeTimer,
   closePeer,
