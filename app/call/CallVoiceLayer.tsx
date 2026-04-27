@@ -768,11 +768,11 @@ const [selectedMicId, setSelectedMicId] = useState("");
 });
 
       if (nonVirtual) {
-        // ⭐ 自動選択やめる
-setSelectedMicId(inputs[0]?.deviceId ?? "");
-      } else if (inputs[0]) {
-        setSelectedMicId(inputs[0].deviceId);
-      }
+  setSelectedMicId(nonVirtual.deviceId);
+} else if (inputs[0]) {
+  setSelectedMicId(inputs[0].deviceId);
+}
+    
     } catch (e) {
       console.warn("[call] load audio devices failed", e);
     }
@@ -881,6 +881,7 @@ if (newTrack) {
       localAudioTrackRef.current = null;
     };
   }, [
+  selectedMicId,
   clearReconnectTimer,
   clearRetrySubscribeTimer,
   closePeer,
