@@ -753,6 +753,13 @@ export default function RoomClient() {
 
   let cancelled = false;
 
+console.log("[room join] payload", {
+  sessionId,
+  classId,
+  deviceId,
+  name,
+});
+
   async function join() {
     try {
       const res = await fetch("/api/session/join", {
