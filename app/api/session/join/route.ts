@@ -179,15 +179,34 @@ export async function POST(req: Request) {
     }
 
     if (existingSessionMember.data) {
-      console.log("[session/join] already in session");
+  // 🔥 display_nameを必ず更新
+  await supabaseAdmin
+    .from("session_members")
+    .update({
+      display_name: name,
+    })
+    .eq("session_id", sessionIdRaw)
+    .eq("device_id", deviceId);
 
-      return NextResponse.json({
-        ok: true,
-        sessionId: sessionIdRaw,
-        classId: classIdRaw,
-        alreadyInSession: true,
-      });
-    }
+  // 🔥 念のためクラスも保証
+  await supabaseAdmin
+    .from("class_memberships")
+    .upsert(
+      {
+        class_id: classIdRaw,
+        device_id: deviceId,
+        joined_at: new Date().toISOString(),
+      },
+      { onConflict: "class_id,device_id" }
+    );
+
+  return NextResponse.json({
+    ok: true,
+    sessionId: sessionIdRaw,
+    classId: classIdRaw,
+    alreadyInSession: true,
+  });
+}
 
     const countRes = await countMembers(sessionIdRaw);
 
