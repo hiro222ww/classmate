@@ -98,6 +98,12 @@ function normalizeName(v: string | null | undefined) {
   return String(v ?? "").trim();
 }
 
+function isUuidLike(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    s
+  );
+}
+
 function normalizeMemberCompare(list: MemberRow[]) {
   return list.map((m) => ({
     device_id: String(m.device_id ?? "").trim(),
@@ -733,81 +739,96 @@ export default function RoomClient() {
   }, [sessionId, deviceId]);
 
   useEffect(() => {
-    if (!sessionId || !classId || !deviceId || !displayName) return;
-    if (pathname !== "/room") return;
+  if (pathname !== "/room") return;
+  if (!deviceId || !displayName) return;
 
-    const joinKey = `${sessionId}:${deviceId}`;
-    if (joinedSessionKeyRef.current === joinKey) return;
+  // ❗ここ追加（超重要）
+  if (!sessionId || !classId) {
+    setErr("招待リンクが正しくありません。");
+    return;
+  }
 
-    joinedSessionKeyRef.current = joinKey;
-    let cancelled = false;
+  if (!isUuidLike(sessionId) || !isUuidLike(classId)) {
+    setErr("招待リンクが壊れています。");
+    return;
+  }
 
-    async function join() {
-      const rawName = displayName || "参加者";
-      const name = rawName === "You" ? "参加者" : rawName;
+  const joinKey = `${sessionId}:${deviceId}`;
+  if (joinedSessionKeyRef.current === joinKey) return;
 
-      const res = await fetch("/api/session/join", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          sessionId,
-          classId,
-          deviceId,
-          name,
-          capacity: 5,
-          invite: searchParams.get("invite") === "1",
-        }),
-        cache: "no-store",
-      });
+  joinedSessionKeyRef.current = joinKey;
+  let cancelled = false;
 
-      const rawText = await res.text().catch(() => "");
-      let json: SessionJoinResponse | null = null;
+  async function join() {
+    const rawName = displayName || "参加者";
+    const name = rawName === "You" ? "参加者" : rawName;
 
-      try {
-        json = rawText ? (JSON.parse(rawText) as SessionJoinResponse) : null;
-      } catch {
-        json = null;
-      }
-
-      if (!res.ok || !json?.ok) {
-        joinedSessionKeyRef.current = null;
-        throw new Error(json?.error || rawText || "session_join_failed");
-      }
-
-      if (cancelled) return;
-
-      if (!topicTitle && json.topic) setTopicTitle(String(json.topic).trim());
-      if (json.status) setStatus(String(json.status));
-      if (Number.isFinite(Number(json.capacity)) && Number(json.capacity) > 0) {
-        setCapacity(Number(json.capacity));
-      }
-      if (Number.isFinite(Number(json.memberCount))) {
-        setMemberCount(Number(json.memberCount));
-      }
-
-      setErr("");
-      await fetchStatus({ force: true });
-    }
-
-    void join().catch((e: any) => {
-      if (!cancelled) setErr(e?.message ?? "session_join_failed");
+    const res = await fetch("/api/session/join", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        sessionId,
+        classId,
+        deviceId,
+        name,
+        capacity: 5,
+        invite: searchParams.get("invite") === "1",
+      }),
+      cache: "no-store",
     });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    sessionId,
-    classId,
-    deviceId,
-    displayName,
-    pathname,
-    fetchStatus,
-    topicTitle,
-    searchParams,
-  ]);
+    const rawText = await res.text().catch(() => "");
+    let json: any = null;
+
+    try {
+      json = rawText ? JSON.parse(rawText) : null;
+    } catch {}
+
+    if (!res.ok || !json?.ok) {
+      joinedSessionKeyRef.current = null;
+
+      const error = json?.error || rawText;
+
+      if (error === "session_full") {
+        throw new Error("このクラスは満員です");
+      }
+
+      if (error === "session_not_found") {
+        throw new Error("ルームが見つかりません");
+      }
+
+      if (error === "sessionId must be uuid") {
+        throw new Error("招待リンクが壊れています");
+      }
+
+      throw new Error("参加に失敗しました");
+    }
+
+    if (cancelled) return;
+
+    setErr("");
+    await fetchStatus({ force: true });
+  }
+
+  void join().catch((e: any) => {
+    if (!cancelled) setErr(e?.message ?? "参加に失敗しました");
+  });
+
+  return () => {
+    cancelled = true;
+  };
+}, [
+  sessionId,
+  classId,
+  deviceId,
+  displayName,
+  pathname,
+  fetchStatus,
+  topicTitle,
+  searchParams,
+]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;
@@ -1092,6 +1113,70 @@ export default function RoomClient() {
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
+            <div
+  style={{
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 12,
+    background: "#fff",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  }}
+>
+  <div>
+    <div style={{ fontWeight: 900 }}>友達を招待</div>
+    <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+      この待機ルームに直接参加できるリンクをコピーします。
+    </div>
+  </div>
+
+  <button
+    onClick={async () => {
+      const inviteUrl =
+        `${location.origin}/room?invite=1&autojoin=1` +
+        `&classId=${encodeURIComponent(classId)}` +
+        `&sessionId=${encodeURIComponent(sessionId)}`;
+
+      try {
+  if (navigator.share) {
+    await navigator.share({
+      title: "classmate",
+      text: "このクラスに参加しよう",
+      url: inviteUrl,
+    });
+    return;
+  }
+
+  await navigator.clipboard.writeText(inviteUrl);
+  alert("招待リンクをコピーしました");
+} catch (e) {
+  console.warn("[invite] copy failed", e);
+
+  window.prompt(
+    "コピーできませんでした。下のリンクをコピーしてください。",
+    inviteUrl
+  );
+}
+    }}
+    disabled={!sessionId || !classId}
+    style={{
+      border: "none",
+      borderRadius: 999,
+      padding: "10px 14px",
+      background: !sessionId || !classId ? "#9ca3af" : "#111827",
+      color: "#fff",
+      fontWeight: 900,
+      cursor: !sessionId || !classId ? "not-allowed" : "pointer",
+      whiteSpace: "nowrap",
+    }}
+  >
+    招待リンクをコピー
+  </button>
+</div>
+
             <div
               style={{
                 border: "1px solid #e5e7eb",

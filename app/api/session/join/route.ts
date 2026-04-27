@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 function isUuid(s: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
     s
   );
 }
@@ -37,17 +37,17 @@ async function ensureJoinableSession(params: {
     };
   }
 
-  const updates: Record<string, any> = {};
-
-  if ((!existing.capacity || Number(existing.capacity) <= 0) && capacity > 0) {
-    updates.capacity = capacity;
-  }
-
   if (existing.status === "closed" || existing.status === "ended") {
     return {
       ok: false as const,
       error: new Error("session_closed"),
     };
+  }
+
+  const updates: Record<string, any> = {};
+
+  if ((!existing.capacity || Number(existing.capacity) <= 0) && capacity > 0) {
+    updates.capacity = capacity;
   }
 
   if (!existing.status) {
@@ -107,11 +107,12 @@ async function countMembers(sessionId: string) {
   };
 }
 
-async function upsertMember(
-  sessionId: string,
-  deviceId: string,
-  name: string
-) {
+async function upsertSessionMember(params: {
+  sessionId: string;
+  deviceId: string;
+  name: string;
+}) {
+  const { sessionId, deviceId, name } = params;
   const safeName = sanitizeDisplayName(name);
 
   const { error } = await supabaseAdmin.from("session_members").upsert(
@@ -125,7 +126,48 @@ async function upsertMember(
   );
 
   if (error) return { ok: false as const, error };
+  return { ok: true as const };
+}
 
+async function upsertClassMembership(params: {
+  classId: string;
+  deviceId: string;
+}) {
+  const { classId, deviceId } = params;
+
+  const { error } = await supabaseAdmin.from("class_memberships").upsert(
+    {
+      class_id: classId,
+      device_id: deviceId,
+      joined_at: new Date().toISOString(),
+    },
+    { onConflict: "class_id,device_id" }
+  );
+
+  if (error) return { ok: false as const, error };
+  return { ok: true as const };
+}
+
+async function upsertClassPresence(params: {
+  classId: string;
+  sessionId: string;
+  deviceId: string;
+  status: "waiting" | "active";
+}) {
+  const { classId, sessionId, deviceId, status } = params;
+
+  const { error } = await supabaseAdmin.from("class_presence").upsert(
+    {
+      class_id: classId,
+      device_id: deviceId,
+      status,
+      session_id: sessionId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "class_id,device_id" }
+  );
+
+  if (error) return { ok: false as const, error };
   return { ok: true as const };
 }
 
@@ -135,21 +177,11 @@ export async function POST(req: Request) {
 
     const sessionIdRaw = String(body.sessionId ?? "").trim();
     const classIdRaw = String(body.classId ?? "").trim();
-    const rawName = String(body.name ?? "").trim();
+    const rawName = String(body.name ?? body.displayName ?? "").trim();
     const name = sanitizeDisplayName(rawName);
     const deviceId = String(body.deviceId ?? "").trim();
     const capacity = Number(body.capacity ?? 0);
-
-    // 招待リンク経由かどうか
-    // 現時点では締切チェックが未実装なので、将来用のフラグとして受け取る
     const invite = Boolean(body.invite);
-
-    if (!name) {
-      return NextResponse.json(
-        { ok: false, error: "name required" },
-        { status: 400 }
-      );
-    }
 
     if (!deviceId) {
       return NextResponse.json(
@@ -223,6 +255,7 @@ export async function POST(req: Request) {
         : resolvedCapacity;
 
     const existingMineRes = await getExistingMine(sessionIdRaw, deviceId);
+
     if (!existingMineRes.ok) {
       return NextResponse.json(
         { ok: false, error: existingMineRes.error.message },
@@ -234,6 +267,7 @@ export async function POST(req: Request) {
 
     if (!alreadyInSession) {
       const countBeforeRes = await countMembers(sessionIdRaw);
+
       if (!countBeforeRes.ok) {
         return NextResponse.json(
           { ok: false, error: countBeforeRes.error.message },
@@ -244,16 +278,16 @@ export async function POST(req: Request) {
       if (countBeforeRes.count >= actualCapacity) {
         return NextResponse.json(
           { ok: false, error: "session_full" },
-          { status: 400 }
+          { status: 409 }
         );
       }
     }
 
-    // 将来、通常募集の締切を入れるならここ
-    // invite=true の場合だけ締切を無視できる
+    // 通常参加の締切チェックを入れるならここ。
+    // invite=true の招待参加は、sessionId固定で入れる想定。
     if (!invite) {
       // 例:
-      // if (session.match_deadline_at && new Date(session.match_deadline_at) < new Date()) {
+      // if (session.recruitment_closed) {
       //   return NextResponse.json(
       //     { ok: false, error: "session_recruitment_closed" },
       //     { status: 409 }
@@ -261,15 +295,50 @@ export async function POST(req: Request) {
       // }
     }
 
-    const upsertRes = await upsertMember(sessionIdRaw, deviceId, name);
-    if (!upsertRes.ok) {
+    const memberRes = await upsertSessionMember({
+      sessionId: sessionIdRaw,
+      deviceId,
+      name,
+    });
+
+    if (!memberRes.ok) {
       return NextResponse.json(
-        { ok: false, error: upsertRes.error.message },
+        { ok: false, error: memberRes.error.message },
+        { status: 500 }
+      );
+    }
+
+    const membershipRes = await upsertClassMembership({
+      classId: classIdRaw,
+      deviceId,
+    });
+
+    if (!membershipRes.ok) {
+      return NextResponse.json(
+        { ok: false, error: membershipRes.error.message },
+        { status: 500 }
+      );
+    }
+
+    const presenceStatus =
+      session.status === "active" ? "active" : "waiting";
+
+    const presenceRes = await upsertClassPresence({
+      classId: classIdRaw,
+      sessionId: sessionIdRaw,
+      deviceId,
+      status: presenceStatus,
+    });
+
+    if (!presenceRes.ok) {
+      return NextResponse.json(
+        { ok: false, error: presenceRes.error.message },
         { status: 500 }
       );
     }
 
     const countAfterRes = await countMembers(sessionIdRaw);
+
     if (!countAfterRes.ok) {
       return NextResponse.json(
         { ok: false, error: countAfterRes.error.message },
@@ -290,6 +359,7 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("[session/join] server error:", e);
+
     return NextResponse.json(
       { ok: false, error: e?.message ?? "server error" },
       { status: 500 }
