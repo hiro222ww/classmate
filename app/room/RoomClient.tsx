@@ -734,8 +734,13 @@ export default function RoomClient() {
   useEffect(() => {
   if (pathname !== "/room") return;
 
-  if (!sessionId || !classId || !deviceId || !displayName) {
+  if (!sessionId || !classId || !deviceId) {
     joinedSessionKeyRef.current = null;
+
+    if (sessionId && classId) {
+      void fetchStatus({ force: true });
+    }
+
     return;
   }
 
@@ -1166,7 +1171,6 @@ export default function RoomClient() {
 const inviteUrl =
   `${location.origin}/room?invite=1&autojoin=1` +
   `&sessionId=${encodeURIComponent(sessionId)}` +
-  `&classId=${encodeURIComponent(classId)}` +
   `&inviter=${encodeURIComponent(inviterName)}`;
 
   try {

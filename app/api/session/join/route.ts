@@ -88,7 +88,7 @@ export async function POST(req: Request) {
       body.sessionId ?? body.session_id ?? body.session ?? ""
     ).trim();
 
-    const classIdRaw = String(
+    let classIdRaw = String(
       body.classId ?? body.class_id ?? body.class ?? ""
     ).trim();
 
@@ -115,13 +115,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!classIdRaw) {
-      return NextResponse.json(
-        { ok: false, error: "classId required" },
-        { status: 400 }
-      );
-    }
-
     if (!sessionIdRaw) {
       return NextResponse.json(
         { ok: false, error: "sessionId required" },
@@ -132,13 +125,6 @@ export async function POST(req: Request) {
     if (!isUuid(sessionIdRaw)) {
       return NextResponse.json(
         { ok: false, error: "sessionId must be uuid" },
-        { status: 400 }
-      );
-    }
-
-    if (!isUuid(classIdRaw)) {
-      return NextResponse.json(
-        { ok: false, error: "classId must be uuid" },
         { status: 400 }
       );
     }
@@ -156,6 +142,25 @@ export async function POST(req: Request) {
     }
 
     const session = ensured.session;
+
+    // classId がURL/POST bodyにない場合は、sessionから補完する
+    if (!classIdRaw) {
+      classIdRaw = String(session.class_id ?? "").trim();
+    }
+
+    if (!classIdRaw) {
+      return NextResponse.json(
+        { ok: false, error: "classId required" },
+        { status: 400 }
+      );
+    }
+
+    if (!isUuid(classIdRaw)) {
+      return NextResponse.json(
+        { ok: false, error: "classId must be uuid" },
+        { status: 400 }
+      );
+    }
 
     if (String(session.class_id ?? "").trim() !== classIdRaw) {
       return NextResponse.json(
@@ -179,34 +184,30 @@ export async function POST(req: Request) {
     }
 
     if (existingSessionMember.data) {
-  // 🔥 display_nameを必ず更新
-  await supabaseAdmin
-    .from("session_members")
-    .update({
-      display_name: name,
-    })
-    .eq("session_id", sessionIdRaw)
-    .eq("device_id", deviceId);
+      await supabaseAdmin
+        .from("session_members")
+        .update({
+          display_name: name,
+        })
+        .eq("session_id", sessionIdRaw)
+        .eq("device_id", deviceId);
 
-  // 🔥 念のためクラスも保証
-  await supabaseAdmin
-    .from("class_memberships")
-    .upsert(
-      {
-        class_id: classIdRaw,
-        device_id: deviceId,
-        joined_at: new Date().toISOString(),
-      },
-      { onConflict: "class_id,device_id" }
-    );
+      await supabaseAdmin.from("class_memberships").upsert(
+        {
+          class_id: classIdRaw,
+          device_id: deviceId,
+          joined_at: new Date().toISOString(),
+        },
+        { onConflict: "class_id,device_id" }
+      );
 
-  return NextResponse.json({
-    ok: true,
-    sessionId: sessionIdRaw,
-    classId: classIdRaw,
-    alreadyInSession: true,
-  });
-}
+      return NextResponse.json({
+        ok: true,
+        sessionId: sessionIdRaw,
+        classId: classIdRaw,
+        alreadyInSession: true,
+      });
+    }
 
     const countRes = await countMembers(sessionIdRaw);
 
@@ -223,10 +224,6 @@ export async function POST(req: Request) {
         { status: 409 }
       );
     }
-
-    // ===== クラス枠チェック =====
-    // 招待参加でも、未所属クラスなら class_slots を消費する。
-    // すでに同じクラスに所属済みなら枠は消費しない。
 
     const { data: ent, error: entErr } = await supabaseAdmin
       .from("user_entitlements")
@@ -273,19 +270,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // ===== session_members 追加 =====
-
-    const { error: memberErr } = await supabaseAdmin
-      .from("session_members")
-      .upsert(
-        {
-          session_id: sessionIdRaw,
-          device_id: deviceId,
-          display_name: name,
-          joined_at: new Date().toISOString(),
-        },
-        { onConflict: "session_id,device_id" }
-      );
+    const { error: memberErr } = await supabaseAdmin.from("session_members").upsert(
+      {
+        session_id: sessionIdRaw,
+        device_id: deviceId,
+        display_name: name,
+        joined_at: new Date().toISOString(),
+      },
+      { onConflict: "session_id,device_id" }
+    );
 
     if (memberErr) {
       console.error("[session/join] member error", memberErr);
@@ -294,8 +287,6 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
-    // ===== class_memberships 追加 =====
 
     const { error: membershipErr } = await supabaseAdmin
       .from("class_memberships")
@@ -315,8 +306,6 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
-    // ===== presence 更新 =====
 
     await supabaseAdmin.from("class_presence").upsert(
       {
