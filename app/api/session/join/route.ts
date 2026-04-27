@@ -260,7 +260,7 @@ classIdRaw = sessionClassId;
 
     const alreadyInClass = joinedClassIds.includes(classIdRaw);
 
-    if (!alreadyInClass && joinedClassIds.length >= classSlots) {
+    if (!invite && !alreadyInClass && joinedClassIds.length >= classSlots) {
       return NextResponse.json(
         {
           ok: false,
