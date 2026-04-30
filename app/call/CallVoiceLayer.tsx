@@ -769,11 +769,15 @@ const [selectedMicId, setSelectedMicId] = useState(() => {
   );
 });
 
-      if (nonVirtual) {
-        setSelectedMicId(nonVirtual.deviceId);
-      } else if (inputs[0]) {
-        setSelectedMicId(inputs[0].deviceId);
-      }
+      const savedMicId = localStorage.getItem("selected_mic_id");
+
+if (savedMicId && inputs.some((d) => d.deviceId === savedMicId)) {
+  setSelectedMicId(savedMicId);
+} else if (nonVirtual) {
+  setSelectedMicId(nonVirtual.deviceId);
+} else if (inputs[0]) {
+  setSelectedMicId(inputs[0].deviceId);
+}
     } catch (e) {
       console.warn("[call] load audio devices failed", e);
     }
@@ -789,28 +793,34 @@ const [selectedMicId, setSelectedMicId] = useState(() => {
   try {
 
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: selectedMicId || undefined,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
+    if (localStreamRef.current) {
+  localStreamRef.current.getTracks().forEach((t) => t.stop());
+}
 
-        if (!mounted) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
+const stream = await navigator.mediaDevices.getUserMedia({
+  audio: {
+    deviceId: selectedMicId || undefined,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+  video: false,
+});
 
-        const track = stream.getAudioTracks()[0] ?? null;
+const track = stream.getAudioTracks()[0] ?? null;
 
 localStreamRef.current = stream;
 localAudioTrackRef.current = track;
 
 if (track) {
   track.enabled = true;
+
+  for (const pc of pcsRef.current.values()) {
+    const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+    if (sender) {
+      void sender.replaceTrack(track);
+    }
+  }
 }
 
 console.log("[call] local audio track", {
@@ -1002,7 +1012,6 @@ if (ctx.state === "suspended") {
         setSignalReady(false);
 
         window.setTimeout(() => {
-          window.location.reload();
         }, 1000);
       }
     });
@@ -1020,8 +1029,14 @@ if (ctx.state === "suspended") {
   };
 }, [sessionId, deviceId]);
   
-  useEffect(() => {
-    console.log("[call] offer effect check", {
+  const remoteIdsKey = members
+  .map((m) => m.device_id)
+  .filter((id) => id && id !== deviceId)
+  .sort()
+  .join("|");
+
+useEffect(() => {
+  console.log("[call] offer effect check", {
       micReady,
       signalReady,
       deviceId,
@@ -1065,16 +1080,16 @@ if (ctx.state === "suspended") {
       void maybeStartOffer(remoteId);
     }
   }, [
-    members,
-    micReady,
-    signalReady,
-    deviceId,
-    closePeer,
-    emitPeerStates,
-    getCurrentConnectionId,
-    maybeStartOffer,
-    setCurrentConnectionId,
-  ]);
+  remoteIdsKey,
+  micReady,
+  signalReady,
+  deviceId,
+  closePeer,
+  emitPeerStates,
+  getCurrentConnectionId,
+  maybeStartOffer,
+  setCurrentConnectionId,
+]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1107,7 +1122,7 @@ if (ctx.state === "suspended") {
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, signalReady, deviceId, maybeStartOffer]);
+  }, [remoteIdsKey, micReady, signalReady, deviceId, maybeStartOffer]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1145,7 +1160,7 @@ if (ctx.state === "suspended") {
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, signalReady, deviceId, scheduleReconnect]);
+  }, [remoteIdsKey, micReady, signalReady, deviceId, scheduleReconnect]);
 
   return (
   <>
@@ -1157,7 +1172,6 @@ if (ctx.state === "suspended") {
   const id = e.target.value;
   localStorage.setItem("selected_mic_id", id);
   setSelectedMicId(id);
-  window.location.reload();
 }}
           style={{
             padding: "8px 10px",
