@@ -744,8 +744,10 @@ export default function RoomClient() {
   return;
 }
 
-  const rawName = displayName || "参加者";
-  const name = rawName === "You" ? "参加者" : rawName;
+  if (!displayName) return; // ←これ追加（最重要）
+
+const rawName = displayName;
+const name = rawName === "You" ? "参加者" : rawName;
 
   const joinKey = `${sessionId}:${classId}:${deviceId}:${name}`;
 
