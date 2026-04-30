@@ -994,29 +994,27 @@ if (ctx.state === "suspended") {
       }
     )
     .subscribe((status) => {
-  console.log("[call] signal subscribe status", status);
+      console.log("[call] signal subscribe status", status);
 
-  if (!alive) return;
+      if (!alive) return;
 
-  if (status === "SUBSCRIBED") {
-    setSignalReady(true);
-    return;
-  }
+      if (status === "SUBSCRIBED") {
+        setSignalReady(true);
+        return;
+      }
 
-  if (
-    status === "CLOSED" ||
-    status === "CHANNEL_ERROR" ||
-    status === "TIMED_OUT"
-  ) {
-    console.warn("[call] signal channel dead → reconnect", status);
-    setSignalReady(false);
+      if (
+        status === "CLOSED" ||
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT"
+      ) {
+        console.warn("[call] signal channel dead → reload", status);
+        setSignalReady(false);
 
-    // 🔥 追加：軽く遅延して再読み込み（安定用）
-    setTimeout(() => {
-      window.location.reload();
-    }, 1500);
-  }
-});
+        window.setTimeout(() => {
+        }, 1000);
+      }
+    });
 
   channelRef.current = channel;
 
