@@ -1003,17 +1003,17 @@ if (ctx.state === "suspended") {
         return;
       }
 
-      if (
-        status === "CLOSED" ||
-        status === "CHANNEL_ERROR" ||
-        status === "TIMED_OUT"
-      ) {
-        console.warn("[call] signal channel dead → reload", status);
-        setSignalReady(false);
+        if (
+  status === "CLOSED" ||
+  status === "CHANNEL_ERROR" ||
+  status === "TIMED_OUT"
+) {
+  console.warn("[call] signal channel dead → retry", status);
 
-        window.setTimeout(() => {
-        }, 1000);
-      }
+  setSignalReady(false);
+
+  // reloadしない
+}
     });
 
   channelRef.current = channel;
