@@ -394,40 +394,39 @@ export default function HomeClient() {
     
     const results = await Promise.all(
   classIds.map(async (classId) => {
-    const targetClass = classes.find((c) => String(c.id) === String(classId));
+    try {
+      const presenceRes = await fetch(
+        `/api/class/presence?classId=${encodeURIComponent(classId)}`,
+        { cache: "no-store" }
+      );
 
-    const presenceRes = await fetch(
-      `/api/class/presence?classId=${encodeURIComponent(classId)}`,
-      {
-        cache: "no-store",
-      }
-    );
+      const presenceJson = await readJsonSafe(presenceRes);
 
-    const presenceJson = await readJsonSafe(presenceRes);
+      const membersRes = await fetch(
+        `/api/class/members?classId=${encodeURIComponent(classId)}`,
+        { cache: "no-store" }
+      );
 
-    const presenceList = Array.isArray(presenceJson?.presence)
-      ? presenceJson.presence
-      : [];
+      const membersJson = await readJsonSafe(membersRes);
 
-    const activeSessionId = String(
-      presenceList.find((p: any) => String(p?.session_id ?? "").trim())
-        ?.session_id ??
-        targetClass?.session_id ??
-        ""
-    ).trim();
+      return {
+        classId,
+        members: Array.isArray(membersJson?.members)
+          ? membersJson.members
+          : [],
+        presence: Array.isArray(presenceJson?.presence)
+          ? presenceJson.presence
+          : [],
+      };
+    } catch (e) {
+      console.warn("[home] partial members/presence load failed", classId, e);
 
-    const membersUrl = `/api/class/members?classId=${encodeURIComponent(classId)}`;
-    const membersRes = await fetch(membersUrl, {
-      cache: "no-store",
-    });
-
-    const membersJson = await readJsonSafe(membersRes);
-
-    return {
-      classId,
-      members: Array.isArray(membersJson?.members) ? membersJson.members : [],
-      presence: presenceList,
-    };
+      return {
+        classId,
+        members: [],
+        presence: [],
+      };
+    }
   })
 );
 
