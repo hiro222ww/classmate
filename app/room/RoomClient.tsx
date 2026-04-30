@@ -751,6 +751,9 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   const joinKey = `${sessionId}:${classId}:${deviceId}:${name}`;
 
+if (joinedSessionKeyRef.current === joinKey) return;
+joinedSessionKeyRef.current = joinKey;
+
   if (joinedSessionKeyRef.current === joinKey && !err) return;
 
   let cancelled = false;
