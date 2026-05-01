@@ -113,6 +113,19 @@ useEffect(() => {
 }, []);
 
   const [members, setMembers] = useState<Member[]>([]);
+
+  useEffect(() => {
+  if (!deviceId) return;
+
+  setMembers([
+    {
+      device_id: deviceId,
+      display_name: "参加者",
+      photo_path: null,
+    },
+  ]);
+}, [deviceId]);
+
   const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
