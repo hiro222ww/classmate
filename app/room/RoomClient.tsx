@@ -759,12 +759,6 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   let cancelled = false;
 
-console.log("[room join] payload", {
-  sessionId,
-  classId,
-  deviceId,
-  name,
-});
 
   async function join() {
     try {
@@ -831,7 +825,6 @@ console.log("[room join] payload", {
 
       if (cancelled) return;
 
-      // ✅ 成功した後だけ固定する
       // ✅ 成功した後だけ固定する
 joinedSessionKeyRef.current = joinKey;
 
