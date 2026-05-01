@@ -109,12 +109,8 @@ useEffect(() => {
 }, []);
 
   const returnTo = useMemo(() => {
-  return withDev(
-    `/room?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
-      classId
-    )}`
-  );
-}, [sessionId, classId]);
+  return withDev("/class/select");
+}, []);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [isMuted, setIsMuted] = useState(true);
