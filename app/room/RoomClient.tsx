@@ -801,8 +801,42 @@ const name = rawName === "You" ? "参加者" : rawName;
         }
 
         if (error === "session_closed") {
-          throw new Error("このルームは終了しています");
-        }
+  const rematchRes = await fetch("/api/class/match-join", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+  deviceId,
+  classId,
+  topicKey: null, // ←これ追加
+  worldKey: "default",
+  capacity: 5,
+  preferJoinedClass: true,
+}),
+    cache: "no-store",
+  });
+
+  const rematchJson = await readJsonSafe(rematchRes);
+
+  const nextSessionId = String(
+    rematchJson?.sessionId ?? rematchJson?.session_id ?? ""
+  ).trim();
+
+  const nextClassId = String(
+    rematchJson?.classId ?? rematchJson?.class_id ?? classId
+  ).trim();
+
+  if (rematchRes.ok && rematchJson?.ok && nextSessionId && nextClassId) {
+    router.replace(
+      withDev(
+        `/room?autojoin=1&classId=${encodeURIComponent(nextClassId)}` +
+          `&sessionId=${encodeURIComponent(nextSessionId)}`
+      )
+    );
+    return;
+  }
+
+  throw new Error("新しい待機ルームを作成できませんでした");
+}
 
         if (error === "session_class_mismatch") {
           throw new Error("招待リンクが壊れています");
