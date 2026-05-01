@@ -559,17 +559,11 @@ export default function RoomClient() {
         let json: SessionStatusResponse | null = null;
 
         try {
-  json = rawText ? (JSON.parse(rawText) as SessionJoinResponse) : null;
+  json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
 } catch {
   json = null;
 }
 
-console.log("[room join] result", {
-  status: res.status,
-  ok: res.ok,
-  json,
-  rawText,
-});
 
 if (!res.ok || !json?.ok) {
           setSoftConnectionError("status");
@@ -758,7 +752,10 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   const joinKey = `${sessionId}:${classId}:${deviceId}:${name}`;
 
-  if (joinedSessionKeyRef.current === joinKey) return;
+  if (joinedSessionKeyRef.current === joinKey) {
+  console.log("[room join] skip duplicate");
+  return;
+}
 
   let cancelled = false;
 
