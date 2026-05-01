@@ -835,10 +835,32 @@ console.log("[room join] payload", {
       if (cancelled) return;
 
       // ✅ 成功した後だけ固定する
-      joinedSessionKeyRef.current = joinKey;
+      // ✅ 成功した後だけ固定する
+joinedSessionKeyRef.current = joinKey;
 
-      setErr("");
-      await fetchStatus({ force: true });
+// ✅ DB反映遅延対策（自分だけ先に表示）
+setMembers((prev) => {
+  const exists = prev.some(
+    (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
+  );
+
+  if (exists) return prev;
+
+  return [
+    {
+      device_id: deviceId,
+      display_name: name,
+      joined_at: new Date().toISOString(),
+    },
+    ...prev,
+  ];
+});
+
+setMemberCount((prev) => Math.max(prev, 1));
+
+// エラークリアして最新取得
+setErr("");
+await fetchStatus({ force: true });
     } catch (e: any) {
       if (cancelled) return;
 
