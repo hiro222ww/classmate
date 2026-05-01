@@ -632,21 +632,14 @@ useEffect(() => {
               fontSize: 13,
               cursor: "pointer",
             }}
-            onClick={async () => {
-              await fetch("/api/session/leave", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  sessionId,
-                  deviceId,
-                }),
-                cache: "no-store",
-              }).catch((e) => {
-                console.warn("[call] leave failed", e);
-              });
-
-              router.push(returnTo);
-            }}
+            onClick={() => {
+  router.push(
+    withDev(
+      `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
+        `&sessionId=${encodeURIComponent(sessionId)}`
+    )
+  );
+}}
           >
             退出
           </button>
