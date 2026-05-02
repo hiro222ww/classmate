@@ -572,12 +572,22 @@ if (!res.ok || !json?.ok) {
 
         const incomingMembers = Array.isArray(json.members) ? json.members : [];
 
-        setMembers((prev) => {
-          const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
-          const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
-          if (prevNorm === nextNorm) return prev;
-          return incomingMembers;
-        });
+const stillJoined = incomingMembers.some(
+  (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
+);
+
+if (deviceId && !stillJoined) {
+  setErr("このクラスから退出済みです。");
+  router.replace(withDev("/"));
+  return;
+}
+
+setMembers((prev) => {
+  const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
+  const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
+  if (prevNorm === nextNorm) return prev;
+  return incomingMembers;
+});
 
         if (!topicTitle && json.session?.topic) {
           setTopicTitle(String(json.session.topic).trim() || "ルーム");
@@ -596,7 +606,7 @@ if (!res.ok || !json?.ok) {
         window.clearTimeout(timer);
       }
     },
-    [sessionId, classId, pathname, topicTitle]
+    [sessionId, classId, pathname, topicTitle, deviceId, router]
   );
 
   useEffect(() => {

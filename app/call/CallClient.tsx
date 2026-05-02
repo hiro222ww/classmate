@@ -227,9 +227,18 @@ useEffect(() => {
           members: nextMembers.map((m) => m.device_id),
         });
 
-        setMembers(nextMembers);
-        setFetchErrorCount(0);
-        clearRetryTimer();
+        const stillJoined = nextMembers.some(
+  (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
+);
+
+if (deviceId && !stillJoined) {
+  router.replace(withDev("/"));
+  return;
+}
+
+setMembers(nextMembers);
+setFetchErrorCount(0);
+clearRetryTimer();
 
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
@@ -254,7 +263,7 @@ useEffect(() => {
         fetchingRef.current = false;
       }
     },
-    [sessionId, classId, clearRetryTimer]
+    [sessionId, classId, deviceId, router, clearRetryTimer]
   );
 
   useEffect(() => {
