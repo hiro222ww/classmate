@@ -490,6 +490,19 @@ const [selectedMicId, setSelectedMicId] = useState("");
         });
 
         upsertRemoteAudio(remoteId, stream);
+        setTimeout(() => {
+  const audioEl = document.querySelector(
+    `audio[data-remote="${remoteId}"]`
+  ) as HTMLAudioElement | null;
+
+  if (audioEl) {
+    audioEl.muted = false;
+    audioEl.volume = 1;
+    audioEl.play().catch((e) => {
+      console.warn("[call] delayed remote audio play failed", remoteId, e);
+    });
+  }
+}, 0);
       };
 
       pc.onsignalingstatechange = () => {
@@ -784,6 +797,11 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const init = async () => {
   try {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+      localAudioTrackRef.current = null;
+    }
 
     const deviceConstraint = selectedMicId
       ? { exact: selectedMicId }
@@ -857,6 +875,8 @@ const [selectedMicId, setSelectedMicId] = useState("");
       localAudioTrackRef.current = null;
     };
   }, [
+  selectedMicId,
+  isMuted,
   clearReconnectTimer,
   clearRetrySubscribeTimer,
   closePeer,
@@ -1258,10 +1278,11 @@ function RemoteAudio({
   return (
     <>
       <audio
-        ref={ref}
-        autoPlay
-        playsInline
-        controls
+  ref={ref}
+  data-remote={remoteId}
+  autoPlay
+  playsInline
+  controls
         style={{
           width: 220,
         }}
