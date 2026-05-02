@@ -869,7 +869,7 @@ export default function CallVoiceLayer({
         localAudioTrackRef.current = track;
 
         if (track) {
-          track.enabled = !isMuted;
+  track.enabled = true;
 
           for (const pc of pcsRef.current.values()) {
             const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
@@ -929,7 +929,6 @@ export default function CallVoiceLayer({
     clearRetrySubscribeTimer,
     closePeer,
     deviceId,
-    isMuted,
     notifyStatus,
     onMicReadyChange,
   ]);
@@ -938,7 +937,7 @@ export default function CallVoiceLayer({
     const track = localAudioTrackRef.current;
     if (!track) return;
 
-    track.enabled = !isMuted;
+    track.enabled = true;
 
     console.log("[call] mute changed", {
       muted: isMuted,
