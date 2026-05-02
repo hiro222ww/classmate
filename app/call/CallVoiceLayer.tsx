@@ -1084,13 +1084,17 @@ if (!iAmOfferer && existingPc) {
         }
 
         if (
-          status === "CLOSED" ||
-          status === "CHANNEL_ERROR" ||
-          status === "TIMED_OUT"
-        ) {
-          console.warn("[call] signal channel dead", status);
-          setSignalReady(false);
-        }
+  status === "CLOSED" ||
+  status === "CHANNEL_ERROR" ||
+  status === "TIMED_OUT"
+) {
+  console.warn("[call] signal channel dead → reload", status);
+  setSignalReady(false);
+
+  window.setTimeout(() => {
+    window.location.reload();
+  }, 1000);
+}
       });
 
     channelRef.current = channel;
