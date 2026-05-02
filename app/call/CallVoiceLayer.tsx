@@ -65,6 +65,7 @@ export default function CallVoiceLayer({
 }: CallVoiceLayerProps) {
  const localStreamRef = useRef<MediaStream | null>(null);
  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+ const hasInitRef = useRef(false); 
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -92,10 +93,7 @@ export default function CallVoiceLayer({
 >({});
 
 const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
-const [selectedMicId, setSelectedMicId] = useState(() => {
-  if (typeof window === "undefined") return "";
-  return localStorage.getItem("selected_mic_id") ?? "";
-});
+const [selectedMicId, setSelectedMicId] = useState("");
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -769,15 +767,11 @@ const [selectedMicId, setSelectedMicId] = useState(() => {
   );
 });
 
-      const savedMicId = localStorage.getItem("selected_mic_id");
-
-if (savedMicId && inputs.some((d) => d.deviceId === savedMicId)) {
-  setSelectedMicId(savedMicId);
-} else if (nonVirtual) {
-  setSelectedMicId(nonVirtual.deviceId);
-} else if (inputs[0]) {
-  setSelectedMicId(inputs[0].deviceId);
-}
+      if (nonVirtual) {
+        setSelectedMicId(nonVirtual.deviceId);
+      } else if (inputs[0]) {
+        setSelectedMicId(inputs[0].deviceId);
+      }
     } catch (e) {
       console.warn("[call] load audio devices failed", e);
     }
@@ -791,45 +785,40 @@ if (savedMicId && inputs.some((d) => d.deviceId === savedMicId)) {
 
     const init = async () => {
   try {
+    if (hasInitRef.current) return;
+    hasInitRef.current = true;
 
+    const deviceConstraint = selectedMicId
+      ? { exact: selectedMicId }
+      : undefined;
 
-    if (localStreamRef.current) {
-  localStreamRef.current.getTracks().forEach((t) => t.stop());
-}
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: deviceConstraint,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
 
-const stream = await navigator.mediaDevices.getUserMedia({
-  audio: {
-    deviceId: selectedMicId || undefined,
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-  },
-  video: false,
-});
+        if (!mounted) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
 
-const track = stream.getAudioTracks()[0] ?? null;
+        localStreamRef.current = stream;
+        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
 
-localStreamRef.current = stream;
-localAudioTrackRef.current = track;
+        if (localAudioTrackRef.current) {
+          localAudioTrackRef.current.enabled = !isMuted;
+        }
 
-if (track) {
-  track.enabled = true;
-
-  for (const pc of pcsRef.current.values()) {
-    const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
-    if (sender) {
-      void sender.replaceTrack(track);
-    }
-  }
-}
-
-console.log("[call] local audio track", {
-  deviceId,
-  trackId: track?.id ?? null,
-  label: track?.label ?? null,
-  enabled: track?.enabled ?? null,
-  readyState: track?.readyState ?? null,
-});
+        console.log("[call] local audio track", {
+          deviceId,
+          trackId: localAudioTrackRef.current?.id ?? null,
+          label: localAudioTrackRef.current?.label ?? null,
+        });
 
         setMicReady(true);
         onMicReadyChange?.(true);
@@ -871,7 +860,6 @@ console.log("[call] local audio track", {
       localAudioTrackRef.current = null;
     };
   }, [
-  selectedMicId,
   clearReconnectTimer,
   clearRetrySubscribeTimer,
   closePeer,
@@ -1003,17 +991,18 @@ if (ctx.state === "suspended") {
         return;
       }
 
-        if (
-  status === "CLOSED" ||
-  status === "CHANNEL_ERROR" ||
-  status === "TIMED_OUT"
-) {
-  console.warn("[call] signal channel dead → retry", status);
+      if (
+        status === "CLOSED" ||
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT"
+      ) {
+        console.warn("[call] signal channel dead → reload", status);
+        setSignalReady(false);
 
-  setSignalReady(false);
-
-  // reloadしない
-}
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      }
     });
 
   channelRef.current = channel;
@@ -1029,14 +1018,8 @@ if (ctx.state === "suspended") {
   };
 }, [sessionId, deviceId]);
   
-  const remoteIdsKey = members
-  .map((m) => m.device_id)
-  .filter((id) => id && id !== deviceId)
-  .sort()
-  .join("|");
-
-useEffect(() => {
-  console.log("[call] offer effect check", {
+  useEffect(() => {
+    console.log("[call] offer effect check", {
       micReady,
       signalReady,
       deviceId,
@@ -1080,16 +1063,16 @@ useEffect(() => {
       void maybeStartOffer(remoteId);
     }
   }, [
-  remoteIdsKey,
-  micReady,
-  signalReady,
-  deviceId,
-  closePeer,
-  emitPeerStates,
-  getCurrentConnectionId,
-  maybeStartOffer,
-  setCurrentConnectionId,
-]);
+    members,
+    micReady,
+    signalReady,
+    deviceId,
+    closePeer,
+    emitPeerStates,
+    getCurrentConnectionId,
+    maybeStartOffer,
+    setCurrentConnectionId,
+  ]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1122,7 +1105,7 @@ useEffect(() => {
     return () => {
       window.clearInterval(timer);
     };
-  }, [remoteIdsKey, micReady, signalReady, deviceId, maybeStartOffer]);
+  }, [members, micReady, signalReady, deviceId, maybeStartOffer]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1160,7 +1143,7 @@ useEffect(() => {
     return () => {
       window.clearInterval(timer);
     };
-  }, [remoteIdsKey, micReady, signalReady, deviceId, scheduleReconnect]);
+  }, [members, micReady, signalReady, deviceId, scheduleReconnect]);
 
   return (
   <>
@@ -1168,11 +1151,7 @@ useEffect(() => {
       <div style={{ marginBottom: 8 }}>
         <select
           value={selectedMicId}
-          onChange={(e) => {
-  const id = e.target.value;
-  localStorage.setItem("selected_mic_id", id);
-  setSelectedMicId(id);
-}}
+          onChange={(e) => setSelectedMicId(e.target.value)}
           style={{
             padding: "8px 10px",
             borderRadius: 10,
@@ -1314,4 +1293,3 @@ function RemoteAudio({
     </>
   );
 }
-
