@@ -63,8 +63,8 @@ export default function CallVoiceLayer({
   onStatusChange,
   onPeerStatesChange,
 }: CallVoiceLayerProps) {
- const localStreamRef = useRef<MediaStream | null>(null);
- const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -86,13 +86,14 @@ export default function CallVoiceLayer({
   );
 
   const [micReady, setMicReady] = useState(false);
+  const [micStreamVersion, setMicStreamVersion] = useState(0);
   const [signalReady, setSignalReady] = useState(false);
   const [remoteAudios, setRemoteAudios] = useState<
-  Record<string, RemoteAudioState>
->({});
+    Record<string, RemoteAudioState>
+  >({});
 
-const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
-const [selectedMicId, setSelectedMicId] = useState("");
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState("");
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -214,8 +215,6 @@ const [selectedMicId, setSelectedMicId] = useState("");
     [sessionId, deviceId, notifyStatus]
   );
 
-
-
   const closePeer = useCallback(
     (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
@@ -271,7 +270,12 @@ const [selectedMicId, setSelectedMicId] = useState("");
       const queued = pendingIceRef.current.get(remoteId) ?? [];
       if (!queued.length) return;
 
-      console.log("[call] flush pending ice", remoteId, connectionId, queued.length);
+      console.log(
+        "[call] flush pending ice",
+        remoteId,
+        connectionId,
+        queued.length
+      );
 
       for (const candidate of queued) {
         try {
@@ -284,6 +288,183 @@ const [selectedMicId, setSelectedMicId] = useState("");
       pendingIceRef.current.delete(remoteId);
     },
     [getCurrentConnectionId]
+  );
+
+  const createPeerConnection = useCallback(
+    (remoteId: string, connectionId: string) => {
+      const existing = pcsRef.current.get(remoteId);
+      const currentId = getCurrentConnectionId(remoteId);
+
+      if (existing && currentId === connectionId) {
+        return existing;
+      }
+
+      if (existing && currentId !== connectionId) {
+        closePeer(remoteId, { clearConnectionId: false });
+      }
+
+      setCurrentConnectionId(remoteId, connectionId);
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
+
+      const localTrack = localAudioTrackRef.current;
+      const localStream = localStreamRef.current;
+
+      if (localTrack && localStream) {
+        pc.addTrack(localTrack, localStream);
+
+        const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+        if (sender && isMuted) {
+          void sender.replaceTrack(null);
+        }
+
+        console.log("[call] add local track", {
+          remoteId,
+          enabled: localTrack.enabled,
+          readyState: localTrack.readyState,
+          trackId: localTrack.id,
+          muted: isMuted,
+        });
+      }
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) return;
+
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) return;
+
+        void sendSignal(remoteId, "ice", {
+          connectionId,
+          candidate: event.candidate.toJSON
+            ? event.candidate.toJSON()
+            : event.candidate,
+        });
+      };
+
+      pc.ontrack = (event) => {
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) return;
+
+        const stream = event.streams?.[0];
+        if (!stream) return;
+
+        console.log("[call] ontrack", remoteId, connectionId, {
+          trackCount: stream.getTracks().length,
+          audioTracks: stream.getAudioTracks().map((t) => ({
+            enabled: t.enabled,
+            muted: t.muted,
+            readyState: t.readyState,
+            label: t.label,
+          })),
+        });
+
+        upsertRemoteAudio(remoteId, stream);
+
+        setTimeout(() => {
+          const audioEl = document.querySelector(
+            `audio[data-remote="${remoteId}"]`
+          ) as HTMLAudioElement | null;
+
+          if (audioEl) {
+            audioEl.muted = false;
+            audioEl.volume = 1;
+            audioEl.play().catch((e) => {
+              console.warn(
+                "[call] delayed remote audio play failed",
+                remoteId,
+                e
+              );
+            });
+          }
+        }, 0);
+      };
+
+      pc.onsignalingstatechange = () => {
+        console.log(
+          "[call] signaling state",
+          remoteId,
+          connectionId,
+          pc.signalingState
+        );
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log(
+          "[call] ice state",
+          remoteId,
+          connectionId,
+          pc.iceConnectionState
+        );
+        notifyStatus(`ice ${remoteId}: ${pc.iceConnectionState}`);
+
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) return;
+
+        if (pc.iceConnectionState === "failed") {
+          console.warn("[call] ICE failed → reconnect", remoteId, connectionId);
+          setPeerState(remoteId, "failed");
+          scheduleReconnect(remoteId, 1500);
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+
+        console.log("[call] connection state", remoteId, connectionId, state);
+
+        if (
+          state === "failed" ||
+          state === "disconnected" ||
+          state === "closed" ||
+          state === "connected"
+        ) {
+          notifyStatus(`peer ${remoteId}: ${state}`);
+        }
+
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) return;
+
+        if (state === "connecting") {
+          setPeerState(remoteId, "connecting");
+        }
+
+        if (state === "connected") {
+          setPeerState(remoteId, "connected");
+          clearReconnectTimer(remoteId);
+        }
+
+        if (state === "disconnected") {
+          console.warn("[call] peer disconnected, wait", remoteId);
+          setPeerState(remoteId, "connecting");
+        }
+
+        if (state === "failed") {
+          setPeerState(remoteId, "failed");
+          closePeer(remoteId, { clearConnectionId: false });
+          scheduleReconnect(remoteId, 1500);
+        }
+
+        if (state === "closed") {
+          setPeerState(remoteId, "idle");
+        }
+      };
+
+      pcsRef.current.set(remoteId, pc);
+      return pc;
+    },
+    [
+      clearReconnectTimer,
+      closePeer,
+      getCurrentConnectionId,
+      isMuted,
+      notifyStatus,
+      sendSignal,
+      setCurrentConnectionId,
+      setPeerState,
+      upsertRemoteAudio,
+    ]
   );
 
   const maybeStartOffer = useCallback(
@@ -301,7 +482,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
         iAmOfferer,
       });
 
-     if (!iAmOfferer) return;
+      if (!iAmOfferer) return;
 
       let connectionId = getCurrentConnectionId(remoteId);
 
@@ -384,6 +565,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
     },
     [
       clearReconnectTimer,
+      createPeerConnection,
       deviceId,
       getCurrentConnectionId,
       sendSignal,
@@ -425,173 +607,16 @@ const [selectedMicId, setSelectedMicId] = useState("");
     ]
   );
 
-  const createPeerConnection = useCallback(
-    (remoteId: string, connectionId: string) => {
-      const existing = pcsRef.current.get(remoteId);
-      const currentId = getCurrentConnectionId(remoteId);
-
-      if (existing && currentId === connectionId) {
-        return existing;
-      }
-
-      if (existing && currentId !== connectionId) {
-        closePeer(remoteId, { clearConnectionId: false });
-      }
-
-      setCurrentConnectionId(remoteId, connectionId);
-
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
-
-      const localTrack = localAudioTrackRef.current;
-      const localStream = localStreamRef.current;
-
-      if (localTrack && localStream) {
-  pc.addTrack(localTrack, localStream);
-
-  console.log("[call] add local track", {
-  remoteId,
-  enabled: localTrack.enabled,
-  readyState: localTrack.readyState,
-  trackId: localTrack.id,
-});
-}
-
-      pc.onicecandidate = (event) => {
-        if (!event.candidate) return;
-
-        const activeConnectionId = getCurrentConnectionId(remoteId);
-        if (!activeConnectionId || activeConnectionId !== connectionId) return;
-
-        void sendSignal(remoteId, "ice", {
-          connectionId,
-          candidate: event.candidate.toJSON
-            ? event.candidate.toJSON()
-            : event.candidate,
-        });
-      };
-
-      pc.ontrack = (event) => {
-        const activeConnectionId = getCurrentConnectionId(remoteId);
-        if (!activeConnectionId || activeConnectionId !== connectionId) return;
-
-        const stream = event.streams?.[0];
-        if (!stream) return;
-
-        console.log("[call] ontrack", remoteId, connectionId, {
-          trackCount: stream.getTracks().length,
-          audioTracks: stream.getAudioTracks().map((t) => ({
-            enabled: t.enabled,
-            muted: t.muted,
-            readyState: t.readyState,
-            label: t.label,
-          })),
-        });
-
-        upsertRemoteAudio(remoteId, stream);
-        setTimeout(() => {
-  const audioEl = document.querySelector(
-    `audio[data-remote="${remoteId}"]`
-  ) as HTMLAudioElement | null;
-
-  if (audioEl) {
-    audioEl.muted = false;
-    audioEl.volume = 1;
-    audioEl.play().catch((e) => {
-      console.warn("[call] delayed remote audio play failed", remoteId, e);
-    });
-  }
-}, 0);
-      };
-
-      pc.onsignalingstatechange = () => {
-        console.log("[call] signaling state", remoteId, connectionId, pc.signalingState);
-      };
-
-      pc.oniceconnectionstatechange = () => {
-        console.log("[call] ice state", remoteId, connectionId, pc.iceConnectionState);
-        notifyStatus(`ice ${remoteId}: ${pc.iceConnectionState}`);
-
-        const activeConnectionId = getCurrentConnectionId(remoteId);
-        if (!activeConnectionId || activeConnectionId !== connectionId) return;
-
-        if (pc.iceConnectionState === "failed") {
-  console.warn("[call] ICE failed → reconnect", remoteId, connectionId);
-  setPeerState(remoteId, "failed");
-  scheduleReconnect(remoteId, 1500);
-}
-          
-      };
-
-      pc.onconnectionstatechange = () => {
-        const state = pc.connectionState;
-
-        console.log("[call] connection state", remoteId, connectionId, state);
-
-        if (
-          state === "failed" ||
-          state === "disconnected" ||
-          state === "closed" ||
-          state === "connected"
-        ) {
-          notifyStatus(`peer ${remoteId}: ${state}`);
-        }
-
-        const activeConnectionId = getCurrentConnectionId(remoteId);
-        if (!activeConnectionId || activeConnectionId !== connectionId) return;
-
-        if (state === "connecting") {
-          setPeerState(remoteId, "connecting");
-        }
-
-        if (state === "connected") {
-          setPeerState(remoteId, "connected");
-          clearReconnectTimer(remoteId);
-        }
-
-        if (state === "disconnected") {
-  console.warn("[call] peer disconnected, wait", remoteId);
-  setPeerState(remoteId, "connecting");
-}
-
-        if (state === "failed") {
-          setPeerState(remoteId, "failed");
-          closePeer(remoteId, { clearConnectionId: false });
-          scheduleReconnect(remoteId, 1000);
-        }
-
-        if (state === "closed") {
-          setPeerState(remoteId, "idle");
-        }
-      };
-
-      pcsRef.current.set(remoteId, pc);
-      return pc;
-    },
-    [
-  clearReconnectTimer,
-  closePeer,
-  getCurrentConnectionId,
-  notifyStatus,
-  scheduleReconnect,
-  sendSignal,
-  setCurrentConnectionId,
-  setPeerState,
-  upsertRemoteAudio,
-]
-  );
-
   const handleSignal = useCallback(
     async (row: SignalRow) => {
       console.log("[call] signal received raw", {
-      id: row.id,
-      type: row.signal_type,
-      from: row.from_device_id,
-      to: row.to_device_id,
-      me: deviceId,
-      session: row.session_id,
-    });
+        id: row.id,
+        type: row.signal_type,
+        from: row.from_device_id,
+        to: row.to_device_id,
+        me: deviceId,
+        session: row.session_id,
+      });
 
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
       processedSignalIdsRef.current.add(row.id);
@@ -611,7 +636,11 @@ const [selectedMicId, setSelectedMicId] = useState("");
       }
 
       if (!incomingConnectionId) {
-        console.warn("[call] ignore signal without connectionId", row.signal_type, remoteId);
+        console.warn(
+          "[call] ignore signal without connectionId",
+          row.signal_type,
+          remoteId
+        );
         return;
       }
 
@@ -629,7 +658,10 @@ const [selectedMicId, setSelectedMicId] = useState("");
           offeredPeersRef.current.delete(remoteId);
           startedPeersRef.current.add(remoteId);
         }
-      } else if (!currentConnectionId || currentConnectionId !== incomingConnectionId) {
+      } else if (
+        !currentConnectionId ||
+        currentConnectionId !== incomingConnectionId
+      ) {
         console.warn("[call] ignore stale signal", row.signal_type, remoteId, {
           currentConnectionId,
           incomingConnectionId,
@@ -718,7 +750,12 @@ const [selectedMicId, setSelectedMicId] = useState("");
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (e) {
-            console.warn("[call] addIceCandidate ignored", remoteId, incomingConnectionId, e);
+            console.warn(
+              "[call] addIceCandidate ignored",
+              remoteId,
+              incomingConnectionId,
+              e
+            );
           }
 
           return;
@@ -734,7 +771,7 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
         if (row.signal_type === "offer" || row.signal_type === "answer") {
           closePeer(remoteId, { clearConnectionId: false });
-          scheduleReconnect(remoteId, 1000);
+          scheduleReconnect(remoteId, 1500);
         }
       }
     },
@@ -757,63 +794,63 @@ const [selectedMicId, setSelectedMicId] = useState("");
   }, [handleSignal]);
 
   useEffect(() => {
-  async function loadDevices() {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const inputs = devices.filter((d) => d.kind === "audioinput");
+    async function loadDevices() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter((d) => d.kind === "audioinput");
 
-      setAudioInputs(inputs);
+        setAudioInputs(inputs);
 
-      const nonVirtual = inputs.find((d) => {
-  if (!d.label) return false; 
+        const nonVirtual = inputs.find((d) => {
+          if (!d.label) return false;
 
-  const label = d.label.toLowerCase();
+          const label = d.label.toLowerCase();
 
-  return (
-    !label.includes("steam") &&
-    !label.includes("virtual") &&
-    !label.includes("obs") &&
-    !label.includes("discord")
-  );
-});
+          return (
+            !label.includes("steam") &&
+            !label.includes("virtual") &&
+            !label.includes("obs") &&
+            !label.includes("discord")
+          );
+        });
 
-      if (nonVirtual) {
-        setSelectedMicId(nonVirtual.deviceId);
-      } else if (inputs[0]) {
-        setSelectedMicId(inputs[0].deviceId);
+        if (nonVirtual) {
+          setSelectedMicId(nonVirtual.deviceId);
+        } else if (inputs[0]) {
+          setSelectedMicId(inputs[0].deviceId);
+        }
+      } catch (e) {
+        console.warn("[call] load audio devices failed", e);
       }
-    } catch (e) {
-      console.warn("[call] load audio devices failed", e);
     }
-  }
 
-  void loadDevices();
-}, []);
+    void loadDevices();
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
     const init = async () => {
-  try {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => t.stop());
-      localStreamRef.current = null;
-      localAudioTrackRef.current = null;
-    }
+      try {
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach((t) => t.stop());
+          localStreamRef.current = null;
+          localAudioTrackRef.current = null;
+        }
 
-    const deviceConstraint = selectedMicId
-      ? { exact: selectedMicId }
-      : undefined;
+        const deviceConstraint = selectedMicId
+          ? { exact: selectedMicId }
+          : undefined;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceConstraint,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-      video: false,
-    });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: deviceConstraint,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
 
         if (!mounted) {
           stream.getTracks().forEach((t) => t.stop());
@@ -823,14 +860,28 @@ const [selectedMicId, setSelectedMicId] = useState("");
         localStreamRef.current = stream;
         localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
 
+        setMicStreamVersion((v) => v + 1);
+
         if (localAudioTrackRef.current) {
-          localAudioTrackRef.current.enabled = !isMuted;
+          localAudioTrackRef.current.enabled = true;
+
+          for (const pc of pcsRef.current.values()) {
+            const sender = pc
+              .getSenders()
+              .find((s) => s.track?.kind === "audio" || s.track === null);
+
+            if (sender) {
+              void sender.replaceTrack(isMuted ? null : localAudioTrackRef.current);
+            }
+          }
         }
 
         console.log("[call] local audio track", {
           deviceId,
           trackId: localAudioTrackRef.current?.id ?? null,
           label: localAudioTrackRef.current?.label ?? null,
+          enabled: localAudioTrackRef.current?.enabled ?? null,
+          muted: isMuted,
         });
 
         setMicReady(true);
@@ -850,7 +901,6 @@ const [selectedMicId, setSelectedMicId] = useState("");
       mounted = false;
 
       clearRetrySubscribeTimer();
-      
 
       for (const remoteId of Array.from(reconnectTimersRef.current.keys())) {
         clearReconnectTimer(remoteId);
@@ -873,31 +923,39 @@ const [selectedMicId, setSelectedMicId] = useState("");
       localAudioTrackRef.current = null;
     };
   }, [
-  selectedMicId,
-  isMuted,
-  clearReconnectTimer,
-  clearRetrySubscribeTimer,
-  closePeer,
-  deviceId,
-  getCurrentConnectionId,
-  notifyStatus,
-  onMicReadyChange,
-  sendSignal,
-]);
+    selectedMicId,
+    isMuted,
+    clearReconnectTimer,
+    clearRetrySubscribeTimer,
+    closePeer,
+    deviceId,
+    notifyStatus,
+    onMicReadyChange,
+  ]);
 
   useEffect(() => {
-  const track = localAudioTrackRef.current;
-  if (!track) return;
+    const track = localAudioTrackRef.current;
+    if (!track) return;
 
-  track.enabled = !isMuted;
+    track.enabled = true;
 
-  console.log("[call] mute changed", {
-    muted: isMuted,
-    enabled: track.enabled,
-    readyState: track.readyState,
-    trackId: track.id,
-  });
-}, [isMuted]);
+    for (const pc of pcsRef.current.values()) {
+      const sender = pc
+        .getSenders()
+        .find((s) => s.track?.kind === "audio" || s.track === null);
+
+      if (sender) {
+        void sender.replaceTrack(isMuted ? null : track);
+      }
+    }
+
+    console.log("[call] mute changed", {
+      muted: isMuted,
+      enabled: track.enabled,
+      readyState: track.readyState,
+      trackId: track.id,
+    });
+  }, [isMuted]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -909,14 +967,21 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const run = async () => {
       try {
-        ctx = new AudioContext();
-audioCtxRef.current = ctx;
+        const Ctx =
+          window.AudioContext || (window as any).webkitAudioContext;
 
-if (ctx.state === "suspended") {
-  await ctx.resume().catch(() => {});
-}
+        if (!Ctx) return;
 
-        const source = ctx.createMediaStreamSource(localStreamRef.current as MediaStream);
+        ctx = new Ctx();
+        audioCtxRef.current = ctx;
+
+        if (ctx.state === "suspended") {
+          await ctx.resume().catch(() => {});
+        }
+
+        const source = ctx.createMediaStreamSource(
+          localStreamRef.current as MediaStream
+        );
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
         source.connect(analyser);
@@ -961,78 +1026,74 @@ if (ctx.state === "suspended") {
         audioCtxRef.current = null;
       }
     };
-  }, [micReady, onMicLevelChange]);
+  }, [micReady, micStreamVersion, onMicLevelChange]);
 
   useEffect(() => {
-  if (!sessionId || !deviceId) return;
+    if (!sessionId || !deviceId) return;
 
-  let alive = true;
+    let alive = true;
 
-  setSignalReady(false);
-
-  if (channelRef.current) {
-    void supabase.removeChannel(channelRef.current);
-    channelRef.current = null;
-  }
-
-  console.log("🔥 SUBSCRIBE CREATED", {
-    sessionId,
-    deviceId,
-  });
-
-  const channel = supabase
-    .channel(`call-signals-${sessionId}-${deviceId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "call_signals",
-        filter: `session_id=eq.${sessionId}`,
-      },
-      async (payload) => {
-        if (!alive) return;
-        const row = payload.new as SignalRow;
-        await handleSignalRef.current(row);
-      }
-    )
-    .subscribe((status) => {
-      console.log("[call] signal subscribe status", status);
-
-      if (!alive) return;
-
-      if (status === "SUBSCRIBED") {
-        setSignalReady(true);
-        return;
-      }
-
-      if (
-        status === "CLOSED" ||
-        status === "CHANNEL_ERROR" ||
-        status === "TIMED_OUT"
-      ) {
-        console.warn("[call] signal channel dead → reload", status);
-        setSignalReady(false);
-
-        window.setTimeout(() => {
-          window.location.reload();
-        }, 1000);
-      }
-    });
-
-  channelRef.current = channel;
-
-  return () => {
-    alive = false;
     setSignalReady(false);
 
     if (channelRef.current) {
       void supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
-  };
-}, [sessionId, deviceId]);
-  
+
+    console.log("🔥 SUBSCRIBE CREATED", {
+      sessionId,
+      deviceId,
+    });
+
+    const channel = supabase
+      .channel(`call-signals-${sessionId}-${deviceId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "call_signals",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        async (payload) => {
+          if (!alive) return;
+          const row = payload.new as SignalRow;
+          await handleSignalRef.current(row);
+        }
+      )
+      .subscribe((status) => {
+        console.log("[call] signal subscribe status", status);
+
+        if (!alive) return;
+
+        if (status === "SUBSCRIBED") {
+          setSignalReady(true);
+          return;
+        }
+
+        if (
+          status === "CLOSED" ||
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT"
+        ) {
+          console.warn("[call] signal channel dead", status);
+          setSignalReady(false);
+        }
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      alive = false;
+      setSignalReady(false);
+
+      if (channelRef.current) {
+        void supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [sessionId, deviceId]);
+
   useEffect(() => {
     console.log("[call] offer effect check", {
       micReady,
@@ -1043,6 +1104,7 @@ if (ctx.state === "suspended") {
 
     if (!micReady) return;
     if (!signalReady) return;
+    if (members.length < 2) return;
 
     const remoteIds = members
       .map((m) => m.device_id)
@@ -1062,18 +1124,17 @@ if (ctx.state === "suspended") {
     }
 
     for (const remoteId of remoteIds) {
-  if (!getCurrentConnectionId(remoteId)) {
-    setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
-  }
+      if (!getCurrentConnectionId(remoteId)) {
+        setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
+      }
 
-  console.log("[call] try maybeStartOffer", {
-    remoteId,
-    deviceId,
-  });
+      console.log("[call] try maybeStartOffer", {
+        remoteId,
+        deviceId,
+      });
 
-  void maybeStartOffer(remoteId); // ← これ必須🔥
-}
-
+      void maybeStartOffer(remoteId);
+    }
   }, [
     members,
     micReady,
@@ -1136,8 +1197,8 @@ if (ctx.state === "suspended") {
         if (!pc) continue;
 
         const badState =
-  pc.connectionState === "failed" ||
-  pc.iceConnectionState === "failed";
+          pc.connectionState === "failed" ||
+          pc.iceConnectionState === "failed";
 
         if (badState) {
           console.warn("[call] watchdog reconnect", remoteId, {
@@ -1145,7 +1206,7 @@ if (ctx.state === "suspended") {
             iceConnectionState: pc.iceConnectionState,
           });
 
-          scheduleReconnect(remoteId, 500);
+          scheduleReconnect(remoteId, 1500);
         }
       }
     }, 4000);
@@ -1156,29 +1217,29 @@ if (ctx.state === "suspended") {
   }, [members, micReady, signalReady, deviceId, scheduleReconnect]);
 
   return (
-  <>
-    {audioInputs.length > 0 && (
-      <div style={{ marginBottom: 8 }}>
-        <select
-          value={selectedMicId}
-          onChange={(e) => setSelectedMicId(e.target.value)}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid #d1d5db",
-            fontSize: 12,
-          }}
-        >
-          {audioInputs.map((d) => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label || "マイク"}
-            </option>
-          ))}
-        </select>
-      </div>
-    )}
+    <>
+      {audioInputs.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <select
+            value={selectedMicId}
+            onChange={(e) => setSelectedMicId(e.target.value)}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid #d1d5db",
+              fontSize: 12,
+            }}
+          >
+            {audioInputs.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || "マイク"}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
-    {Object.entries(remoteAudios).map(([remoteId, state]) => (
+      {Object.entries(remoteAudios).map(([remoteId, state]) => (
         <RemoteAudio key={remoteId} stream={state.stream} remoteId={remoteId} />
       ))}
     </>
@@ -1201,9 +1262,8 @@ function RemoteAudio({
     if (!el) return;
 
     try {
-      // 自分のマイクミュートとは無関係。
-      // これは「相手の音を再生するaudio要素」の設定。
       el.muted = false;
+      el.defaultMuted = false;
       el.volume = 1;
 
       await el.play();
@@ -1250,6 +1310,8 @@ function RemoteAudio({
     el.autoplay = true;
     el.setAttribute("playsinline", "true");
     el.volume = 1;
+    el.muted = false;
+    el.defaultMuted = false;
 
     const tryPlay = () => {
       console.log("[call] try play", remoteId, {
@@ -1265,7 +1327,12 @@ function RemoteAudio({
 
     void playAudio();
 
+    const retryTimer = window.setTimeout(() => {
+      void playAudio();
+    }, 300);
+
     return () => {
+      window.clearTimeout(retryTimer);
       el.removeEventListener("canplay", tryPlay);
       el.removeEventListener("loadedmetadata", tryPlay);
     };
@@ -1274,11 +1341,11 @@ function RemoteAudio({
   return (
     <>
       <audio
-  ref={ref}
-  data-remote={remoteId}
-  autoPlay
-  playsInline
-  controls
+        ref={ref}
+        data-remote={remoteId}
+        autoPlay
+        playsInline
+        controls
         style={{
           width: 220,
         }}
