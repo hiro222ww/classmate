@@ -1022,7 +1022,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       return;
     }
 
-    if (data) {
+   if (data) {
   console.log("[chalk] persist stroke success", {
     sessionId,
     id: data.id,
@@ -1032,11 +1032,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
     data as ChalkStrokeRow,
   ]);
-} // ← これ追加！！！
 
-pendingRowsRef.current = pendingRowsRef.current.filter(
-  (row) => row.id !== optimisticRow.id
-);
+  pendingRowsRef.current = pendingRowsRef.current.filter(
+    (row) => row.id !== optimisticRow.id
+  );
+} else {
+  console.warn("[chalk] persist stroke success but no data returned");
+}
 
     redrawScene();
     setInfo("");

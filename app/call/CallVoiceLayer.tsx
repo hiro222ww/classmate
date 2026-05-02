@@ -65,7 +65,6 @@ export default function CallVoiceLayer({
 }: CallVoiceLayerProps) {
  const localStreamRef = useRef<MediaStream | null>(null);
  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
- const hasInitRef = useRef(false); 
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -785,8 +784,6 @@ const [selectedMicId, setSelectedMicId] = useState("");
 
     const init = async () => {
   try {
-    if (hasInitRef.current) return;
-    hasInitRef.current = true;
 
     const deviceConstraint = selectedMicId
       ? { exact: selectedMicId }
