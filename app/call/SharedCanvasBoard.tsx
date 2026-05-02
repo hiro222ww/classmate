@@ -142,9 +142,14 @@ function upsertRows(base: ChalkStrokeRow[], incoming: ChalkStrokeRow[]) {
   for (const row of base) map.set(row.id, row);
   for (const row of incoming) map.set(row.id, row);
 
-  return Array.from(map.values()).sort((a, b) =>
-    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
-  );
+  return Array.from(map.values()).sort((a, b) => {
+    const at = String(a.created_at ?? "");
+    const bt = String(b.created_at ?? "");
+
+    if (at !== bt) return at.localeCompare(bt);
+
+    return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+  });
 }
 
 function useBoardSounds() {
@@ -665,7 +670,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         "id, session_id, device_id, display_name, color, width, points, kind, created_at"
       )
       .eq("session_id", sessionId)
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+.order("id", { ascending: true });
 
     if (error) {
       console.error("[chalk] loadAll failed", {
