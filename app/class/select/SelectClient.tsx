@@ -164,7 +164,7 @@ export default function SelectClient() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [, setClasses] = useState<ClassRow[]>([]);
 
-  const [prefs, setPrefs] = useState<MatchPrefs>({ min_age: 18, max_age: 25 });
+  const [prefs, setPrefs] = useState<MatchPrefs>({ min_age: 18, max_age: 120 });
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
 
@@ -349,7 +349,7 @@ export default function SelectClient() {
       setHasProfile(null);
       setProfile(null);
       setEnt(null);
-      setPrefs({ min_age: 18, max_age: 25 });
+      setPrefs({ min_age: 18, max_age: 120 });
       setPrefsLoaded(false);
       setWorlds([]);
       setTopics([]);
@@ -368,9 +368,11 @@ export default function SelectClient() {
         });
 
         await fetchProfile(id);
-        if (!alive) return;
+if (!alive) return;
 
-        await fetchEntitlements(id);
+setLoading(false);
+
+void fetchEntitlements(id);
         if (!alive) return;
 
         if (paid === "1" && sessionId) {
@@ -474,8 +476,7 @@ export default function SelectClient() {
           }
         }
 
-        if (!alive) return;
-        await reloadCatalog();
+        void reloadCatalog();
       } catch (e: any) {
         console.error(e);
         if (alive) {
@@ -1177,7 +1178,7 @@ if (!classId || !sessionId) {
 
           <button
             onClick={() => void enterQuickFreeTheme()}
-            disabled={busy || loading || !deviceId || hasProfile === false || !prefsLoaded}
+            disabled={busy || !deviceId || hasProfile === false}
             style={{
               padding: "12px 14px",
               borderRadius: 14,
@@ -1186,18 +1187,14 @@ if (!classId || !sessionId) {
               color: hasProfile === false ? "#666" : "#fff",
               fontWeight: 900,
               cursor:
-                busy || loading || !deviceId || hasProfile === false || !prefsLoaded
-                  ? "not-allowed"
-                  : "pointer",
-              whiteSpace: "nowrap",
-              opacity: busy || loading || !deviceId || !prefsLoaded ? 0.6 : 1,
+  busy || !deviceId || hasProfile === false
+    ? "not-allowed"
+    : "pointer",
+whiteSpace: "nowrap",
+opacity: busy || !deviceId ? 0.6 : 1,
             }}
           >
-            {hasProfile === false
-              ? "プロフィール登録が必要"
-              : !prefsLoaded
-                ? "設定を読み込み中..."
-                : "入る"}
+            {hasProfile === false ? "プロフィール登録が必要" : "入る"}
           </button>
         </div>
 
