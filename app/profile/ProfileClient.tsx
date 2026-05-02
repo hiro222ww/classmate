@@ -24,6 +24,10 @@ type ProfileResponse = {
   message?: string;
 };
 
+const MAX_PHOTO_MB = 8;
+const TARGET_PHOTO_SIZE = 1024;
+const TARGET_PHOTO_QUALITY = 0.82;
+
 function isValidISODateString(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(s);
@@ -40,7 +44,9 @@ function calcAge(birthDate: string): number | null {
 
   let age = today.getFullYear() - birth.getFullYear();
   const mm = today.getMonth() - birth.getMonth();
+
   if (mm < 0 || (mm === 0 && today.getDate() < birth.getDate())) age--;
+
   return age;
 }
 
@@ -75,10 +81,7 @@ function getAvatarUrl(photoPath?: string | null) {
 
   if (!normalized) return "/default-avatar.jpg";
 
-  if (
-    normalized.startsWith("http://") ||
-    normalized.startsWith("https://")
-  ) {
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
     return normalized;
   }
 
@@ -98,6 +101,82 @@ function getAvatarUrl(photoPath?: string | null) {
   if (!publicUrl) return "/default-avatar.jpg";
 
   return `${publicUrl}?t=${encodeURIComponent(normalized)}`;
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes)) return "-";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+async function compressImageFile(file: File): Promise<File> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("画像ファイルを選択してください。");
+  }
+
+  if (file.size > MAX_PHOTO_MB * 1024 * 1024) {
+    throw new Error(
+      `画像が大きすぎます。${MAX_PHOTO_MB}MB以下の画像を選んでください。`
+    );
+  }
+
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const img = new Image();
+    img.src = imageUrl;
+
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("画像の読み込みに失敗しました。"));
+    });
+
+    const originalWidth = img.naturalWidth || img.width;
+    const originalHeight = img.naturalHeight || img.height;
+
+    if (!originalWidth || !originalHeight) {
+      throw new Error("画像サイズを取得できませんでした。");
+    }
+
+    const scale = Math.min(
+      1,
+      TARGET_PHOTO_SIZE / Math.max(originalWidth, originalHeight)
+    );
+
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) {
+      throw new Error("画像の圧縮に失敗しました。");
+    }
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/jpeg", TARGET_PHOTO_QUALITY);
+    });
+
+    if (!blob) {
+      throw new Error("画像の圧縮に失敗しました。");
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "profile";
+    const compressedName = `${baseName}.jpg`;
+
+    return new File([blob], compressedName, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
 }
 
 export default function ProfileClient() {
@@ -120,12 +199,13 @@ export default function ProfileClient() {
   const [birthDate, setBirthDate] = useState("");
   const [gender, setGender] = useState<Gender>("male");
   const [guardianConsent, setGuardianConsent] = useState(false);
-
   const [termsAgreed, setTermsAgreed] = useState(false);
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPath, setPhotoPath] = useState<string | null>(null);
+  const [photoInfo, setPhotoInfo] = useState("");
 
+  const [compressing, setCompressing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -140,6 +220,7 @@ export default function ProfileClient() {
     (gender === "male" || gender === "female") &&
     isAdult &&
     termsAgreed &&
+    !compressing &&
     !submitting;
 
   useEffect(() => {
@@ -160,6 +241,7 @@ export default function ProfileClient() {
       setTermsAgreed(false);
       setPhotoFile(null);
       setPhotoPath(null);
+      setPhotoInfo("");
 
       try {
         const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
@@ -167,9 +249,7 @@ export default function ProfileClient() {
           cache: "no-store",
         });
 
-        if (!res.ok) {
-          return;
-        }
+        if (!res.ok) return;
 
         const json = (await res.json().catch(() => null)) as ProfileResponse | null;
         const profile = json?.profile ?? null;
@@ -193,9 +273,7 @@ export default function ProfileClient() {
       } catch (e) {
         console.error("[profile] load failed", e);
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -222,6 +300,36 @@ export default function ProfileClient() {
     if (photoPath) return getAvatarUrl(photoPath);
     return "/default-avatar.jpg";
   }, [localPreviewUrl, photoPath]);
+
+  async function handlePhotoChange(file: File | null) {
+    setErrorMsg("");
+    setPhotoInfo("");
+
+    if (!file) {
+      setPhotoFile(null);
+      return;
+    }
+
+    setCompressing(true);
+
+    try {
+      const beforeSize = file.size;
+      const compressed = await compressImageFile(file);
+      setPhotoFile(compressed);
+
+      setPhotoInfo(
+        `画像を圧縮しました：${formatBytes(beforeSize)} → ${formatBytes(
+          compressed.size
+        )}`
+      );
+    } catch (e: any) {
+      console.error("[profile] photo compress failed", e);
+      setPhotoFile(null);
+      setErrorMsg(e?.message ?? "画像の処理に失敗しました。");
+    } finally {
+      setCompressing(false);
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -277,13 +385,25 @@ export default function ProfileClient() {
         body: fd,
       });
 
-      if (!res.ok) {
-        const msg = await res.text().catch(() => "");
-        setErrorMsg(`保存に失敗しました。${msg ? `（${msg}）` : ""}`);
-        return;
+      const raw = await res.text().catch(() => "");
+      let json: any = null;
+
+      try {
+        json = raw ? JSON.parse(raw) : null;
+      } catch {
+        json = null;
       }
 
-      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const serverMsg =
+          json?.message ||
+          json?.error ||
+          raw ||
+          "サーバー側で保存に失敗しました。";
+
+        setErrorMsg(`保存に失敗しました。${serverMsg}`);
+        return;
+      }
 
       const nextPhotoPath =
         String(json?.profile?.photo_path ?? "").trim() ||
@@ -298,14 +418,15 @@ export default function ProfileClient() {
 
       setPhotoPath(nextPhotoPath);
       setPhotoFile(null);
+      setPhotoInfo("");
 
       writeStoredDisplayName(deviceId, displayName.trim());
 
       alert("プロフィールを保存しました");
       router.push(withDev("/class/select"));
-    } catch (e) {
+    } catch (e: any) {
       console.error("[profile] submit failed", e);
-      setErrorMsg("保存に失敗しました。");
+      setErrorMsg(e?.message ?? "保存に失敗しました。");
     } finally {
       setSubmitting(false);
     }
@@ -334,6 +455,7 @@ export default function ProfileClient() {
           <div>deviceId: {deviceId || "-"}</div>
           <div>photoPath: {photoPath || "-"}</div>
           <div>hasPhotoFile: {photoFile ? "yes" : "no"}</div>
+          <div>photoFileSize: {photoFile ? formatBytes(photoFile.size) : "-"}</div>
         </div>
       )}
 
@@ -429,11 +551,25 @@ export default function ProfileClient() {
         <input
           type="file"
           accept="image/*"
+          disabled={compressing || submitting}
           onChange={(e) => {
             const next = e.target.files?.[0] ?? null;
-            setPhotoFile(next);
+            void handlePhotoChange(next);
+            e.currentTarget.value = "";
           }}
         />
+
+        {compressing ? (
+          <p style={{ margin: 0, color: "#555", fontSize: 13 }}>
+            画像を圧縮しています...
+          </p>
+        ) : null}
+
+        {photoInfo ? (
+          <p style={{ margin: 0, color: "#166534", fontSize: 13, fontWeight: 700 }}>
+            {photoInfo}
+          </p>
+        ) : null}
 
         <img
           src={previewUrl}
@@ -508,7 +644,7 @@ export default function ProfileClient() {
             cursor: canSubmit ? "pointer" : "not-allowed",
           }}
         >
-          {submitting ? "保存中..." : "保存する"}
+          {compressing ? "画像処理中..." : submitting ? "保存中..." : "保存する"}
         </button>
 
         <button

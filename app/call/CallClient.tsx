@@ -134,9 +134,10 @@ useEffect(() => {
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
   
-  const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
-  const [showRoomMessages, setShowRoomMessages] = useState(false);
-  const [draft, setDraft] = useState("");
+ const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
+const [showRoomMessages, setShowRoomMessages] = useState(false);
+const [draft, setDraft] = useState("");
+const [isComposing, setIsComposing] = useState(false);
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
@@ -989,14 +990,26 @@ clearRetryTimer();
   <input
     value={draft}
     onChange={(e) => setDraft(e.target.value)}
-    onKeyDown={(e) => {
-  if (e.nativeEvent.isComposing) return;
+    onCompositionStart={() => setIsComposing(true)}
+onCompositionEnd={() => {
+  window.setTimeout(() => setIsComposing(false), 0);
+}}
+onKeyDown={(e) => {
+  const native = e.nativeEvent as KeyboardEvent & {
+    isComposing?: boolean;
+    keyCode?: number;
+  };
+
+  if (isComposing) return;
+  if (native?.isComposing) return;
+  if (e.key === "Process") return;
+  if (native?.keyCode === 229) return;
 
   if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        void sendRoomMessage();
-      }
-    }}
+    e.preventDefault();
+    void sendRoomMessage();
+  }
+}}
     placeholder="メッセージを入力"
     style={{
       flex: 1,
