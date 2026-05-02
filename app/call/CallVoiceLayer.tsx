@@ -516,14 +516,12 @@ const [selectedMicId, setSelectedMicId] = useState("");
         const activeConnectionId = getCurrentConnectionId(remoteId);
         if (!activeConnectionId || activeConnectionId !== connectionId) return;
 
-        if (
-          pc.iceConnectionState === "disconnected" ||
-          pc.iceConnectionState === "failed"
-        ) {
-          console.warn("[call] ICE dead → reconnect", remoteId, connectionId);
-          setPeerState(remoteId, "failed");
-          scheduleReconnect(remoteId, 900);
-        }
+        if (pc.iceConnectionState === "failed") {
+  console.warn("[call] ICE failed → reconnect", remoteId, connectionId);
+  setPeerState(remoteId, "failed");
+  scheduleReconnect(remoteId, 1500);
+}
+          
       };
 
       pc.onconnectionstatechange = () => {
@@ -553,9 +551,9 @@ const [selectedMicId, setSelectedMicId] = useState("");
         }
 
         if (state === "disconnected") {
-          setPeerState(remoteId, "failed");
-          scheduleReconnect(remoteId, 1200);
-        }
+  console.warn("[call] peer disconnected, wait", remoteId);
+  setPeerState(remoteId, "connecting");
+}
 
         if (state === "failed") {
           setPeerState(remoteId, "failed");
@@ -1138,10 +1136,8 @@ if (ctx.state === "suspended") {
         if (!pc) continue;
 
         const badState =
-          pc.connectionState === "failed" ||
-          pc.connectionState === "disconnected" ||
-          pc.iceConnectionState === "failed" ||
-          pc.iceConnectionState === "disconnected";
+  pc.connectionState === "failed" ||
+  pc.iceConnectionState === "failed";
 
         if (badState) {
           console.warn("[call] watchdog reconnect", remoteId, {
