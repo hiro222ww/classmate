@@ -531,12 +531,6 @@ void fetchEntitlements(id);
     }
   }
 
-  const topicByKey = useMemo(() => {
-    const m = new Map<string, Topic>();
-    for (const t of topics) m.set(t.topic_key, t);
-    return m;
-  }, [topics]);
-
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
 
@@ -619,10 +613,6 @@ void fetchEntitlements(id);
       return;
     }
 
-    if (!prefsLoaded) {
-      alert("年齢設定を読み込み中です。少し待ってからもう一度お試しください。");
-      return;
-    }
 
     if (hasProfile === false) {
       goProfileIfNeeded();
@@ -788,7 +778,7 @@ if (!classId || !sessionId) {
 
         <button
           onClick={() => void joinMatchedBoard(b)}
-          disabled={busy || loading || !deviceId || profileMissing || !prefsLoaded}
+          disabled={busy || !deviceId || profileMissing}
           style={{
             width: "100%",
             padding: "10px 12px",
@@ -798,15 +788,13 @@ if (!classId || !sessionId) {
             color: profileMissing ? "#666" : locked ? "#111" : "#fff",
             fontWeight: 900,
             cursor:
-              busy || loading || !deviceId || profileMissing || !prefsLoaded
-                ? "not-allowed"
-                : "pointer",
+  busy || !deviceId || profileMissing
+    ? "not-allowed"
+    : "pointer",
           }}
         >
           {profileMissing
             ? "プロフィール登録が必要"
-            : !prefsLoaded
-              ? "設定を読み込み中..."
               : locked
                 ? `参加（要：${tierName(b.monthly_price)}以上）`
                 : "参加する"}
