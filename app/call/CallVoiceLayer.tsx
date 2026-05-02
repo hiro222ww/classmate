@@ -1047,21 +1047,18 @@ if (ctx.state === "suspended") {
     }
 
     for (const remoteId of remoteIds) {
-      if (startedPeersRef.current.has(remoteId)) continue;
+  if (!getCurrentConnectionId(remoteId)) {
+    setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
+  }
 
-      startedPeersRef.current.add(remoteId);
+  console.log("[call] try maybeStartOffer", {
+    remoteId,
+    deviceId,
+  });
 
-      if (!getCurrentConnectionId(remoteId)) {
-        setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
-      }
+  void maybeStartOffer(remoteId); // ← これ必須🔥
+}
 
-      console.log("[call] try maybeStartOffer", {
-        remoteId,
-        deviceId,
-      });
-
-      void maybeStartOffer(remoteId);
-    }
   }, [
     members,
     micReady,
