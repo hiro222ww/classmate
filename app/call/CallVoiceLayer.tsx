@@ -476,13 +476,27 @@ export default function CallVoiceLayer({
 
       const iAmOfferer = deviceId < remoteId;
 
-      console.log("[call] offer role check", {
-        deviceId,
-        remoteId,
-        iAmOfferer,
-      });
+console.log("[call] offer role check", {
+  deviceId,
+  remoteId,
+  iAmOfferer,
+});
 
-      if (!iAmOfferer) return;
+// 本来は小さいdeviceIdだけがofferする。
+// ただし待ちっぱなし対策として、非offererも少し待ってからofferを許可する。
+const existingPc = pcsRef.current.get(remoteId);
+const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
+
+if (!iAmOfferer && hasRemoteStream) return;
+
+if (!iAmOfferer && existingPc) {
+  if (
+    existingPc.connectionState === "connecting" ||
+    existingPc.connectionState === "connected"
+  ) {
+    return;
+  }
+}
 
       let connectionId = getCurrentConnectionId(remoteId);
 
@@ -576,8 +590,6 @@ export default function CallVoiceLayer({
 
   const scheduleReconnect = useCallback(
     (remoteId: string, delay = 800) => {
-      const iAmOfferer = deviceId < remoteId;
-      if (!iAmOfferer) return;
       if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
       console.log("[call] schedule reconnect", remoteId, { delay });
