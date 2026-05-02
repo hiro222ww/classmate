@@ -934,10 +934,10 @@ export default function CallVoiceLayer({
   ]);
 
   useEffect(() => {
-    const track = localAudioTrackRef.current;
-    if (!track) return;
+  const track = localAudioTrackRef.current;
+  if (!track) return;
 
-    track.enabled = true;
+  track.enabled = !isMuted;
 
     console.log("[call] mute changed", {
       muted: isMuted,
