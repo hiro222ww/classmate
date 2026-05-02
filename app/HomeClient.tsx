@@ -83,7 +83,7 @@ function getEffectiveStatus(p?: PresenceRow): PresenceStatus {
 
   const diff = Date.now() - t;
 
-  if (diff > 10000) return "offline";
+  if (diff > 45000) return "offline";
 
   if (p.status === "active") return "active";
   if (p.status === "waiting") return "waiting";
@@ -255,6 +255,8 @@ export default function HomeClient() {
     }
   }, []);
 
+  
+
   useEffect(() => {
     let cancelled = false;
 
@@ -344,7 +346,11 @@ export default function HomeClient() {
     if (!classes.length) return;
 
     const timer = window.setInterval(() => {
-      classes.forEach((c) => {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+    return;
+  }
+
+  classes.forEach((c) => {
         fetch("/api/class/presence", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -359,7 +365,7 @@ export default function HomeClient() {
           console.warn("[home] presence heartbeat failed", c.id, e);
         });
       });
-    }, 5000);
+    }, 15000);
 
     classes.forEach((c) => {
       fetch("/api/class/presence", {
@@ -382,42 +388,59 @@ export default function HomeClient() {
     };
   }, [deviceId, classes]);
 
+  
   useEffect(() => {
     if (!classes.length) return;
 
     let cancelled = false;
 
-    async function loadMembersAndPresence() {
-  const classIds = classes.map((c) => c.id).filter(Boolean);
+async function loadMembersAndPresence() {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+    return;
+  }
 
+  const classIds = classes.map((c) => c.id).filter(Boolean);
   try {
     
     const results = await Promise.all(
   classIds.map(async (classId) => {
     try {
-      const presenceRes = await fetch(
-        `/api/class/presence?classId=${encodeURIComponent(classId)}`,
-        { cache: "no-store" }
-      );
+      let members = [];
+let presence = [];
 
-      const presenceJson = await readJsonSafe(presenceRes);
+// membersは必ず取得
+try {
+  const membersRes = await fetch(
+    `/api/class/members?classId=${encodeURIComponent(classId)}`,
+    { cache: "no-store" }
+  );
+  const membersJson = await readJsonSafe(membersRes);
+  members = Array.isArray(membersJson?.members)
+    ? membersJson.members
+    : [];
+} catch (e) {
+  console.warn("[home] members load failed", classId, e);
+}
 
-      const membersRes = await fetch(
-        `/api/class/members?classId=${encodeURIComponent(classId)}`,
-        { cache: "no-store" }
-      );
+// presenceは失敗してもOK
+try {
+  const presenceRes = await fetch(
+    `/api/class/presence?classId=${encodeURIComponent(classId)}`,
+    { cache: "no-store" }
+  );
+  const presenceJson = await readJsonSafe(presenceRes);
+  presence = Array.isArray(presenceJson?.presence)
+    ? presenceJson.presence
+    : [];
+} catch (e) {
+  console.warn("[home] presence load failed", classId, e);
+}
 
-      const membersJson = await readJsonSafe(membersRes);
-
-      return {
-        classId,
-        members: Array.isArray(membersJson?.members)
-          ? membersJson.members
-          : [],
-        presence: Array.isArray(presenceJson?.presence)
-          ? presenceJson.presence
-          : [],
-      };
+return {
+  classId,
+  members,
+  presence,
+};
     } catch (e) {
       console.warn("[home] partial members/presence load failed", classId, e);
 
@@ -493,12 +516,22 @@ export default function HomeClient() {
     }
 
     void loadMembersAndPresence();
-    const timer = window.setInterval(loadMembersAndPresence, 10000);
 
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+const onVisible = () => {
+  if (document.visibilityState === "visible") {
+    void loadMembersAndPresence();
+  }
+};
+
+document.addEventListener("visibilitychange", onVisible);
+
+const timer = window.setInterval(loadMembersAndPresence, 20000);
+
+return () => {
+  cancelled = true;
+  window.clearInterval(timer);
+  document.removeEventListener("visibilitychange", onVisible);
+};
   }, [classes, deviceId, notificationsEnabled]);
 
   useEffect(() => {
@@ -507,7 +540,11 @@ export default function HomeClient() {
     let cancelled = false;
 
     async function pollMessages() {
-      try {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+    return;
+  }
+
+  try {
         const results = await Promise.all(
           classes.map(async (c) => {
             const res = await fetch("/api/class/messages", {
@@ -576,12 +613,22 @@ export default function HomeClient() {
     }
 
     void pollMessages();
-    const timer = window.setInterval(pollMessages, 15000);
 
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+const onVisible = () => {
+  if (document.visibilityState === "visible") {
+    void pollMessages();
+  }
+};
+
+document.addEventListener("visibilitychange", onVisible);
+
+const timer = window.setInterval(pollMessages, 30000);
+
+return () => {
+  cancelled = true;
+  window.clearInterval(timer);
+  document.removeEventListener("visibilitychange", onVisible);
+};
   }, [classes, deviceId, membersByClass, notificationsEnabled]);
 
   const visible = useMemo(() => {
