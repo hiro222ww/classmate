@@ -969,17 +969,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     const safeName = sanitizeDisplayName(displayNameRef.current);
 
-    const localCommittedRow: ChalkStrokeRow = {
-      id: makeLocalRowId("local-commit"),
-      session_id: sessionId,
-      device_id: deviceIdRef.current,
-      display_name: safeName,
-      color: strokeColorRef.current,
-      width: strokeWidthRef.current,
-      points: pts,
-      kind: "stroke",
-      created_at: new Date().toISOString(),
-    };
 
     const optimisticRow: ChalkStrokeRow = {
       id: makeLocalRowId("stroke"),
@@ -993,7 +982,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       created_at: new Date().toISOString(),
     };
 
-    persistedRowsRef.current = upsertRows(persistedRowsRef.current, [localCommittedRow]);
     pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
     redrawScene();
 
@@ -1029,24 +1017,20 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     }
 
     if (data) {
-      console.log("[chalk] persist stroke success", {
-        sessionId,
-        id: data.id,
-        pointCount: pts.length,
-      });
+  console.log("[chalk] persist stroke success", {
+    sessionId,
+    id: data.id,
+    pointCount: pts.length,
+  });
 
-      persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
-        data as ChalkStrokeRow,
-      ]);
+  persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
+    data as ChalkStrokeRow,
+  ]);
+} // ← これ追加！！！
 
-      persistedRowsRef.current = persistedRowsRef.current.filter(
-        (row) => row.id !== localCommittedRow.id
-      );
-    }
-
-    pendingRowsRef.current = pendingRowsRef.current.filter(
-      (row) => row.id !== optimisticRow.id
-    );
+pendingRowsRef.current = pendingRowsRef.current.filter(
+  (row) => row.id !== optimisticRow.id
+);
 
     redrawScene();
     setInfo("");
