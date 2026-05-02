@@ -290,6 +290,35 @@ export default function CallVoiceLayer({
     [getCurrentConnectionId]
   );
 
+  const scheduleReconnect = useCallback(
+    (remoteId: string, delay = 1500) => {
+      if (!localAudioTrackRef.current && !localStreamRef.current) return;
+
+      console.log("[call] schedule reconnect", remoteId, { delay });
+
+      clearReconnectTimer(remoteId);
+
+      const timer = window.setTimeout(() => {
+        reconnectTimersRef.current.delete(remoteId);
+
+        const nextConnectionId = makeConnectionId(deviceId, remoteId);
+        closePeer(remoteId, { clearConnectionId: false });
+        setCurrentConnectionId(remoteId, nextConnectionId);
+
+        console.log("[call] reconnect prepared", remoteId, nextConnectionId);
+
+        void maybeStartOfferRef.current?.(remoteId);
+      }, delay);
+
+      reconnectTimersRef.current.set(remoteId, timer);
+    },
+    [clearReconnectTimer, closePeer, deviceId, setCurrentConnectionId]
+  );
+
+  const maybeStartOfferRef = useRef<((remoteId: string) => Promise<void>) | null>(
+    null
+  );
+
   const createPeerConnection = useCallback(
     (remoteId: string, connectionId: string) => {
       const existing = pcsRef.current.get(remoteId);
@@ -362,13 +391,14 @@ export default function CallVoiceLayer({
 
         upsertRemoteAudio(remoteId, stream);
 
-        setTimeout(() => {
+        window.setTimeout(() => {
           const audioEl = document.querySelector(
             `audio[data-remote="${remoteId}"]`
           ) as HTMLAudioElement | null;
 
           if (audioEl) {
             audioEl.muted = false;
+            audioEl.defaultMuted = false;
             audioEl.volume = 1;
             audioEl.play().catch((e) => {
               console.warn(
@@ -378,7 +408,7 @@ export default function CallVoiceLayer({
               );
             });
           }
-        }, 0);
+        }, 300);
       };
 
       pc.onsignalingstatechange = () => {
@@ -460,6 +490,7 @@ export default function CallVoiceLayer({
       getCurrentConnectionId,
       isMuted,
       notifyStatus,
+      scheduleReconnect,
       sendSignal,
       setCurrentConnectionId,
       setPeerState,
@@ -474,34 +505,24 @@ export default function CallVoiceLayer({
         return;
       }
 
-      const iAmOfferer = deviceId < remoteId;
+      const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
+      const existingPc = pcsRef.current.get(remoteId);
 
-console.log("[call] offer role check", {
-  deviceId,
-  remoteId,
-  iAmOfferer,
-});
+      if (hasRemoteStream) return;
 
-// 本来は小さいdeviceIdだけがofferする。
-// ただし待ちっぱなし対策として、非offererも少し待ってからofferを許可する。
-const existingPc = pcsRef.current.get(remoteId);
-const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
+      if (
+        existingPc &&
+        (existingPc.connectionState === "connecting" ||
+          existingPc.connectionState === "connected" ||
+          existingPc.signalingState !== "stable")
+      ) {
+        return;
+      }
 
-if (!iAmOfferer && hasRemoteStream) return;
+      const connectionId =
+        getCurrentConnectionId(remoteId) ?? makeConnectionId(deviceId, remoteId);
 
-if (!iAmOfferer && existingPc) {
-  if (
-    existingPc.connectionState === "connecting" ||
-    existingPc.connectionState === "connected"
-  ) {
-    return;
-  }
-}
-
-      let connectionId = getCurrentConnectionId(remoteId);
-
-      if (!connectionId) {
-        connectionId = makeConnectionId(deviceId, remoteId);
+      if (!getCurrentConnectionId(remoteId)) {
         setCurrentConnectionId(remoteId, connectionId);
       }
 
@@ -518,19 +539,6 @@ if (!iAmOfferer && existingPc) {
           remoteId,
           connectionId,
           pc.signalingState
-        );
-        return;
-      }
-
-      if (
-        pc.connectionState === "connecting" ||
-        pc.connectionState === "connected"
-      ) {
-        console.log(
-          "[call] skip offer: already connecting/connected",
-          remoteId,
-          connectionId,
-          pc.connectionState
         );
         return;
       }
@@ -588,36 +596,9 @@ if (!iAmOfferer && existingPc) {
     ]
   );
 
-  const scheduleReconnect = useCallback(
-    (remoteId: string, delay = 800) => {
-      if (!localAudioTrackRef.current && !localStreamRef.current) return;
-
-      console.log("[call] schedule reconnect", remoteId, { delay });
-
-      clearReconnectTimer(remoteId);
-
-      const timer = window.setTimeout(() => {
-        reconnectTimersRef.current.delete(remoteId);
-
-        const nextConnectionId = makeConnectionId(deviceId, remoteId);
-        closePeer(remoteId, { clearConnectionId: false });
-        setCurrentConnectionId(remoteId, nextConnectionId);
-
-        console.log("[call] reconnect prepared", remoteId, nextConnectionId);
-
-        void maybeStartOffer(remoteId);
-      }, delay);
-
-      reconnectTimersRef.current.set(remoteId, timer);
-    },
-    [
-      clearReconnectTimer,
-      closePeer,
-      deviceId,
-      maybeStartOffer,
-      setCurrentConnectionId,
-    ]
-  );
+  useEffect(() => {
+    maybeStartOfferRef.current = maybeStartOffer;
+  }, [maybeStartOffer]);
 
   const handleSignal = useCallback(
     async (row: SignalRow) => {
@@ -883,7 +864,9 @@ if (!iAmOfferer && existingPc) {
               .find((s) => s.track?.kind === "audio" || s.track === null);
 
             if (sender) {
-              void sender.replaceTrack(isMuted ? null : localAudioTrackRef.current);
+              void sender.replaceTrack(
+                isMuted ? null : localAudioTrackRef.current
+              );
             }
           }
         }
@@ -912,21 +895,6 @@ if (!iAmOfferer && existingPc) {
     return () => {
       mounted = false;
 
-      clearRetrySubscribeTimer();
-
-      for (const remoteId of Array.from(reconnectTimersRef.current.keys())) {
-        clearReconnectTimer(remoteId);
-      }
-
-      for (const remoteId of Array.from(pcsRef.current.keys())) {
-        closePeer(remoteId, { clearConnectionId: true });
-      }
-
-      if (channelRef.current) {
-        void supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
@@ -934,16 +902,7 @@ if (!iAmOfferer && existingPc) {
 
       localAudioTrackRef.current = null;
     };
-  }, [
-    selectedMicId,
-    isMuted,
-    clearReconnectTimer,
-    clearRetrySubscribeTimer,
-    closePeer,
-    deviceId,
-    notifyStatus,
-    onMicReadyChange,
-  ]);
+  }, [selectedMicId, deviceId, notifyStatus, onMicReadyChange]);
 
   useEffect(() => {
     const track = localAudioTrackRef.current;
@@ -1084,17 +1043,13 @@ if (!iAmOfferer && existingPc) {
         }
 
         if (
-  status === "CLOSED" ||
-  status === "CHANNEL_ERROR" ||
-  status === "TIMED_OUT"
-) {
-  console.warn("[call] signal channel dead → reload", status);
-  setSignalReady(false);
-
-  window.setTimeout(() => {
-    window.location.reload();
-  }, 1000);
-}
+          status === "CLOSED" ||
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT"
+        ) {
+          console.warn("[call] signal channel dead", status);
+          setSignalReady(false);
+        }
       });
 
     channelRef.current = channel;
