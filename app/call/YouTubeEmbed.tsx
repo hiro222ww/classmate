@@ -4,16 +4,28 @@ type Props = {
   url: string;
 };
 
-function extractYouTubeId(url: string) {
+function extractYouTubeId(input: string) {
+  const raw = input.trim();
+  if (!raw) return null;
+
   try {
-    const u = new URL(url);
+    const u = new URL(raw);
 
     if (u.hostname.includes("youtu.be")) {
-      return u.pathname.replace("/", "");
+      return u.pathname.replace("/", "").split("?")[0];
     }
 
     if (u.hostname.includes("youtube.com")) {
-      return u.searchParams.get("v");
+      const v = u.searchParams.get("v");
+      if (v) return v;
+
+      if (u.pathname.startsWith("/shorts/")) {
+        return u.pathname.replace("/shorts/", "").split("/")[0];
+      }
+
+      if (u.pathname.startsWith("/embed/")) {
+        return u.pathname.replace("/embed/", "").split("/")[0];
+      }
     }
 
     return null;
@@ -25,7 +37,23 @@ function extractYouTubeId(url: string) {
 export default function YouTubeEmbed({ url }: Props) {
   const videoId = extractYouTubeId(url);
 
-  if (!videoId) return null;
+  if (!videoId) {
+    return (
+      <div
+        style={{
+          marginTop: 12,
+          padding: 12,
+          borderRadius: 12,
+          background: "#fef2f2",
+          color: "#991b1b",
+          fontSize: 13,
+          fontWeight: 800,
+        }}
+      >
+        YouTubeのURLを認識できません
+      </div>
+    );
+  }
 
   return (
     <div
@@ -46,6 +74,7 @@ export default function YouTubeEmbed({ url }: Props) {
           width: "100%",
           height: "100%",
           border: "none",
+          display: "block",
         }}
       />
     </div>
