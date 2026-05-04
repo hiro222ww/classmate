@@ -624,6 +624,52 @@ clearRetryTimer();
     }
   }
 
+  async function sendRoomImage(file: File) {
+  if (!sessionId || !deviceId) return;
+
+  try {
+    const me = members.find((m) => m.device_id === deviceId);
+    const displayName = me?.display_name || "参加者";
+
+    const compressed = await compressImage(file);
+
+    const path = `${sessionId}/${deviceId}/${Date.now()}.jpg`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("room-message-images")
+      .upload(path, compressed, {
+        contentType: compressed.type,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data, error } = await supabase
+      .from("room_messages")
+      .insert({
+        session_id: sessionId,
+        device_id: deviceId,
+        display_name: displayName,
+        message: "",
+        image_path: path,
+        message_type: "image",
+      })
+      .select(
+        "id, session_id, device_id, display_name, message, image_path, message_type, created_at"
+      )
+      .single();
+
+    if (error) throw error;
+
+    if (data) {
+      setRoomMessages((prev) =>
+        dedupeRoomMessages([...prev, data as RoomMessage])
+      );
+    }
+  } catch (e) {
+    console.warn("[call] image send failed", e);
+  }
+}
+
   if (!deviceId) {
   return null;
 }
@@ -1092,6 +1138,29 @@ onKeyDown={(e) => {
       background: "#fff",
     }}
   />
+
+<label
+  style={{
+    border: "1px solid #d1d5db",
+    borderRadius: 999,
+    padding: "10px 12px",
+    cursor: "pointer",
+    background: "#fff",
+  }}
+>
+  📷
+  <input
+    type="file"
+    accept="image/jpeg,image/png,image/webp"
+    style={{ display: "none" }}
+    onChange={(e) => {
+      const file = e.target.files?.[0];
+      e.currentTarget.value = "";
+      if (!file) return;
+      void sendRoomImage(file);
+    }}
+  />
+</label>
 
   <button
     type="button"

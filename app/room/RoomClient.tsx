@@ -1224,16 +1224,27 @@ if (!shouldAutoStart) return;
 
     if (uploadError) throw uploadError;
 
-    const { error: insertError } = await supabase.from("room_messages").insert({
-      session_id: sessionId,
-      device_id: deviceId,
-      display_name: name,
-      message: "",
-      image_path: path,
-      message_type: "image",
-    });
+    const { data, error: insertError } = await supabase
+      .from("room_messages")
+      .insert({
+        session_id: sessionId,
+        device_id: deviceId,
+        display_name: name,
+        message: "",
+        image_path: path,
+        message_type: "image",
+      })
+      .select(
+        "id, session_id, device_id, display_name, message, image_path, message_type, created_at"
+      )
+      .single();
 
     if (insertError) throw insertError;
+
+    if (data?.id) {
+      setMsgs((prev) => dedupeMessages([...prev, data as RoomMessage]));
+      queueMicrotask(() => scrollToBottom("smooth"));
+    }
   } catch (e: any) {
     console.error("[room] image send failed", e);
     setErr(e?.message ?? "画像の送信に失敗しました");
