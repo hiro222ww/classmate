@@ -105,6 +105,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   const suppressEventRef = useRef(false);
   const lastBroadcastAtRef = useRef(0);
   const lastSavedAtRef = useRef(0);
+  const allowPlayUntilRef = useRef(0);
 
   const [input, setInput] = useState("");
   const [state, setState] = useState<YoutubeState | null>(null);
@@ -344,16 +345,24 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   const t = Number(player.getCurrentTime?.() ?? 0);
 
   if (event.data === window.YT.PlayerState.PLAYING) {
-                await saveStateToDb({
-                  status: "playing",
-                  playhead_seconds: t,
-                });
+  const allowed = Date.now() < allowPlayUntilRef.current;
 
-                await sendBroadcast("play", {
-                  status: "playing",
-                  playheadSeconds: t,
-                });
-              }
+  if (!allowed) {
+    player.pauseVideo?.();
+    setNeedsUserPlay(true);
+    return;
+  }
+
+  await saveStateToDb({
+    status: "playing",
+    playhead_seconds: t,
+  });
+
+  await sendBroadcast("play", {
+    status: "playing",
+    playheadSeconds: t,
+  });
+}
 
               if (event.data === window.YT.PlayerState.PAUSED) {
                 await saveStateToDb({
@@ -595,8 +604,9 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
                   const player = playerRef.current;
                   if (!player) return;
 
-                  player.playVideo?.();
-                  setNeedsUserPlay(false);
+                  allowPlayUntilRef.current = Date.now() + 3000;
+player.playVideo?.();
+setNeedsUserPlay(false);
                 }}
                 style={{
                   marginTop: 8,

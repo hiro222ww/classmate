@@ -66,8 +66,12 @@ export default function CallVoiceLayer({
   onPeerStatesChange,
 }: CallVoiceLayerProps) {
   const localStreamRef = useRef<MediaStream | null>(null);
-  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+
+const localSendStreamRef = useRef<MediaStream | null>(null);
+const localSendTrackRef = useRef<MediaStreamTrack | null>(null);
+
+const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
@@ -340,12 +344,10 @@ export default function CallVoiceLayer({
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
 
-      const localTrack = localAudioTrackRef.current;
-      const localStream = localStreamRef.current;
+      const localTrack = localSendTrackRef.current;
+const localStream = localSendStreamRef.current;
 
-      if (localTrack && localStream) {
-  localTrack.enabled = true;
-
+if (localTrack && localStream) {
   pc.addTrack(localTrack, localStream);
 
   console.log("[call] add local track", {
@@ -691,15 +693,18 @@ export default function CallVoiceLayer({
           setPeerState(remoteId, "connecting");
 
           const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
+console.log("[call] answer created", remoteId, incomingConnectionId);
 
-          await sendSignal(remoteId, "answer", {
-            connectionId: incomingConnectionId,
-            sdp: pc.localDescription,
-          });
+await pc.setLocalDescription(answer);
+console.log("[call] local answer set", remoteId, incomingConnectionId);
 
-          console.log("[call] answer sent", remoteId, incomingConnectionId);
-          return;
+await sendSignal(remoteId, "answer", {
+  connectionId: incomingConnectionId,
+  sdp: pc.localDescription,
+});
+
+console.log("[call] answer sent", remoteId, incomingConnectionId);
+return;
         }
 
         if (row.signal_type === "answer") {
@@ -855,20 +860,30 @@ export default function CallVoiceLayer({
         }
 
         localStreamRef.current = stream;
-        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
+localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
 
-        setMicStreamVersion((v) => v + 1);
+const micTrack = localAudioTrackRef.current;
 
-        if (localAudioTrackRef.current) {
-          localAudioTrackRef.current.enabled = true;
+if (micTrack) {
+  micTrack.enabled = true; // 波形用は常にON
 
-          for (const pc of pcsRef.current.values()) {
+  const sendTrack = micTrack.clone();
+  sendTrack.enabled = !isMuted;
+
+  localSendTrackRef.current = sendTrack;
+  localSendStreamRef.current = new MediaStream([sendTrack]);
+}
+
+setMicStreamVersion((v) => v + 1);
+
+if (localSendTrackRef.current) {
+  for (const pc of pcsRef.current.values()) {
             const sender = pc
               .getSenders()
               .find((s) => s.track?.kind === "audio" || s.track === null);
 
-            if (sender && localAudioTrackRef.current) {
-  void sender.replaceTrack(localAudioTrackRef.current);
+            if (sender && localSendTrackRef.current) {
+  void sender.replaceTrack(localSendTrackRef.current);
 }
           }
         }
@@ -895,22 +910,28 @@ export default function CallVoiceLayer({
     void init();
 
     return () => {
-      mounted = false;
+  mounted = false;
 
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
-        localStreamRef.current = null;
-      }
+  if (localStreamRef.current) {
+    localStreamRef.current.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+  }
 
-      localAudioTrackRef.current = null;
-    };
+  if (localSendStreamRef.current) {
+    localSendStreamRef.current.getTracks().forEach((t) => t.stop());
+    localSendStreamRef.current = null;
+  }
+
+  localAudioTrackRef.current = null;
+  localSendTrackRef.current = null;
+};
   }, [selectedMicId, deviceId, notifyStatus, onMicReadyChange]);
 
   useEffect(() => {
-  const track = localAudioTrackRef.current;
+  const track = localSendTrackRef.current;
   if (!track) return;
 
-  track.enabled = true;
+  track.enabled = !isMuted;
 
   for (const pc of pcsRef.current.values()) {
     const sender = pc
