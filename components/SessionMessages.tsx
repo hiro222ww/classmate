@@ -35,8 +35,14 @@ function formatTime(v: string) {
 
 function dedupeMessages(list: RoomMessage[]) {
   const map = new Map<string, RoomMessage>();
+
   for (const m of list) {
-    if (m?.id) map.set(m.id, m);
+    if (m?.id) {
+      map.set(m.id, {
+        ...map.get(m.id),
+        ...m,
+      });
+    }
   }
 
   return Array.from(map.values()).sort((a, b) =>
@@ -130,6 +136,12 @@ export default function SessionMessages({
     endRef.current?.scrollIntoView({ behavior, block: "end" });
   }
 
+  function scrollToBottomNextFrame(behavior: ScrollBehavior = "smooth") {
+    requestAnimationFrame(() => {
+      scrollToBottom(behavior);
+    });
+  }
+
   useEffect(() => {
     if (!sessionId) return;
 
@@ -156,9 +168,7 @@ export default function SessionMessages({
       setMessages(dedupeMessages((data ?? []) as RoomMessage[]));
       setErr("");
 
-      setTimeout(() => {
-        scrollToBottom("auto");
-      }, 0);
+      scrollToBottomNextFrame("auto");
     }
 
     void loadMessages();
@@ -174,23 +184,19 @@ export default function SessionMessages({
           filter: `session_id=eq.${sessionId}`,
         },
         (payload: any) => {
-          const row = (payload?.new || payload?.old) as RoomMessage;
+          const row =
+            payload.eventType === "DELETE" ? payload.old : payload.new;
+
           if (!row?.id) return;
 
-          setMessages((prev) => {
-            if (payload.eventType === "DELETE") {
-              return prev.filter((m) => m.id !== row.id);
-            }
-
-            return dedupeMessages([
+          setMessages((prev) =>
+            dedupeMessages([
               ...prev.filter((m) => m.id !== row.id),
-              row,
-            ]);
-          });
+              row as RoomMessage,
+            ])
+          );
 
-          setTimeout(() => {
-            scrollToBottom("smooth");
-          }, 0);
+          scrollToBottomNextFrame("smooth");
         }
       )
       .subscribe();
@@ -206,7 +212,7 @@ export default function SessionMessages({
     if (!box) return;
 
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-    if (nearBottom) scrollToBottom("smooth");
+    if (nearBottom) scrollToBottomNextFrame("smooth");
   }, [messages, show]);
 
   async function sendText() {
@@ -223,11 +229,13 @@ export default function SessionMessages({
       display_name: name,
       message: text,
       message_type: "text",
+      deleted_at: null,
       created_at: new Date().toISOString(),
     };
 
     setDraft("");
     setMessages((prev) => dedupeMessages([...prev, temp]));
+    scrollToBottomNextFrame("smooth");
 
     const { data, error } = await supabase
       .from("room_messages")
@@ -260,9 +268,7 @@ export default function SessionMessages({
       );
     }
 
-    setTimeout(() => {
-      scrollToBottom("smooth");
-    }, 0);
+    scrollToBottomNextFrame("smooth");
   }
 
   async function sendImage(file: File) {
@@ -318,10 +324,7 @@ export default function SessionMessages({
       }
 
       setPendingImage(null);
-
-      setTimeout(() => {
-        scrollToBottom("smooth");
-      }, 0);
+      scrollToBottomNextFrame("smooth");
     } catch (e: any) {
       console.warn("[messages] send image failed", e);
       setErr(e?.message ?? "画像の送信に失敗しました");
@@ -333,10 +336,12 @@ export default function SessionMessages({
   async function deleteMessage(m: RoomMessage) {
     if (!m?.id || !deviceId) return;
 
+    const deletedAt = new Date().toISOString();
+
     const { error } = await supabase
       .from("room_messages")
       .update({
-        deleted_at: new Date().toISOString(),
+        deleted_at: deletedAt,
         message: "",
         image_path: null,
         message_type: "text",
@@ -351,16 +356,18 @@ export default function SessionMessages({
     }
 
     setMessages((prev) =>
-      prev.map((x) =>
-        x.id === m.id
-          ? {
-              ...x,
-              deleted_at: new Date().toISOString(),
-              message: "",
-              image_path: null,
-              message_type: "text",
-            }
-          : x
+      dedupeMessages(
+        prev.map((x) =>
+          x.id === m.id
+            ? {
+                ...x,
+                deleted_at: deletedAt,
+                message: "",
+                image_path: null,
+                message_type: "text",
+              }
+            : x
+        )
       )
     );
   }
