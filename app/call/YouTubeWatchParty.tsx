@@ -101,41 +101,56 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   const playerRef = useRef<any>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
+  const stateRef = useRef<YoutubeState | null>(null);
+  const activeVideoIdRef = useRef("");
   const lastAppliedRef = useRef("");
   const suppressEventRef = useRef(false);
-  const lastBroadcastAtRef = useRef(0);
   const lastSavedAtRef = useRef(0);
   const allowPlayUntilRef = useRef(0);
-const stateRef = useRef<YoutubeState | null>(null);
 
-const [input, setInput] = useState("");
+  const [input, setInput] = useState("");
   const [state, setState] = useState<YoutubeState | null>(null);
   const [error, setError] = useState("");
   const [needsUserPlay, setNeedsUserPlay] = useState(false);
 
-useEffect(() => {
-  stateRef.current = state;
-}, [state]);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
-const saveStateToDb = useCallback(
+  function destroyPlayer() {
+    try {
+      playerRef.current?.destroy?.();
+    } catch {
+      // ignore
+    }
+
+    playerRef.current = null;
+
+    if (containerRef.current) {
+      containerRef.current.innerHTML = "";
+    }
+  }
+
+  const saveStateToDb = useCallback(
     async (patch: Partial<YoutubeState>) => {
       if (!sessionId) return;
 
       const current = stateRef.current;
 
-const next: YoutubeState = {
-  session_id: sessionId,
-  url: patch.url ?? current?.url ?? "",
-  video_id: patch.video_id ?? current?.video_id ?? "",
-  status: patch.status ?? current?.status ?? "paused",
-  playhead_seconds:
-    typeof patch.playhead_seconds === "number"
-      ? patch.playhead_seconds
-      : current?.playhead_seconds ?? 0,
-  updated_by: deviceId,
-  updated_at: new Date().toISOString(),
-};
+      const next: YoutubeState = {
+        session_id: sessionId,
+        url: patch.url ?? current?.url ?? "",
+        video_id: patch.video_id ?? current?.video_id ?? "",
+        status: patch.status ?? current?.status ?? "paused",
+        playhead_seconds:
+          typeof patch.playhead_seconds === "number"
+            ? patch.playhead_seconds
+            : current?.playhead_seconds ?? 0,
+        updated_by: deviceId,
+        updated_at: new Date().toISOString(),
+      };
 
+      stateRef.current = next;
       setState(next);
 
       const { error } = await supabase
@@ -150,43 +165,16 @@ const next: YoutubeState = {
     [sessionId, deviceId]
   );
 
-  const sendBroadcast = useCallback(
-    async (
-      kind: YoutubeBroadcastPayload["kind"],
-      patch?: Partial<YoutubeBroadcastPayload>
-    ) => {
-      const channel = channelRef.current;
-      const current = stateRef.current;
-      const player = playerRef.current;
-
-      if (!channel || !current?.video_id) return;
-
-      const now = Date.now();
-
-      if (kind === "heartbeat" && now - lastBroadcastAtRef.current < 9000) {
-        return;
-      }
-
-      lastBroadcastAtRef.current = now;
-
-      const playheadSeconds =
-        typeof patch?.playheadSeconds === "number"
-          ? patch.playheadSeconds
-          : Number(player?.getCurrentTime?.() ?? current.playhead_seconds ?? 0);
-
-      const payload: YoutubeBroadcastPayload = {
-        kind,
-        videoId: patch?.videoId ?? current.video_id,
-        status: patch?.status ?? current.status,
-        playheadSeconds,
-        fromDeviceId: deviceId,
-        sentAt: now,
-      };
-
-      await channel.send({
+  const sendYoutubeBroadcast = useCallback(
+    async (payload: Omit<YoutubeBroadcastPayload, "fromDeviceId" | "sentAt">) => {
+      await channelRef.current?.send({
         type: "broadcast",
         event: "youtube-sync",
-        payload,
+        payload: {
+          ...payload,
+          fromDeviceId: deviceId,
+          sentAt: Date.now(),
+        },
       });
     },
     [deviceId]
@@ -201,32 +189,43 @@ const next: YoutubeState = {
       if (lastAppliedRef.current === key) return;
       lastAppliedRef.current = key;
 
+      const elapsed = Math.max(0, (Date.now() - payload.sentAt) / 1000);
+      const compensatedTime =
+        payload.status === "playing"
+          ? Number(payload.playheadSeconds ?? 0) + elapsed
+          : Number(payload.playheadSeconds ?? 0);
+
+      const next: YoutubeState = {
+        session_id: sessionId,
+        url: stateRef.current?.url ?? "",
+        video_id: payload.videoId,
+        status: payload.status,
+        playhead_seconds: compensatedTime,
+        updated_by: payload.fromDeviceId,
+        updated_at: new Date().toISOString(),
+      };
+
+      stateRef.current = next;
+      setState(next);
+
       const player = playerRef.current;
       if (!player) return;
 
+      suppressEventRef.current = true;
+
       try {
         const currentVideoId = player.getVideoData?.()?.video_id;
-        const currentTime = Number(player.getCurrentTime?.() ?? 0);
-        const targetTime = Number(payload.playheadSeconds ?? 0);
-        const elapsed = Math.max(0, (Date.now() - payload.sentAt) / 1000);
-        const compensatedTime =
-          payload.status === "playing" ? targetTime + elapsed : targetTime;
-
-        setState((prev) => ({
-          session_id: sessionId,
-          url: prev?.url ?? "",
-          video_id: payload.videoId,
-          status: payload.status,
-          playhead_seconds: compensatedTime,
-          updated_by: payload.fromDeviceId,
-          updated_at: new Date().toISOString(),
-        }));
-
-        suppressEventRef.current = true;
 
         if (currentVideoId !== payload.videoId) {
-          player.cueVideoById(payload.videoId, compensatedTime);
-        } else if (Math.abs(currentTime - compensatedTime) > 2) {
+          activeVideoIdRef.current = payload.videoId;
+          destroyPlayer();
+          suppressEventRef.current = false;
+          return;
+        }
+
+        const currentTime = Number(player.getCurrentTime?.() ?? 0);
+
+        if (Math.abs(currentTime - compensatedTime) > 2) {
           player.seekTo(compensatedTime, true);
         }
 
@@ -244,7 +243,7 @@ const next: YoutubeState = {
 
           window.setTimeout(() => {
             suppressEventRef.current = false;
-          }, 1200);
+          }, 1000);
         }
       } catch (e) {
         console.warn("[youtube] apply broadcast failed", e);
@@ -276,10 +275,13 @@ const next: YoutubeState = {
       if (data) {
         const row = data as YoutubeState;
 
-        setState({
+        const next: YoutubeState = {
           ...row,
           status: "paused",
-        });
+        };
+
+        stateRef.current = next;
+        setState(next);
       }
     }
 
@@ -311,118 +313,103 @@ const next: YoutubeState = {
       await loadYouTubeApi();
       if (cancelled || !containerRef.current || !state?.video_id) return;
 
-      if (!playerRef.current) {
-        playerRef.current = new window.YT.Player(containerRef.current, {
-          videoId: state.video_id,
-          width: "100%",
-          height: "100%",
-          playerVars: {
-            playsinline: 1,
-            rel: 0,
-            modestbranding: 1,
-            iv_load_policy: 3,
-            fs: 0,
-            disablekb: 1,
-            autoplay: 0,
+      const shouldRecreate =
+        !playerRef.current || activeVideoIdRef.current !== state.video_id;
+
+      if (!shouldRecreate) return;
+
+      activeVideoIdRef.current = state.video_id;
+      suppressEventRef.current = true;
+      destroyPlayer();
+
+      playerRef.current = new window.YT.Player(containerRef.current, {
+        videoId: state.video_id,
+        width: "100%",
+        height: "100%",
+        playerVars: {
+          playsinline: 1,
+          rel: 0,
+          modestbranding: 1,
+          iv_load_policy: 3,
+          fs: 0,
+          disablekb: 1,
+          autoplay: 0,
+        },
+        events: {
+          onReady: () => {
+            const player = playerRef.current;
+            if (!player) return;
+
+            suppressEventRef.current = true;
+
+            try {
+              player.cueVideoById(state.video_id, state.playhead_seconds ?? 0);
+              player.pauseVideo?.();
+            } catch {
+              // ignore
+            }
+
+            window.setTimeout(() => {
+              suppressEventRef.current = false;
+            }, 1200);
           },
-          events: {
-            onReady: () => {
-              const player = playerRef.current;
-              if (!player) return;
 
+          onStateChange: async (event: any) => {
+            const player = playerRef.current;
+            if (!player) return;
+
+            const isPlaying = event.data === window.YT.PlayerState.PLAYING;
+            const allowed = Date.now() < allowPlayUntilRef.current;
+
+            if (isPlaying && !allowed) {
               suppressEventRef.current = true;
-
-              try {
-                player.cueVideoById(state.video_id, state.playhead_seconds ?? 0);
-                player.pauseVideo?.();
-              } catch {}
+              player.pauseVideo?.();
 
               window.setTimeout(() => {
                 suppressEventRef.current = false;
-              }, 1200);
-            },
+              }, 800);
 
-            onStateChange: async (event: any) => {
-  const player = playerRef.current;
-  if (!player) return;
+              setNeedsUserPlay(false);
+              return;
+            }
 
-  const isPlaying = event.data === window.YT.PlayerState.PLAYING;
-  const allowed = Date.now() < allowPlayUntilRef.current;
+            if (suppressEventRef.current) return;
 
-  // suppress中でも、許可してない再生は必ず止める
-  if (isPlaying && !allowed) {
-    suppressEventRef.current = true;
-    player.pauseVideo?.();
+            const playerVideoId = player.getVideoData?.()?.video_id ?? "";
+            const currentState = stateRef.current;
 
-    window.setTimeout(() => {
-      suppressEventRef.current = false;
-    }, 800);
+            if (
+              currentState?.video_id &&
+              playerVideoId &&
+              playerVideoId !== currentState.video_id
+            ) {
+              return;
+            }
 
-    setNeedsUserPlay(false);
-    return;
-  }
+            const t = Number(player.getCurrentTime?.() ?? 0);
 
-  if (suppressEventRef.current) return;
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              await saveStateToDb({
+                video_id: playerVideoId || currentState?.video_id,
+                status: "playing",
+                playhead_seconds: t,
+              });
 
-  const t = Number(player.getCurrentTime?.() ?? 0);
-const playerVideoId = player.getVideoData?.()?.video_id ?? "";
+              return;
+            }
 
-if (state?.video_id && playerVideoId && playerVideoId !== state.video_id) {
-  return;
-}
+            if (event.data === window.YT.PlayerState.PAUSED) {
+              await saveStateToDb({
+                video_id: playerVideoId || currentState?.video_id,
+                status: "paused",
+                playhead_seconds: t,
+              });
 
-if (event.data === window.YT.PlayerState.PLAYING) {
-                const allowed = Date.now() < allowPlayUntilRef.current;
-
-                if (!allowed) {
-                  suppressEventRef.current = true;
-                  player.pauseVideo?.();
-
-                  window.setTimeout(() => {
-                    suppressEventRef.current = false;
-                  }, 800);
-
-                  setNeedsUserPlay(false);
-                  return;
-                }
-
-                await saveStateToDb({
-  video_id: playerVideoId || state?.video_id,
-  status: "playing",
-  playhead_seconds: t,
-});
-
-                return;
-              }
-
-              if (event.data === window.YT.PlayerState.PAUSED) {
-                await saveStateToDb({
-  video_id: playerVideoId || state?.video_id,
-  status: "paused",
-  playhead_seconds: t,
-});
-                return;
-              }
-            },
+              return;
+            }
           },
-        });
-      } else {
-        const player = playerRef.current;
-        const currentVideoId = player.getVideoData?.()?.video_id;
-
-        if (currentVideoId !== state.video_id) {
-          suppressEventRef.current = true;
-
-          try {
-            player.cueVideoById(state.video_id, state.playhead_seconds ?? 0);
-            player.pauseVideo?.();
-          } catch {}
-
-          window.setTimeout(() => {
-            suppressEventRef.current = false;
-          }, 1200);
-        }
-      }
+        },
+      });
     }
 
     void setupPlayer();
@@ -447,6 +434,7 @@ if (event.data === window.YT.PlayerState.PLAYING) {
         lastSavedAtRef.current = now;
 
         void saveStateToDb({
+          video_id: stateRef.current?.video_id,
           status: "playing",
           playhead_seconds: t,
         });
@@ -471,14 +459,9 @@ if (event.data === window.YT.PlayerState.PLAYING) {
     setNeedsUserPlay(false);
 
     suppressEventRef.current = true;
+    activeVideoIdRef.current = videoId;
 
-    const player = playerRef.current;
-    if (player) {
-      try {
-        player.cueVideoById(videoId, 0);
-        player.pauseVideo?.();
-      } catch {}
-    }
+    destroyPlayer();
 
     await saveStateToDb({
       url,
@@ -487,18 +470,12 @@ if (event.data === window.YT.PlayerState.PLAYING) {
       playhead_seconds: 0,
     });
 
-    await channelRef.current?.send({
-  type: "broadcast",
-  event: "youtube-sync",
-  payload: {
-    kind: "pause",
-    videoId,
-    status: "paused",
-    playheadSeconds: 0,
-    fromDeviceId: deviceId,
-    sentAt: Date.now(),
-  },
-});
+    await sendYoutubeBroadcast({
+      kind: "pause",
+      videoId,
+      status: "paused",
+      playheadSeconds: 0,
+    });
 
     window.setTimeout(() => {
       suppressEventRef.current = false;
@@ -512,29 +489,22 @@ if (event.data === window.YT.PlayerState.PLAYING) {
     if (!player || !current?.video_id) return;
 
     const t = Number(player.getCurrentTime?.() ?? 0);
+    const videoId = player.getVideoData?.()?.video_id || current.video_id;
 
     allowPlayUntilRef.current = Date.now() + 3000;
 
-    const videoId = player.getVideoData?.()?.video_id || current.video_id;
+    await saveStateToDb({
+      video_id: videoId,
+      status: "playing",
+      playhead_seconds: t,
+    });
 
-await saveStateToDb({
-  video_id: videoId,
-  status: "playing",
-  playhead_seconds: t,
-});
-
-await channelRef.current?.send({
-  type: "broadcast",
-  event: "youtube-sync",
-  payload: {
-    kind: "play",
-    videoId,
-    status: "playing",
-    playheadSeconds: t,
-    fromDeviceId: deviceId,
-    sentAt: Date.now(),
-  },
-});
+    await sendYoutubeBroadcast({
+      kind: "play",
+      videoId,
+      status: "playing",
+      playheadSeconds: t,
+    });
 
     try {
       player.playVideo?.();

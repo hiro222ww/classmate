@@ -316,7 +316,7 @@ export default function CallVoiceLayer({
   );
 
   const scheduleReconnect = useCallback(
-    (remoteId: string, delay = 1500) => {
+    (remoteId: string, delay = 4000) => {
       if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
       console.log("[call] schedule reconnect", remoteId, { delay });
@@ -365,7 +365,9 @@ export default function CallVoiceLayer({
       if (localTrack && localStream) {
         pc.addTrack(localTrack, localStream);
 
-        const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+        const sender = pc.getSenders().find(
+  (s) => s.track?.kind === "audio" || s.track === null
+);
         if (sender && isMuted) {
           void sender.replaceTrack(null);
         }
@@ -456,7 +458,7 @@ export default function CallVoiceLayer({
         if (pc.iceConnectionState === "failed") {
           console.warn("[call] ICE failed → reconnect", remoteId, connectionId);
           setPeerState(remoteId, "failed");
-          scheduleReconnect(remoteId, 1500);
+          scheduleReconnect(remoteId, 4000);
         }
       };
 
@@ -494,7 +496,7 @@ export default function CallVoiceLayer({
         if (state === "failed") {
           setPeerState(remoteId, "failed");
           closePeer(remoteId, { clearConnectionId: false });
-          scheduleReconnect(remoteId, 1500);
+          scheduleReconnect(remoteId, 4000);
         }
 
         if (state === "closed") {
@@ -534,7 +536,6 @@ export default function CallVoiceLayer({
       if (
         existingPc &&
         (existingPc.connectionState === "connecting" ||
-          existingPc.connectionState === "connected" ||
           existingPc.signalingState !== "stable")
       ) {
         console.log("[call] skip offer: existing pc busy", remoteId, {
@@ -790,7 +791,7 @@ export default function CallVoiceLayer({
 
         if (row.signal_type === "offer" || row.signal_type === "answer") {
           closePeer(remoteId, { clearConnectionId: false });
-          scheduleReconnect(remoteId, 1500);
+          scheduleReconnect(remoteId, 4000);
         }
       }
     },
@@ -1164,15 +1165,12 @@ export default function CallVoiceLayer({
         const pc = pcsRef.current.get(remoteId);
 
         if (hasRemoteStream) continue;
+if (pc && pc.connectionState === "connected") continue;
         if (pc && pc.signalingState !== "stable") continue;
 
-        if (
-          pc &&
-          (pc.connectionState === "connecting" ||
-            pc.connectionState === "connected")
-        ) {
-          continue;
-        }
+        if (pc && pc.connectionState === "connecting") {
+  continue;
+}
 
         void maybeStartOffer(remoteId);
       }
@@ -1207,7 +1205,7 @@ export default function CallVoiceLayer({
             iceConnectionState: pc.iceConnectionState,
           });
 
-          scheduleReconnect(remoteId, 1500);
+          scheduleReconnect(remoteId, 4000);
         }
       }
     }, 4000);
