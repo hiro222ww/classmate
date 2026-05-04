@@ -702,19 +702,37 @@ clearRetryTimer();
   </div>
 
   <input
-    value={youtubeUrl}
-    onChange={(e) => setYoutubeUrl(e.target.value)}
-    placeholder="YouTubeのURLを貼る"
-    style={{
-      marginTop: 10,
-      width: "100%",
-      border: "1px solid #d1d5db",
-      borderRadius: 12,
-      padding: "10px 12px",
-    }}
-  />
+  value={youtubeInput}
+  onChange={(e) => setYoutubeInput(e.target.value)}
+  placeholder="YouTubeのURLを貼る"
+  style={{
+    marginTop: 10,
+    width: "100%",
+    border: "1px solid #d1d5db",
+    borderRadius: 12,
+    padding: "10px 12px",
+  }}
+/>
 
-  {youtubeUrl ? <YouTubeEmbed url={youtubeUrl} /> : null}
+<button
+  type="button"
+  onClick={() => setYoutubeUrl(youtubeInput.trim())}
+  disabled={!youtubeInput.trim()}
+  style={{
+    marginTop: 8,
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #111",
+    background: youtubeInput.trim() ? "#111" : "#9ca3af",
+    color: "#fff",
+    fontWeight: 800,
+    cursor: youtubeInput.trim() ? "pointer" : "not-allowed",
+  }}
+>
+  再生
+</button>
+
+{youtubeUrl ? <YouTubeEmbed url={youtubeUrl} /> : null}
 </section>
 
       <section
