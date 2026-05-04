@@ -368,16 +368,23 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       {state?.video_id ? (
         <>
           <div
-            style={{
-              marginTop: 14,
-              borderRadius: 18,
-              overflow: "hidden",
-              background: "#000",
-              aspectRatio: "16 / 9",
-            }}
-          >
-            <div ref={containerRef} />
-          </div>
+  style={{
+    marginTop: 14,
+    borderRadius: 18,
+    overflow: "hidden",
+    background: "#000",
+    aspectRatio: "16 / 9",
+    width: "100%",
+  }}
+>
+  <div
+    ref={containerRef}
+    style={{
+      width: "100%",
+      height: "100%",
+    }}
+  />
+</div>
 
           <button
             type="button"
