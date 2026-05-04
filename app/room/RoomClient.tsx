@@ -18,6 +18,7 @@ import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
+import SessionMessages from "@/components/SessionMessages";
 
 type MemberRow = {
   device_id?: string;
@@ -36,16 +37,6 @@ type PresenceRow = {
   updated_at?: string | null;
 };
 
-type RoomMessage = {
-  id: string;
-  session_id: string;
-  device_id: string;
-  display_name: string;
-  message: string;
-  image_path?: string | null;
-  message_type?: "text" | "image";
-  created_at: string;
-};
 
 type ProfileResponse = {
   ok?: boolean;
@@ -290,78 +281,6 @@ function dedupeMembers(
   return me ? [me, ...sortedOthers] : sortedOthers;
 }
 
-function dedupeMessages(list: RoomMessage[]): RoomMessage[] {
-  const map = new Map<string, RoomMessage>();
-  for (const m of list) {
-    if (!m?.id) continue;
-    map.set(m.id, m);
-  }
-  return Array.from(map.values()).sort((a, b) =>
-    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
-  );
-}
-
-function formatTime(v: string) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("ja-JP", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-async function compressImage(file: File): Promise<File> {
-  const allowed = ["image/jpeg", "image/png", "image/webp"];
-
-  if (!allowed.includes(file.type)) {
-    throw new Error("送信できる画像は JPG / PNG / WebP のみです");
-  }
-
-  if (file.size > 8 * 1024 * 1024) {
-    throw new Error("画像は8MB以下にしてください");
-  }
-
-  const objectUrl = URL.createObjectURL(file);
-
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = objectUrl;
-    });
-
-    const maxSize = 1280;
-    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(image.width * scale);
-    canvas.height = Math.round(image.height * scale);
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("画像の圧縮に失敗しました");
-
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (b) => {
-          if (!b) reject(new Error("画像の圧縮に失敗しました"));
-          else resolve(b);
-        },
-        "image/jpeg",
-        0.72
-      );
-    });
-
-    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
-      type: "image/jpeg",
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
 
 function MemberAvatar({
   src,
@@ -412,8 +331,6 @@ export default function RoomClient() {
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
-  const [msgs, setMsgs] = useState<RoomMessage[]>([]);
-  const [draft, setDraft] = useState("");
   const [topicTitle, setTopicTitle] = useState("ルーム");
   const [classLabel, setClassLabel] = useState("");
   const [err, setErr] = useState("");
@@ -423,57 +340,37 @@ export default function RoomClient() {
 
   const [deviceId, setDeviceId] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [isComposing, setIsComposing] = useState(false);
 
   const joinedSessionKeyRef = useRef<string | null>(null);
   const autoMovedRef = useRef<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const messagesBoxRef = useRef<HTMLDivElement | null>(null);
 
   const [showDevBanner, setShowDevBanner] = useState(false);
   const [devBannerLabel, setDevBannerLabel] = useState("");
 
   const statusFailCountRef = useRef(0);
-  const messagesFailCountRef = useRef(0);
 
   const publicStorageBase =
     process.env.NEXT_PUBLIC_SUPABASE_URL
       ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos`
       : "";
 
-  function scrollToBottom(behavior: ScrollBehavior = "smooth") {
-    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
-  }
-
-  function setSoftConnectionError(kind: "status" | "messages") {
-    if (kind === "status") {
-      statusFailCountRef.current += 1;
-      if (statusFailCountRef.current >= 3) {
-        setErr("接続が不安定です。再接続しています…");
-      }
-      return;
-    }
-
-    messagesFailCountRef.current += 1;
-    if (messagesFailCountRef.current >= 3) {
-      setErr("通信状況が不安定です。メッセージ更新を再試行しています…");
+function setSoftConnectionError(kind: "status" | "messages") {
+  if (kind === "status") {
+    statusFailCountRef.current += 1;
+    if (statusFailCountRef.current >= 3) {
+      setErr("接続が不安定です。再接続しています…");
     }
   }
+}
 
-  function clearSoftConnectionError(kind?: "status" | "messages") {
-    if (!kind || kind === "status") statusFailCountRef.current = 0;
-    if (!kind || kind === "messages") messagesFailCountRef.current = 0;
+function clearSoftConnectionError(kind?: "status" | "messages") {
+  if (!kind || kind === "status") statusFailCountRef.current = 0;
 
-    setErr((prev) => {
-      if (
-        prev === "接続が不安定です。再接続しています…" ||
-        prev === "通信状況が不安定です。メッセージ更新を再試行しています…"
-      ) {
-        return "";
-      }
-      return prev;
-    });
-  }
+  setErr((prev) => {
+    if (prev === "接続が不安定です。再接続しています…") return "";
+    return prev;
+  });
+}
 
   useEffect(() => {
     const id = String(getDeviceId() ?? "").trim();
@@ -1071,186 +968,6 @@ if (!shouldAutoStart) return;
     autojoin,
   ]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-    if (pathname !== "/room") return;
-
-    let cancelled = false;
-
-    async function loadMessages() {
-      if (typeof document !== "undefined" && document.hidden) return;
-
-      try {
-        const { data, error } = await supabase
-          .from("room_messages")
-          .select("id, session_id, device_id, display_name, message, image_path, message_type, created_at")
-          .eq("session_id", sessionId)
-          .order("created_at", { ascending: true })
-          .limit(200);
-
-        if (cancelled) return;
-
-        if (error) {
-          setSoftConnectionError("messages");
-          return;
-        }
-
-        setMsgs((prev) => {
-          const next = dedupeMessages((data ?? []) as RoomMessage[]);
-          const prevStr = JSON.stringify(prev);
-          const nextStr = JSON.stringify(next);
-          if (prevStr === nextStr) return prev;
-          return next;
-        });
-
-        clearSoftConnectionError("messages");
-      } catch {
-        if (!cancelled) setSoftConnectionError("messages");
-      }
-    }
-
-    void loadMessages();
-
-    const poll = window.setInterval(() => {
-      if (window.location.pathname !== "/room") return;
-      void loadMessages();
-    }, 15000);
-
-    const onVisible = () => {
-      if (document.hidden) return;
-      void loadMessages();
-    };
-
-    document.addEventListener("visibilitychange", onVisible);
-
-    const channel = supabase
-      .channel(`room_messages:${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "room_messages",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        (payload: any) => {
-          if (window.location.pathname !== "/room") return;
-
-          const row = payload?.new as RoomMessage;
-          if (!row?.id) return;
-
-          setMsgs((prev) => dedupeMessages([...prev, row]));
-          clearSoftConnectionError("messages");
-        }
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(poll);
-      document.removeEventListener("visibilitychange", onVisible);
-      void supabase.removeChannel(channel);
-    };
-  }, [sessionId, pathname]);
-
-  useEffect(() => {
-    const box = messagesBoxRef.current;
-    if (!box) return;
-
-    const nearBottom =
-      box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-
-    if (nearBottom) scrollToBottom("smooth");
-  }, [msgs]);
-
-  async function sendMessage() {
-    const text = draft.trim();
-    if (!text || !sessionId) return;
-
-    const rawName = displayName || "参加者";
-    const name = rawName === "You" ? "参加者" : rawName;
-
-    const optimisticId = `local-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2)}`;
-    const optimisticRow: RoomMessage = {
-      id: optimisticId,
-      session_id: sessionId,
-      device_id: deviceId,
-      display_name: name,
-      message: text,
-      created_at: new Date().toISOString(),
-    };
-
-    setMsgs((prev) => dedupeMessages([...prev, optimisticRow]));
-    setDraft("");
-    queueMicrotask(() => scrollToBottom("smooth"));
-
-    const { error } = await supabase.from("room_messages").insert({
-      session_id: sessionId,
-      device_id: deviceId,
-      display_name: name,
-      message: text,
-    });
-
-    if (error) {
-      setErr("送信に失敗しました。通信状況をご確認ください。");
-      setMsgs((prev) => prev.filter((m) => m.id !== optimisticId));
-      setDraft(text);
-    }
-  }
-
-  async function sendImage(file: File) {
-  if (!sessionId || !deviceId) return;
-
-  try {
-    const rawName = displayName || "参加者";
-    const name = rawName === "You" ? "参加者" : rawName;
-
-    const compressed = await compressImage(file);
-
-    const safeFileName = compressed.name
-      .replace(/[^\w.\-]/g, "_")
-      .slice(0, 80);
-
-    const path = `${sessionId}/${deviceId}/${Date.now()}-${safeFileName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("room-message-images")
-      .upload(path, compressed, {
-        contentType: compressed.type,
-        upsert: false,
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data, error: insertError } = await supabase
-      .from("room_messages")
-      .insert({
-        session_id: sessionId,
-        device_id: deviceId,
-        display_name: name,
-        message: "",
-        image_path: path,
-        message_type: "image",
-      })
-      .select(
-        "id, session_id, device_id, display_name, message, image_path, message_type, created_at"
-      )
-      .single();
-
-    if (insertError) throw insertError;
-
-    if (data?.id) {
-      setMsgs((prev) => dedupeMessages([...prev, data as RoomMessage]));
-      queueMicrotask(() => scrollToBottom("smooth"));
-    }
-  } catch (e: any) {
-    console.error("[room] image send failed", e);
-    setErr(e?.message ?? "画像の送信に失敗しました");
-  }
-}
-
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
 
   const shellTitle = topicTitle || "ルーム";
@@ -1258,7 +975,7 @@ if (!shouldAutoStart) return;
     ? `${classLabel} / ${subtitle}`
     : subtitle;
 
-  return (
+    return (
     <>
       {showDevBanner && (
         <div
@@ -1287,34 +1004,35 @@ if (!shouldAutoStart) return;
           title={shellTitle}
           subtitle={shellSubtitle}
           lines={
-  err
-    ? [err]
-    : invite
-      ? [
-          inviter
-            ? `${inviter}さんに招待されています`
-            : "このクラスに招待されています",
-          "参加中のメンバーと会話を始めましょう",
-        ]
-      : autoMovedRef.current === `${sessionId}:${classId}:first-auto-call` ||
-          (typeof window !== "undefined" &&
-            sessionStorage.getItem(
-              `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
-            ) === "1")
-        ? ["通話開始ボタンを押して、通話を開始してください。"]
-        : status === "forming"
-          ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
-          : status === "active"
-            ? ["通話を開始できます。"]
-            : []
-}
+            err
+              ? [err]
+              : invite
+                ? [
+                    inviter
+                      ? `${inviter}さんに招待されています`
+                      : "このクラスに招待されています",
+                    "参加中のメンバーと会話を始めましょう",
+                  ]
+                : autoMovedRef.current ===
+                    `${sessionId}:${classId}:first-auto-call` ||
+                  (typeof window !== "undefined" &&
+                    sessionStorage.getItem(
+                      `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
+                    ) === "1")
+                  ? ["通話開始ボタンを押して、通話を開始してください。"]
+                  : status === "forming"
+                    ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+                    : status === "active"
+                      ? ["通話を開始できます。"]
+                      : []
+          }
           onBack={() => router.push(withDev("/class/select"))}
           onStartCall={() =>
             router.push(
               withDev(
-                `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
-                  classId
-                )}`
+                `/call?sessionId=${encodeURIComponent(
+                  sessionId
+                )}&classId=${encodeURIComponent(classId)}`
               )
             )
           }
@@ -1323,70 +1041,66 @@ if (!shouldAutoStart) return;
         >
           <div style={{ display: "grid", gap: 12 }}>
             <div
-  style={{
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    padding: 12,
-    background: "#fff",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
-  }}
->
-  <div>
-    <div style={{ fontWeight: 900 }}>友達を招待</div>
-    <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-      この待機ルームに直接参加できるリンクをコピーします。
-    </div>
-  </div>
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 14,
+                padding: 12,
+                background: "#fff",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 900 }}>友達を招待</div>
+                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+                  この待機ルームに直接参加できるリンクをコピーします。
+                </div>
+              </div>
 
-  <button
-    onClick={async () => {
-  
+              <button
+                onClick={async () => {
+                  if (!sessionId || !classId) {
+                    alert("まだ招待リンクを作れません。");
+                    return;
+                  }
 
-  if (!sessionId || !classId) {
-  alert("まだ招待リンクを作れません。");
-  return;
-}
+                  const inviterName = normalizeName(displayName) || "友達";
 
-  const inviterName =
-  normalizeName(displayName) || "友達";
+                  const inviteUrl =
+                    `${location.origin}/room?invite=1&autojoin=1` +
+                    `&sessionId=${encodeURIComponent(sessionId)}` +
+                    `&classId=${encodeURIComponent(classId)}` +
+                    `&inviter=${encodeURIComponent(inviterName)}`;
 
-const inviteUrl =
-  `${location.origin}/room?invite=1&autojoin=1` +
-  `&sessionId=${encodeURIComponent(sessionId)}` +
-  `&classId=${encodeURIComponent(classId)}` +
-  `&inviter=${encodeURIComponent(inviterName)}`;
-
-  try {
-    await navigator.clipboard.writeText(inviteUrl);
-    alert("招待リンクをコピーしました");
-  } catch (e) {
-    console.warn("[invite] copy failed", e);
-    window.prompt(
-      "コピーできませんでした。下のリンクをコピーしてください。",
-      inviteUrl
-    );
-  }
-}}
-
-    disabled={!sessionId || !classId}
-    style={{
-      border: "none",
-      borderRadius: 999,
-      padding: "10px 14px",
-      background: !sessionId || !classId ? "#9ca3af" : "#111827",
-      color: "#fff",
-      fontWeight: 900,
-      cursor: !sessionId || !classId ? "not-allowed" : "pointer",
-      whiteSpace: "nowrap",
-    }}
-  >
-    招待リンクをコピー
-  </button>
-</div>
+                  try {
+                    await navigator.clipboard.writeText(inviteUrl);
+                    alert("招待リンクをコピーしました");
+                  } catch (e) {
+                    console.warn("[invite] copy failed", e);
+                    window.prompt(
+                      "コピーできませんでした。下のリンクをコピーしてください。",
+                      inviteUrl
+                    );
+                  }
+                }}
+                disabled={!sessionId || !classId}
+                style={{
+                  border: "none",
+                  borderRadius: 999,
+                  padding: "10px 14px",
+                  background: !sessionId || !classId ? "#9ca3af" : "#111827",
+                  color: "#fff",
+                  fontWeight: 900,
+                  cursor: !sessionId || !classId ? "not-allowed" : "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                招待リンクをコピー
+              </button>
+            </div>
 
             <div
               style={{
@@ -1396,7 +1110,9 @@ const inviteUrl =
                 background: "#fff",
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>参加メンバー</div>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                参加メンバー
+              </div>
 
               {visibleMembers.length === 0 ? (
                 <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
@@ -1463,12 +1179,7 @@ const inviteUrl =
                             }}
                           >
                             {isMe ? (
-                              <span
-                                style={{
-                                  fontSize: 12,
-                                  color: "#6b7280",
-                                }}
-                              >
+                              <span style={{ fontSize: 12, color: "#6b7280" }}>
                                 自分
                               </span>
                             ) : null}
@@ -1494,200 +1205,13 @@ const inviteUrl =
               )}
             </div>
 
-            <div
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 14,
-                padding: 12,
-                background: "#fff",
-              }}
-            >
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>チャット</div>
-
-              <div
-                ref={messagesBoxRef}
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  maxHeight: 320,
-                  overflowY: "auto",
-                  paddingRight: 4,
-                  marginBottom: 12,
-                }}
-              >
-                {msgs.length === 0 ? (
-                  <div style={{ color: "#666", fontSize: 13 }}>
-                    まだメッセージはありません
-                  </div>
-                ) : (
-                  msgs.map((m) => {
-                    const isMe =
-                      String(m.device_id ?? "").trim() ===
-                      String(deviceId ?? "").trim();
-
-                    return (
-                      <div
-                        key={m.id}
-                        style={{
-                          display: "flex",
-                          justifyContent: isMe ? "flex-end" : "flex-start",
-                        }}
-                      >
-                        <div
-                          style={{
-                            maxWidth: "78%",
-                            display: "grid",
-                            gap: 4,
-                            justifyItems: isMe ? "end" : "start",
-                          }}
-                        >
-                          {!isMe ? (
-                            <div
-                              style={{
-                                fontSize: 11,
-                                color: "#6b7280",
-                                fontWeight: 800,
-                                paddingLeft: 4,
-                              }}
-                            >
-                              {m.display_name || "参加者"}
-                            </div>
-                          ) : null}
-
-                          <div
-  style={{
-    padding: "10px 12px",
-    borderRadius: 18,
-    background: isMe ? "#86efac" : "#ffffff",
-    border: isMe ? "none" : "1px solid #e5e7eb",
-    color: "#111827",
-    lineHeight: 1.5,
-    whiteSpace: "pre-wrap",
-    overflowWrap: "anywhere",
-    wordBreak: "break-word",
-    borderBottomRightRadius: isMe ? 6 : 18,
-    borderBottomLeftRadius: isMe ? 18 : 6,
-    boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-  }}
->
-  {m.message_type === "image" && m.image_path ? (
-    <img
-      src={
-        supabase.storage
-          .from("room-message-images")
-          .getPublicUrl(m.image_path).data.publicUrl
-      }
-      alt="img"
-      style={{
-        maxWidth: "100%",
-        borderRadius: 10,
-      }}
-    />
-  ) : (
-    m.message
-  )}
-</div>
-
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: "#9ca3af",
-                              padding: isMe ? "0 4px 0 0" : "0 0 0 4px",
-                            }}
-                          >
-                            {formatTime(m.created_at)}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                }}
-              >
-                <input
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onCompositionStart={() => setIsComposing(true)}
-                  onCompositionEnd={() => {
-                    window.setTimeout(() => setIsComposing(false), 0);
-                  }}
-                  onKeyDown={(e) => {
-                    const native = e.nativeEvent as KeyboardEvent & {
-                      isComposing?: boolean;
-                      keyCode?: number;
-                    };
-
-                    if (isComposing) return;
-                    if (native?.isComposing) return;
-                    if (e.key === "Process") return;
-                    if (native?.keyCode === 229) return;
-
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendMessage();
-                    }
-                  }}
-                  placeholder="メッセージを入力"
-                  style={{
-                    flex: 1,
-                    border: "1px solid #d1d5db",
-                    borderRadius: 999,
-                    padding: "12px 14px",
-                    background: "#fff",
-                  }}
-                />
-
-                <label
-  style={{
-    border: "1px solid #d1d5db",
-    borderRadius: 999,
-    padding: "10px 14px",
-    background: "#fff",
-    color: "#111827",
-    fontWeight: 900,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  }}
->
-  📷
-  <input
-    type="file"
-    accept="image/jpeg,image/png,image/webp"
-    style={{ display: "none" }}
-    onChange={(e) => {
-      const file = e.target.files?.[0];
-      e.currentTarget.value = "";
-      if (!file) return;
-      void sendImage(file);
-    }}
-  />
-</label>
-
-<button
-  onClick={() => void sendMessage()}
-  style={{
-    border: "none",
-    borderRadius: 999,
-    padding: "10px 16px",
-    background: "#22c55e",
-    color: "#fff",
-    fontWeight: 900,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  }}
->
-  送信
-</button>
-              </div>
-            </div>
+            <SessionMessages
+              sessionId={sessionId}
+              deviceId={deviceId}
+              displayName={displayName}
+              title="チャット"
+              maxHeight={320}
+            />
           </div>
         </ChalkboardRoomShell>
       </div>

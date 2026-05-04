@@ -7,6 +7,7 @@ import CallVoiceLayer from "./CallVoiceLayer";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
+import SessionMessages from "@/components/SessionMessages";
 
 type Member = {
   device_id: string;
