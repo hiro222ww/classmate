@@ -7,6 +7,9 @@ type Member = {
   device_id: string;
   display_name: string;
   photo_path?: string | null;
+  screen?: string;
+  last_seen_at?: string | null;
+  is_in_call?: boolean;
 };
 
 type SignalType = "offer" | "answer" | "ice" | "leave";
@@ -41,7 +44,7 @@ type CallVoiceLayerProps = {
   isMuted: boolean;
   onMicReadyChange?: (ready: boolean) => void;
   onMicLevelChange?: (level: number) => void;
-  onRemoteSpeakingChange?: (remoteId: string | null) => void;
+  onRemoteSpeakingChange?: (remoteId: string, level: number) => void;
   onRemoteCountChange?: (count: number) => void;
   onStatusChange?: (text: string) => void;
   onPeerStatesChange?: (states: Record<string, PeerState>) => void;
@@ -299,8 +302,8 @@ pendingIceRef.current.delete(remoteId);
   );
 
   const scheduleReconnect = useCallback(
-    (remoteId: string, delay = 1500) => {
-      if (!localAudioTrackRef.current && !localStreamRef.current) return;
+  (remoteId: string, delay = 1500) => {
+    if (!localSendTrackRef.current && !localSendStreamRef.current) return;
 
       console.log("[call] schedule reconnect", remoteId, { delay });
 
@@ -503,10 +506,10 @@ if (localTrack && localStream) {
 
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
-      if (!localAudioTrackRef.current && !localStreamRef.current) {
-        console.log("[call] skip offer: local audio not ready", remoteId);
-        return;
-      }
+      if (!localSendTrackRef.current && !localSendStreamRef.current) {
+  console.log("[call] skip offer: local send audio not ready", remoteId);
+  return;
+}
 
       const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
       const existingPc = pcsRef.current.get(remoteId);
@@ -1116,8 +1119,9 @@ if (localSendTrackRef.current) {
     if (members.length < 2) return;
 
     const remoteIds = members
-      .map((m) => m.device_id)
-      .filter((id) => id && id !== deviceId);
+  .filter((m) => m.screen === "call")
+  .map((m) => m.device_id)
+  .filter((id) => id && id !== deviceId);
 
     console.log("[call] remoteIds for offer", {
       remoteIds,

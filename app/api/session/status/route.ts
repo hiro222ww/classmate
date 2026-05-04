@@ -44,6 +44,20 @@ type UserProfileRow = {
   photo_path?: string | null;
 };
 
+type PresenceRow = {
+  device_id?: string | null;
+  screen?: string | null;
+  session_id?: string | null;
+  last_seen_at?: string | null;
+};
+
+type PresenceInfo = {
+  screen: string;
+  session_id: string | null;
+  last_seen_at: string | null;
+  is_in_call: boolean;
+};
+
 function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
   if (!s || s === "You") return "参加者";
@@ -65,10 +79,16 @@ function normalizePhotoPath(v: string | null | undefined) {
   return s || null;
 }
 
-async function getSession(
-  sb: ReturnType<typeof admin>,
-  sessionId: string
-) {
+function isFreshPresence(lastSeenAt: string | null, maxAgeMs = 20_000) {
+  if (!lastSeenAt) return false;
+
+  const t = new Date(lastSeenAt).getTime();
+  if (!Number.isFinite(t)) return false;
+
+  return Date.now() - t < maxAgeMs;
+}
+
+async function getSession(sb: ReturnType<typeof admin>, sessionId: string) {
   const { data, error } = await sb
     .from("sessions")
     .select("id,class_id,topic,status,capacity,created_at")
@@ -92,10 +112,7 @@ async function getSession(
   };
 }
 
-async function getRawMembers(
-  sb: ReturnType<typeof admin>,
-  sessionId: string
-) {
+async function getRawMembers(sb: ReturnType<typeof admin>, sessionId: string) {
   const { data, error } = await sb
     .from("session_members")
     .select("device_id,display_name,joined_at")
@@ -148,9 +165,62 @@ async function getPhotoPathMap(
   };
 }
 
+async function getPresenceMap(
+  sb: ReturnType<typeof admin>,
+  deviceIds: string[],
+  sessionId: string
+) {
+  if (deviceIds.length === 0) {
+    return {
+      ok: true as const,
+      presenceMap: new Map<string, PresenceInfo>(),
+    };
+  }
+
+  const { data, error } = await sb
+    .from("class_presence")
+    .select("device_id,screen,session_id,last_seen_at")
+    .in("device_id", deviceIds)
+    .order("last_seen_at", { ascending: false });
+
+  if (error) {
+    return { ok: false as const, error };
+  }
+
+  const map = new Map<string, PresenceInfo>();
+
+  for (const row of (Array.isArray(data) ? data : []) as PresenceRow[]) {
+    const did = String(row.device_id ?? "").trim();
+    if (!did) continue;
+
+    if (map.has(did)) continue;
+
+    const screen = String(row.screen ?? "").trim() || "offline";
+    const rowSessionId = String(row.session_id ?? "").trim() || null;
+    const lastSeenAt = String(row.last_seen_at ?? "").trim() || null;
+
+    const fresh = isFreshPresence(lastSeenAt);
+    const isInCall =
+      fresh && screen === "call" && rowSessionId === sessionId;
+
+    map.set(did, {
+      screen: fresh ? screen : "offline",
+      session_id: fresh ? rowSessionId : null,
+      last_seen_at: lastSeenAt,
+      is_in_call: isInCall,
+    });
+  }
+
+  return {
+    ok: true as const,
+    presenceMap: map,
+  };
+}
+
 function buildMembers(
   rawMembers: SessionMemberRow[],
-  photoPathMap: Map<string, string | null>
+  photoPathMap: Map<string, string | null>,
+  presenceMap: Map<string, PresenceInfo>
 ) {
   const byDevice = new Map<
     string,
@@ -160,6 +230,10 @@ function buildMembers(
       photo_path: string | null;
       avatar_url: null;
       joined_at: string;
+      screen: string;
+      presence_session_id: string | null;
+      last_seen_at: string | null;
+      is_in_call: boolean;
     }
   >();
 
@@ -171,6 +245,13 @@ function buildMembers(
     const joinedAt =
       String(row.joined_at ?? "").trim() || new Date(0).toISOString();
 
+    const presence = presenceMap.get(deviceId) ?? {
+      screen: "offline",
+      session_id: null,
+      last_seen_at: null,
+      is_in_call: false,
+    };
+
     const prev = byDevice.get(deviceId);
     if (prev && prev.joined_at <= joinedAt) continue;
 
@@ -180,6 +261,10 @@ function buildMembers(
       photo_path: photoPathMap.get(deviceId) ?? null,
       avatar_url: null,
       joined_at: joinedAt,
+      screen: presence.screen,
+      presence_session_id: presence.session_id,
+      last_seen_at: presence.last_seen_at,
+      is_in_call: presence.is_in_call,
     });
   }
 
@@ -273,9 +358,18 @@ export async function GET(req: Request) {
       );
     }
 
+    const presenceMapRes = await getPresenceMap(sb, deviceIds, sessionIdRaw);
+    if (!presenceMapRes.ok) {
+      return NextResponse.json(
+        { ok: false, error: presenceMapRes.error.message },
+        { status: 500 }
+      );
+    }
+
     const members = buildMembers(
       rawMembersRes.members,
-      photoMapRes.photoPathMap
+      photoMapRes.photoPathMap,
+      presenceMapRes.presenceMap
     );
 
     return NextResponse.json(
@@ -291,6 +385,7 @@ export async function GET(req: Request) {
         },
         members,
         memberCount: members.length,
+        inCallMemberCount: members.filter((m) => m.is_in_call).length,
       },
       {
         headers: {
