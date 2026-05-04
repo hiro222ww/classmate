@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 import SessionMessages from "@/components/SessionMessages";
-import YouTubeEmbed from "./YouTubeEmbed";
+import YouTubeWatchParty from "./YouTubeWatchParty";
 
 type Member = {
   device_id: string;
@@ -105,8 +105,7 @@ useEffect(() => {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
-const [youtubeInput, setYoutubeInput] = useState("");
-const [youtubeUrl, setYoutubeUrl] = useState("");
+
 
 
   const retryTimerRef = useRef<number | null>(null);
@@ -688,52 +687,7 @@ clearRetryTimer();
         </div>
       </section>
 
-      <section
-  style={{
-    marginTop: 16,
-    padding: 14,
-    border: "1px solid #e5e7eb",
-    borderRadius: 18,
-    background: "#fff",
-  }}
->
-  <div style={{ fontWeight: 900, fontSize: 15 }}>
-    一緒に見る
-  </div>
-
-  <input
-  value={youtubeInput}
-  onChange={(e) => setYoutubeInput(e.target.value)}
-  placeholder="YouTubeのURLを貼る"
-  style={{
-    marginTop: 10,
-    width: "100%",
-    border: "1px solid #d1d5db",
-    borderRadius: 12,
-    padding: "10px 12px",
-  }}
-/>
-
-<button
-  type="button"
-  onClick={() => setYoutubeUrl(youtubeInput.trim())}
-  disabled={!youtubeInput.trim()}
-  style={{
-    marginTop: 8,
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: youtubeInput.trim() ? "#111" : "#9ca3af",
-    color: "#fff",
-    fontWeight: 800,
-    cursor: youtubeInput.trim() ? "pointer" : "not-allowed",
-  }}
->
-  再生
-</button>
-
-{youtubeUrl ? <YouTubeEmbed url={youtubeUrl} /> : null}
-</section>
+     <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} />
 
       <section
         style={{
