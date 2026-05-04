@@ -15,21 +15,31 @@ type Props = {
   deviceId: string;
 };
 
+type YoutubeStatus = "playing" | "paused";
+
 type YoutubeState = {
   session_id: string;
   url: string;
   video_id: string;
-  status: "playing" | "paused";
+  status: YoutubeStatus;
   playhead_seconds: number;
   updated_by: string | null;
   updated_at: string;
+};
+
+type YoutubeBroadcastPayload = {
+  kind: "play" | "pause" | "seek" | "heartbeat";
+  videoId: string;
+  status: YoutubeStatus;
+  playheadSeconds: number;
+  fromDeviceId: string;
+  sentAt: number;
 };
 
 let ytApiPromise: Promise<void> | null = null;
 
 function loadYouTubeApi() {
   if (typeof window === "undefined") return Promise.resolve();
-
   if (window.YT?.Player) return Promise.resolve();
 
   if (!ytApiPromise) {
@@ -89,14 +99,19 @@ function extractYouTubeId(input: string) {
 export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<any>(null);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
   const lastAppliedRef = useRef("");
   const suppressEventRef = useRef(false);
+  const lastBroadcastAtRef = useRef(0);
+  const lastSavedAtRef = useRef(0);
 
   const [input, setInput] = useState("");
   const [state, setState] = useState<YoutubeState | null>(null);
   const [error, setError] = useState("");
+  const [needsUserPlay, setNeedsUserPlay] = useState(false);
 
-  const syncState = useCallback(
+  const saveStateToDb = useCallback(
     async (patch: Partial<YoutubeState>) => {
       if (!sessionId) return;
 
@@ -120,12 +135,97 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         .upsert(next, { onConflict: "session_id" });
 
       if (error) {
-        console.warn("[youtube] sync failed", error);
+        console.warn("[youtube] db save failed", error);
         setError(error.message);
       }
     },
     [sessionId, deviceId, state]
   );
+
+  const sendBroadcast = useCallback(
+    async (
+      kind: YoutubeBroadcastPayload["kind"],
+      patch?: Partial<YoutubeBroadcastPayload>
+    ) => {
+      const channel = channelRef.current;
+      const current = state;
+      const player = playerRef.current;
+
+      if (!channel || !current?.video_id) return;
+
+      const now = Date.now();
+
+      if (kind === "heartbeat" && now - lastBroadcastAtRef.current < 9000) {
+        return;
+      }
+
+      lastBroadcastAtRef.current = now;
+
+      const playheadSeconds =
+        typeof patch?.playheadSeconds === "number"
+          ? patch.playheadSeconds
+          : Number(player?.getCurrentTime?.() ?? current.playhead_seconds ?? 0);
+
+      const payload: YoutubeBroadcastPayload = {
+        kind,
+        videoId: patch?.videoId ?? current.video_id,
+        status: patch?.status ?? current.status,
+        playheadSeconds,
+        fromDeviceId: deviceId,
+        sentAt: now,
+      };
+
+      await channel.send({
+        type: "broadcast",
+        event: "youtube-sync",
+        payload,
+      });
+    },
+    [deviceId, state]
+  );
+
+  const applyRemoteState = useCallback((payload: YoutubeBroadcastPayload) => {
+    if (!payload?.videoId) return;
+    if (payload.fromDeviceId === deviceId) return;
+
+    const player = playerRef.current;
+    if (!player) return;
+
+    suppressEventRef.current = true;
+
+    try {
+      const currentVideoId = player.getVideoData?.()?.video_id;
+      const currentTime = Number(player.getCurrentTime?.() ?? 0);
+      const targetTime = Number(payload.playheadSeconds ?? 0);
+      const elapsed = Math.max(0, (Date.now() - payload.sentAt) / 1000);
+      const compensatedTime =
+        payload.status === "playing" ? targetTime + elapsed : targetTime;
+
+      if (currentVideoId !== payload.videoId) {
+        player.loadVideoById(payload.videoId, compensatedTime);
+      } else if (Math.abs(currentTime - compensatedTime) > 2) {
+        player.seekTo(compensatedTime, true);
+      }
+
+      if (payload.status === "playing") {
+        try {
+          player.playVideo?.();
+          setNeedsUserPlay(false);
+        } catch {
+          setNeedsUserPlay(true);
+        }
+      } else {
+        player.pauseVideo?.();
+        setNeedsUserPlay(false);
+      }
+    } catch (e) {
+      console.warn("[youtube] apply broadcast failed", e);
+    }
+
+    window.setTimeout(() => {
+      suppressEventRef.current = false;
+    }, 500);
+  }, [deviceId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -167,13 +267,19 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
           setState(row);
         }
       )
+      .on("broadcast", { event: "youtube-sync" }, ({ payload }) => {
+        applyRemoteState(payload as YoutubeBroadcastPayload);
+      })
       .subscribe();
+
+    channelRef.current = channel;
 
     return () => {
       cancelled = true;
+      channelRef.current = null;
       void supabase.removeChannel(channel);
     };
-  }, [sessionId]);
+  }, [sessionId, applyRemoteState]);
 
   useEffect(() => {
     if (!state?.video_id) return;
@@ -191,10 +297,13 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
           width: "100%",
           height: "100%",
           playerVars: {
-            playsinline: 1,
-            rel: 0,
-            modestbranding: 1,
-          },
+  playsinline: 1,
+  rel: 0,
+  modestbranding: 1,
+  iv_load_policy: 3,
+  fs: 0,
+  disablekb: 1,
+},
           events: {
             onStateChange: async (event: any) => {
               if (suppressEventRef.current) return;
@@ -205,16 +314,26 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
               const t = Number(player.getCurrentTime?.() ?? 0);
 
               if (event.data === window.YT.PlayerState.PLAYING) {
-                await syncState({
+                await saveStateToDb({
                   status: "playing",
                   playhead_seconds: t,
+                });
+
+                await sendBroadcast("play", {
+                  status: "playing",
+                  playheadSeconds: t,
                 });
               }
 
               if (event.data === window.YT.PlayerState.PAUSED) {
-                await syncState({
+                await saveStateToDb({
                   status: "paused",
                   playhead_seconds: t,
+                });
+
+                await sendBroadcast("pause", {
+                  status: "paused",
+                  playheadSeconds: t,
                 });
               }
             },
@@ -228,7 +347,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [state?.video_id, syncState]);
+  }, [state?.video_id, saveStateToDb, sendBroadcast]);
 
   useEffect(() => {
     const current = state;
@@ -257,18 +376,56 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       }
 
       if (current.status === "playing") {
-        player.playVideo?.();
+        try {
+          player.playVideo?.();
+          setNeedsUserPlay(false);
+        } catch {
+          setNeedsUserPlay(true);
+        }
       } else {
         player.pauseVideo?.();
+        setNeedsUserPlay(false);
       }
     } catch (e) {
-      console.warn("[youtube] apply state failed", e);
+      console.warn("[youtube] apply db state failed", e);
     }
 
     window.setTimeout(() => {
       suppressEventRef.current = false;
     }, 500);
   }, [state]);
+
+  useEffect(() => {
+    if (!state?.video_id) return;
+    if (state.status !== "playing") return;
+
+    const timer = window.setInterval(() => {
+      const player = playerRef.current;
+      if (!player) return;
+
+      const t = Number(player.getCurrentTime?.() ?? 0);
+
+      void sendBroadcast("heartbeat", {
+        status: "playing",
+        playheadSeconds: t,
+      });
+
+      const now = Date.now();
+
+      if (now - lastSavedAtRef.current > 30000) {
+        lastSavedAtRef.current = now;
+
+        void saveStateToDb({
+          status: "playing",
+          playhead_seconds: t,
+        });
+      }
+    }, 10000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [state?.video_id, state?.status, sendBroadcast, saveStateToDb]);
 
   async function openUrl() {
     const url = input.trim();
@@ -281,7 +438,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
 
     setError("");
 
-    await syncState({
+    await saveStateToDb({
       url,
       video_id: videoId,
       status: "paused",
@@ -295,9 +452,16 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
 
     if (!player || !current?.video_id) return;
 
-    await syncState({
+    const t = Number(player.getCurrentTime?.() ?? 0);
+
+    await saveStateToDb({
       status: "playing",
-      playhead_seconds: Number(player.getCurrentTime?.() ?? 0),
+      playhead_seconds: t,
+    });
+
+    await sendBroadcast("seek", {
+      status: "playing",
+      playheadSeconds: t,
     });
   }
 
@@ -368,39 +532,66 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       {state?.video_id ? (
         <>
           <div
-  style={{
-    marginTop: 14,
-    borderRadius: 18,
-    overflow: "hidden",
-    background: "#000",
-    aspectRatio: "16 / 9",
-    width: "100%",
-  }}
->
-  <div
-    ref={containerRef}
-    style={{
-      width: "100%",
-      height: "100%",
-    }}
-  />
-</div>
-
-          <button
-            type="button"
-            onClick={() => void sendManualSync()}
             style={{
-              marginTop: 8,
-              padding: "8px 12px",
-              borderRadius: 999,
-              border: "1px solid #d1d5db",
-              background: "#fff",
-              fontWeight: 900,
-              cursor: "pointer",
+              marginTop: 14,
+              borderRadius: 18,
+              overflow: "hidden",
+              background: "#000",
+              aspectRatio: "16 / 9",
+              width: "100%",
             }}
           >
-            今の再生位置を同期
-          </button>
+            <div
+              ref={containerRef}
+              style={{
+                width: "100%",
+                height: "100%",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => void sendManualSync()}
+              style={{
+                marginTop: 8,
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              今の再生位置を同期
+            </button>
+
+            {needsUserPlay && (
+              <button
+                type="button"
+                onClick={() => {
+                  const player = playerRef.current;
+                  if (!player) return;
+
+                  player.playVideo?.();
+                  setNeedsUserPlay(false);
+                }}
+                style={{
+                  marginTop: 8,
+                  padding: "8px 12px",
+                  borderRadius: 999,
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#fff",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                ▶ 同期再生を開始
+              </button>
+            )}
+          </div>
         </>
       ) : (
         <div

@@ -24,6 +24,22 @@ type Props = {
   collapsible?: boolean;
 };
 
+const EMOJIS = [
+  "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚",
+  "😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🥸","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️",
+  "😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓",
+  "🫣","🤗","🫡","🤔","🫢","🤭","🤫","🤥","😶","😐","😑","😬","🫨","🙄","😯","😦","😧","😮","😲","🥱",
+  "😴","🤤","😪","😮‍💨","😵","😵‍💫","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕",
+  "👍","👎","👌","🤌","🤏","✌️","🤞","🫰","🤟","🤘","🤙","👈","👉","👆","👇","☝️","✋","🤚","🖐️","🖖",
+  "👋","🤝","👏","🙌","🫶","🙏","✍️","💪","🦾","🖕","🙇","🤷","🤦",
+  "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❤️‍🔥","❤️‍🩹","💕","💞","💓","💗","💖","💘","💝","💟",
+  "🔥","✨","💯","💢","💥","💫","💦","💨","🕳️","💬","👀","🧠","🫀","🫁","👑","🎉","🎊","🎁","🏆","🥇",
+  "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🐔","🐧","🐦","🐤","🦆",
+  "🍎","🍊","🍋","🍌","🍉","🍇","🍓","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🥑","🍆","🥔","🥕","🌽","🍞",
+  "🍙","🍚","🍜","🍣","🍤","🍱","🍛","🍔","🍟","🍕","🌭","🥪","🌮","🌯","🥗","🍰","🎂","🍮","🍩","🍪",
+  "☀️","🌤️","⛅","🌥️","☁️","🌧️","⛈️","🌩️","🌨️","❄️","🌈","🌙","⭐","🌟","⚡","☔","🌊","🌸","🌻","🍀",
+];
+
 function formatTime(v: string) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return "";
@@ -37,19 +53,26 @@ function dedupeMessages(list: RoomMessage[]) {
   const map = new Map<string, RoomMessage>();
 
   for (const m of list) {
-    if (m?.id) {
-      map.set(m.id, {
-        ...map.get(m.id),
-        ...m,
-      });
-    }
+    if (!m?.id) continue;
+
+    const existing = map.get(m.id);
+    const deleted_at = existing?.deleted_at || m.deleted_at || null;
+
+    map.set(m.id, {
+      ...existing,
+      ...m,
+      deleted_at,
+      message: deleted_at ? "" : m.message,
+      image_path: deleted_at ? null : m.image_path,
+      message_type: deleted_at ? "text" : m.message_type,
+    });
   }
 
-  return Array.from(map.values()).sort(
-  (a, b) =>
-    new Date(a.created_at).getTime() -
-    new Date(b.created_at).getTime()
-);
+  return Array.from(map.values()).sort((a, b) => {
+    const at = new Date(a.created_at ?? 0).getTime();
+    const bt = new Date(b.created_at ?? 0).getTime();
+    return at - bt;
+  });
 }
 
 async function compressImage(file: File): Promise<File> {
@@ -119,9 +142,11 @@ export default function SessionMessages({
   const [show, setShow] = useState(!collapsible);
   const [err, setErr] = useState("");
   const [sending, setSending] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
-  const endRef = useRef<HTMLDivElement | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const deletedMessageIdsRef = useRef<Set<string>>(new Set());
 
   const pendingImageUrl = useMemo(() => {
     if (!pendingImage) return "";
@@ -135,19 +160,30 @@ export default function SessionMessages({
   }, [pendingImageUrl]);
 
   function scrollToBottom(behavior: ScrollBehavior = "smooth") {
-    endRef.current?.scrollIntoView({ behavior, block: "end" });
+    const box = boxRef.current;
+    if (!box) return;
+    box.scrollTo({ top: box.scrollHeight, behavior });
+  }
+
+  function scrollToTop(behavior: ScrollBehavior = "smooth") {
+    const box = boxRef.current;
+    if (!box) return;
+    box.scrollTo({ top: 0, behavior });
   }
 
   function scrollToBottomNextFrame(behavior: ScrollBehavior = "smooth") {
-    requestAnimationFrame(() => {
-      scrollToBottom(behavior);
-    });
+    requestAnimationFrame(() => scrollToBottom(behavior));
+  }
+
+  function scrollToTopNextFrame(behavior: ScrollBehavior = "smooth") {
+    requestAnimationFrame(() => scrollToTop(behavior));
   }
 
   useEffect(() => {
     if (!sessionId) return;
 
     let cancelled = false;
+    deletedMessageIdsRef.current.clear();
 
     async function loadMessages() {
       const { data, error } = await supabase
@@ -167,9 +203,14 @@ export default function SessionMessages({
         return;
       }
 
+      for (const m of data ?? []) {
+        if ((m as RoomMessage).id && (m as RoomMessage).deleted_at) {
+          deletedMessageIdsRef.current.add((m as RoomMessage).id);
+        }
+      }
+
       setMessages(dedupeMessages((data ?? []) as RoomMessage[]));
       setErr("");
-
       scrollToBottomNextFrame("auto");
     }
 
@@ -192,30 +233,35 @@ export default function SessionMessages({
           if (!row?.id) return;
 
           setMessages((prev) => {
-  const map = new Map(prev.map((m) => [m.id, m]));
+            const map = new Map(prev.map((m) => [m.id, m]));
+            const existing = map.get(row.id);
 
-  const existing = map.get(row.id);
+            if (row.deleted_at) {
+              deletedMessageIdsRef.current.add(row.id);
+            }
 
-  // 🔥 古いデータなら無視（これが最重要）
-  if (
-    existing &&
-    new Date(existing.created_at).getTime() >
-      new Date(row.created_at).getTime()
-  ) {
-    return prev;
-  }
+            const wasDeleted =
+              deletedMessageIdsRef.current.has(row.id) ||
+              !!existing?.deleted_at ||
+              !!row.deleted_at;
 
-  map.set(row.id, {
-    ...existing,
-    ...row,
-  });
+            map.set(row.id, {
+              ...existing,
+              ...row,
+              deleted_at: wasDeleted
+                ? existing?.deleted_at || row.deleted_at || new Date().toISOString()
+                : null,
+              message: wasDeleted ? "" : row.message,
+              image_path: wasDeleted ? null : row.image_path,
+              message_type: wasDeleted ? "text" : row.message_type,
+            });
 
-  return Array.from(map.values()).sort(
-    (a, b) =>
-      new Date(a.created_at).getTime() -
-      new Date(b.created_at).getTime()
-  );
-});
+            return Array.from(map.values()).sort((a, b) => {
+              const at = new Date(a.created_at ?? 0).getTime();
+              const bt = new Date(b.created_at ?? 0).getTime();
+              return at - bt;
+            });
+          });
 
           scrollToBottomNextFrame("smooth");
         }
@@ -236,6 +282,11 @@ export default function SessionMessages({
     if (nearBottom) scrollToBottomNextFrame("smooth");
   }, [messages, show]);
 
+  useEffect(() => {
+    if (!show) return;
+    scrollToBottomNextFrame("auto");
+  }, [show]);
+
   async function sendText() {
     const text = draft.trim();
     if (!text || !sessionId || !deviceId || sending) return;
@@ -255,6 +306,7 @@ export default function SessionMessages({
     };
 
     setDraft("");
+    setShowEmojiPicker(false);
     setMessages((prev) => dedupeMessages([...prev, temp]));
     scrollToBottomNextFrame("smooth");
 
@@ -298,6 +350,7 @@ export default function SessionMessages({
     try {
       setSending(true);
       setErr("");
+      setShowEmojiPicker(false);
 
       const name = displayName && displayName !== "You" ? displayName : "参加者";
       const compressed = await compressImage(file);
@@ -357,7 +410,20 @@ export default function SessionMessages({
   async function deleteMessage(m: RoomMessage) {
     if (!m?.id || !deviceId) return;
 
+    deletedMessageIdsRef.current.add(m.id);
+
     const deletedAt = new Date().toISOString();
+    const imagePathToDelete = m.image_path ?? null;
+
+    if (imagePathToDelete) {
+      const { error: storageDeleteError } = await supabase.storage
+        .from("room-message-images")
+        .remove([imagePathToDelete]);
+
+      if (storageDeleteError) {
+        console.warn("[messages] image delete failed", storageDeleteError);
+      }
+    }
 
     const { error } = await supabase
       .from("room_messages")
@@ -373,6 +439,31 @@ export default function SessionMessages({
     if (error) {
       console.warn("[messages] delete failed", error);
       setErr("取り消しに失敗しました");
+      return;
+    }
+
+    const { data: confirmed, error: confirmError } = await supabase
+      .from("room_messages")
+      .select(
+        "id, session_id, device_id, display_name, message, image_path, message_type, deleted_at, created_at"
+      )
+      .eq("id", m.id)
+      .maybeSingle();
+
+    if (confirmError) {
+      console.warn("[messages] delete confirm failed", confirmError);
+    }
+
+    if (confirmed?.id) {
+      deletedMessageIdsRef.current.add(confirmed.id);
+
+      setMessages((prev) =>
+        dedupeMessages([
+          ...prev.filter((x) => x.id !== confirmed.id),
+          confirmed as RoomMessage,
+        ])
+      );
+
       return;
     }
 
@@ -425,107 +516,170 @@ export default function SessionMessages({
         </div>
       ) : null}
 
-      <div
-        ref={boxRef}
-        style={{
-          display: "grid",
-          gap: 10,
-          maxHeight,
-          overflowY: "auto",
-          paddingRight: 4,
-          marginBottom: 12,
-        }}
-      >
-        {messages.length === 0 ? (
-          <div style={{ color: "#666", fontSize: 13 }}>
-            まだメッセージはありません
-          </div>
-        ) : (
-          messages.map((m) => {
-            const isMe =
-              String(m.device_id ?? "").trim() === String(deviceId ?? "").trim();
+      <div style={{ position: "relative" }}>
+        <div
+          ref={boxRef}
+          style={{
+            display: "grid",
+            gap: 10,
+            maxHeight,
+            overflowY: "auto",
+            paddingRight: 4,
+            marginBottom: 12,
+          }}
+        >
+          {messages.length === 0 ? (
+            <div style={{ color: "#666", fontSize: 13 }}>
+              まだメッセージはありません
+            </div>
+          ) : (
+            messages.map((m) => {
+              const isMe =
+                String(m.device_id ?? "").trim() === String(deviceId ?? "").trim();
 
-            return (
-              <div
-                key={m.id}
-                style={{
-                  display: "grid",
-                  gap: 4,
-                  justifyItems: isMe ? "end" : "start",
-                }}
-              >
+              return (
                 <div
+                  key={m.id}
                   style={{
-                    fontSize: 11,
-                    color: "#6b7280",
-                    fontWeight: 800,
-                    padding: isMe ? "0 4px 0 0" : "0 0 0 4px",
+                    display: "grid",
+                    gap: 4,
+                    justifyItems: isMe ? "end" : "start",
                   }}
                 >
-                  {isMe ? "自分" : m.display_name || "参加者"}・
-                  {formatTime(m.created_at)}
-                </div>
-
-                <div
-                  style={{
-                    maxWidth: "78%",
-                    padding: "9px 11px",
-                    borderRadius: 14,
-                    background: isMe ? "#dcfce7" : "#f9fafb",
-                    border: "1px solid #e5e7eb",
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {m.deleted_at ? (
-                    <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
-                      メッセージを取り消しました
-                    </span>
-                  ) : m.message_type === "image" && m.image_path ? (
-                    <img
-                      src={
-                        supabase.storage
-                          .from("room-message-images")
-                          .getPublicUrl(m.image_path).data.publicUrl
-                      }
-                      alt="送信画像"
-                      loading="lazy"
-                      style={{
-                        maxWidth: "100%",
-                        maxHeight: 240,
-                        borderRadius: 10,
-                        display: "block",
-                        objectFit: "contain",
-                      }}
-                    />
-                  ) : (
-                    m.message
-                  )}
-                </div>
-
-                {isMe && !m.deleted_at ? (
-                  <button
-                    type="button"
-                    onClick={() => void deleteMessage(m)}
+                  <div
                     style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "#9ca3af",
                       fontSize: 11,
-                      cursor: "pointer",
-                      padding: "0 4px",
+                      color: "#6b7280",
+                      fontWeight: 800,
+                      padding: isMe ? "0 4px 0 0" : "0 0 0 4px",
                     }}
                   >
-                    取り消し
-                  </button>
-                ) : null}
-              </div>
-            );
-          })
-        )}
-        <div ref={endRef} />
+                    {isMe ? "自分" : m.display_name || "参加者"}・
+                    {formatTime(m.created_at)}
+                  </div>
+
+                  <div
+                    style={{
+                      maxWidth: "78%",
+                      padding: "9px 11px",
+                      borderRadius: 14,
+                      background: isMe ? "#dcfce7" : "#f9fafb",
+                      border: "1px solid #e5e7eb",
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {m.deleted_at ? (
+                      <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
+                        メッセージを取り消しました
+                      </span>
+                    ) : m.message_type === "image" && m.image_path ? (
+                      <img
+                        src={
+                          supabase.storage
+                            .from("room-message-images")
+                            .getPublicUrl(m.image_path).data.publicUrl
+                        }
+                        alt="送信画像"
+                        loading="lazy"
+                        style={{
+                          maxWidth: "100%",
+                          maxHeight: 240,
+                          borderRadius: 10,
+                          display: "block",
+                          objectFit: "contain",
+                        }}
+                      />
+                    ) : (
+                      m.message
+                    )}
+                  </div>
+
+                  {!m.deleted_at ? (
+  <button
+    type="button"
+    onClick={() => {
+      console.log("[messages] delete clicked", {
+        messageId: m.id,
+        messageDeviceId: m.device_id,
+        currentDeviceId: deviceId,
+        isMe,
+      });
+      void deleteMessage(m);
+    }}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        color: "#9ca3af",
+                        fontSize: 11,
+                        cursor: "pointer",
+                        padding: "0 4px",
+                      }}
+                    >
+                      取り消し
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {messages.length > 0 ? (
+          <>
+            <button
+              type="button"
+              title="先頭へ"
+              onClick={() => scrollToTopNextFrame("smooth")}
+              style={{
+                position: "absolute",
+                left: "50%",
+                bottom: 118,
+                transform: "translateX(-50%)",
+                borderRadius: 999,
+                width: 40,
+                height: 40,
+                background: "#6b7280",
+                color: "#fff",
+                border: "none",
+                fontSize: 18,
+                fontWeight: 900,
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                zIndex: 2,
+              }}
+            >
+              ↑
+            </button>
+
+            <button
+              type="button"
+              title="最新へ"
+              onClick={() => scrollToBottomNextFrame("smooth")}
+              style={{
+                position: "absolute",
+                left: "50%",
+                bottom: 64,
+                transform: "translateX(-50%)",
+                borderRadius: 999,
+                width: 40,
+                height: 40,
+                background: "#22c55e",
+                color: "#fff",
+                border: "none",
+                fontSize: 18,
+                fontWeight: 900,
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                zIndex: 2,
+              }}
+            >
+              ↓
+            </button>
+          </>
+        ) : null}
       </div>
 
       {pendingImage ? (
@@ -582,32 +736,42 @@ export default function SessionMessages({
       ) : null}
 
       <div style={{ display: "grid", gap: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            gap: 4,
-            overflowX: "auto",
-            paddingBottom: 2,
-          }}
-        >
-          {["👍", "😂", "😭", "🙏", "🔥", "❤️"].map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              onClick={() => setDraft((prev) => prev + emoji)}
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 999,
-                background: "#fff",
-                cursor: "pointer",
-                padding: "6px 8px",
-                flex: "0 0 auto",
-              }}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
+        {showEmojiPicker ? (
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              flexWrap: "wrap",
+              maxHeight: 160,
+              overflowY: "auto",
+              padding: 8,
+              border: "1px solid #e5e7eb",
+              borderRadius: 14,
+              background: "#fff",
+            }}
+          >
+            {EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => {
+                  setDraft((prev) => prev + emoji);
+                  inputRef.current?.focus();
+                }}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: 22,
+                  padding: 4,
+                  lineHeight: 1.1,
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div
           style={{
@@ -616,7 +780,57 @@ export default function SessionMessages({
             alignItems: "center",
           }}
         >
+          <button
+            type="button"
+            onClick={() => {
+              setShowEmojiPicker((prev) => !prev);
+              inputRef.current?.focus();
+            }}
+            style={{
+              border: "1px solid #d1d5db",
+              borderRadius: 999,
+              padding: "10px 12px",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            😊
+          </button>
+
+          <label
+            style={{
+              border: "1px solid #d1d5db",
+              borderRadius: 999,
+              padding: "10px 12px",
+              cursor: sending ? "not-allowed" : "pointer",
+              background: "#fff",
+              opacity: sending ? 0.6 : 1,
+              whiteSpace: "nowrap",
+              lineHeight: 1,
+            }}
+          >
+            📷
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={sending}
+              style={{ display: "none" }}
+              onClick={(e) => {
+                e.currentTarget.value = "";
+              }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setPendingImage(file);
+              }}
+            />
+          </label>
+
           <input
+            ref={inputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onCompositionStart={() => setIsComposing(true)}
@@ -642,9 +856,7 @@ export default function SessionMessages({
                 }
               }
             }}
-            placeholder={
-              pendingImage ? "送信ボタンで画像を送信" : "メッセージを入力"
-            }
+            placeholder={pendingImage ? "送信ボタンで画像を送信" : "メッセージを入力"}
             disabled={sending}
             style={{
               flex: 1,
@@ -655,35 +867,6 @@ export default function SessionMessages({
               minWidth: 0,
             }}
           />
-
-          <label
-            style={{
-              border: "1px solid #d1d5db",
-              borderRadius: 999,
-              padding: "10px 12px",
-              cursor: sending ? "not-allowed" : "pointer",
-              background: "#fff",
-              opacity: sending ? 0.6 : 1,
-              whiteSpace: "nowrap",
-            }}
-          >
-            📷
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              disabled={sending}
-              style={{ display: "none" }}
-              onClick={(e) => {
-                e.currentTarget.value = "";
-              }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-
-                setPendingImage(file);
-              }}
-            />
-          </label>
 
           <button
             type="button"
