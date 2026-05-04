@@ -42,6 +42,8 @@ type RoomMessage = {
   device_id: string;
   display_name: string;
   message: string;
+  image_path?: string | null;
+  message_type?: "text" | "image";
   created_at: string;
 };
 
@@ -307,6 +309,58 @@ function formatTime(v: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+async function compressImage(file: File): Promise<File> {
+  const allowed = ["image/jpeg", "image/png", "image/webp"];
+
+  if (!allowed.includes(file.type)) {
+    throw new Error("送信できる画像は JPG / PNG / WebP のみです");
+  }
+
+  if (file.size > 8 * 1024 * 1024) {
+    throw new Error("画像は8MB以下にしてください");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = objectUrl;
+    });
+
+    const maxSize = 1280;
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(image.width * scale);
+    canvas.height = Math.round(image.height * scale);
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("画像の圧縮に失敗しました");
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => {
+          if (!b) reject(new Error("画像の圧縮に失敗しました"));
+          else resolve(b);
+        },
+        "image/jpeg",
+        0.72
+      );
+    });
+
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+      type: "image/jpeg",
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function MemberAvatar({
@@ -1029,7 +1083,7 @@ if (!shouldAutoStart) return;
       try {
         const { data, error } = await supabase
           .from("room_messages")
-          .select("id, session_id, device_id, display_name, message, created_at")
+          .select("id, session_id, device_id, display_name, message, image_path, message_type, created_at")
           .eq("session_id", sessionId)
           .order("created_at", { ascending: true })
           .limit(200);
@@ -1145,6 +1199,46 @@ if (!shouldAutoStart) return;
       setDraft(text);
     }
   }
+
+  async function sendImage(file: File) {
+  if (!sessionId || !deviceId) return;
+
+  try {
+    const rawName = displayName || "参加者";
+    const name = rawName === "You" ? "参加者" : rawName;
+
+    const compressed = await compressImage(file);
+
+    const safeFileName = compressed.name
+      .replace(/[^\w.\-]/g, "_")
+      .slice(0, 80);
+
+    const path = `${sessionId}/${deviceId}/${Date.now()}-${safeFileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("room-message-images")
+      .upload(path, compressed, {
+        contentType: compressed.type,
+        upsert: false,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { error: insertError } = await supabase.from("room_messages").insert({
+      session_id: sessionId,
+      device_id: deviceId,
+      display_name: name,
+      message: "",
+      image_path: path,
+      message_type: "image",
+    });
+
+    if (insertError) throw insertError;
+  } catch (e: any) {
+    console.error("[room] image send failed", e);
+    setErr(e?.message ?? "画像の送信に失敗しました");
+  }
+}
 
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
 
@@ -1450,23 +1544,38 @@ const inviteUrl =
                           ) : null}
 
                           <div
-                            style={{
-                              padding: "10px 12px",
-                              borderRadius: 18,
-                              background: isMe ? "#86efac" : "#ffffff",
-                              border: isMe ? "none" : "1px solid #e5e7eb",
-                              color: "#111827",
-                              lineHeight: 1.5,
-                              whiteSpace: "pre-wrap",
-                              overflowWrap: "anywhere",
-                              wordBreak: "break-word",
-                              borderBottomRightRadius: isMe ? 6 : 18,
-                              borderBottomLeftRadius: isMe ? 18 : 6,
-                              boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                            }}
-                          >
-                            {m.message}
-                          </div>
+  style={{
+    padding: "10px 12px",
+    borderRadius: 18,
+    background: isMe ? "#86efac" : "#ffffff",
+    border: isMe ? "none" : "1px solid #e5e7eb",
+    color: "#111827",
+    lineHeight: 1.5,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    borderBottomRightRadius: isMe ? 6 : 18,
+    borderBottomLeftRadius: isMe ? 18 : 6,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+  }}
+>
+  {m.message_type === "image" && m.image_path ? (
+    <img
+      src={
+        supabase.storage
+          .from("room-message-images")
+          .getPublicUrl(m.image_path).data.publicUrl
+      }
+      alt="img"
+      style={{
+        maxWidth: "100%",
+        borderRadius: 10,
+      }}
+    />
+  ) : (
+    m.message
+  )}
+</div>
 
                           <div
                             style={{
@@ -1525,21 +1634,47 @@ const inviteUrl =
                   }}
                 />
 
-                <button
-                  onClick={() => void sendMessage()}
-                  style={{
-                    border: "none",
-                    borderRadius: 999,
-                    padding: "10px 16px",
-                    background: "#22c55e",
-                    color: "#fff",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  送信
-                </button>
+                <label
+  style={{
+    border: "1px solid #d1d5db",
+    borderRadius: 999,
+    padding: "10px 14px",
+    background: "#fff",
+    color: "#111827",
+    fontWeight: 900,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  }}
+>
+  📷
+  <input
+    type="file"
+    accept="image/jpeg,image/png,image/webp"
+    style={{ display: "none" }}
+    onChange={(e) => {
+      const file = e.target.files?.[0];
+      e.currentTarget.value = "";
+      if (!file) return;
+      void sendImage(file);
+    }}
+  />
+</label>
+
+<button
+  onClick={() => void sendMessage()}
+  style={{
+    border: "none",
+    borderRadius: 999,
+    padding: "10px 16px",
+    background: "#22c55e",
+    color: "#fff",
+    fontWeight: 900,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  }}
+>
+  送信
+</button>
               </div>
             </div>
           </div>

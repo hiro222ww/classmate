@@ -22,6 +22,8 @@ type RoomMessage = {
   device_id: string;
   display_name: string;
   message: string;
+  image_path?: string | null;
+  message_type?: "text" | "image";
   created_at: string;
 };
 
@@ -53,6 +55,58 @@ function formatTime(v: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+async function compressImage(file: File): Promise<File> {
+  const allowed = ["image/jpeg", "image/png", "image/webp"];
+
+  if (!allowed.includes(file.type)) {
+    throw new Error("送信できる画像は JPG / PNG / WebP のみです");
+  }
+
+  if (file.size > 8 * 1024 * 1024) {
+    throw new Error("画像は8MB以下にしてください");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = objectUrl;
+    });
+
+    const maxSize = 1280;
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(image.width * scale);
+    canvas.height = Math.round(image.height * scale);
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("画像の圧縮に失敗しました");
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => {
+          if (!b) reject(new Error("画像の圧縮に失敗しました"));
+          else resolve(b);
+        },
+        "image/jpeg",
+        0.72
+      );
+    });
+
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+      type: "image/jpeg",
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function getAvatarUrl(photoPath?: string | null) {
@@ -392,7 +446,7 @@ clearRetryTimer();
     async function loadRoomMessages() {
       const { data, error } = await supabase
         .from("room_messages")
-        .select("id, session_id, device_id, display_name, message, created_at")
+        .select("id, session_id, device_id, display_name, message, image_path, message_type, created_at")
         .eq("session_id", sessionId)
         .order("created_at", { ascending: true })
         .limit(100);
@@ -550,7 +604,7 @@ clearRetryTimer();
         display_name: displayName,
         message: text,
       })
-      .select("id, session_id, device_id, display_name, message, created_at")
+      .select("id, session_id, device_id, display_name, message, image_path, message_type, created_at")
       .single();
 
     if (error) {
@@ -960,20 +1014,39 @@ clearRetryTimer();
       </div>
 
       <div
-        style={{
-          maxWidth: "78%",
-          padding: "9px 11px",
-          borderRadius: 14,
-          background: isMe ? "#dcfce7" : "#f9fafb",
-          border: "1px solid #e5e7eb",
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-          fontSize: 13,
-          lineHeight: 1.5,
-        }}
-      >
-        {m.message}
-      </div>
+  style={{
+    maxWidth: "78%",
+    padding: "9px 11px",
+    borderRadius: 14,
+    background: isMe ? "#dcfce7" : "#f9fafb",
+    border: "1px solid #e5e7eb",
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    fontSize: 13,
+    lineHeight: 1.5,
+  }}
+>
+  {m.message_type === "image" && m.image_path ? (
+    <img
+      src={
+        supabase.storage
+          .from("room-message-images")
+          .getPublicUrl(m.image_path).data.publicUrl
+      }
+      alt="送信画像"
+      loading="lazy"
+      style={{
+        maxWidth: "100%",
+        maxHeight: 220,
+        borderRadius: 10,
+        display: "block",
+        objectFit: "contain",
+      }}
+    />
+  ) : (
+    m.message
+  )}
+</div>
     </div>
   );
 })
