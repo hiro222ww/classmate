@@ -336,12 +336,28 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
             },
 
             onStateChange: async (event: any) => {
-              if (suppressEventRef.current) return;
+  const player = playerRef.current;
+  if (!player) return;
 
-              const player = playerRef.current;
-              if (!player) return;
+  const isPlaying = event.data === window.YT.PlayerState.PLAYING;
+  const allowed = Date.now() < allowPlayUntilRef.current;
 
-              const t = Number(player.getCurrentTime?.() ?? 0);
+  // suppress中でも、許可してない再生は必ず止める
+  if (isPlaying && !allowed) {
+    suppressEventRef.current = true;
+    player.pauseVideo?.();
+
+    window.setTimeout(() => {
+      suppressEventRef.current = false;
+    }, 800);
+
+    setNeedsUserPlay(false);
+    return;
+  }
+
+  if (suppressEventRef.current) return;
+
+  const t = Number(player.getCurrentTime?.() ?? 0);
 
               if (event.data === window.YT.PlayerState.PLAYING) {
                 const allowed = Date.now() < allowPlayUntilRef.current;
