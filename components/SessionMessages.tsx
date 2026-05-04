@@ -25,7 +25,6 @@ type Props = {
 };
 
 function formatTime(v: string) {
-  if (!v) return "";
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleTimeString("ja-JP", {
@@ -37,9 +36,9 @@ function formatTime(v: string) {
 function dedupeMessages(list: RoomMessage[]) {
   const map = new Map<string, RoomMessage>();
   for (const m of list) {
-    if (!m?.id) continue;
-    map.set(m.id, m);
+    if (m?.id) map.set(m.id, m);
   }
+
   return Array.from(map.values()).sort((a, b) =>
     String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
   );
@@ -156,6 +155,10 @@ export default function SessionMessages({
 
       setMessages(dedupeMessages((data ?? []) as RoomMessage[]));
       setErr("");
+
+      setTimeout(() => {
+        scrollToBottom("auto");
+      }, 0);
     }
 
     void loadMessages();
@@ -178,8 +181,16 @@ export default function SessionMessages({
             if (payload.eventType === "DELETE") {
               return prev.filter((m) => m.id !== row.id);
             }
-            return dedupeMessages([...prev.filter((m) => m.id !== row.id), row]);
+
+            return dedupeMessages([
+              ...prev.filter((m) => m.id !== row.id),
+              row,
+            ]);
           });
+
+          setTimeout(() => {
+            scrollToBottom("smooth");
+          }, 0);
         }
       )
       .subscribe();
@@ -242,9 +253,16 @@ export default function SessionMessages({
 
     if (data?.id) {
       setMessages((prev) =>
-        dedupeMessages([...prev.filter((m) => m.id !== tempId), data as RoomMessage])
+        dedupeMessages([
+          ...prev.filter((m) => m.id !== tempId),
+          data as RoomMessage,
+        ])
       );
     }
+
+    setTimeout(() => {
+      scrollToBottom("smooth");
+    }, 0);
   }
 
   async function sendImage(file: File) {
@@ -257,7 +275,10 @@ export default function SessionMessages({
       const name = displayName && displayName !== "You" ? displayName : "参加者";
       const compressed = await compressImage(file);
 
-      const safeFileName = compressed.name.replace(/[^\w.\-]/g, "_").slice(0, 80);
+      const safeFileName = compressed.name
+        .replace(/[^\w.\-]/g, "_")
+        .slice(0, 80);
+
       const path = `${sessionId}/${deviceId}/${Date.now()}-${safeFileName}`;
 
       const { error: uploadError } = await supabase.storage
@@ -287,11 +308,20 @@ export default function SessionMessages({
       if (error) throw error;
 
       if (data?.id) {
-        setMessages((prev) => dedupeMessages([...prev, data as RoomMessage]));
+        const inserted = data as RoomMessage;
+        setMessages((prev) =>
+          dedupeMessages([
+            ...prev.filter((m) => m.id !== inserted.id),
+            inserted,
+          ])
+        );
       }
 
       setPendingImage(null);
-      queueMicrotask(() => scrollToBottom("smooth"));
+
+      setTimeout(() => {
+        scrollToBottom("smooth");
+      }, 0);
     } catch (e: any) {
       console.warn("[messages] send image failed", e);
       setErr(e?.message ?? "画像の送信に失敗しました");
@@ -335,7 +365,11 @@ export default function SessionMessages({
     );
   }
 
-  async function handleSend() {
+  async function handleSendTextOnly() {
+    await sendText();
+  }
+
+  async function handleSendButton() {
     if (pendingImage) {
       await sendImage(pendingImage);
       return;
@@ -490,6 +524,7 @@ export default function SessionMessages({
               border: "1px solid #e5e7eb",
             }}
           />
+
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 900, color: "#111827" }}>
               画像を送信しますか？
@@ -498,6 +533,7 @@ export default function SessionMessages({
               {pendingImage.name}
             </div>
           </div>
+
           <button
             type="button"
             onClick={() => setPendingImage(null)}
@@ -517,94 +553,134 @@ export default function SessionMessages({
         </div>
       ) : null}
 
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-        }}
-      >
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onCompositionStart={() => setIsComposing(true)}
-          onCompositionEnd={() => {
-            window.setTimeout(() => setIsComposing(false), 0);
-          }}
-          onKeyDown={(e) => {
-            const native = e.nativeEvent as KeyboardEvent & {
-              isComposing?: boolean;
-              keyCode?: number;
-            };
-
-            if (isComposing) return;
-            if (native?.isComposing) return;
-            if (e.key === "Process") return;
-            if (native?.keyCode === 229) return;
-
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void handleSend();
-            }
-          }}
-          placeholder={pendingImage ? "画像を送信できます" : "メッセージを入力"}
-          disabled={sending}
+      <div style={{ display: "grid", gap: 8 }}>
+        <div
           style={{
-            flex: 1,
-            border: "1px solid #d1d5db",
-            borderRadius: 999,
-            padding: "10px 12px",
-            background: "#fff",
-          }}
-        />
-
-        <label
-          style={{
-            border: "1px solid #d1d5db",
-            borderRadius: 999,
-            padding: "10px 12px",
-            cursor: sending ? "not-allowed" : "pointer",
-            background: "#fff",
-            opacity: sending ? 0.6 : 1,
-            whiteSpace: "nowrap",
+            display: "flex",
+            gap: 4,
+            overflowX: "auto",
+            paddingBottom: 2,
           }}
         >
-          📷
+          {["👍", "😂", "😭", "🙏", "🔥", "❤️"].map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              onClick={() => setDraft((prev) => prev + emoji)}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 999,
+                background: "#fff",
+                cursor: "pointer",
+                padding: "6px 8px",
+                flex: "0 0 auto",
+              }}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+          }}
+        >
           <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => {
+              window.setTimeout(() => setIsComposing(false), 0);
+            }}
+            onKeyDown={(e) => {
+              const native = e.nativeEvent as KeyboardEvent & {
+                isComposing?: boolean;
+                keyCode?: number;
+              };
+
+              if (isComposing) return;
+              if (native?.isComposing) return;
+              if (e.key === "Process") return;
+              if (native?.keyCode === 229) return;
+
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+
+                if (!pendingImage) {
+                  void handleSendTextOnly();
+                }
+              }
+            }}
+            placeholder={
+              pendingImage ? "送信ボタンで画像を送信" : "メッセージを入力"
+            }
             disabled={sending}
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.currentTarget.value = "";
-              if (!file) return;
-              setPendingImage(file);
+            style={{
+              flex: 1,
+              border: "1px solid #d1d5db",
+              borderRadius: 999,
+              padding: "10px 12px",
+              background: "#fff",
+              minWidth: 0,
             }}
           />
-        </label>
 
-        <button
-          type="button"
-          onClick={() => void handleSend()}
-          disabled={sending || (!draft.trim() && !pendingImage)}
-          style={{
-            border: "none",
-            borderRadius: 999,
-            padding: "10px 14px",
-            background:
-              sending || (!draft.trim() && !pendingImage) ? "#9ca3af" : "#22c55e",
-            color: "#fff",
-            fontWeight: 900,
-            cursor:
-              sending || (!draft.trim() && !pendingImage)
-                ? "not-allowed"
-                : "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {sending ? "送信中" : "送信"}
-        </button>
+          <label
+            style={{
+              border: "1px solid #d1d5db",
+              borderRadius: 999,
+              padding: "10px 12px",
+              cursor: sending ? "not-allowed" : "pointer",
+              background: "#fff",
+              opacity: sending ? 0.6 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            📷
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={sending}
+              style={{ display: "none" }}
+              onClick={(e) => {
+                e.currentTarget.value = "";
+              }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                setPendingImage(file);
+              }}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => void handleSendButton()}
+            disabled={sending || (!draft.trim() && !pendingImage)}
+            style={{
+              border: "none",
+              borderRadius: 999,
+              padding: "10px 14px",
+              background:
+                sending || (!draft.trim() && !pendingImage)
+                  ? "#9ca3af"
+                  : "#22c55e",
+              color: "#fff",
+              fontWeight: 900,
+              cursor:
+                sending || (!draft.trim() && !pendingImage)
+                  ? "not-allowed"
+                  : "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {sending ? "送信中" : "送信"}
+          </button>
+        </div>
       </div>
     </>
   );
