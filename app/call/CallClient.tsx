@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 import SessionMessages from "@/components/SessionMessages";
+import YouTubeEmbed from "./YouTubeEmbed";
 
 type Member = {
   device_id: string;
@@ -17,16 +18,6 @@ type Member = {
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
 
-type RoomMessage = {
-  id: string;
-  session_id: string;
-  device_id: string;
-  display_name: string;
-  message: string;
-  image_path?: string | null;
-  message_type?: "text" | "image";
-  created_at: string;
-};
 
 type SessionStatusResponse = {
   ok?: boolean;
@@ -47,68 +38,6 @@ type SessionStatusResponse = {
   memberCount?: number;
   error?: string;
 };
-
-function formatTime(v: string) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("ja-JP", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-async function compressImage(file: File): Promise<File> {
-  const allowed = ["image/jpeg", "image/png", "image/webp"];
-
-  if (!allowed.includes(file.type)) {
-    throw new Error("送信できる画像は JPG / PNG / WebP のみです");
-  }
-
-  if (file.size > 8 * 1024 * 1024) {
-    throw new Error("画像は8MB以下にしてください");
-  }
-
-  const objectUrl = URL.createObjectURL(file);
-
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = objectUrl;
-    });
-
-    const maxSize = 1280;
-    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(image.width * scale);
-    canvas.height = Math.round(image.height * scale);
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("画像の圧縮に失敗しました");
-
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (b) => {
-          if (!b) reject(new Error("画像の圧縮に失敗しました"));
-          else resolve(b);
-        },
-        "image/jpeg",
-        0.72
-      );
-    });
-
-    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
-      type: "image/jpeg",
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
 
 function getAvatarUrl(photoPath?: string | null) {
   let normalized = String(photoPath ?? "").trim();
@@ -137,18 +66,6 @@ function getAvatarUrl(photoPath?: string | null) {
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
-function dedupeRoomMessages(list: RoomMessage[]) {
-  const map = new Map<string, RoomMessage>();
-
-  for (const m of list) {
-    if (!m?.id) continue;
-    map.set(m.id, m);
-  }
-
-  return Array.from(map.values()).sort((a, b) =>
-    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
-  );
-}
 
 export default function CallClient() {
   const router = useRouter();
@@ -188,11 +105,9 @@ useEffect(() => {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
-  
- const [roomMessages, setRoomMessages] = useState<RoomMessage[]>([]);
-const [showRoomMessages, setShowRoomMessages] = useState(false);
-const [draft, setDraft] = useState("");
-const [isComposing, setIsComposing] = useState(false);
+const [youtubeInput, setYoutubeInput] = useState("");
+const [youtubeUrl, setYoutubeUrl] = useState("");
+
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
@@ -439,60 +354,6 @@ clearRetryTimer();
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-
-    let cancelled = false;
-
-    async function loadRoomMessages() {
-      const { data, error } = await supabase
-        .from("room_messages")
-        .select("id, session_id, device_id, display_name, message, image_path, message_type, created_at")
-        .eq("session_id", sessionId)
-        .order("created_at", { ascending: true })
-        .limit(100);
-
-      if (cancelled) return;
-
-      if (error) {
-        console.warn("[call] room messages load failed", error);
-        return;
-      }
-
-      setRoomMessages(dedupeRoomMessages((data ?? []) as RoomMessage[]));
-    }
-
-    void loadRoomMessages();
-
-    const channel = supabase
-      .channel(`call-room-messages-${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "room_messages",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        (payload: any) => {
-          const row = payload?.new as RoomMessage;
-          if (!row?.id) return;
-
-          setRoomMessages((prev) => dedupeRoomMessages([...prev, row]));
-        }
-      )
-      .subscribe((status) => {
-        console.log("[call] room messages subscribe status", {
-          sessionId,
-          status,
-        });
-      });
-
-    return () => {
-      cancelled = true;
-      void supabase.removeChannel(channel);
-    };
-  }, [sessionId]);
 
   useEffect(() => {
     const memberIds = new Set(members.map((m) => m.device_id));
@@ -578,98 +439,7 @@ clearRetryTimer();
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
-    async function sendRoomMessage() {
-    const text = draft.trim();
-    if (!text || !sessionId || !deviceId) return;
 
-    const me = members.find((m) => m.device_id === deviceId);
-    const displayName = me?.display_name || "参加者";
-
-    const tempMessage: RoomMessage = {
-      id: `temp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      session_id: sessionId,
-      device_id: deviceId,
-      display_name: displayName,
-      message: text,
-      created_at: new Date().toISOString(),
-    };
-
-    setDraft("");
-    setRoomMessages((prev) => [...prev, tempMessage]);
-
-    const { data, error } = await supabase
-      .from("room_messages")
-      .insert({
-        session_id: sessionId,
-        device_id: deviceId,
-        display_name: displayName,
-        message: text,
-      })
-      .select("id, session_id, device_id, display_name, message, image_path, message_type, created_at")
-      .single();
-
-    if (error) {
-      console.warn("[call] room message send failed", error);
-      setRoomMessages((prev) => prev.filter((m) => m.id !== tempMessage.id));
-      setDraft(text);
-      return;
-    }
-
-    if (data?.id) {
-      setRoomMessages((prev) =>
-        dedupeRoomMessages([
-          ...prev.filter((m) => m.id !== tempMessage.id),
-          data as RoomMessage,
-        ])
-      );
-    }
-  }
-
-  async function sendRoomImage(file: File) {
-  if (!sessionId || !deviceId) return;
-
-  try {
-    const me = members.find((m) => m.device_id === deviceId);
-    const displayName = me?.display_name || "参加者";
-
-    const compressed = await compressImage(file);
-
-    const path = `${sessionId}/${deviceId}/${Date.now()}.jpg`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("room-message-images")
-      .upload(path, compressed, {
-        contentType: compressed.type,
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data, error } = await supabase
-      .from("room_messages")
-      .insert({
-        session_id: sessionId,
-        device_id: deviceId,
-        display_name: displayName,
-        message: "",
-        image_path: path,
-        message_type: "image",
-      })
-      .select(
-        "id, session_id, device_id, display_name, message, image_path, message_type, created_at"
-      )
-      .single();
-
-    if (error) throw error;
-
-    if (data) {
-      setRoomMessages((prev) =>
-        dedupeRoomMessages([...prev, data as RoomMessage])
-      );
-    }
-  } catch (e) {
-    console.warn("[call] image send failed", e);
-  }
-}
 
   if (!deviceId) {
   return null;
@@ -919,6 +689,35 @@ clearRetryTimer();
       </section>
 
       <section
+  style={{
+    marginTop: 16,
+    padding: 14,
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
+    background: "#fff",
+  }}
+>
+  <div style={{ fontWeight: 900, fontSize: 15 }}>
+    一緒に見る
+  </div>
+
+  <input
+    value={youtubeUrl}
+    onChange={(e) => setYoutubeUrl(e.target.value)}
+    placeholder="YouTubeのURLを貼る"
+    style={{
+      marginTop: 10,
+      width: "100%",
+      border: "1px solid #d1d5db",
+      borderRadius: 12,
+      padding: "10px 12px",
+    }}
+  />
+
+  {youtubeUrl ? <YouTubeEmbed url={youtubeUrl} /> : null}
+</section>
+
+      <section
         style={{
           marginTop: 16,
           padding: 14,
@@ -988,202 +787,18 @@ clearRetryTimer();
       <section style={{ marginTop: 16 }}>
         {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
       </section>
-
-      <section
-        style={{
-          marginTop: 16,
-          padding: 14,
-          border: "1px solid #e5e7eb",
-          borderRadius: 18,
-          background: "#fff",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setShowRoomMessages((prev) => !prev)}
-          style={{
-            width: "100%",
-            border: "none",
-            background: "transparent",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            fontWeight: 900,
-            fontSize: 15,
-            cursor: "pointer",
-            padding: 0,
-          }}
-        >
-          <span>メッセージ</span>
-          <span style={{ color: "#6b7280", fontSize: 12 }}>
-            {roomMessages.length}件 {showRoomMessages ? "▲" : "▼"}
-          </span>
-        </button>
-
-        {showRoomMessages && (
-          <div
-            style={{
-              marginTop: 12,
-              display: "grid",
-              gap: 8,
-              maxHeight: 240,
-              overflowY: "auto",
-            }}
-          >
-            {roomMessages.length === 0 ? (
-  <div style={{ color: "#6b7280", fontSize: 13 }}>
-    まだメッセージはありません
-  </div>
-) : (
-  roomMessages.map((m) => {
-  const isMe =
-    String(m.device_id ?? "").trim() ===
-    String(deviceId ?? "").trim();
-
-  return (
-    <div
-      key={m.id}
-      style={{
-        display: "grid",
-        gap: 3,
-        justifyItems: isMe ? "end" : "start",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          color: "#6b7280",
-          fontWeight: 800,
-        }}
-      >
-        {isMe ? "自分" : m.display_name || "参加者"}・
-        {formatTime(m.created_at)}
-      </div>
-
-      <div
-  style={{
-    maxWidth: "78%",
-    padding: "9px 11px",
-    borderRadius: 14,
-    background: isMe ? "#dcfce7" : "#f9fafb",
-    border: "1px solid #e5e7eb",
-    whiteSpace: "pre-wrap",
-    overflowWrap: "anywhere",
-    fontSize: 13,
-    lineHeight: 1.5,
-  }}
->
-  {m.message_type === "image" && m.image_path ? (
-    <img
-      src={
-        supabase.storage
-          .from("room-message-images")
-          .getPublicUrl(m.image_path).data.publicUrl
-      }
-      alt="送信画像"
-      loading="lazy"
-      style={{
-        maxWidth: "100%",
-        maxHeight: 220,
-        borderRadius: 10,
-        display: "block",
-        objectFit: "contain",
-      }}
-    />
-  ) : (
-    m.message
-  )}
-</div>
-    </div>
-  );
-})
-)}
-
-<div
-  style={{
-    marginTop: 10,
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-  }}
->
-  <input
-    value={draft}
-    onChange={(e) => setDraft(e.target.value)}
-    onCompositionStart={() => setIsComposing(true)}
-onCompositionEnd={() => {
-  window.setTimeout(() => setIsComposing(false), 0);
-}}
-onKeyDown={(e) => {
-  const native = e.nativeEvent as KeyboardEvent & {
-    isComposing?: boolean;
-    keyCode?: number;
-  };
-
-  if (isComposing) return;
-  if (native?.isComposing) return;
-  if (e.key === "Process") return;
-  if (native?.keyCode === 229) return;
-
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    void sendRoomMessage();
-  }
-}}
-    placeholder="メッセージを入力"
-    style={{
-      flex: 1,
-      border: "1px solid #d1d5db",
-      borderRadius: 999,
-      padding: "10px 12px",
-      background: "#fff",
-    }}
+   <div style={{ marginTop: 16 }}>
+  <SessionMessages
+    sessionId={sessionId}
+    deviceId={deviceId}
+    displayName={
+      members.find((m) => m.device_id === deviceId)?.display_name || "参加者"
+    }
+    title="メッセージ"
+    maxHeight={240}
+    collapsible
   />
-
-<label
-  style={{
-    border: "1px solid #d1d5db",
-    borderRadius: 999,
-    padding: "10px 12px",
-    cursor: "pointer",
-    background: "#fff",
-  }}
->
-  📷
-  <input
-    type="file"
-    accept="image/jpeg,image/png,image/webp"
-    style={{ display: "none" }}
-    onChange={(e) => {
-      const file = e.target.files?.[0];
-      e.currentTarget.value = "";
-      if (!file) return;
-      void sendRoomImage(file);
-    }}
-  />
-</label>
-
-  <button
-    type="button"
-    onClick={() => void sendRoomMessage()}
-    disabled={!draft.trim()}
-    style={{
-      border: "none",
-      borderRadius: 999,
-      padding: "10px 14px",
-      background: !draft.trim() ? "#9ca3af" : "#22c55e",
-      color: "#fff",
-      fontWeight: 900,
-      cursor: !draft.trim() ? "not-allowed" : "pointer",
-      whiteSpace: "nowrap",
-    }}
-  >
-    送信
-  </button>
 </div>
-          </div>
-        )}
-      </section>
     </main>
   );
 }

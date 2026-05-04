@@ -172,6 +172,67 @@ export async function POST(req: Request) {
 
     const now = new Date().toISOString();
 
+        // ✅ クラス所属上限チェック
+    // すでにこのクラスに入っている場合はOK。
+    // 新しく別クラスへ参加する場合だけ class_slots を確認する。
+    const { data: existingMembership, error: existingMembershipErr } =
+      await supabaseAdmin
+        .from("class_memberships")
+        .select("class_id")
+        .eq("class_id", classId)
+        .eq("device_id", deviceId)
+        .maybeSingle();
+
+    if (existingMembershipErr) {
+      console.log("[session/join existingMembershipErr]", existingMembershipErr);
+      return NextResponse.json(
+        { ok: false, error: "membership_check_failed" },
+        { status: 500 }
+      );
+    }
+
+    if (!existingMembership) {
+      const { data: entitlement, error: entitlementErr } = await supabaseAdmin
+        .from("user_entitlements")
+        .select("class_slots")
+        .eq("device_id", deviceId)
+        .maybeSingle();
+
+      if (entitlementErr) {
+        console.log("[session/join entitlementErr]", entitlementErr);
+        return NextResponse.json(
+          { ok: false, error: "entitlement_check_failed" },
+          { status: 500 }
+        );
+      }
+
+      const classSlots = Number(entitlement?.class_slots ?? 1);
+
+      const { count: activeClassCount, error: countErr } = await supabaseAdmin
+        .from("class_memberships")
+        .select("*", { count: "exact", head: true })
+        .eq("device_id", deviceId);
+
+      if (countErr) {
+        console.log("[session/join activeClassCountErr]", countErr);
+        return NextResponse.json(
+          { ok: false, error: "membership_count_failed" },
+          { status: 500 }
+        );
+      }
+
+      if (Number(activeClassCount ?? 0) >= classSlots) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "class_slots_limit",
+            message: "参加できるクラス数の上限に達しています。",
+          },
+          { status: 403 }
+        );
+      }
+    }
+
     const { error: memberErr } = await supabaseAdmin
       .from("session_members")
       .upsert(
