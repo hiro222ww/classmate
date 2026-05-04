@@ -45,9 +45,11 @@ function dedupeMessages(list: RoomMessage[]) {
     }
   }
 
-  return Array.from(map.values()).sort((a, b) =>
-    String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""))
-  );
+  return Array.from(map.values()).sort(
+  (a, b) =>
+    new Date(a.created_at).getTime() -
+    new Date(b.created_at).getTime()
+);
 }
 
 async function compressImage(file: File): Promise<File> {
@@ -189,12 +191,31 @@ export default function SessionMessages({
 
           if (!row?.id) return;
 
-          setMessages((prev) =>
-            dedupeMessages([
-              ...prev.filter((m) => m.id !== row.id),
-              row as RoomMessage,
-            ])
-          );
+          setMessages((prev) => {
+  const map = new Map(prev.map((m) => [m.id, m]));
+
+  const existing = map.get(row.id);
+
+  // 🔥 古いデータなら無視（これが最重要）
+  if (
+    existing &&
+    new Date(existing.created_at).getTime() >
+      new Date(row.created_at).getTime()
+  ) {
+    return prev;
+  }
+
+  map.set(row.id, {
+    ...existing,
+    ...row,
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) =>
+      new Date(a.created_at).getTime() -
+      new Date(b.created_at).getTime()
+  );
+});
 
           scrollToBottomNextFrame("smooth");
         }
