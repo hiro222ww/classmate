@@ -145,7 +145,7 @@ export async function POST(req: Request) {
     }
 
     const session = ensured.session;
-    const classId = session.classId || requestedClassId;
+    const classId = requestedClassId || session.classId;
 
     if (!classId || !isUuid(classId)) {
       return NextResponse.json(
