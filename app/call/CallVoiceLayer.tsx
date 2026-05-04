@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type Member = {
@@ -69,12 +69,8 @@ export default function CallVoiceLayer({
   onPeerStatesChange,
 }: CallVoiceLayerProps) {
   const localStreamRef = useRef<MediaStream | null>(null);
-const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
-
-const localSendStreamRef = useRef<MediaStream | null>(null);
-const localSendTrackRef = useRef<MediaStreamTrack | null>(null);
-
-const audioCtxRef = useRef<AudioContext | null>(null);
+  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
@@ -85,8 +81,7 @@ const audioCtxRef = useRef<AudioContext | null>(null);
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const connectionIdsRef = useRef<Map<string, string>>(new Map());
   const offeredPeersRef = useRef<Set<string>>(new Set());
-const startedPeersRef = useRef<Set<string>>(new Set());
-const offerStartedAtRef = useRef<Map<string, number>>(new Map());
+  const startedPeersRef = useRef<Set<string>>(new Set());
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retrySubscribeTimerRef = useRef<number | null>(null);
@@ -104,6 +99,22 @@ const offerStartedAtRef = useRef<Map<string, number>>(new Map());
 
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicId, setSelectedMicId] = useState("");
+
+  const activeMembers = useMemo(() => {
+    const hasInCallInfo = members.some((m) => typeof m.is_in_call === "boolean");
+
+    if (!hasInCallInfo) {
+      return members;
+    }
+
+    return members.filter((m) => m.is_in_call === true);
+  }, [members]);
+
+  const getRemoteIds = useCallback(() => {
+    return activeMembers
+      .map((m) => String(m.device_id ?? "").trim())
+      .filter((id) => id && id !== deviceId);
+  }, [activeMembers, deviceId]);
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -248,10 +259,9 @@ const offerStartedAtRef = useRef<Map<string, number>>(new Map());
 
       pcsRef.current.delete(remoteId);
       offeredPeersRef.current.delete(remoteId);
-startedPeersRef.current.delete(remoteId);
-offerStartedAtRef.current.delete(remoteId);
-remoteStreamsRef.current.delete(remoteId);
-pendingIceRef.current.delete(remoteId);
+      startedPeersRef.current.delete(remoteId);
+      remoteStreamsRef.current.delete(remoteId);
+      pendingIceRef.current.delete(remoteId);
       clearReconnectTimer(remoteId);
 
       peerStatesRef.current.delete(remoteId);
@@ -301,9 +311,13 @@ pendingIceRef.current.delete(remoteId);
     [getCurrentConnectionId]
   );
 
+  const maybeStartOfferRef = useRef<((remoteId: string) => Promise<void>) | null>(
+    null
+  );
+
   const scheduleReconnect = useCallback(
-  (remoteId: string, delay = 1500) => {
-    if (!localSendTrackRef.current && !localSendStreamRef.current) return;
+    (remoteId: string, delay = 1500) => {
+      if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
       console.log("[call] schedule reconnect", remoteId, { delay });
 
@@ -326,10 +340,6 @@ pendingIceRef.current.delete(remoteId);
     [clearReconnectTimer, closePeer, deviceId, setCurrentConnectionId]
   );
 
-  const maybeStartOfferRef = useRef<((remoteId: string) => Promise<void>) | null>(
-    null
-  );
-
   const createPeerConnection = useCallback(
     (remoteId: string, connectionId: string) => {
       const existing = pcsRef.current.get(remoteId);
@@ -349,20 +359,25 @@ pendingIceRef.current.delete(remoteId);
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
 
-      const localTrack = localSendTrackRef.current;
-const localStream = localSendStreamRef.current;
+      const localTrack = localAudioTrackRef.current;
+      const localStream = localStreamRef.current;
 
-if (localTrack && localStream) {
-  pc.addTrack(localTrack, localStream);
+      if (localTrack && localStream) {
+        pc.addTrack(localTrack, localStream);
 
-  console.log("[call] add local track", {
-    remoteId,
-    enabled: localTrack.enabled,
-    readyState: localTrack.readyState,
-    trackId: localTrack.id,
-    muted: isMuted,
-  });
-}
+        const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+        if (sender && isMuted) {
+          void sender.replaceTrack(null);
+        }
+
+        console.log("[call] add local track", {
+          remoteId,
+          enabled: localTrack.enabled,
+          readyState: localTrack.readyState,
+          trackId: localTrack.id,
+          muted: isMuted,
+        });
+      }
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
@@ -491,8 +506,8 @@ if (localTrack && localStream) {
       return pc;
     },
     [
-      clearReconnectTimer,
       closePeer,
+      clearReconnectTimer,
       getCurrentConnectionId,
       isMuted,
       notifyStatus,
@@ -506,48 +521,29 @@ if (localTrack && localStream) {
 
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
-      if (!localSendTrackRef.current && !localSendStreamRef.current) {
-  console.log("[call] skip offer: local send audio not ready", remoteId);
-  return;
-}
+      if (!localAudioTrackRef.current && !localStreamRef.current) {
+        console.log("[call] skip offer: local audio not ready", remoteId);
+        return;
+      }
 
       const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
       const existingPc = pcsRef.current.get(remoteId);
 
       if (hasRemoteStream) return;
 
-      if (existingPc) {
-  const startedAt = offerStartedAtRef.current.get(remoteId) ?? 0;
-  const offerAge = Date.now() - startedAt;
-
-  const stuckLocalOffer =
-    existingPc.signalingState === "have-local-offer" &&
-    existingPc.connectionState === "new" &&
-    offerAge > 8000;
-
-  if (stuckLocalOffer) {
-    console.warn("[call] stale local offer → recreate peer", remoteId, {
-      offerAge,
-      connectionState: existingPc.connectionState,
-      iceConnectionState: existingPc.iceConnectionState,
-      signalingState: existingPc.signalingState,
-    });
-
-    closePeer(remoteId, { clearConnectionId: false });
-  } else if (
-    existingPc.connectionState === "connecting" ||
-    existingPc.connectionState === "connected" ||
-    existingPc.signalingState !== "stable"
-  ) {
-    console.log("[call] skip offer: existing pc busy", remoteId, {
-      offerAge,
-      connectionState: existingPc.connectionState,
-      iceConnectionState: existingPc.iceConnectionState,
-      signalingState: existingPc.signalingState,
-    });
-    return;
-  }
-}
+      if (
+        existingPc &&
+        (existingPc.connectionState === "connecting" ||
+          existingPc.connectionState === "connected" ||
+          existingPc.signalingState !== "stable")
+      ) {
+        console.log("[call] skip offer: existing pc busy", remoteId, {
+          connectionState: existingPc.connectionState,
+          iceConnectionState: existingPc.iceConnectionState,
+          signalingState: existingPc.signalingState,
+        });
+        return;
+      }
 
       const connectionId =
         getCurrentConnectionId(remoteId) ?? makeConnectionId(deviceId, remoteId);
@@ -574,12 +570,11 @@ if (localTrack && localStream) {
       }
 
       offeredPeersRef.current.add(remoteId);
-offerStartedAtRef.current.set(remoteId, Date.now());
-clearReconnectTimer(remoteId);
-setPeerState(remoteId, "connecting");
+      clearReconnectTimer(remoteId);
+      setPeerState(remoteId, "connecting");
 
-try {
-  console.log("[call] create offer start", remoteId, connectionId);
+      try {
+        console.log("[call] create offer start", remoteId, connectionId);
 
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
@@ -718,18 +713,15 @@ try {
           setPeerState(remoteId, "connecting");
 
           const answer = await pc.createAnswer();
-console.log("[call] answer created", remoteId, incomingConnectionId);
+          await pc.setLocalDescription(answer);
 
-await pc.setLocalDescription(answer);
-console.log("[call] local answer set", remoteId, incomingConnectionId);
+          await sendSignal(remoteId, "answer", {
+            connectionId: incomingConnectionId,
+            sdp: pc.localDescription,
+          });
 
-await sendSignal(remoteId, "answer", {
-  connectionId: incomingConnectionId,
-  sdp: pc.localDescription,
-});
-
-console.log("[call] answer sent", remoteId, incomingConnectionId);
-return;
+          console.log("[call] answer sent", remoteId, incomingConnectionId);
+          return;
         }
 
         if (row.signal_type === "answer") {
@@ -885,31 +877,23 @@ return;
         }
 
         localStreamRef.current = stream;
-localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
+        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
 
-const micTrack = localAudioTrackRef.current;
+        setMicStreamVersion((v) => v + 1);
 
-if (micTrack) {
-  micTrack.enabled = true; // 波形用は常にON
+        if (localAudioTrackRef.current) {
+          localAudioTrackRef.current.enabled = true;
 
-  const sendTrack = micTrack.clone();
-  sendTrack.enabled = !isMuted;
-
-  localSendTrackRef.current = sendTrack;
-  localSendStreamRef.current = new MediaStream([sendTrack]);
-}
-
-setMicStreamVersion((v) => v + 1);
-
-if (localSendTrackRef.current) {
-  for (const pc of pcsRef.current.values()) {
+          for (const pc of pcsRef.current.values()) {
             const sender = pc
               .getSenders()
               .find((s) => s.track?.kind === "audio" || s.track === null);
 
-            if (sender && localSendTrackRef.current) {
-  void sender.replaceTrack(localSendTrackRef.current);
-}
+            if (sender) {
+              void sender.replaceTrack(
+                isMuted ? null : localAudioTrackRef.current
+              );
+            }
           }
         }
 
@@ -935,46 +919,40 @@ if (localSendTrackRef.current) {
     void init();
 
     return () => {
-  mounted = false;
+      mounted = false;
 
-  if (localStreamRef.current) {
-    localStreamRef.current.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
-  }
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
 
-  if (localSendStreamRef.current) {
-    localSendStreamRef.current.getTracks().forEach((t) => t.stop());
-    localSendStreamRef.current = null;
-  }
-
-  localAudioTrackRef.current = null;
-  localSendTrackRef.current = null;
-};
+      localAudioTrackRef.current = null;
+    };
   }, [selectedMicId, deviceId, notifyStatus, onMicReadyChange]);
 
   useEffect(() => {
-  const track = localSendTrackRef.current;
-  if (!track) return;
+    const track = localAudioTrackRef.current;
+    if (!track) return;
 
-  track.enabled = !isMuted;
+    track.enabled = true;
 
-  for (const pc of pcsRef.current.values()) {
-    const sender = pc
-      .getSenders()
-      .find((s) => s.track?.kind === "audio");
+    for (const pc of pcsRef.current.values()) {
+      const sender = pc
+        .getSenders()
+        .find((s) => s.track?.kind === "audio" || s.track === null);
 
-    if (sender && sender.track !== track) {
-      void sender.replaceTrack(track);
+      if (sender) {
+        void sender.replaceTrack(isMuted ? null : track);
+      }
     }
-  }
 
-  console.log("[call] mute changed", {
-    muted: isMuted,
-    enabled: track.enabled,
-    readyState: track.readyState,
-    trackId: track.id,
-  });
-}, [isMuted]);
+    console.log("[call] mute changed", {
+      muted: isMuted,
+      enabled: track.enabled,
+      readyState: track.readyState,
+      trackId: track.id,
+    });
+  }, [isMuted]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1007,8 +985,12 @@ if (localSendTrackRef.current) {
 
         const data = new Uint8Array(analyser.frequencyBinCount);
 
-        const tick = () => {
+        const tick = async () => {
           if (closed) return;
+
+          if (ctx?.state === "suspended") {
+            await ctx.resume().catch(() => {});
+          }
 
           analyser.getByteTimeDomainData(data);
 
@@ -1037,6 +1019,13 @@ if (localSendTrackRef.current) {
 
       if (raf) cancelAnimationFrame(raf);
 
+      if (ctx) {
+        void ctx.close().catch(() => {});
+      }
+
+      if (audioCtxRef.current === ctx) {
+        audioCtxRef.current = null;
+      }
     };
   }, [micReady, micStreamVersion, onMicLevelChange]);
 
@@ -1107,21 +1096,23 @@ if (localSendTrackRef.current) {
   }, [sessionId, deviceId]);
 
   useEffect(() => {
+    const remoteIds = getRemoteIds();
+
     console.log("[call] offer effect check", {
       micReady,
       signalReady,
       deviceId,
-      members: members.map((m) => m.device_id),
+      members: members.map((m) => ({
+        device_id: m.device_id,
+        screen: m.screen,
+        is_in_call: m.is_in_call,
+      })),
+      remoteIds,
     });
 
     if (!micReady) return;
     if (!signalReady) return;
-    if (members.length < 2) return;
-
-    const remoteIds = members
-  .filter((m) => m.screen === "call")
-  .map((m) => m.device_id)
-  .filter((id) => id && id !== deviceId);
+    if (remoteIds.length < 1) return;
 
     console.log("[call] remoteIds for offer", {
       remoteIds,
@@ -1156,6 +1147,7 @@ if (localSendTrackRef.current) {
     closePeer,
     emitPeerStates,
     getCurrentConnectionId,
+    getRemoteIds,
     maybeStartOffer,
     setCurrentConnectionId,
   ]);
@@ -1165,9 +1157,7 @@ if (localSendTrackRef.current) {
     if (!signalReady) return;
 
     const timer = window.setInterval(() => {
-      const remoteIds = members
-        .map((m) => m.device_id)
-        .filter((id) => id && id !== deviceId);
+      const remoteIds = getRemoteIds();
 
       for (const remoteId of remoteIds) {
         const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
@@ -1191,16 +1181,14 @@ if (localSendTrackRef.current) {
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, signalReady, deviceId, maybeStartOffer]);
+  }, [members, micReady, signalReady, deviceId, maybeStartOffer, getRemoteIds]);
 
   useEffect(() => {
     if (!micReady) return;
     if (!signalReady) return;
 
     const timer = window.setInterval(() => {
-      const remoteIds = members
-        .map((m) => m.device_id)
-        .filter((id) => id && id !== deviceId);
+      const remoteIds = getRemoteIds();
 
       for (const remoteId of remoteIds) {
         const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
@@ -1227,7 +1215,7 @@ if (localSendTrackRef.current) {
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, signalReady, deviceId, scheduleReconnect]);
+  }, [members, micReady, signalReady, deviceId, scheduleReconnect, getRemoteIds]);
 
   return (
     <>
@@ -1253,13 +1241,13 @@ if (localSendTrackRef.current) {
       )}
 
       {Object.entries(remoteAudios).map(([remoteId, state]) => (
-  <RemoteAudio
-    key={remoteId}
-    stream={state.stream}
-    remoteId={remoteId}
-    onSpeaking={onRemoteSpeakingChange}
-  />
-))}
+        <RemoteAudio
+          key={remoteId}
+          stream={state.stream}
+          remoteId={remoteId}
+          onSpeaking={onRemoteSpeakingChange}
+        />
+      ))}
     </>
   );
 }
@@ -1273,8 +1261,6 @@ function RemoteAudio({
   remoteId: string;
   onSpeaking?: (remoteId: string, level: number) => void;
 }) {
-  const sharedAudioCtxRef = useRef<AudioContext | null>(null);
-
   const ref = useRef<HTMLAudioElement | null>(null);
   const lastStreamRef = useRef<MediaStream | null>(null);
   const [blocked, setBlocked] = useState(false);
@@ -1321,73 +1307,77 @@ function RemoteAudio({
   }, [remoteId, stream]);
 
   useEffect(() => {
-  let closed = false;
-  let raf = 0;
-  let ctx: AudioContext | null = null;
+    let closed = false;
+    let raf = 0;
+    let ctx: AudioContext | null = null;
 
-  const run = async () => {
-    try {
-      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-if (!Ctx) return;
+    const run = async () => {
+      try {
+        const Ctx =
+          window.AudioContext || (window as any).webkitAudioContext;
 
-if (!sharedAudioCtxRef.current) {
-  sharedAudioCtxRef.current = new Ctx();
-}
+        if (!Ctx) return;
 
-ctx = sharedAudioCtxRef.current;
+        ctx = new Ctx();
 
-      if (ctx.state === "suspended") {
-        await ctx.resume().catch(() => {});
+        if (ctx.state === "suspended") {
+          await ctx.resume().catch(() => {});
+        }
+
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        let lastNotifyAt = 0;
+
+        const tick = async () => {
+          if (closed) return;
+
+          if (ctx?.state === "suspended") {
+            await ctx.resume().catch(() => {});
+          }
+
+          analyser.getByteTimeDomainData(data);
+
+          let sum = 0;
+
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sum += v * v;
+          }
+
+          const rms = Math.sqrt(sum / data.length);
+          const now = Date.now();
+
+          if (rms > 0.12 && now - lastNotifyAt > 300) {
+            lastNotifyAt = now;
+            onSpeaking?.(remoteId, rms);
+          }
+
+          raf = requestAnimationFrame(tick);
+        };
+
+        tick();
+      } catch (e) {
+        console.warn("[call] remote meter error", remoteId, e);
       }
+    };
 
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
+    void run();
 
-      analyser.fftSize = 256;
-      source.connect(analyser);
+    return () => {
+      closed = true;
 
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      let lastNotifyAt = 0;
+      if (raf) cancelAnimationFrame(raf);
 
-      const tick = () => {
-        if (closed) return;
-
-        analyser.getByteTimeDomainData(data);
-
-        let sum = 0;
-
-        for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128;
-          sum += v * v;
-        }
-
-        const rms = Math.sqrt(sum / data.length);
-        const now = Date.now();
-
-        if (rms > 0.12 && now - lastNotifyAt > 300) {
-          lastNotifyAt = now;
-          onSpeaking?.(remoteId, rms);
-        }
-
-        raf = requestAnimationFrame(tick);
-      };
-
-      tick();
-    } catch (e) {
-      console.warn("[call] remote meter error", remoteId, e);
-    }
-  };
-
-  void run();
-
-  return () => {
-  closed = true;
-
-  if (raf) {
-    cancelAnimationFrame(raf);
-  }
-  };
-}, [stream, remoteId, onSpeaking]);
+      if (ctx) {
+        void ctx.close().catch(() => {});
+      }
+    };
+  }, [stream, remoteId, onSpeaking]);
 
   useEffect(() => {
     const el = ref.current;
@@ -1432,14 +1422,15 @@ ctx = sharedAudioCtxRef.current;
   return (
     <>
       <audio
-  ref={ref}
-  data-remote={remoteId}
-  autoPlay
-  playsInline
-  style={{
-    display: "none",
-  }}
-/>
+        ref={ref}
+        data-remote={remoteId}
+        autoPlay
+        playsInline
+        controls
+        style={{
+          width: 220,
+        }}
+      />
 
       {blocked && (
         <button

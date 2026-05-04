@@ -106,28 +106,35 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   const lastBroadcastAtRef = useRef(0);
   const lastSavedAtRef = useRef(0);
   const allowPlayUntilRef = useRef(0);
+const stateRef = useRef<YoutubeState | null>(null);
 
-  const [input, setInput] = useState("");
+const [input, setInput] = useState("");
   const [state, setState] = useState<YoutubeState | null>(null);
   const [error, setError] = useState("");
   const [needsUserPlay, setNeedsUserPlay] = useState(false);
 
-  const saveStateToDb = useCallback(
+useEffect(() => {
+  stateRef.current = state;
+}, [state]);
+
+const saveStateToDb = useCallback(
     async (patch: Partial<YoutubeState>) => {
       if (!sessionId) return;
 
-      const next: YoutubeState = {
-        session_id: sessionId,
-        url: patch.url ?? state?.url ?? "",
-        video_id: patch.video_id ?? state?.video_id ?? "",
-        status: patch.status ?? state?.status ?? "paused",
-        playhead_seconds:
-          typeof patch.playhead_seconds === "number"
-            ? patch.playhead_seconds
-            : state?.playhead_seconds ?? 0,
-        updated_by: deviceId,
-        updated_at: new Date().toISOString(),
-      };
+      const current = stateRef.current;
+
+const next: YoutubeState = {
+  session_id: sessionId,
+  url: patch.url ?? current?.url ?? "",
+  video_id: patch.video_id ?? current?.video_id ?? "",
+  status: patch.status ?? current?.status ?? "paused",
+  playhead_seconds:
+    typeof patch.playhead_seconds === "number"
+      ? patch.playhead_seconds
+      : current?.playhead_seconds ?? 0,
+  updated_by: deviceId,
+  updated_at: new Date().toISOString(),
+};
 
       setState(next);
 
@@ -140,7 +147,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         setError(error.message);
       }
     },
-    [sessionId, deviceId, state]
+    [sessionId, deviceId]
   );
 
   const sendBroadcast = useCallback(
@@ -149,7 +156,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       patch?: Partial<YoutubeBroadcastPayload>
     ) => {
       const channel = channelRef.current;
-      const current = state;
+      const current = stateRef.current;
       const player = playerRef.current;
 
       if (!channel || !current?.video_id) return;
@@ -182,7 +189,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         payload,
       });
     },
-    [deviceId, state]
+    [deviceId]
   );
 
   const applyRemoteState = useCallback(
@@ -358,8 +365,13 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   if (suppressEventRef.current) return;
 
   const t = Number(player.getCurrentTime?.() ?? 0);
+const playerVideoId = player.getVideoData?.()?.video_id ?? "";
 
-              if (event.data === window.YT.PlayerState.PLAYING) {
+if (state?.video_id && playerVideoId && playerVideoId !== state.video_id) {
+  return;
+}
+
+if (event.data === window.YT.PlayerState.PLAYING) {
                 const allowed = Date.now() < allowPlayUntilRef.current;
 
                 if (!allowed) {
@@ -375,19 +387,20 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
                 }
 
                 await saveStateToDb({
-                  status: "playing",
-                  playhead_seconds: t,
-                });
+  video_id: playerVideoId || state?.video_id,
+  status: "playing",
+  playhead_seconds: t,
+});
 
                 return;
               }
 
               if (event.data === window.YT.PlayerState.PAUSED) {
                 await saveStateToDb({
-                  status: "paused",
-                  playhead_seconds: t,
-                });
-
+  video_id: playerVideoId || state?.video_id,
+  status: "paused",
+  playhead_seconds: t,
+});
                 return;
               }
             },
@@ -417,7 +430,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [state?.video_id, state?.playhead_seconds, saveStateToDb]);
+  }, [state?.video_id, saveStateToDb]);
 
   useEffect(() => {
     if (!state?.video_id) return;
@@ -474,11 +487,18 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       playhead_seconds: 0,
     });
 
-    await sendBroadcast("pause", {
-      videoId,
-      status: "paused",
-      playheadSeconds: 0,
-    });
+    await channelRef.current?.send({
+  type: "broadcast",
+  event: "youtube-sync",
+  payload: {
+    kind: "pause",
+    videoId,
+    status: "paused",
+    playheadSeconds: 0,
+    fromDeviceId: deviceId,
+    sentAt: Date.now(),
+  },
+});
 
     window.setTimeout(() => {
       suppressEventRef.current = false;
@@ -487,7 +507,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
 
   async function sendManualSync() {
     const player = playerRef.current;
-    const current = state;
+    const current = stateRef.current;
 
     if (!player || !current?.video_id) return;
 
@@ -495,15 +515,26 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
 
     allowPlayUntilRef.current = Date.now() + 3000;
 
-    await saveStateToDb({
-      status: "playing",
-      playhead_seconds: t,
-    });
+    const videoId = player.getVideoData?.()?.video_id || current.video_id;
 
-    await sendBroadcast("play", {
-      status: "playing",
-      playheadSeconds: t,
-    });
+await saveStateToDb({
+  video_id: videoId,
+  status: "playing",
+  playhead_seconds: t,
+});
+
+await channelRef.current?.send({
+  type: "broadcast",
+  event: "youtube-sync",
+  payload: {
+    kind: "play",
+    videoId,
+    status: "playing",
+    playheadSeconds: t,
+    fromDeviceId: deviceId,
+    sentAt: Date.now(),
+  },
+});
 
     try {
       player.playVideo?.();
