@@ -41,6 +41,7 @@ type CallVoiceLayerProps = {
   isMuted: boolean;
   onMicReadyChange?: (ready: boolean) => void;
   onMicLevelChange?: (level: number) => void;
+  onRemoteSpeakingChange?: (remoteId: string | null) => void;
   onRemoteCountChange?: (count: number) => void;
   onStatusChange?: (text: string) => void;
   onPeerStatesChange?: (states: Record<string, PeerState>) => void;
@@ -59,6 +60,7 @@ export default function CallVoiceLayer({
   isMuted,
   onMicReadyChange,
   onMicLevelChange,
+  onRemoteSpeakingChange,
   onRemoteCountChange,
   onStatusChange,
   onPeerStatesChange,
@@ -342,21 +344,18 @@ export default function CallVoiceLayer({
       const localStream = localStreamRef.current;
 
       if (localTrack && localStream) {
-        pc.addTrack(localTrack, localStream);
+  localTrack.enabled = true;
 
-        const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
-        if (sender && isMuted) {
-          void sender.replaceTrack(null);
-        }
+  pc.addTrack(localTrack, localStream);
 
-        console.log("[call] add local track", {
-          remoteId,
-          enabled: localTrack.enabled,
-          readyState: localTrack.readyState,
-          trackId: localTrack.id,
-          muted: isMuted,
-        });
-      }
+  console.log("[call] add local track", {
+    remoteId,
+    enabled: localTrack.enabled,
+    readyState: localTrack.readyState,
+    trackId: localTrack.id,
+    muted: isMuted,
+  });
+}
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
@@ -863,11 +862,9 @@ export default function CallVoiceLayer({
               .getSenders()
               .find((s) => s.track?.kind === "audio" || s.track === null);
 
-            if (sender) {
-              void sender.replaceTrack(
-                isMuted ? null : localAudioTrackRef.current
-              );
-            }
+            if (sender && localAudioTrackRef.current) {
+  void sender.replaceTrack(localAudioTrackRef.current);
+}
           }
         }
 
@@ -905,28 +902,28 @@ export default function CallVoiceLayer({
   }, [selectedMicId, deviceId, notifyStatus, onMicReadyChange]);
 
   useEffect(() => {
-    const track = localAudioTrackRef.current;
-    if (!track) return;
+  const track = localAudioTrackRef.current;
+  if (!track) return;
 
-    track.enabled = true;
+  track.enabled = true;
 
-    for (const pc of pcsRef.current.values()) {
-      const sender = pc
-        .getSenders()
-        .find((s) => s.track?.kind === "audio" || s.track === null);
+  for (const pc of pcsRef.current.values()) {
+    const sender = pc
+      .getSenders()
+      .find((s) => s.track?.kind === "audio");
 
-      if (sender) {
-        void sender.replaceTrack(isMuted ? null : track);
-      }
+    if (sender && sender.track !== track) {
+      void sender.replaceTrack(track);
     }
+  }
 
-    console.log("[call] mute changed", {
-      muted: isMuted,
-      enabled: track.enabled,
-      readyState: track.readyState,
-      trackId: track.id,
-    });
-  }, [isMuted]);
+  console.log("[call] mute changed", {
+    muted: isMuted,
+    enabled: track.enabled,
+    readyState: track.readyState,
+    trackId: track.id,
+  });
+}, [isMuted]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -989,13 +986,6 @@ export default function CallVoiceLayer({
 
       if (raf) cancelAnimationFrame(raf);
 
-      if (ctx) {
-        void ctx.close().catch(() => {});
-      }
-
-      if (audioCtxRef.current === ctx) {
-        audioCtxRef.current = null;
-      }
     };
   }, [micReady, micStreamVersion, onMicLevelChange]);
 
@@ -1211,8 +1201,13 @@ export default function CallVoiceLayer({
       )}
 
       {Object.entries(remoteAudios).map(([remoteId, state]) => (
-        <RemoteAudio key={remoteId} stream={state.stream} remoteId={remoteId} />
-      ))}
+  <RemoteAudio
+    key={remoteId}
+    stream={state.stream}
+    remoteId={remoteId}
+    onSpeaking={onRemoteSpeakingChange}
+  />
+))}
     </>
   );
 }
@@ -1220,10 +1215,14 @@ export default function CallVoiceLayer({
 function RemoteAudio({
   stream,
   remoteId,
+  onSpeaking,
 }: {
   stream: MediaStream;
   remoteId: string;
+  onSpeaking?: (remoteId: string, level: number) => void;
 }) {
+  const sharedAudioCtxRef = useRef<AudioContext | null>(null);
+
   const ref = useRef<HTMLAudioElement | null>(null);
   const lastStreamRef = useRef<MediaStream | null>(null);
   const [blocked, setBlocked] = useState(false);
@@ -1270,6 +1269,75 @@ function RemoteAudio({
   }, [remoteId, stream]);
 
   useEffect(() => {
+  let closed = false;
+  let raf = 0;
+  let ctx: AudioContext | null = null;
+
+  const run = async () => {
+    try {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+if (!Ctx) return;
+
+if (!sharedAudioCtxRef.current) {
+  sharedAudioCtxRef.current = new Ctx();
+}
+
+ctx = sharedAudioCtxRef.current;
+
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => {});
+      }
+
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+
+      analyser.fftSize = 256;
+      source.connect(analyser);
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      let lastNotifyAt = 0;
+
+      const tick = () => {
+        if (closed) return;
+
+        analyser.getByteTimeDomainData(data);
+
+        let sum = 0;
+
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+
+        const rms = Math.sqrt(sum / data.length);
+        const now = Date.now();
+
+        if (rms > 0.12 && now - lastNotifyAt > 300) {
+          lastNotifyAt = now;
+          onSpeaking?.(remoteId, rms);
+        }
+
+        raf = requestAnimationFrame(tick);
+      };
+
+      tick();
+    } catch (e) {
+      console.warn("[call] remote meter error", remoteId, e);
+    }
+  };
+
+  void run();
+
+  return () => {
+  closed = true;
+
+  if (raf) {
+    cancelAnimationFrame(raf);
+  }
+  };
+}, [stream, remoteId, onSpeaking]);
+
+  useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
@@ -1312,15 +1380,14 @@ function RemoteAudio({
   return (
     <>
       <audio
-        ref={ref}
-        data-remote={remoteId}
-        autoPlay
-        playsInline
-        controls
-        style={{
-          width: 220,
-        }}
-      />
+  ref={ref}
+  data-remote={remoteId}
+  autoPlay
+  playsInline
+  style={{
+    display: "none",
+  }}
+/>
 
       {blocked && (
         <button
