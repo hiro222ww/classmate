@@ -510,13 +510,18 @@ export default function CallVoiceLayer({
       if (hasRemoteStream) return;
 
       if (
-        existingPc &&
-        (existingPc.connectionState === "connecting" ||
-          existingPc.connectionState === "connected" ||
-          existingPc.signalingState !== "stable")
-      ) {
-        return;
-      }
+  existingPc &&
+  (existingPc.connectionState === "connecting" ||
+    existingPc.connectionState === "connected" ||
+    existingPc.signalingState !== "stable")
+) {
+  console.log("[call] skip offer: existing pc busy", remoteId, {
+    connectionState: existingPc.connectionState,
+    iceConnectionState: existingPc.iceConnectionState,
+    signalingState: existingPc.signalingState,
+  });
+  return;
+}
 
       const connectionId =
         getCurrentConnectionId(remoteId) ?? makeConnectionId(deviceId, remoteId);

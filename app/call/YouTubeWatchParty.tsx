@@ -217,26 +217,20 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         }));
 
         if (currentVideoId !== payload.videoId) {
-          if (payload.status === "playing") {
-            player.loadVideoById(payload.videoId, compensatedTime);
-          } else {
-            player.cueVideoById(payload.videoId, compensatedTime);
-          }
-        } else if (Math.abs(currentTime - compensatedTime) > 2) {
+  // loadVideoById は再生開始しやすいので使わない
+  player.cueVideoById(payload.videoId, compensatedTime);
+}else if (Math.abs(currentTime - compensatedTime) > 2) {
           player.seekTo(compensatedTime, true);
         }
 
         if (payload.status === "playing") {
-          try {
-            player.playVideo?.();
-            setNeedsUserPlay(false);
-          } catch {
-            setNeedsUserPlay(true);
-          }
-        } else {
-          player.pauseVideo?.();
-          setNeedsUserPlay(false);
-        }
+  // 勝手に再生しない。位置だけ合わせて、ユーザー操作で開始させる。
+  player.pauseVideo?.();
+  setNeedsUserPlay(true);
+} else {
+  player.pauseVideo?.();
+  setNeedsUserPlay(false);
+}
       } catch (e) {
         console.warn("[youtube] apply broadcast failed", e);
       }
@@ -337,14 +331,19 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
             },
 
             onStateChange: async (event: any) => {
-              if (suppressEventRef.current) return;
+  if (suppressEventRef.current) return;
 
-              const player = playerRef.current;
-              if (!player) return;
+  const player = playerRef.current;
+  if (!player) return;
 
-              const t = Number(player.getCurrentTime?.() ?? 0);
+  if (event.data === window.YT.PlayerState.PLAYING && needsUserPlay) {
+    player.pauseVideo?.();
+    return;
+  }
 
-              if (event.data === window.YT.PlayerState.PLAYING) {
+  const t = Number(player.getCurrentTime?.() ?? 0);
+
+  if (event.data === window.YT.PlayerState.PLAYING) {
                 await saveStateToDb({
                   status: "playing",
                   playhead_seconds: t,
