@@ -14,10 +14,10 @@ type Member = {
   device_id: string;
   display_name: string;
   photo_path: string | null;
+  lastSpokeAt?: number;
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
-
 
 type SessionStatusResponse = {
   ok?: boolean;
@@ -66,7 +66,6 @@ function getAvatarUrl(photoPath?: string | null) {
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
-
 export default function CallClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -76,27 +75,27 @@ export default function CallClient() {
 
   const [deviceId, setDeviceId] = useState("");
 
-useEffect(() => {
-  setDeviceId(getDeviceId());
-}, []);
+  useEffect(() => {
+    setDeviceId(getDeviceId());
+  }, []);
 
   const returnTo = useMemo(() => {
-  return withDev("/class/select");
-}, []);
+    return withDev("/class/select");
+  }, []);
 
   const [members, setMembers] = useState<Member[]>([]);
 
   useEffect(() => {
-  if (!deviceId) return;
+    if (!deviceId) return;
 
-  setMembers([
-    {
-      device_id: deviceId,
-      display_name: "参加者",
-      photo_path: null,
-    },
-  ]);
-}, [deviceId]);
+    setMembers([
+      {
+        device_id: deviceId,
+        display_name: "参加者",
+        photo_path: null,
+      },
+    ]);
+  }, [deviceId]);
 
   const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
@@ -105,8 +104,6 @@ useEffect(() => {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
-
-
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
@@ -184,10 +181,13 @@ useEffect(() => {
           const did = String(m.device_id ?? "").trim();
           if (!did) continue;
 
+          const existing = members.find((x) => x.device_id === did);
+
           nextMembers.push({
             device_id: did,
             display_name: String(m.display_name ?? "").trim() || "参加者",
             photo_path: String(m.photo_path ?? "").trim() || null,
+            lastSpokeAt: existing?.lastSpokeAt,
           });
         }
 
@@ -198,17 +198,17 @@ useEffect(() => {
         });
 
         const stillJoined = nextMembers.some(
-  (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
-);
+          (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
+        );
 
-if (deviceId && !stillJoined) {
-  router.replace(withDev("/"));
-  return;
-}
+        if (deviceId && !stillJoined) {
+          router.replace(withDev("/"));
+          return;
+        }
 
-setMembers(nextMembers);
-setFetchErrorCount(0);
-clearRetryTimer();
+        setMembers(nextMembers);
+        setFetchErrorCount(0);
+        clearRetryTimer();
 
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
@@ -233,7 +233,7 @@ clearRetryTimer();
         fetchingRef.current = false;
       }
     },
-    [sessionId, classId, deviceId, router, clearRetryTimer]
+    [sessionId, classId, deviceId, router, clearRetryTimer, members]
   );
 
   useEffect(() => {
@@ -353,7 +353,6 @@ clearRetryTimer();
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers]);
 
-
   useEffect(() => {
     const memberIds = new Set(members.map((m) => m.device_id));
 
@@ -438,25 +437,67 @@ clearRetryTimer();
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
+  const sortedMembers = useMemo(() => {
+    const now = Date.now();
+    const HOLD_MS = 1500;
 
+    return [...members].sort((a, b) => {
+      const aActive = !!a.lastSpokeAt && now - a.lastSpokeAt < HOLD_MS;
+      const bActive = !!b.lastSpokeAt && now - b.lastSpokeAt < HOLD_MS;
+
+      if (aActive !== bActive) {
+        return bActive ? 1 : -1;
+      }
+
+      const aTime = a.lastSpokeAt ?? 0;
+      const bTime = b.lastSpokeAt ?? 0;
+
+      if (aTime !== bTime) {
+        return bTime - aTime;
+      }
+
+      return 0;
+    });
+  }, [members, micLevel]);
 
   if (!deviceId) {
-  return null;
-}
+    return null;
+  }
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <CallVoiceLayer
-        sessionId={sessionId}
-        deviceId={deviceId}
-        members={members}
-        isMuted={isMuted}
-        onMicReadyChange={setMicReady}
-        onMicLevelChange={setMicLevel}
-        onRemoteCountChange={handleRemoteCountChange}
-        onStatusChange={setCallInfo}
-        onPeerStatesChange={setPeerStates}
-      />
+  sessionId={sessionId}
+  deviceId={deviceId}
+  members={members}
+  isMuted={isMuted}
+  onMicReadyChange={setMicReady}
+  onMicLevelChange={(level) => {
+    setMicLevel(level);
+
+    if (!isMuted && level > 0.08) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.device_id === deviceId
+            ? { ...m, lastSpokeAt: Date.now() }
+            : m
+        )
+      );
+    }
+  }}
+  onRemoteSpeakingChange={(remoteId) => {
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.device_id === remoteId
+          ? { ...m, lastSpokeAt: Date.now() }
+          : m
+      )
+    );
+  }}
+  onRemoteCountChange={handleRemoteCountChange}
+  onStatusChange={setCallInfo}
+  onPeerStatesChange={setPeerStates}
+/>
 
       <div
         style={{
@@ -526,13 +567,13 @@ clearRetryTimer();
               cursor: "pointer",
             }}
             onClick={() => {
-  router.push(
-    withDev(
-      `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
-        `&sessionId=${encodeURIComponent(sessionId)}`
-    )
-  );
-}}
+              router.push(
+                withDev(
+                  `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
+                    `&sessionId=${encodeURIComponent(sessionId)}`
+                )
+              );
+            }}
           >
             退出
           </button>
@@ -594,24 +635,36 @@ clearRetryTimer();
           }}
         >
           {Array.from({ length: capacity }).map((_, i) => {
-            const member = members[i];
+            const member = sortedMembers[i];
             const isFilled = !!member;
             const isMe = member?.device_id === deviceId;
             const status = getMemberStatus(member);
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
 
+            const now = Date.now();
+            const isSpeaking =
+              !!member?.lastSpokeAt && now - member.lastSpokeAt < 1500;
+
             return (
               <div
-                key={i}
+                key={member?.device_id ?? `empty-${i}`}
                 style={{
                   minHeight: 96,
                   borderRadius: 16,
-                  border: "1px solid #e5e7eb",
+                  border: isSpeaking
+                    ? "2px solid #22c55e"
+                    : "1px solid #e5e7eb",
                   background: isFilled ? "#ffffff" : "#f9fafb",
                   padding: 12,
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
+                  boxShadow: isSpeaking
+                    ? "0 8px 24px rgba(34,197,94,0.18)"
+                    : "none",
+                  transform: isSpeaking ? "translateY(-2px)" : "none",
+                  transition:
+                    "transform 160ms ease, box-shadow 160ms ease, border 160ms ease",
                 }}
               >
                 <div
@@ -672,13 +725,13 @@ clearRetryTimer();
                       alignItems: "center",
                       padding: "4px 8px",
                       borderRadius: 999,
-                      background: status.chipBg,
-                      color: status.chipText,
+                      background: isSpeaking ? "#dcfce7" : status.chipBg,
+                      color: isSpeaking ? "#166534" : status.chipText,
                       fontSize: 11,
                       fontWeight: 800,
                     }}
                   >
-                    {status.text}
+                    {isSpeaking ? "発話中" : status.text}
                   </div>
                 </div>
               </div>
@@ -687,7 +740,7 @@ clearRetryTimer();
         </div>
       </section>
 
-     <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} />
+      <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} />
 
       <section
         style={{
@@ -759,18 +812,20 @@ clearRetryTimer();
       <section style={{ marginTop: 16 }}>
         {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
       </section>
-   <div style={{ marginTop: 16 }}>
-  <SessionMessages
-    sessionId={sessionId}
-    deviceId={deviceId}
-    displayName={
-      members.find((m) => m.device_id === deviceId)?.display_name || "参加者"
-    }
-    title="メッセージ"
-    maxHeight={240}
-    collapsible
-  />
-</div>
+
+      <div style={{ marginTop: 16 }}>
+        <SessionMessages
+          sessionId={sessionId}
+          deviceId={deviceId}
+          displayName={
+            members.find((m) => m.device_id === deviceId)?.display_name ||
+            "参加者"
+          }
+          title="メッセージ"
+          maxHeight={240}
+          collapsible
+        />
+      </div>
     </main>
   );
 }

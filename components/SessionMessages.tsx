@@ -143,6 +143,7 @@ export default function SessionMessages({
   const [err, setErr] = useState("");
   const [sending, setSending] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const boxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -408,64 +409,13 @@ export default function SessionMessages({
   }
 
   async function deleteMessage(m: RoomMessage) {
-    if (!m?.id || !deviceId) return;
+    if (!m?.id || !deviceId || deletingId) return;
 
-    deletedMessageIdsRef.current.add(m.id);
+    setDeletingId(m.id);
 
     const deletedAt = new Date().toISOString();
-    const imagePathToDelete = m.image_path ?? null;
 
-    if (imagePathToDelete) {
-      const { error: storageDeleteError } = await supabase.storage
-        .from("room-message-images")
-        .remove([imagePathToDelete]);
-
-      if (storageDeleteError) {
-        console.warn("[messages] image delete failed", storageDeleteError);
-      }
-    }
-
-    const { error } = await supabase
-      .from("room_messages")
-      .update({
-        deleted_at: deletedAt,
-        message: "",
-        image_path: null,
-        message_type: "text",
-      })
-      .eq("id", m.id)
-      .eq("device_id", deviceId);
-
-    if (error) {
-      console.warn("[messages] delete failed", error);
-      setErr("取り消しに失敗しました");
-      return;
-    }
-
-    const { data: confirmed, error: confirmError } = await supabase
-      .from("room_messages")
-      .select(
-        "id, session_id, device_id, display_name, message, image_path, message_type, deleted_at, created_at"
-      )
-      .eq("id", m.id)
-      .maybeSingle();
-
-    if (confirmError) {
-      console.warn("[messages] delete confirm failed", confirmError);
-    }
-
-    if (confirmed?.id) {
-      deletedMessageIdsRef.current.add(confirmed.id);
-
-      setMessages((prev) =>
-        dedupeMessages([
-          ...prev.filter((x) => x.id !== confirmed.id),
-          confirmed as RoomMessage,
-        ])
-      );
-
-      return;
-    }
+    deletedMessageIdsRef.current.add(m.id);
 
     setMessages((prev) =>
       dedupeMessages(
@@ -482,6 +432,36 @@ export default function SessionMessages({
         )
       )
     );
+
+    try {
+      const res = await fetch("/api/messages/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messageId: m.id,
+          deviceId,
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || !json?.ok) {
+        console.warn("[messages] delete api failed", json);
+        setErr("取り消しに失敗しました");
+        return;
+      }
+
+      if (json.message?.id) {
+        setMessages((prev) =>
+          dedupeMessages([
+            ...prev.filter((x) => x.id !== json.message.id),
+            json.message as RoomMessage,
+          ])
+        );
+      }
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   async function handleSendTextOnly() {
@@ -597,28 +577,21 @@ export default function SessionMessages({
                     )}
                   </div>
 
-                  {!m.deleted_at ? (
-  <button
-    type="button"
-    onClick={() => {
-      console.log("[messages] delete clicked", {
-        messageId: m.id,
-        messageDeviceId: m.device_id,
-        currentDeviceId: deviceId,
-        isMe,
-      });
-      void deleteMessage(m);
-    }}
+                  {isMe && !m.deleted_at ? (
+                    <button
+                      type="button"
+                      disabled={deletingId === m.id}
+                      onClick={() => void deleteMessage(m)}
                       style={{
                         border: "none",
                         background: "transparent",
-                        color: "#9ca3af",
+                        color: deletingId === m.id ? "#d1d5db" : "#9ca3af",
                         fontSize: 11,
-                        cursor: "pointer",
+                        cursor: deletingId === m.id ? "not-allowed" : "pointer",
                         padding: "0 4px",
                       }}
                     >
-                      取り消し
+                      {deletingId === m.id ? "取り消し中" : "取り消し"}
                     </button>
                   ) : null}
                 </div>
@@ -636,7 +609,7 @@ export default function SessionMessages({
               style={{
                 position: "absolute",
                 left: "50%",
-                bottom: 118,
+                bottom: 80,
                 transform: "translateX(-50%)",
                 borderRadius: 999,
                 width: 40,
@@ -661,7 +634,7 @@ export default function SessionMessages({
               style={{
                 position: "absolute",
                 left: "50%",
-                bottom: 64,
+                bottom: 20,
                 transform: "translateX(-50%)",
                 borderRadius: 999,
                 width: 40,
