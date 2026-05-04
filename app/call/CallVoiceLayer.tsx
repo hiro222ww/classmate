@@ -82,7 +82,8 @@ const audioCtxRef = useRef<AudioContext | null>(null);
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const connectionIdsRef = useRef<Map<string, string>>(new Map());
   const offeredPeersRef = useRef<Set<string>>(new Set());
-  const startedPeersRef = useRef<Set<string>>(new Set());
+const startedPeersRef = useRef<Set<string>>(new Set());
+const offerStartedAtRef = useRef<Map<string, number>>(new Map());
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const retrySubscribeTimerRef = useRef<number | null>(null);
@@ -244,9 +245,10 @@ const audioCtxRef = useRef<AudioContext | null>(null);
 
       pcsRef.current.delete(remoteId);
       offeredPeersRef.current.delete(remoteId);
-      startedPeersRef.current.delete(remoteId);
-      remoteStreamsRef.current.delete(remoteId);
-      pendingIceRef.current.delete(remoteId);
+startedPeersRef.current.delete(remoteId);
+offerStartedAtRef.current.delete(remoteId);
+remoteStreamsRef.current.delete(remoteId);
+pendingIceRef.current.delete(remoteId);
       clearReconnectTimer(remoteId);
 
       peerStatesRef.current.delete(remoteId);
@@ -511,18 +513,37 @@ if (localTrack && localStream) {
 
       if (hasRemoteStream) return;
 
-      if (
-  existingPc &&
-  (existingPc.connectionState === "connecting" ||
+      if (existingPc) {
+  const startedAt = offerStartedAtRef.current.get(remoteId) ?? 0;
+  const offerAge = Date.now() - startedAt;
+
+  const stuckLocalOffer =
+    existingPc.signalingState === "have-local-offer" &&
+    existingPc.connectionState === "new" &&
+    offerAge > 8000;
+
+  if (stuckLocalOffer) {
+    console.warn("[call] stale local offer → recreate peer", remoteId, {
+      offerAge,
+      connectionState: existingPc.connectionState,
+      iceConnectionState: existingPc.iceConnectionState,
+      signalingState: existingPc.signalingState,
+    });
+
+    closePeer(remoteId, { clearConnectionId: false });
+  } else if (
+    existingPc.connectionState === "connecting" ||
     existingPc.connectionState === "connected" ||
-    existingPc.signalingState !== "stable")
-) {
-  console.log("[call] skip offer: existing pc busy", remoteId, {
-    connectionState: existingPc.connectionState,
-    iceConnectionState: existingPc.iceConnectionState,
-    signalingState: existingPc.signalingState,
-  });
-  return;
+    existingPc.signalingState !== "stable"
+  ) {
+    console.log("[call] skip offer: existing pc busy", remoteId, {
+      offerAge,
+      connectionState: existingPc.connectionState,
+      iceConnectionState: existingPc.iceConnectionState,
+      signalingState: existingPc.signalingState,
+    });
+    return;
+  }
 }
 
       const connectionId =
@@ -550,11 +571,12 @@ if (localTrack && localStream) {
       }
 
       offeredPeersRef.current.add(remoteId);
-      clearReconnectTimer(remoteId);
-      setPeerState(remoteId, "connecting");
+offerStartedAtRef.current.set(remoteId, Date.now());
+clearReconnectTimer(remoteId);
+setPeerState(remoteId, "connecting");
 
-      try {
-        console.log("[call] create offer start", remoteId, connectionId);
+try {
+  console.log("[call] create offer start", remoteId, connectionId);
 
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
