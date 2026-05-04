@@ -32,7 +32,11 @@ async function ensureJoinableSession(sessionId: string) {
     .maybeSingle();
 
   if (error) {
-    return { ok: false as const, error: "session_lookup_failed", detail: error.message };
+    return {
+      ok: false as const,
+      error: "session_lookup_failed",
+      detail: error.message,
+    };
   }
 
   if (!data) {
@@ -145,7 +149,10 @@ export async function POST(req: Request) {
     }
 
     const session = ensured.session;
-    const classId = requestedClassId || session.classId;
+
+    // ✅ session_members が真実。
+    // 招待リンク側の classId が古い/ズレていても、session.class_id を正として補正する。
+    const classId = session.classId || requestedClassId;
 
     if (!classId || !isUuid(classId)) {
       return NextResponse.json(
@@ -155,21 +162,27 @@ export async function POST(req: Request) {
     }
 
     if (requestedClassId && session.classId && requestedClassId !== session.classId) {
-      return NextResponse.json(
-        { ok: false, error: "session_class_mismatch" },
-        { status: 400 }
-      );
+      console.warn("[session/join class mismatch ignored]", {
+        requestedClassId,
+        sessionClassId: session.classId,
+        usingClassId: classId,
+        invite,
+      });
     }
 
-    const { error: memberErr } = await supabaseAdmin.from("session_members").upsert(
-      {
-        session_id: sessionId,
-        device_id: deviceId,
-        display_name: name,
-        joined_at: new Date().toISOString(),
-      },
-      { onConflict: "session_id,device_id" }
-    );
+    const now = new Date().toISOString();
+
+    const { error: memberErr } = await supabaseAdmin
+      .from("session_members")
+      .upsert(
+        {
+          session_id: sessionId,
+          device_id: deviceId,
+          display_name: name,
+          joined_at: now,
+        },
+        { onConflict: "session_id,device_id" }
+      );
 
     if (memberErr) {
       console.log("[session/join memberErr]", memberErr);
@@ -179,13 +192,14 @@ export async function POST(req: Request) {
       );
     }
 
+    // ✅ ホーム表示用の所属を必ず補正
     const { error: membershipErr } = await supabaseAdmin
       .from("class_memberships")
       .upsert(
         {
           class_id: classId,
           device_id: deviceId,
-          joined_at: new Date().toISOString(),
+          joined_at: now,
         },
         { onConflict: "class_id,device_id" }
       );
@@ -194,16 +208,19 @@ export async function POST(req: Request) {
       console.log("[session/join membershipErr]", membershipErr);
     }
 
-    const { error: presenceErr } = await supabaseAdmin.from("class_presence").upsert(
-      {
-        class_id: classId,
-        device_id: deviceId,
-        session_id: sessionId,
-        status: session.status === "active" ? "active" : "waiting",
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "class_id,device_id" }
-    );
+    // ✅ オンライン表示用のpresenceも同じclassIdにそろえる
+    const { error: presenceErr } = await supabaseAdmin
+      .from("class_presence")
+      .upsert(
+        {
+          class_id: classId,
+          device_id: deviceId,
+          session_id: sessionId,
+          status: session.status === "active" ? "active" : "waiting",
+          updated_at: now,
+        },
+        { onConflict: "class_id,device_id" }
+      );
 
     if (presenceErr) {
       console.log("[session/join presenceErr]", presenceErr);
@@ -225,6 +242,7 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("[session/join server_error]", e);
+
     return NextResponse.json(
       { ok: false, error: "server_error", detail: e?.message ?? String(e) },
       { status: 500 }
