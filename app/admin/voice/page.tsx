@@ -116,13 +116,14 @@ if (saved === "好きな長いパスワード") {
 
 const pass = window.prompt("管理者パスワード");
 
-if (pass === "好きな長いパスワード") {
+if (pass === "2766Uuuhiro") {
   localStorage.setItem("admin_pass", pass);
   setAuthorized(true);
   return;
 }
 
-  window.location.href = "/";
+// ❌ redirectしない
+setAuthorized(false);
 }, []);
 
 useEffect(() => {
