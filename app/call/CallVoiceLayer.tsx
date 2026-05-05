@@ -128,13 +128,21 @@ const voiceRouteRef = useRef<VoiceRoute>("stun");
 const turnIceServersRef = useRef<RTCIceServer[] | null>(null);
 const loadingTurnRef = useRef(false);
 
+const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(true);
+
 const enableTurnFallback = useCallback(async () => {
+  if (!turnFallbackEnabled) {
+    callWarn("[call] TURN fallback disabled by admin setting");
+    return false;
+  }
+
   if (voiceRouteRef.current === "turn") return true;
 
   if (turnIceServersRef.current && turnIceServersRef.current.length > 0) {
     voiceRouteRef.current = "turn";
     setVoiceRoute("turn");
-    setIceServers(turnIceServersRef.current);
+    iceServersRef.current = turnIceServersRef.current;
+setIceServers(turnIceServersRef.current);
     return true;
   }
 
@@ -160,7 +168,8 @@ const enableTurnFallback = useCallback(async () => {
       turnIceServersRef.current = nextIceServers;
       voiceRouteRef.current = "turn";
       setVoiceRoute("turn");
-      setIceServers(nextIceServers);
+      iceServersRef.current = nextIceServers;
+setIceServers(nextIceServers);
 
       callWarn("[call] TURN fallback activated", {
         count: nextIceServers.length,
@@ -178,7 +187,7 @@ const enableTurnFallback = useCallback(async () => {
   } finally {
     loadingTurnRef.current = false;
   }
-}, []);
+}, [turnFallbackEnabled]);
 
   const activeMembers = useMemo(() => {
     const hasInCallInfo = members.some((m) => typeof m.is_in_call === "boolean");
@@ -202,6 +211,40 @@ const enableTurnFallback = useCallback(async () => {
     },
     [onStatusChange]
   );
+
+  useEffect(() => {
+  let alive = true;
+
+  async function loadVoiceSettings() {
+    try {
+      const res = await fetch("/api/voice-settings", {
+        cache: "no-store",
+      });
+
+      const data = await res.json();
+
+      if (!alive) return;
+
+      const settings = data?.settings;
+
+      if (settings) {
+        setTurnFallbackEnabled(settings.turn_fallback_enabled !== false);
+
+        if (settings.voice_enabled === false) {
+          notifyStatus(settings.emergency_message || "通話機能は停止中です");
+        }
+      }
+    } catch {
+      setTurnFallbackEnabled(true);
+    }
+  }
+
+  void loadVoiceSettings();
+
+  return () => {
+    alive = false;
+  };
+}, [notifyStatus]);
 
   const emitPeerStates = useCallback(() => {
     onPeerStatesChange?.(Object.fromEntries(peerStatesRef.current.entries()));
@@ -423,9 +466,13 @@ const enableTurnFallback = useCallback(async () => {
 
       setCurrentConnectionId(remoteId, connectionId);
 
-      const pc = new RTCPeerConnection({
-  iceServers:
-    iceServers.length > 0 ? iceServers : FALLBACK_ICE_SERVERS,
+      const currentIceServers =
+  iceServersRef.current.length > 0
+    ? iceServersRef.current
+    : FALLBACK_ICE_SERVERS;
+
+const pc = new RTCPeerConnection({
+  iceServers: currentIceServers,
   iceTransportPolicy: "all",
 });
 
@@ -433,9 +480,7 @@ const enableTurnFallback = useCallback(async () => {
   remoteId,
   connectionId,
   voiceRoute: voiceRouteRef.current,
-  iceServers: (iceServers.length > 0 ? iceServers : FALLBACK_ICE_SERVERS).map(
-    (s) => s.urls
-  ),
+  iceServers: currentIceServers.map((s) => s.urls),
 });
 
       const localTrack = localAudioTrackRef.current;
@@ -582,9 +627,20 @@ const enableTurnFallback = useCallback(async () => {
         }
 
         if (state === "connected") {
-          setPeerState(remoteId, "connected");
-          clearReconnectTimer(remoteId);
-        }
+  setPeerState(remoteId, "connected");
+  clearReconnectTimer(remoteId);
+
+  // 🔥 追加：接続直後にトラックを強制再適用
+  const sender = pc
+    .getSenders()
+    .find((s) => s.track?.kind === "audio" || s.track === null);
+
+  const track = localAudioTrackRef.current;
+
+  if (sender && track) {
+    void sender.replaceTrack(isMuted ? null : track);
+  }
+}
 
         if (state === "disconnected") {
           callWarn("[call] peer disconnected, wait", remoteId);
@@ -628,7 +684,6 @@ const enableTurnFallback = useCallback(async () => {
   clearReconnectTimer,
   enableTurnFallback,
   getCurrentConnectionId,
-  iceServers,
   isMuted,
   notifyStatus,
   scheduleReconnect,
