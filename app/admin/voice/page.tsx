@@ -13,6 +13,14 @@ type VoiceSettings = {
   emergency_message: string | null;
 };
 
+type VoiceMetrics = {
+  total: number;
+  turn: number;
+  p2p: number;
+  unknown?: number;
+  turnRate: number;
+};
+
 const defaultSettings: VoiceSettings = {
   voice_enabled: true,
   new_calls_enabled: true,
@@ -25,8 +33,11 @@ const defaultSettings: VoiceSettings = {
 };
 
 export default function AdminVoicePage() {
-  const [settings, setSettings] = useState<VoiceSettings>(defaultSettings);
+  const [authorized, setAuthorized] = useState(false);
+const [settings, setSettings] = useState<VoiceSettings>(defaultSettings);
+const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [metricsLoading, setMetricsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -46,6 +57,22 @@ export default function AdminVoicePage() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMetrics() {
+    setMetricsLoading(true);
+    try {
+      const res = await fetch("/api/admin/voice-metrics", {
+        cache: "no-store",
+      });
+      const data = await res.json();
+
+      if (data.metrics) {
+        setMetrics(data.metrics);
+      }
+    } finally {
+      setMetricsLoading(false);
     }
   }
 
@@ -80,8 +107,38 @@ export default function AdminVoicePage() {
   }
 
   useEffect(() => {
-    void load();
-  }, []);
+  const saved = localStorage.getItem("admin_pass");
+
+if (saved === "好きな長いパスワード") {
+  setAuthorized(true);
+  return;
+}
+
+const pass = window.prompt("管理者パスワード");
+
+if (pass === "好きな長いパスワード") {
+  localStorage.setItem("admin_pass", pass);
+  setAuthorized(true);
+  return;
+}
+
+  window.location.href = "/";
+}, []);
+
+useEffect(() => {
+  if (!authorized) return;
+
+  void load();
+  void loadMetrics();
+}, [authorized]);
+
+if (!authorized) {
+  return (
+    <main style={{ padding: 24 }}>
+      <p>認証中...</p>
+    </main>
+  );
+}
 
   if (loading) {
     return (
@@ -105,6 +162,41 @@ export default function AdminVoicePage() {
         <p style={{ color: "#6b7280", marginBottom: 24 }}>
           TURN課金・通話上限・緊急停止を管理します。
         </p>
+
+        <section style={cardStyle}>
+          <h2 style={sectionTitle}>接続統計（今日）</h2>
+
+          {metricsLoading ? (
+            <div style={{ color: "#6b7280", fontWeight: 800 }}>
+              読み込み中...
+            </div>
+          ) : metrics ? (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: 12,
+              }}
+            >
+              <MetricCard label="TURN使用率" value={`${metrics.turnRate}%`} />
+              <MetricCard label="TURN接続" value={`${metrics.turn}`} />
+              <MetricCard label="P2P接続" value={`${metrics.p2p}`} />
+              <MetricCard label="総接続ログ" value={`${metrics.total}`} />
+            </div>
+          ) : (
+            <div style={{ color: "#6b7280", fontWeight: 800 }}>
+              統計はまだありません。
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void loadMetrics()}
+            style={smallButtonStyle}
+          >
+            統計を再読み込み
+          </button>
+        </section>
 
         <section style={cardStyle}>
           <h2 style={sectionTitle}>緊急操作</h2>
@@ -223,6 +315,26 @@ export default function AdminVoicePage() {
         </button>
       </div>
     </main>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 14,
+        padding: 14,
+        background: "#f9fafb",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+        {label}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 24, fontWeight: 900 }}>
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -352,6 +464,17 @@ const warningButtonStyle: React.CSSProperties = {
   border: "none",
   background: "#f59e0b",
   color: "#111827",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const smallButtonStyle: React.CSSProperties = {
+  marginTop: 14,
+  padding: "9px 12px",
+  borderRadius: 999,
+  border: "1px solid #d1d5db",
+  background: "#fff",
+  color: "#374151",
   fontWeight: 900,
   cursor: "pointer",
 };

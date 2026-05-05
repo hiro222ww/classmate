@@ -630,6 +630,32 @@ const pc = new RTCPeerConnection({
   setPeerState(remoteId, "connected");
   clearReconnectTimer(remoteId);
 
+async function detectConnectionType(pc: RTCPeerConnection) {
+  const stats = await pc.getStats();
+
+  let route: "turn" | "p2p" | "unknown" = "unknown";
+  let localType: string | null = null;
+  let remoteType: string | null = null;
+
+  stats.forEach((report) => {
+    if (report.type === "candidate-pair" && report.state === "succeeded") {
+      const local = stats.get(report.localCandidateId);
+      const remote = stats.get(report.remoteCandidateId);
+
+      localType = local?.candidateType ?? null;
+      remoteType = remote?.candidateType ?? null;
+
+      if (localType === "relay" || remoteType === "relay") {
+        route = "turn";
+      } else if (localType || remoteType) {
+        route = "p2p";
+      }
+    }
+  });
+
+  return { route, localType, remoteType };
+}
+
   // 🔥 追加：接続直後にトラックを強制再適用
   const sender = pc
     .getSenders()
