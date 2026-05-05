@@ -236,7 +236,7 @@ export default function CallClient() {
         fetchingRef.current = false;
       }
     },
-    [sessionId, classId, deviceId, router, clearRetryTimer, members]
+    [sessionId, classId, deviceId, router, clearRetryTimer]
   );
 
   useEffect(() => {
@@ -325,7 +325,7 @@ export default function CallClient() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [sessionId, fetchMembers]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;
