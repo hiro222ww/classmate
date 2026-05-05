@@ -3,6 +3,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
+// 🔥 ここに移動
+async function detectConnectionType(pc: RTCPeerConnection) {
+  const stats = await pc.getStats();
+
+  let route: "turn" | "p2p" | "unknown" = "unknown";
+  let localType: string | null = null;
+  let remoteType: string | null = null;
+
+  stats.forEach((report) => {
+    if (report.type === "candidate-pair" && report.state === "succeeded") {
+      const local = stats.get(report.localCandidateId);
+      const remote = stats.get(report.remoteCandidateId);
+
+      localType = local?.candidateType ?? null;
+      remoteType = remote?.candidateType ?? null;
+
+      if (localType === "relay" || remoteType === "relay") {
+        route = "turn";
+      } else if (localType || remoteType) {
+        route = "p2p";
+      }
+    }
+  });
+
+  return { route, localType, remoteType };
+}
+
 const DEBUG_CALL = false;
 
 function callLog(...args: any[]) {
@@ -214,6 +241,7 @@ setIceServers(nextIceServers);
 
   useEffect(() => {
   let alive = true;
+  
 
   async function loadVoiceSettings() {
     try {
@@ -605,6 +633,8 @@ const pc = new RTCPeerConnection({
 }
       };
 
+
+
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
 
@@ -623,40 +653,38 @@ const pc = new RTCPeerConnection({
         if (!activeConnectionId || activeConnectionId !== connectionId) return;
 
         if (state === "connecting") {
-          setPeerState(remoteId, "connecting");
-        }
+  setPeerState(remoteId, "connecting");
 
-        if (state === "connected") {
+  if (voiceRouteRef.current === "stun") {
+    window.setTimeout(() => {
+      const currentPc = pcsRef.current.get(remoteId);
+      if (!currentPc) return;
+
+      const stillBad =
+        currentPc.connectionState === "connecting" ||
+        currentPc.iceConnectionState === "checking" ||
+        currentPc.iceConnectionState === "disconnected";
+
+      if (!stillBad) return;
+
+      void enableTurnFallback().then((ok) => {
+        if (!ok) return;
+
+        const nextConnectionId = makeConnectionId(deviceId, remoteId);
+        closePeer(remoteId, { clearConnectionId: false });
+        setCurrentConnectionId(remoteId, nextConnectionId);
+        scheduleReconnect(remoteId, 300);
+      });
+    }, 8000);
+  }
+}
+
+        
+
+       if (state === "connected") {
   setPeerState(remoteId, "connected");
   clearReconnectTimer(remoteId);
 
-async function detectConnectionType(pc: RTCPeerConnection) {
-  const stats = await pc.getStats();
-
-  let route: "turn" | "p2p" | "unknown" = "unknown";
-  let localType: string | null = null;
-  let remoteType: string | null = null;
-
-  stats.forEach((report) => {
-    if (report.type === "candidate-pair" && report.state === "succeeded") {
-      const local = stats.get(report.localCandidateId);
-      const remote = stats.get(report.remoteCandidateId);
-
-      localType = local?.candidateType ?? null;
-      remoteType = remote?.candidateType ?? null;
-
-      if (localType === "relay" || remoteType === "relay") {
-        route = "turn";
-      } else if (localType || remoteType) {
-        route = "p2p";
-      }
-    }
-  });
-
-  return { route, localType, remoteType };
-}
-
-  // 🔥 追加：接続直後にトラックを強制再適用
   const sender = pc
     .getSenders()
     .find((s) => s.track?.kind === "audio" || s.track === null);
@@ -666,6 +694,31 @@ async function detectConnectionType(pc: RTCPeerConnection) {
   if (sender && track) {
     void sender.replaceTrack(isMuted ? null : track);
   }
+
+  // 🔥 ここ追加（TURN判定ログ）
+  setTimeout(async () => {
+    try {
+      const result = await detectConnectionType(pc);
+
+      console.log("[call] route", result);
+
+      await fetch("/api/voice-connection-log", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          deviceId,
+          remoteDeviceId: remoteId,
+          route: result.route,
+          localCandidateType: result.localType,
+          remoteCandidateType: result.remoteType,
+          voiceRoute: voiceRouteRef.current,
+        }),
+      });
+    } catch (e) {
+      console.warn("[call] stats error", e);
+    }
+  }, 1000);
 }
 
         if (state === "disconnected") {
