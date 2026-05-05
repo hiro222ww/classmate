@@ -75,11 +75,7 @@ export default function CallClient() {
   const sessionId = searchParams.get("sessionId") || "";
   const classId = searchParams.get("classId") || "";
 
-  const [deviceId, setDeviceId] = useState("");
-
-  useEffect(() => {
-    setDeviceId(getDeviceId());
-  }, []);
+  const [deviceId] = useState(() => getDeviceId());
 
   const returnTo = useMemo(() => {
     return withDev("/class/select");
@@ -88,16 +84,20 @@ export default function CallClient() {
   const [members, setMembers] = useState<Member[]>([]);
 
   useEffect(() => {
-    if (!deviceId) return;
+  if (!deviceId) return;
 
-    setMembers([
+  setMembers((prev) => {
+    if (prev.length > 0) return prev;
+
+    return [
       {
         device_id: deviceId,
         display_name: "参加者",
         photo_path: null,
       },
-    ]);
-  }, [deviceId]);
+    ];
+  });
+}, [deviceId]);
 
   const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
@@ -120,9 +120,8 @@ export default function CallClient() {
   const fetchMembers = useCallback(
     async (reason = "manual") => {
       if (!sessionId || !classId) {
-        setMembers([]);
-        return;
-      }
+  return;
+}
 
       if (fetchingRef.current) {
         return;
@@ -327,33 +326,31 @@ export default function CallClient() {
     };
   }, [sessionId]);
 
-  useEffect(() => {
-    if (!sessionId) return;
+  // 一旦コメントアウト
+/*
+useEffect(() => {
+  if (!sessionId) return;
 
-    const channel = supabase
-      .channel(`call-profiles-${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "user_profiles",
-        },
-        async () => {
-          await fetchMembers("profiles_realtime");
-        }
-      )
-      .subscribe((status) => {
-        console.log("[call] profiles subscribe status", {
-          sessionId,
-          status,
-        });
-      });
+  const channel = supabase
+    .channel(`call-profiles-${sessionId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "user_profiles",
+      },
+      async () => {
+        await fetchMembers("profiles_realtime");
+      }
+    )
+    .subscribe();
 
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [sessionId, fetchMembers]);
+  return () => {
+    void supabase.removeChannel(channel);
+  };
+}, [sessionId, fetchMembers]);
+*/
 
   useEffect(() => {
     if (!sessionId) return;
