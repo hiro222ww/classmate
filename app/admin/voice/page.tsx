@@ -79,11 +79,16 @@ const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
   async function save(next = settings) {
     setSaving(true);
     try {
-      const res = await fetch("/api/admin/voice-settings", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(next),
-      });
+      const pass = localStorage.getItem("admin_pass") || "";
+
+const res = await fetch("/api/admin/voice-settings", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    password: pass,
+    ...next,
+  }),
+});
 
       const data = await res.json();
 
@@ -109,21 +114,20 @@ const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
   useEffect(() => {
   const saved = localStorage.getItem("admin_pass");
 
-if (saved === "好きな長いパスワード") {
-  setAuthorized(true);
-  return;
-}
+  if (saved === "2766Uuuhiro") {
+    setAuthorized(true);
+    return;
+  }
 
-const pass = window.prompt("管理者パスワード");
+  const pass = window.prompt("管理者パスワード");
 
-if (pass === "2766Uuuhiro") {
-  localStorage.setItem("admin_pass", pass);
-  setAuthorized(true);
-  return;
-}
+  if (pass === "2766Uuuhiro") {
+    localStorage.setItem("admin_pass", pass);
+    setAuthorized(true);
+    return;
+  }
 
-// ❌ redirectしない
-setAuthorized(false);
+  setAuthorized(false);
 }, []);
 
 useEffect(() => {
@@ -136,7 +140,8 @@ useEffect(() => {
 if (!authorized) {
   return (
     <main style={{ padding: 24 }}>
-      <p>認証中...</p>
+      <h2>403</h2>
+      <p>権限がありません</p>
     </main>
   );
 }

@@ -5,18 +5,19 @@ export const dynamic = "force-dynamic";
 
 const ID = "global";
 
-function checkAdmin(req: Request) {
-  const auth = req.headers.get("authorization");
+/**
+ * 🔐 topicsと同じ：body.passwordで認証
+ */
+function checkAdminPassword(passwordFromBody: unknown) {
   const password = process.env.ADMIN_PASSWORD;
-
   if (!password) return false;
-  if (!auth) return false;
-
-  return auth === `Bearer ${password}`;
+  return String(passwordFromBody ?? "").trim() === password;
 }
 
-export async function GET(req: Request) {
-  // GETは誰でもOK（読むだけ）
+/**
+ * GET：読み取りだけ（公開OK）
+ */
+export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("voice_settings")
     .select("*")
@@ -30,13 +31,16 @@ export async function GET(req: Request) {
   return NextResponse.json({ settings: data });
 }
 
+/**
+ * POST：更新（管理者のみ）
+ */
 export async function POST(req: Request) {
-  // 🔐 管理者チェック
-  if (!checkAdmin(req)) {
+  const body = await req.json().catch(() => ({}));
+
+  // 🔐 認証チェック
+  if (!checkAdminPassword(body.password)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-
-  const body = await req.json().catch(() => ({}));
 
   const payload = {
     id: ID,
