@@ -722,24 +722,43 @@ const name = rawName === "You" ? "参加者" : rawName;
 
 
   async function join() {
-    try {
-      const res = await fetch(
-  `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
-  {
+  try {
+    if (invite) {
+      const inviteRes = await fetch("/api/class/join-by-invite", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId,
+          deviceId,
+        }),
+        cache: "no-store",
+      });
+
+      const inviteJson = await readJsonSafe(inviteRes);
+
+      if (!inviteRes.ok || !inviteJson?.ok) {
+        console.warn("[room invite] class join failed", inviteJson);
+      }
+    }
+
+    const res = await fetch(
+      `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
+      {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-  sessionId,
-  classId: classId || undefined,
+          sessionId,
+          classId: classId || undefined,
           deviceId,
           name,
           capacity: 5,
           invite: searchParams.get("invite") === "1",
         }),
         cache: "no-store",
-      });
+      }
+    );
 
       const rawText = await res.text().catch(() => "");
       let json: SessionJoinResponse | null = null;

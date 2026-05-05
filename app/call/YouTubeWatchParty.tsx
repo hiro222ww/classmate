@@ -28,7 +28,7 @@ type YoutubeState = {
 };
 
 type YoutubeBroadcastPayload = {
-  kind: "play" | "pause" | "seek" | "heartbeat";
+  kind: "play" | "pause" | "seek" | "video_change";
   videoId: string;
   status: YoutubeStatus;
   playheadSeconds: number;
@@ -104,20 +104,20 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   const stateRef = useRef<YoutubeState | null>(null);
   const activeVideoIdRef = useRef("");
   const lastAppliedRef = useRef("");
-  const suppressEventRef = useRef(false);
-  const lastSavedAtRef = useRef(0);
   const allowPlayUntilRef = useRef(0);
+  const recreateNonceRef = useRef(0);
 
   const [input, setInput] = useState("");
   const [state, setState] = useState<YoutubeState | null>(null);
   const [error, setError] = useState("");
   const [needsUserPlay, setNeedsUserPlay] = useState(false);
+  const [playerKey, setPlayerKey] = useState(0);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
-  function destroyPlayer() {
+  const destroyPlayer = useCallback(() => {
     try {
       playerRef.current?.destroy?.();
     } catch {
@@ -129,7 +129,12 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     if (containerRef.current) {
       containerRef.current.innerHTML = "";
     }
-  }
+  }, []);
+
+  const forceRecreatePlayer = useCallback(() => {
+    recreateNonceRef.current += 1;
+    setPlayerKey(recreateNonceRef.current);
+  }, []);
 
   const saveStateToDb = useCallback(
     async (patch: Partial<YoutubeState>) => {
@@ -195,9 +200,11 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
           ? Number(payload.playheadSeconds ?? 0) + elapsed
           : Number(payload.playheadSeconds ?? 0);
 
+      const current = stateRef.current;
+
       const next: YoutubeState = {
         session_id: sessionId,
-        url: stateRef.current?.url ?? "",
+        url: current?.url ?? "",
         video_id: payload.videoId,
         status: payload.status,
         playhead_seconds: compensatedTime,
@@ -209,48 +216,53 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       setState(next);
 
       const player = playerRef.current;
-      if (!player) return;
 
-      suppressEventRef.current = true;
+      if (!player) {
+        activeVideoIdRef.current = payload.videoId;
+        forceRecreatePlayer();
+        return;
+      }
 
       try {
-        const currentVideoId = player.getVideoData?.()?.video_id;
+        const currentVideoId = player.getVideoData?.()?.video_id ?? "";
 
         if (currentVideoId !== payload.videoId) {
           activeVideoIdRef.current = payload.videoId;
           destroyPlayer();
-          suppressEventRef.current = false;
+          forceRecreatePlayer();
           return;
         }
 
-        const currentTime = Number(player.getCurrentTime?.() ?? 0);
-
-        if (Math.abs(currentTime - compensatedTime) > 2) {
-          player.seekTo(compensatedTime, true);
-        }
-
         if (payload.status === "playing") {
-          allowPlayUntilRef.current = Date.now() + 3000;
+          allowPlayUntilRef.current = Date.now() + 4000;
+
+          const currentTime = Number(player.getCurrentTime?.() ?? 0);
+          if (Math.abs(currentTime - compensatedTime) > 1.5) {
+            player.seekTo(compensatedTime, true);
+          }
 
           window.setTimeout(() => {
-            suppressEventRef.current = false;
-            player.playVideo?.();
-            setNeedsUserPlay(false);
+            try {
+              player.playVideo?.();
+              setNeedsUserPlay(false);
+            } catch {
+              setNeedsUserPlay(true);
+            }
           }, 150);
         } else {
           player.pauseVideo?.();
           setNeedsUserPlay(false);
 
-          window.setTimeout(() => {
-            suppressEventRef.current = false;
-          }, 1000);
+          const currentTime = Number(player.getCurrentTime?.() ?? 0);
+          if (Math.abs(currentTime - compensatedTime) > 2) {
+            player.seekTo(compensatedTime, true);
+          }
         }
       } catch (e) {
         console.warn("[youtube] apply broadcast failed", e);
-        suppressEventRef.current = false;
       }
     },
-    [deviceId, sessionId]
+    [deviceId, sessionId, destroyPlayer, forceRecreatePlayer]
   );
 
   useEffect(() => {
@@ -278,10 +290,13 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         const next: YoutubeState = {
           ...row,
           status: "paused",
+          playhead_seconds: Number(row.playhead_seconds ?? 0),
         };
 
         stateRef.current = next;
         setState(next);
+        activeVideoIdRef.current = next.video_id;
+        forceRecreatePlayer();
       }
     }
 
@@ -299,31 +314,39 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     return () => {
       cancelled = true;
       channelRef.current = null;
+      destroyPlayer();
       void supabase.removeChannel(channel);
     };
-  }, [sessionId, applyRemoteState]);
+  }, [
+    sessionId,
+    applyRemoteState,
+    destroyPlayer,
+    forceRecreatePlayer,
+  ]);
 
   useEffect(() => {
     if (!state?.video_id) return;
     if (!containerRef.current) return;
 
     let cancelled = false;
+    const videoId = state.video_id;
+    const startSeconds = Number(state.playhead_seconds ?? 0);
 
     async function setupPlayer() {
       await loadYouTubeApi();
-      if (cancelled || !containerRef.current || !state?.video_id) return;
+      if (cancelled || !containerRef.current || !videoId) return;
 
-      const shouldRecreate =
-        !playerRef.current || activeVideoIdRef.current !== state.video_id;
-
-      if (!shouldRecreate) return;
-
-      activeVideoIdRef.current = state.video_id;
-      suppressEventRef.current = true;
+      activeVideoIdRef.current = videoId;
       destroyPlayer();
 
+      console.log("[youtube] create player", {
+        videoId,
+        startSeconds,
+        playerKey,
+      });
+
       playerRef.current = new window.YT.Player(containerRef.current, {
-        videoId: state.video_id,
+        videoId,
         width: "100%",
         height: "100%",
         playerVars: {
@@ -337,75 +360,42 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         },
         events: {
           onReady: () => {
+            if (cancelled) return;
+
             const player = playerRef.current;
             if (!player) return;
-
-            suppressEventRef.current = true;
 
             try {
-              player.cueVideoById(state.video_id, state.playhead_seconds ?? 0);
+              player.cueVideoById(videoId, startSeconds);
               player.pauseVideo?.();
-            } catch {
-              // ignore
+              setNeedsUserPlay(false);
+            } catch (e) {
+              console.warn("[youtube] ready cue failed", e);
             }
-
-            window.setTimeout(() => {
-              suppressEventRef.current = false;
-            }, 1200);
           },
 
-          onStateChange: async (event: any) => {
+          onStateChange: (event: any) => {
+            // 重要：
+            // YouTube側のPLAYING/PAUSEDイベントではDB更新・broadcastしない。
+            // ここで保存すると古いplayerや謎イベントでゾンビ動画が復活する。
             const player = playerRef.current;
-            if (!player) return;
+            const playerVideoId = player?.getVideoData?.()?.video_id ?? "";
 
-            const isPlaying = event.data === window.YT.PlayerState.PLAYING;
+            console.log("[youtube] state event ignored", {
+              eventData: event?.data,
+              playerVideoId,
+              activeVideoId: activeVideoIdRef.current,
+            });
+
+            const isPlaying = event?.data === window.YT?.PlayerState?.PLAYING;
             const allowed = Date.now() < allowPlayUntilRef.current;
 
             if (isPlaying && !allowed) {
-              suppressEventRef.current = true;
-              player.pauseVideo?.();
-
-              window.setTimeout(() => {
-                suppressEventRef.current = false;
-              }, 800);
-
-              setNeedsUserPlay(false);
-              return;
-            }
-
-            if (suppressEventRef.current) return;
-
-            const playerVideoId = player.getVideoData?.()?.video_id ?? "";
-            const currentState = stateRef.current;
-
-            if (
-              currentState?.video_id &&
-              playerVideoId &&
-              playerVideoId !== currentState.video_id
-            ) {
-              return;
-            }
-
-            const t = Number(player.getCurrentTime?.() ?? 0);
-
-            if (event.data === window.YT.PlayerState.PLAYING) {
-              await saveStateToDb({
-                video_id: playerVideoId || currentState?.video_id,
-                status: "playing",
-                playhead_seconds: t,
-              });
-
-              return;
-            }
-
-            if (event.data === window.YT.PlayerState.PAUSED) {
-              await saveStateToDb({
-                video_id: playerVideoId || currentState?.video_id,
-                status: "paused",
-                playhead_seconds: t,
-              });
-
-              return;
+              try {
+                player?.pauseVideo?.();
+              } catch {
+                // ignore
+              }
             }
           },
         },
@@ -416,35 +406,9 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
 
     return () => {
       cancelled = true;
+      destroyPlayer();
     };
-  }, [state?.video_id, saveStateToDb]);
-
-  useEffect(() => {
-    if (!state?.video_id) return;
-    if (state.status !== "playing") return;
-
-    const timer = window.setInterval(() => {
-      const player = playerRef.current;
-      if (!player) return;
-
-      const t = Number(player.getCurrentTime?.() ?? 0);
-      const now = Date.now();
-
-      if (now - lastSavedAtRef.current > 30000) {
-        lastSavedAtRef.current = now;
-
-        void saveStateToDb({
-          video_id: stateRef.current?.video_id,
-          status: "playing",
-          playhead_seconds: t,
-        });
-      }
-    }, 10000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [state?.video_id, state?.status, saveStateToDb]);
+  }, [state?.video_id, playerKey, destroyPlayer]);
 
   async function openUrl() {
     const url = input.trim();
@@ -458,9 +422,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     setError("");
     setNeedsUserPlay(false);
 
-    suppressEventRef.current = true;
     activeVideoIdRef.current = videoId;
-
     destroyPlayer();
 
     await saveStateToDb({
@@ -470,28 +432,35 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       playhead_seconds: 0,
     });
 
+    forceRecreatePlayer();
+
     await sendYoutubeBroadcast({
-      kind: "pause",
+      kind: "video_change",
       videoId,
       status: "paused",
       playheadSeconds: 0,
     });
-
-    window.setTimeout(() => {
-      suppressEventRef.current = false;
-    }, 1200);
   }
 
   async function sendManualSync() {
-    const player = playerRef.current;
     const current = stateRef.current;
+    if (!current?.video_id) return;
 
-    if (!player || !current?.video_id) return;
+    const player = playerRef.current;
+    const videoId = current.video_id;
 
-    const t = Number(player.getCurrentTime?.() ?? 0);
-    const videoId = player.getVideoData?.()?.video_id || current.video_id;
+    let t = Number(current.playhead_seconds ?? 0);
 
-    allowPlayUntilRef.current = Date.now() + 3000;
+    try {
+      const playerVideoId = player?.getVideoData?.()?.video_id ?? "";
+      if (player && (!playerVideoId || playerVideoId === videoId)) {
+        t = Number(player.getCurrentTime?.() ?? t);
+      }
+    } catch {
+      // ignore
+    }
+
+    allowPlayUntilRef.current = Date.now() + 4000;
 
     await saveStateToDb({
       video_id: videoId,
@@ -507,11 +476,49 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     });
 
     try {
-      player.playVideo?.();
+      if (!playerRef.current) {
+        forceRecreatePlayer();
+        setNeedsUserPlay(true);
+        return;
+      }
+
+      playerRef.current.seekTo?.(t, true);
+      playerRef.current.playVideo?.();
       setNeedsUserPlay(false);
     } catch {
       setNeedsUserPlay(true);
     }
+  }
+
+  async function sendManualPause() {
+    const current = stateRef.current;
+    const player = playerRef.current;
+
+    if (!current?.video_id) return;
+
+    let t = Number(current.playhead_seconds ?? 0);
+
+    try {
+      t = Number(player?.getCurrentTime?.() ?? t);
+      player?.pauseVideo?.();
+    } catch {
+      // ignore
+    }
+
+    await saveStateToDb({
+      video_id: current.video_id,
+      status: "paused",
+      playhead_seconds: t,
+    });
+
+    await sendYoutubeBroadcast({
+      kind: "pause",
+      videoId: current.video_id,
+      status: "paused",
+      playheadSeconds: t,
+    });
+
+    setNeedsUserPlay(false);
   }
 
   return (
@@ -591,6 +598,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
             }}
           >
             <div
+              key={`${state.video_id}-${playerKey}`}
               ref={containerRef}
               style={{
                 width: "100%",
@@ -616,6 +624,22 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
               再生を同期
             </button>
 
+            <button
+              type="button"
+              onClick={() => void sendManualPause()}
+              style={{
+                marginTop: 8,
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              停止を同期
+            </button>
+
             {needsUserPlay && (
               <button
                 type="button"
@@ -623,9 +647,14 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
                   const player = playerRef.current;
                   if (!player) return;
 
-                  allowPlayUntilRef.current = Date.now() + 3000;
-                  player.playVideo?.();
-                  setNeedsUserPlay(false);
+                  allowPlayUntilRef.current = Date.now() + 4000;
+
+                  try {
+                    player.playVideo?.();
+                    setNeedsUserPlay(false);
+                  } catch {
+                    setNeedsUserPlay(true);
+                  }
                 }}
                 style={{
                   marginTop: 8,

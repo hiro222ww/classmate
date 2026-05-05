@@ -15,6 +15,7 @@ type Member = {
   display_name: string;
   photo_path: string | null;
   lastSpokeAt?: number;
+  is_in_call?: boolean;
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
@@ -30,11 +31,12 @@ type SessionStatusResponse = {
     created_at?: string | null;
   };
   members?: Array<{
-    device_id?: string;
-    display_name?: string | null;
-    photo_path?: string | null;
-    joined_at?: string | null;
-  }>;
+  device_id?: string;
+  display_name?: string | null;
+  photo_path?: string | null;
+  joined_at?: string | null;
+  is_in_call?: boolean | null;
+}>;
   memberCount?: number;
   error?: string;
 };
@@ -96,6 +98,7 @@ export default function CallClient() {
       },
     ]);
   }, [deviceId]);
+
 
   const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
@@ -184,11 +187,12 @@ export default function CallClient() {
           const existing = members.find((x) => x.device_id === did);
 
           nextMembers.push({
-            device_id: did,
-            display_name: String(m.display_name ?? "").trim() || "参加者",
-            photo_path: String(m.photo_path ?? "").trim() || null,
-            lastSpokeAt: existing?.lastSpokeAt,
-          });
+  device_id: did,
+  display_name: String(m.display_name ?? "").trim() || "参加者",
+  photo_path: String(m.photo_path ?? "").trim() || null,
+  lastSpokeAt: existing?.lastSpokeAt,
+  is_in_call: m.is_in_call === true,
+});
         }
 
         console.log("[call] fetchMembers success", {
@@ -277,9 +281,18 @@ export default function CallClient() {
 
     void sendPresence();
 
-    const timer = window.setInterval(() => {
-      void sendPresence();
-    }, 15000);
+window.setTimeout(() => {
+  void sendPresence();
+  void fetchMembers("presence_after_join");
+}, 500);
+
+window.setTimeout(() => {
+  void fetchMembers("presence_after_join_2");
+}, 1500);
+
+const timer = window.setInterval(() => {
+  void sendPresence();
+}, 10000);
 
     return () => {
       window.clearInterval(timer);
@@ -437,39 +450,76 @@ export default function CallClient() {
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
-  const sortedMembers = useMemo(() => {
-    const now = Date.now();
-    const HOLD_MS = 1500;
+  const lastSpeakerIdRef = useRef<string | null>(null);
 
-    return [...members].sort((a, b) => {
-      const aActive = !!a.lastSpokeAt && now - a.lastSpokeAt < HOLD_MS;
-      const bActive = !!b.lastSpokeAt && now - b.lastSpokeAt < HOLD_MS;
+const speakingMemberId = useMemo(() => {
+  const now = Date.now();
+  const SPEAKING_MS = 1500;
 
-      if (aActive !== bActive) {
-        return bActive ? 1 : -1;
-      }
+  const speaking = members.find(
+    (m) => !!m.lastSpokeAt && now - m.lastSpokeAt < SPEAKING_MS
+  );
 
-      const aTime = a.lastSpokeAt ?? 0;
-      const bTime = b.lastSpokeAt ?? 0;
+  return speaking?.device_id ?? null;
+}, [members, micLevel]);
 
-      if (aTime !== bTime) {
-        return bTime - aTime;
-      }
+useEffect(() => {
+  if (speakingMemberId) {
+    lastSpeakerIdRef.current = speakingMemberId;
+  }
+}, [speakingMemberId]);
 
-      return 0;
-    });
-  }, [members, micLevel]);
+const sortedMembers = useMemo(() => {
+  const lastSpeakerId = lastSpeakerIdRef.current;
+
+  return [...members].sort((a, b) => {
+  const aIsLastSpeaker = a.device_id === lastSpeakerId;
+  const bIsLastSpeaker = b.device_id === lastSpeakerId;
+
+  // ① 最後に喋った人を最優先
+  if (aIsLastSpeaker !== bIsLastSpeaker) {
+    return aIsLastSpeaker ? -1 : 1;
+  }
+
+  // ② 接続状態を取得
+  const aState = peerStates[a.device_id] ?? "idle";
+  const bState = peerStates[b.device_id] ?? "idle";
+
+  // 優先度（低いほど前）
+  const priority = {
+    connected: 0,
+    idle: 1,
+    connecting: 2,
+    failed: 3,
+  };
+
+  const aP = priority[aState] ?? 99;
+  const bP = priority[bState] ?? 99;
+
+  if (aP !== bP) {
+    return aP - bP;
+  }
+
+  return 0;
+});
+}, [members, speakingMemberId, peerStates]);
+
+  const callMembers = useMemo(() => {
+  return members.filter(
+    (m) => m.device_id === deviceId || m.is_in_call === true
+  );
+}, [members, deviceId]);
 
   if (!deviceId) {
     return null;
   }
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <CallVoiceLayer
-  sessionId={sessionId}
-  deviceId={deviceId}
-  members={members}
+  <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+    <CallVoiceLayer
+      sessionId={sessionId}
+      deviceId={deviceId}
+      members={callMembers}
   isMuted={isMuted}
   onMicReadyChange={setMicReady}
   onMicLevelChange={(level) => {
@@ -804,9 +854,6 @@ export default function CallClient() {
           </div>
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 12, color: "#6b7280" }}>
-          {callInfo || "通話シグナリング待機中"}
-        </div>
       </section>
 
       <section style={{ marginTop: 16 }}>

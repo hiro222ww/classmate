@@ -56,6 +56,10 @@ function makeConnectionId(localId: string, remoteId: string) {
     .slice(2, 8)}`;
 }
 
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+];
+
 export default function CallVoiceLayer({
   sessionId,
   deviceId,
@@ -84,7 +88,6 @@ export default function CallVoiceLayer({
   const startedPeersRef = useRef<Set<string>>(new Set());
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const retrySubscribeTimerRef = useRef<number | null>(null);
 
   const handleSignalRef = useRef<(row: SignalRow) => Promise<void> | void>(
     () => {}
@@ -100,6 +103,54 @@ export default function CallVoiceLayer({
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicId, setSelectedMicId] = useState("");
 
+  const [iceServers, setIceServers] =
+    useState<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadTurn() {
+      try {
+        const res = await fetch("/api/turn", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        const data = await res.json();
+
+        if (!alive) return;
+
+        const nextIceServers = Array.isArray(data?.ice_servers)
+          ? data.ice_servers
+          : Array.isArray(data?.iceServers)
+            ? data.iceServers
+            : null;
+
+        if (nextIceServers && nextIceServers.length > 0) {
+          console.log("[call] TURN ice servers loaded", {
+            count: nextIceServers.length,
+            urls: nextIceServers.map((s: any) => s.urls),
+          });
+
+          setIceServers(nextIceServers);
+          return;
+        }
+
+        console.warn("[call] TURN response has no ice_servers", data);
+        setIceServers(FALLBACK_ICE_SERVERS);
+      } catch (e) {
+        console.warn("[call] TURN load failed, fallback to STUN", e);
+        setIceServers(FALLBACK_ICE_SERVERS);
+      }
+    }
+
+    void loadTurn();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const activeMembers = useMemo(() => {
     const hasInCallInfo = members.some((m) => typeof m.is_in_call === "boolean");
 
@@ -107,7 +158,9 @@ export default function CallVoiceLayer({
       return members;
     }
 
-    return members.filter((m) => m.is_in_call === true);
+    return members.filter(
+  (m) => m.device_id === deviceId || m.is_in_call === true
+);
   }, [members]);
 
   const getRemoteIds = useCallback(() => {
@@ -187,13 +240,6 @@ export default function CallVoiceLayer({
     if (timer) {
       window.clearTimeout(timer);
       reconnectTimersRef.current.delete(remoteId);
-    }
-  }, []);
-
-  const clearRetrySubscribeTimer = useCallback(() => {
-    if (retrySubscribeTimerRef.current) {
-      window.clearTimeout(retrySubscribeTimerRef.current);
-      retrySubscribeTimerRef.current = null;
     }
   }, []);
 
@@ -356,7 +402,16 @@ export default function CallVoiceLayer({
       setCurrentConnectionId(remoteId, connectionId);
 
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        iceServers:
+          iceServers.length > 0 ? iceServers : FALLBACK_ICE_SERVERS,
+      });
+
+      console.log("[call] create peer", {
+        remoteId,
+        connectionId,
+        iceServers: (iceServers.length > 0 ? iceServers : FALLBACK_ICE_SERVERS).map(
+          (s) => s.urls
+        ),
       });
 
       const localTrack = localAudioTrackRef.current;
@@ -365,9 +420,10 @@ export default function CallVoiceLayer({
       if (localTrack && localStream) {
         pc.addTrack(localTrack, localStream);
 
-        const sender = pc.getSenders().find(
-  (s) => s.track?.kind === "audio" || s.track === null
-);
+        const sender = pc
+          .getSenders()
+          .find((s) => s.track?.kind === "audio" || s.track === null);
+
         if (sender && isMuted) {
           void sender.replaceTrack(null);
         }
@@ -383,6 +439,11 @@ export default function CallVoiceLayer({
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
+
+        console.log("[call] ICE candidate", {
+          remoteId,
+          candidate: event.candidate.candidate,
+        });
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
         if (!activeConnectionId || activeConnectionId !== connectionId) return;
@@ -511,6 +572,7 @@ export default function CallVoiceLayer({
       closePeer,
       clearReconnectTimer,
       getCurrentConnectionId,
+      iceServers,
       isMuted,
       notifyStatus,
       scheduleReconnect,
@@ -523,6 +585,15 @@ export default function CallVoiceLayer({
 
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
+  const isOfferOwner = deviceId.localeCompare(remoteId) < 0;
+
+if (!isOfferOwner) {
+  console.log("[call] skip offer: responder side", {
+    deviceId,
+    remoteId,
+  });
+  return;
+}
       if (!localAudioTrackRef.current && !localStreamRef.current) {
         console.log("[call] skip offer: local audio not ready", remoteId);
         return;
@@ -534,10 +605,13 @@ export default function CallVoiceLayer({
       if (hasRemoteStream) return;
 
       if (
-        existingPc &&
-        (existingPc.connectionState === "connecting" ||
-          existingPc.signalingState !== "stable")
-      ) {
+  existingPc &&
+  (existingPc.connectionState === "connected" ||
+    existingPc.connectionState === "connecting" ||
+    existingPc.signalingState === "have-local-offer" ||
+    existingPc.signalingState === "have-remote-offer" ||
+    existingPc.signalingState !== "stable")
+) {
         console.log("[call] skip offer: existing pc busy", remoteId, {
           connectionState: existingPc.connectionState,
           iceConnectionState: existingPc.iceConnectionState,
@@ -1003,7 +1077,11 @@ export default function CallVoiceLayer({
           }
 
           const rms = Math.sqrt(sum / data.length);
-          onMicLevelChange?.(rms);
+
+// 小さい入力でもUIに出るように増幅
+const level = Math.min(1, Math.max(0, (rms - 0.005) * 12));
+
+onMicLevelChange?.(level);
           raf = requestAnimationFrame(tick);
         };
 
@@ -1165,12 +1243,12 @@ export default function CallVoiceLayer({
         const pc = pcsRef.current.get(remoteId);
 
         if (hasRemoteStream) continue;
-if (pc && pc.connectionState === "connected") continue;
+        if (pc && pc.connectionState === "connected") continue;
         if (pc && pc.signalingState !== "stable") continue;
 
         if (pc && pc.connectionState === "connecting") {
-  continue;
-}
+          continue;
+        }
 
         void maybeStartOffer(remoteId);
       }
@@ -1304,7 +1382,6 @@ function RemoteAudio({
     }
   }, [remoteId, stream]);
 
-
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -1348,15 +1425,14 @@ function RemoteAudio({
   return (
     <>
       <audio
-        ref={ref}
-        data-remote={remoteId}
-        autoPlay
-        playsInline
-        controls
-        style={{
-          width: 220,
-        }}
-      />
+  ref={ref}
+  data-remote={remoteId}
+  autoPlay
+  playsInline
+  style={{
+    display: "none",
+  }}
+/>
 
       {blocked && (
         <button
