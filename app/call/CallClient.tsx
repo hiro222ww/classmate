@@ -31,12 +31,12 @@ type SessionStatusResponse = {
     created_at?: string | null;
   };
   members?: Array<{
-  device_id?: string;
-  display_name?: string | null;
-  photo_path?: string | null;
-  joined_at?: string | null;
-  is_in_call?: boolean | null;
-}>;
+    device_id?: string;
+    display_name?: string | null;
+    photo_path?: string | null;
+    joined_at?: string | null;
+    is_in_call?: boolean | null;
+  }>;
   memberCount?: number;
   error?: string;
 };
@@ -98,7 +98,6 @@ export default function CallClient() {
       },
     ]);
   }, [deviceId]);
-
 
   const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
@@ -187,15 +186,15 @@ export default function CallClient() {
           const existing = members.find((x) => x.device_id === did);
 
           nextMembers.push({
-  device_id: did,
-  display_name: String(m.display_name ?? "").trim() || "参加者",
-  photo_path: String(m.photo_path ?? "").trim() || null,
-  lastSpokeAt: existing?.lastSpokeAt,
-  is_in_call: m.is_in_call === true,
-});
+            device_id: did,
+            display_name: String(m.display_name ?? "").trim() || "参加者",
+            photo_path: String(m.photo_path ?? "").trim() || null,
+            lastSpokeAt: existing?.lastSpokeAt,
+            is_in_call: m.is_in_call === true,
+          });
         }
 
-        // // // console.log("[call] fetchMembers success", {
+        console.log("[call] fetchMembers success", {
           reason,
           count: nextMembers.length,
           members: nextMembers.map((m) => m.device_id),
@@ -249,7 +248,7 @@ export default function CallClient() {
   }, [fetchMembers, clearRetryTimer]);
 
   useEffect(() => {
-    // // // console.log("[call] members state", {
+    console.log("[call] members state", {
       count: members.length,
       deviceId,
       members: members.map((m) => ({
@@ -281,23 +280,23 @@ export default function CallClient() {
 
     void sendPresence();
 
-window.setTimeout(() => {
-  void sendPresence();
-  void fetchMembers("presence_after_join");
-}, 500);
+    window.setTimeout(() => {
+      void sendPresence();
+      void fetchMembers("presence_after_join");
+    }, 500);
 
-window.setTimeout(() => {
-  void fetchMembers("presence_after_join_2");
-}, 1500);
+    window.setTimeout(() => {
+      void fetchMembers("presence_after_join_2");
+    }, 1500);
 
-const timer = window.setInterval(() => {
-  void sendPresence();
-}, 10000);
+    const timer = window.setInterval(() => {
+      void sendPresence();
+    }, 10000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [classId, sessionId, deviceId]);
+  }, [classId, sessionId, deviceId, fetchMembers]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -317,7 +316,7 @@ const timer = window.setInterval(() => {
         }
       )
       .subscribe((status) => {
-        // // // console.log("[call] members subscribe status", {
+        console.log("[call] members subscribe status", {
           sessionId,
           status,
         });
@@ -345,7 +344,7 @@ const timer = window.setInterval(() => {
         }
       )
       .subscribe((status) => {
-        // // // console.log("[call] profiles subscribe status", {
+        console.log("[call] profiles subscribe status", {
           sessionId,
           status,
         });
@@ -452,102 +451,99 @@ const timer = window.setInterval(() => {
 
   const lastSpeakerIdRef = useRef<string | null>(null);
 
-const speakingMemberId = useMemo(() => {
-  const now = Date.now();
-  const SPEAKING_MS = 1500;
+  const speakingMemberId = useMemo(() => {
+    const now = Date.now();
+    const SPEAKING_MS = 1500;
 
-  const speaking = members.find(
-    (m) => !!m.lastSpokeAt && now - m.lastSpokeAt < SPEAKING_MS
-  );
+    const speaking = members.find(
+      (m) => !!m.lastSpokeAt && now - m.lastSpokeAt < SPEAKING_MS
+    );
 
-  return speaking?.device_id ?? null;
-}, [members, micLevel]);
+    return speaking?.device_id ?? null;
+  }, [members, micLevel]);
 
-useEffect(() => {
-  if (speakingMemberId) {
-    lastSpeakerIdRef.current = speakingMemberId;
-  }
-}, [speakingMemberId]);
+  useEffect(() => {
+    if (speakingMemberId) {
+      lastSpeakerIdRef.current = speakingMemberId;
+    }
+  }, [speakingMemberId]);
 
-const sortedMembers = useMemo(() => {
-  const lastSpeakerId = lastSpeakerIdRef.current;
+  const sortedMembers = useMemo(() => {
+    const lastSpeakerId = lastSpeakerIdRef.current;
 
-  return [...members].sort((a, b) => {
-  const aIsLastSpeaker = a.device_id === lastSpeakerId;
-  const bIsLastSpeaker = b.device_id === lastSpeakerId;
+    return [...members].sort((a, b) => {
+      const aIsLastSpeaker = a.device_id === lastSpeakerId;
+      const bIsLastSpeaker = b.device_id === lastSpeakerId;
 
-  // ① 最後に喋った人を最優先
-  if (aIsLastSpeaker !== bIsLastSpeaker) {
-    return aIsLastSpeaker ? -1 : 1;
-  }
+      if (aIsLastSpeaker !== bIsLastSpeaker) {
+        return aIsLastSpeaker ? -1 : 1;
+      }
 
-  // ② 接続状態を取得
-  const aState = peerStates[a.device_id] ?? "idle";
-  const bState = peerStates[b.device_id] ?? "idle";
+      const aState = peerStates[a.device_id] ?? "idle";
+      const bState = peerStates[b.device_id] ?? "idle";
 
-  // 優先度（低いほど前）
-  const priority = {
-    connected: 0,
-    idle: 1,
-    connecting: 2,
-    failed: 3,
-  };
+      const priority: Record<PeerState, number> = {
+        connected: 0,
+        idle: 1,
+        connecting: 2,
+        failed: 3,
+      };
 
-  const aP = priority[aState] ?? 99;
-  const bP = priority[bState] ?? 99;
+      const aP = priority[aState] ?? 99;
+      const bP = priority[bState] ?? 99;
 
-  if (aP !== bP) {
-    return aP - bP;
-  }
+      if (aP !== bP) {
+        return aP - bP;
+      }
 
-  return 0;
-});
-}, [members, speakingMemberId, peerStates]);
+      return 0;
+    });
+  }, [members, speakingMemberId, peerStates]);
 
   const callMembers = useMemo(() => {
-  return members.filter(
-    (m) => m.device_id === deviceId || m.is_in_call === true
-  );
-}, [members, deviceId]);
+    return members.filter(
+      (m) => m.device_id === deviceId || m.is_in_call === true
+    );
+  }, [members, deviceId]);
 
   if (!deviceId) {
     return null;
   }
 
   return (
-  <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-    <CallVoiceLayer
-      sessionId={sessionId}
-      deviceId={deviceId}
-      members={callMembers}
-  isMuted={isMuted}
-  onMicReadyChange={setMicReady}
-  onMicLevelChange={(level) => {
-    setMicLevel(level);
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+      <CallVoiceLayer
+        sessionId={sessionId}
+        deviceId={deviceId}
+        members={callMembers}
+        isMuted={isMuted}
+        onMicReadyChange={setMicReady}
+        onMicLevelChange={(level) => {
+          setMicLevel(level);
 
-    if (!isMuted && level > 0.08) {
-      setMembers((prev) =>
-        prev.map((m) =>
-          m.device_id === deviceId
-            ? { ...m, lastSpokeAt: Date.now() }
-            : m
-        )
-      );
-    }
-  }}
-  onRemoteSpeakingChange={(remoteId) => {
-    setMembers((prev) =>
-      prev.map((m) =>
-        m.device_id === remoteId
-          ? { ...m, lastSpokeAt: Date.now() }
-          : m
-      )
-    );
-  }}
-  onRemoteCountChange={handleRemoteCountChange}
-  onStatusChange={setCallInfo}
-  onPeerStatesChange={setPeerStates}
-/>
+          if (!isMuted && level > 0.08) {
+            setMembers((prev) =>
+              prev.map((m) =>
+                m.device_id === deviceId
+                  ? { ...m, lastSpokeAt: Date.now() }
+                  : m
+              )
+            );
+          }
+        }}
+        onRemoteSpeakingChange={(remoteId) => {
+          setMembers((prev) =>
+            prev.map((m) =>
+              m.device_id === remoteId
+                ? { ...m, lastSpokeAt: Date.now() }
+                : m
+            )
+          );
+        }}
+        onRemoteCountChange={handleRemoteCountChange}
+        onStatusChange={setCallInfo}
+        onPeerStatesChange={setPeerStates}
+      />
 
       <div
         style={{
@@ -853,7 +849,6 @@ const sortedMembers = useMemo(() => {
             />
           </div>
         </div>
-
       </section>
 
       <section style={{ marginTop: 16 }}>
