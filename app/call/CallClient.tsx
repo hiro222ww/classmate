@@ -783,7 +783,13 @@ useEffect(() => {
         </div>
       </section>
 
-      <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} />
+      {/* <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} /> */}
+
+{/* 
+<section style={{ marginTop: 16 }}>
+  {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
+</section>
+*/}
 
       <section
         style={{
