@@ -3,19 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-declare global {
-  interface Window {
-    YT?: any;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
 type Props = {
   sessionId: string;
   deviceId: string;
 };
 
-type YoutubeStatus = "playing" | "paused";
+type YoutubeStatus = "paused";
 
 type YoutubeState = {
   session_id: string;
@@ -28,43 +21,12 @@ type YoutubeState = {
 };
 
 type YoutubeBroadcastPayload = {
-  kind: "play" | "pause" | "seek" | "video_change";
+  kind: "video_change" | "sync_time";
   videoId: string;
-  status: YoutubeStatus;
   playheadSeconds: number;
   fromDeviceId: string;
   sentAt: number;
 };
-
-let ytApiPromise: Promise<void> | null = null;
-
-function loadYouTubeApi() {
-  if (typeof window === "undefined") return Promise.resolve();
-  if (window.YT?.Player) return Promise.resolve();
-
-  if (!ytApiPromise) {
-    ytApiPromise = new Promise<void>((resolve) => {
-      const prev = window.onYouTubeIframeAPIReady;
-
-      window.onYouTubeIframeAPIReady = () => {
-        prev?.();
-        resolve();
-      };
-
-      const existing = document.querySelector(
-        'script[src="https://www.youtube.com/iframe_api"]'
-      );
-
-      if (!existing) {
-        const script = document.createElement("script");
-        script.src = "https://www.youtube.com/iframe_api";
-        document.body.appendChild(script);
-      }
-    });
-  }
-
-  return ytApiPromise;
-}
 
 function extractYouTubeId(input: string) {
   const raw = input.trim();
@@ -96,44 +58,37 @@ function extractYouTubeId(input: string) {
   }
 }
 
-export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const playerRef = useRef<any>(null);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+function buildEmbedUrl(videoId: string, startSeconds: number) {
+  const start = Math.max(0, Math.floor(startSeconds || 0));
 
+  const params = new URLSearchParams({
+    start: String(start),
+    autoplay: "0",
+    playsinline: "1",
+    rel: "0",
+    modestbranding: "1",
+    iv_load_policy: "3",
+  });
+
+  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+}
+
+export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const stateRef = useRef<YoutubeState | null>(null);
-  const activeVideoIdRef = useRef("");
   const lastAppliedRef = useRef("");
-  const allowPlayUntilRef = useRef(0);
-  const recreateNonceRef = useRef(0);
 
   const [input, setInput] = useState("");
   const [state, setState] = useState<YoutubeState | null>(null);
   const [error, setError] = useState("");
-  const [needsUserPlay, setNeedsUserPlay] = useState(false);
-  const [playerKey, setPlayerKey] = useState(0);
+  const [iframeKey, setIframeKey] = useState(0);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
-  const destroyPlayer = useCallback(() => {
-    try {
-      playerRef.current?.destroy?.();
-    } catch {
-      // ignore
-    }
-
-    playerRef.current = null;
-
-    if (containerRef.current) {
-      containerRef.current.innerHTML = "";
-    }
-  }, []);
-
-  const forceRecreatePlayer = useCallback(() => {
-    recreateNonceRef.current += 1;
-    setPlayerKey(recreateNonceRef.current);
+  const bumpIframe = useCallback(() => {
+    setIframeKey((v) => v + 1);
   }, []);
 
   const saveStateToDb = useCallback(
@@ -146,7 +101,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         session_id: sessionId,
         url: patch.url ?? current?.url ?? "",
         video_id: patch.video_id ?? current?.video_id ?? "",
-        status: patch.status ?? current?.status ?? "paused",
+        status: "paused",
         playhead_seconds:
           typeof patch.playhead_seconds === "number"
             ? patch.playhead_seconds
@@ -171,7 +126,9 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
   );
 
   const sendYoutubeBroadcast = useCallback(
-    async (payload: Omit<YoutubeBroadcastPayload, "fromDeviceId" | "sentAt">) => {
+    async (
+      payload: Omit<YoutubeBroadcastPayload, "fromDeviceId" | "sentAt">
+    ) => {
       await channelRef.current?.send({
         type: "broadcast",
         event: "youtube-sync",
@@ -194,75 +151,27 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       if (lastAppliedRef.current === key) return;
       lastAppliedRef.current = key;
 
-      const elapsed = Math.max(0, (Date.now() - payload.sentAt) / 1000);
-      const compensatedTime =
-        payload.status === "playing"
-          ? Number(payload.playheadSeconds ?? 0) + elapsed
-          : Number(payload.playheadSeconds ?? 0);
-
-      const current = stateRef.current;
-
       const next: YoutubeState = {
         session_id: sessionId,
-        url: current?.url ?? "",
+        url: stateRef.current?.url ?? "",
         video_id: payload.videoId,
-        status: payload.status,
-        playhead_seconds: compensatedTime,
+        status: "paused",
+        playhead_seconds: Number(payload.playheadSeconds ?? 0),
         updated_by: payload.fromDeviceId,
         updated_at: new Date().toISOString(),
       };
 
       stateRef.current = next;
       setState(next);
+      bumpIframe();
 
-      const player = playerRef.current;
-
-      if (!player) {
-        activeVideoIdRef.current = payload.videoId;
-        forceRecreatePlayer();
-        return;
-      }
-
-      try {
-        const currentVideoId = player.getVideoData?.()?.video_id ?? "";
-
-        if (currentVideoId !== payload.videoId) {
-          activeVideoIdRef.current = payload.videoId;
-          destroyPlayer();
-          forceRecreatePlayer();
-          return;
-        }
-
-        if (payload.status === "playing") {
-          allowPlayUntilRef.current = Date.now() + 4000;
-
-          const currentTime = Number(player.getCurrentTime?.() ?? 0);
-          if (Math.abs(currentTime - compensatedTime) > 1.5) {
-            player.seekTo(compensatedTime, true);
-          }
-
-          window.setTimeout(() => {
-            try {
-              player.playVideo?.();
-              setNeedsUserPlay(false);
-            } catch {
-              setNeedsUserPlay(true);
-            }
-          }, 150);
-        } else {
-          player.pauseVideo?.();
-          setNeedsUserPlay(false);
-
-          const currentTime = Number(player.getCurrentTime?.() ?? 0);
-          if (Math.abs(currentTime - compensatedTime) > 2) {
-            player.seekTo(compensatedTime, true);
-          }
-        }
-      } catch (e) {
-        console.warn("[youtube] apply broadcast failed", e);
-      }
+      console.log("[youtube] remote applied", {
+        kind: payload.kind,
+        videoId: payload.videoId,
+        playheadSeconds: payload.playheadSeconds,
+      });
     },
-    [deviceId, sessionId, destroyPlayer, forceRecreatePlayer]
+    [deviceId, sessionId, bumpIframe]
   );
 
   useEffect(() => {
@@ -281,6 +190,7 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
 
       if (error) {
         console.warn("[youtube] load failed", error);
+        setError(error.message);
         return;
       }
 
@@ -288,15 +198,18 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
         const row = data as YoutubeState;
 
         const next: YoutubeState = {
-          ...row,
+          session_id: sessionId,
+          url: row.url ?? "",
+          video_id: row.video_id ?? "",
           status: "paused",
           playhead_seconds: Number(row.playhead_seconds ?? 0),
+          updated_by: row.updated_by ?? null,
+          updated_at: row.updated_at ?? new Date().toISOString(),
         };
 
         stateRef.current = next;
         setState(next);
-        activeVideoIdRef.current = next.video_id;
-        forceRecreatePlayer();
+        bumpIframe();
       }
     }
 
@@ -314,101 +227,9 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     return () => {
       cancelled = true;
       channelRef.current = null;
-      destroyPlayer();
       void supabase.removeChannel(channel);
     };
-  }, [
-    sessionId,
-    applyRemoteState,
-    destroyPlayer,
-    forceRecreatePlayer,
-  ]);
-
-  useEffect(() => {
-    if (!state?.video_id) return;
-    if (!containerRef.current) return;
-
-    let cancelled = false;
-    const videoId = state.video_id;
-    const startSeconds = Number(state.playhead_seconds ?? 0);
-
-    async function setupPlayer() {
-      await loadYouTubeApi();
-      if (cancelled || !containerRef.current || !videoId) return;
-
-      activeVideoIdRef.current = videoId;
-      destroyPlayer();
-
-      console.log("[youtube] create player", {
-        videoId,
-        startSeconds,
-        playerKey,
-      });
-
-      playerRef.current = new window.YT.Player(containerRef.current, {
-        videoId,
-        width: "100%",
-        height: "100%",
-        playerVars: {
-          playsinline: 1,
-          rel: 0,
-          modestbranding: 1,
-          iv_load_policy: 3,
-          fs: 0,
-          disablekb: 1,
-          autoplay: 0,
-        },
-        events: {
-          onReady: () => {
-            if (cancelled) return;
-
-            const player = playerRef.current;
-            if (!player) return;
-
-            try {
-              player.cueVideoById(videoId, startSeconds);
-              player.pauseVideo?.();
-              setNeedsUserPlay(false);
-            } catch (e) {
-              console.warn("[youtube] ready cue failed", e);
-            }
-          },
-
-          onStateChange: (event: any) => {
-            // 重要：
-            // YouTube側のPLAYING/PAUSEDイベントではDB更新・broadcastしない。
-            // ここで保存すると古いplayerや謎イベントでゾンビ動画が復活する。
-            const player = playerRef.current;
-            const playerVideoId = player?.getVideoData?.()?.video_id ?? "";
-
-            console.log("[youtube] state event ignored", {
-              eventData: event?.data,
-              playerVideoId,
-              activeVideoId: activeVideoIdRef.current,
-            });
-
-            const isPlaying = event?.data === window.YT?.PlayerState?.PLAYING;
-            const allowed = Date.now() < allowPlayUntilRef.current;
-
-            if (isPlaying && !allowed) {
-              try {
-                player?.pauseVideo?.();
-              } catch {
-                // ignore
-              }
-            }
-          },
-        },
-      });
-    }
-
-    void setupPlayer();
-
-    return () => {
-      cancelled = true;
-      destroyPlayer();
-    };
-  }, [state?.video_id, playerKey, destroyPlayer]);
+  }, [sessionId, applyRemoteState, bumpIframe]);
 
   async function openUrl() {
     const url = input.trim();
@@ -420,10 +241,6 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
     }
 
     setError("");
-    setNeedsUserPlay(false);
-
-    activeVideoIdRef.current = videoId;
-    destroyPlayer();
 
     await saveStateToDb({
       url,
@@ -432,78 +249,20 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       playhead_seconds: 0,
     });
 
-    forceRecreatePlayer();
+    bumpIframe();
 
     await sendYoutubeBroadcast({
       kind: "video_change",
       videoId,
-      status: "paused",
       playheadSeconds: 0,
     });
   }
 
-  async function sendManualSync() {
+  async function syncFromSeconds(seconds: number) {
     const current = stateRef.current;
     if (!current?.video_id) return;
 
-    const player = playerRef.current;
-    const videoId = current.video_id;
-
-    let t = Number(current.playhead_seconds ?? 0);
-
-    try {
-      const playerVideoId = player?.getVideoData?.()?.video_id ?? "";
-      if (player && (!playerVideoId || playerVideoId === videoId)) {
-        t = Number(player.getCurrentTime?.() ?? t);
-      }
-    } catch {
-      // ignore
-    }
-
-    allowPlayUntilRef.current = Date.now() + 4000;
-
-    await saveStateToDb({
-      video_id: videoId,
-      status: "playing",
-      playhead_seconds: t,
-    });
-
-    await sendYoutubeBroadcast({
-      kind: "play",
-      videoId,
-      status: "playing",
-      playheadSeconds: t,
-    });
-
-    try {
-      if (!playerRef.current) {
-        forceRecreatePlayer();
-        setNeedsUserPlay(true);
-        return;
-      }
-
-      playerRef.current.seekTo?.(t, true);
-      playerRef.current.playVideo?.();
-      setNeedsUserPlay(false);
-    } catch {
-      setNeedsUserPlay(true);
-    }
-  }
-
-  async function sendManualPause() {
-    const current = stateRef.current;
-    const player = playerRef.current;
-
-    if (!current?.video_id) return;
-
-    let t = Number(current.playhead_seconds ?? 0);
-
-    try {
-      t = Number(player?.getCurrentTime?.() ?? t);
-      player?.pauseVideo?.();
-    } catch {
-      // ignore
-    }
+    const t = Math.max(0, Math.floor(seconds || 0));
 
     await saveStateToDb({
       video_id: current.video_id,
@@ -511,15 +270,19 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
       playhead_seconds: t,
     });
 
+    bumpIframe();
+
     await sendYoutubeBroadcast({
-      kind: "pause",
+      kind: "sync_time",
       videoId: current.video_id,
-      status: "paused",
       playheadSeconds: t,
     });
-
-    setNeedsUserPlay(false);
   }
+
+  const currentStartSeconds = Number(state?.playhead_seconds ?? 0);
+  const iframeSrc = state?.video_id
+    ? buildEmbedUrl(state.video_id, currentStartSeconds)
+    : "";
 
   return (
     <section
@@ -597,22 +360,34 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
               width: "100%",
             }}
           >
-            <div
-              key={`${state.video_id}-${playerKey}`}
-              ref={containerRef}
+            <iframe
+              key={`${state.video_id}-${currentStartSeconds}-${iframeKey}`}
+              src={iframeSrc}
+              title="YouTube Watch Party"
+              allow="encrypted-media; picture-in-picture"
+              allowFullScreen
               style={{
                 width: "100%",
                 height: "100%",
+                border: 0,
+                display: "block",
               }}
             />
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
             <button
               type="button"
-              onClick={() => void sendManualSync()}
+              onClick={() => void syncFromSeconds(currentStartSeconds)}
               style={{
-                marginTop: 8,
                 padding: "8px 12px",
                 borderRadius: 999,
                 border: "1px solid #d1d5db",
@@ -621,14 +396,13 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
                 cursor: "pointer",
               }}
             >
-              再生を同期
+              この位置に同期
             </button>
 
             <button
               type="button"
-              onClick={() => void sendManualPause()}
+              onClick={() => void syncFromSeconds(currentStartSeconds + 10)}
               style={{
-                marginTop: 8,
                 padding: "8px 12px",
                 borderRadius: 999,
                 border: "1px solid #d1d5db",
@@ -637,39 +411,33 @@ export default function YouTubeWatchParty({ sessionId, deviceId }: Props) {
                 cursor: "pointer",
               }}
             >
-              停止を同期
+              +10秒
             </button>
 
-            {needsUserPlay && (
-              <button
-                type="button"
-                onClick={() => {
-                  const player = playerRef.current;
-                  if (!player) return;
+            <button
+              type="button"
+              onClick={() => void syncFromSeconds(Math.max(0, currentStartSeconds - 10))}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 999,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                fontWeight: 900,
+                cursor: "pointer",
+              }}
+            >
+              -10秒
+            </button>
 
-                  allowPlayUntilRef.current = Date.now() + 4000;
-
-                  try {
-                    player.playVideo?.();
-                    setNeedsUserPlay(false);
-                  } catch {
-                    setNeedsUserPlay(true);
-                  }
-                }}
-                style={{
-                  marginTop: 8,
-                  padding: "8px 12px",
-                  borderRadius: 999,
-                  border: "1px solid #111827",
-                  background: "#111827",
-                  color: "#fff",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                }}
-              >
-                ▶ 同期再生を開始
-              </button>
-            )}
+            <span
+              style={{
+                fontSize: 12,
+                fontWeight: 800,
+                color: "#6b7280",
+              }}
+            >
+              開始位置: {Math.floor(currentStartSeconds)}秒
+            </span>
           </div>
         </>
       ) : (

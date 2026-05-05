@@ -195,7 +195,7 @@ export default function CallClient() {
 });
         }
 
-        console.log("[call] fetchMembers success", {
+        // // // console.log("[call] fetchMembers success", {
           reason,
           count: nextMembers.length,
           members: nextMembers.map((m) => m.device_id),
@@ -249,7 +249,7 @@ export default function CallClient() {
   }, [fetchMembers, clearRetryTimer]);
 
   useEffect(() => {
-    console.log("[call] members state", {
+    // // // console.log("[call] members state", {
       count: members.length,
       deviceId,
       members: members.map((m) => ({
@@ -317,7 +317,7 @@ const timer = window.setInterval(() => {
         }
       )
       .subscribe((status) => {
-        console.log("[call] members subscribe status", {
+        // // // console.log("[call] members subscribe status", {
           sessionId,
           status,
         });
@@ -345,7 +345,7 @@ const timer = window.setInterval(() => {
         }
       )
       .subscribe((status) => {
-        console.log("[call] profiles subscribe status", {
+        // // // console.log("[call] profiles subscribe status", {
           sessionId,
           status,
         });
