@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 type VoiceSettings = {
   voice_enabled: boolean;
@@ -133,8 +134,29 @@ const res = await fetch("/api/admin/voice-settings", {
 useEffect(() => {
   if (!authorized) return;
 
+  // 🔥 初回ロード追加
   void load();
   void loadMetrics();
+
+  const channel = supabase
+    .channel("voice_logs")
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "voice_connection_logs",
+      },
+      () => {
+        console.log("🔥 realtime update");
+        loadMetrics();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }, [authorized]);
 
 if (!authorized) {
