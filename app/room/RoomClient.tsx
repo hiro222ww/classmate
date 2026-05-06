@@ -30,9 +30,12 @@ type MemberRow = {
 
 type PresenceStatus = "offline" | "waiting" | "active";
 
+type PresenceScreen = "home" | "room" | "call" | "unknown";
+
 type PresenceRow = {
   device_id: string;
   status: PresenceStatus;
+  screen?: PresenceScreen | null;
   session_id?: string | null;
   updated_at?: string | null;
 };
@@ -193,9 +196,25 @@ function getFreshPresenceStatus(p?: PresenceRow): PresenceStatus {
 }
 
 function statusLabel(status: PresenceStatus) {
-  if (status === "active") return "通話中";
+  if (status === "active") return "オンライン";
   if (status === "waiting") return "オンライン";
   return "オフライン";
+}
+
+function getMemberStatusLabel(
+  p: PresenceRow | undefined,
+  currentSessionId: string
+) {
+  const fresh = getFreshPresenceStatus(p);
+  if (fresh === "offline") return "オフライン";
+
+  const screen = String(p?.screen ?? "").trim();
+  const sid = String(p?.session_id ?? "").trim();
+
+  if (screen === "call" && sid === currentSessionId) return "通話中";
+  if (screen === "room") return "待機中";
+
+  return "オンライン";
 }
 
 function statusStyle(status: PresenceStatus) {
@@ -737,8 +756,14 @@ const name = rawName === "You" ? "参加者" : rawName;
       const inviteJson = await readJsonSafe(inviteRes);
 
       if (!inviteRes.ok || !inviteJson?.ok) {
-        console.warn("[room invite] class join failed", inviteJson);
-      }
+  console.warn("[room invite] class join failed", inviteJson);
+
+  if (inviteJson?.error === "class_slots_limit") {
+    throw new Error("参加できるクラス数の上限に達しています");
+  }
+
+  throw new Error("招待されたクラスへの参加に失敗しました");
+}
     }
 
     const res = await fetch(
@@ -1204,17 +1229,17 @@ if (!shouldAutoStart) return;
                             ) : null}
 
                             <span
-                              style={{
-                                ...pill,
-                                fontSize: 11,
-                                fontWeight: 900,
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {statusLabel(memberStatus)}
-                            </span>
+  style={{
+    ...pill,
+    fontSize: 11,
+    fontWeight: 900,
+    padding: "4px 8px",
+    borderRadius: 999,
+    whiteSpace: "nowrap",
+  }}
+>
+  {isMe ? "待機中" : getMemberStatusLabel(presenceMap[did], sessionId)}
+</span>
                           </div>
                         </div>
                       </div>
