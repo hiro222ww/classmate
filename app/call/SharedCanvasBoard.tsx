@@ -56,7 +56,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
     {}
   );
-  const remoteStrokeQueueByDeviceRef = useRef<Record<string, string[]>>({});
 
   const channelRef =
     useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
@@ -82,6 +81,39 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     return { w: canvas.width, h: canvas.height };
   };
 
+  const normalizeRowsAfterLastClear = (rows: ChalkStrokeRow[]) => {
+    const sorted = [...rows].sort((a, b) => {
+      const at = String(a.created_at ?? "");
+      const bt = String(b.created_at ?? "");
+
+      if (at !== bt) return at.localeCompare(bt);
+
+      return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+    });
+
+    let lastClearIndex = -1;
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (sorted[i].kind === "clear") {
+        lastClearIndex = i;
+      }
+    }
+
+    if (lastClearIndex >= 0) {
+      return sorted.slice(lastClearIndex);
+    }
+
+    return sorted;
+  };
+
+  const setPersistedRows = (rows: ChalkStrokeRow[]) => {
+    persistedRowsRef.current = normalizeRowsAfterLastClear(rows);
+  };
+
+  const setPendingRows = (rows: ChalkStrokeRow[]) => {
+    pendingRowsRef.current = normalizeRowsAfterLastClear(rows);
+  };
+
   const paintBase = () => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -96,7 +128,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const clearRemoteOnly = () => {
     remoteProgressRef.current = {};
     remoteStyleRef.current = {};
-    remoteStrokeQueueByDeviceRef.current = {};
   };
 
   const resetBoardRowsForClear = (clearRow?: ChalkStrokeRow) => {
@@ -115,9 +146,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     paintBoardBase(ctx, w, h);
 
-    const mergedRows = upsertRows(
-      persistedRowsRef.current,
-      pendingRowsRef.current
+    const mergedRows = normalizeRowsAfterLastClear(
+      upsertRows(persistedRowsRef.current, pendingRowsRef.current)
     );
 
     for (const row of mergedRows) {
@@ -208,7 +238,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     const incoming = (data ?? []) as ChalkStrokeRow[];
 
-    persistedRowsRef.current = upsertRows(persistedRowsRef.current, incoming);
+    setPersistedRows(upsertRows(persistedRowsRef.current, incoming));
     redrawScene();
     setInfo("");
   };
@@ -311,7 +341,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       created_at: new Date().toISOString(),
     };
 
-    pendingRowsRef.current = upsertRows(pendingRowsRef.current, [optimisticRow]);
+    setPendingRows(upsertRows(pendingRowsRef.current, [optimisticRow]));
     redrawScene();
 
     const { data, error } = await supabaseBrowser
@@ -342,6 +372,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       pendingRowsRef.current = pendingRowsRef.current.filter(
         (row) => row.id !== optimisticRow.id
       );
+
       redrawScene();
       return;
     }
@@ -351,9 +382,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     );
 
     if (data) {
-      persistedRowsRef.current = upsertRows(persistedRowsRef.current, [
-        data as ChalkStrokeRow,
-      ]);
+      setPersistedRows(
+        upsertRows(persistedRowsRef.current, [data as ChalkStrokeRow])
+      );
     }
 
     redrawScene();
@@ -462,25 +493,22 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
         const key = `${p.deviceId}:${p.strokeId}`;
 
+        if (p.done) {
+          delete remoteProgressRef.current[key];
+          delete remoteStyleRef.current[key];
+          redrawScene();
+          return;
+        }
+
         if (!p.points || p.points.length < 1) return;
 
         const prev = remoteProgressRef.current[key] ?? [];
         const nextPoints = [...prev];
 
-        if (nextPoints.length === 0) {
-          nextPoints.push(...p.points);
-
-          const queue = remoteStrokeQueueByDeviceRef.current[p.deviceId] ?? [];
-          if (!queue.includes(key)) {
-            queue.push(key);
-            remoteStrokeQueueByDeviceRef.current[p.deviceId] = queue;
-          }
-        } else {
-          for (const pt of p.points) {
-            const last = nextPoints[nextPoints.length - 1];
-            if (!last || last.x !== pt.x || last.y !== pt.y) {
-              nextPoints.push(pt);
-            }
+        for (const pt of p.points) {
+          const last = nextPoints[nextPoints.length - 1];
+          if (!last || last.x !== pt.x || last.y !== pt.y) {
+            nextPoints.push(pt);
           }
         }
 
@@ -532,18 +560,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             return;
           }
 
-          persistedRowsRef.current = upsertRows(persistedRowsRef.current, [row]);
+          const key = `${row.device_id}:${row.id}`;
+          delete remoteProgressRef.current[key];
+          delete remoteStyleRef.current[key];
 
-          const deviceId = String(row.device_id ?? "").trim();
-          const queue = remoteStrokeQueueByDeviceRef.current[deviceId] ?? [];
-          const targetKey = queue.shift();
-
-          if (targetKey) {
-            delete remoteProgressRef.current[targetKey];
-            delete remoteStyleRef.current[targetKey];
-          }
-
-          remoteStrokeQueueByDeviceRef.current[deviceId] = queue;
+          setPersistedRows(upsertRows(persistedRowsRef.current, [row]));
 
           redrawScene();
         }
@@ -650,27 +671,20 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       const finalPoints = [...pointsRef.current];
       const strokeColor = strokeColorRef.current;
       const strokeWidth = strokeWidthRef.current;
-      const finalStrokeId = strokeIdRef.current;
 
       resetDrawingState();
 
       if (finalPoints.length >= 1) {
         void persistWholeStroke(finalPoints, strokeColor, strokeWidth);
-
-        void sendBroadcastStroke({
-          sessionId,
-          deviceId: deviceIdRef.current,
-          strokeId: finalStrokeId,
-          color: strokeColor,
-          width: strokeWidth,
-          points: finalPoints,
-          done: true,
-        }).catch((e: any) => {
-          console.error("[chalk] broadcast done failed", e);
-        });
       }
 
       sounds.chalkEnd();
+
+      window.setTimeout(() => {
+        if (!drawingRef.current) {
+          sounds.dispose();
+        }
+      }, 120);
     };
 
     const onDown = (ev: PointerEvent) => {
@@ -698,13 +712,28 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
       redrawScene();
 
+      void sendBroadcastStroke({
+        sessionId,
+        deviceId: deviceIdRef.current,
+        strokeId: strokeIdRef.current,
+        color: strokeColorRef.current,
+        width: strokeWidthRef.current,
+        points: [p],
+        done: false,
+      }).catch((e: any) => {
+        console.error("[chalk] broadcast start failed", e);
+      });
+
       const now = performance.now();
+
       if (tool === "chalk" && now - lastTapRef.current > 260) {
         lastTapRef.current = now;
         sounds.chalkTap(0.35);
       }
 
-      sounds.chalkStart();
+      if (tool === "chalk") {
+        sounds.chalkStart();
+      }
     };
 
     const onMove = (ev: PointerEvent) => {
@@ -735,7 +764,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         strokeId: strokeIdRef.current,
         color: strokeColor,
         width: strokeWidth,
-        points: [last, p],
+        points: [p],
         done: false,
       }).catch((e: any) => {
         console.error("[chalk] broadcast move failed", e);
@@ -828,7 +857,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     watchdogRef.current = window.setInterval(() => {
       if (!drawingRef.current) sounds.dispose();
-    }, 500);
+    }, 180);
 
     canvas.addEventListener("pointerdown", onDown, { passive: false });
     canvas.addEventListener("pointermove", onMove, { passive: false });
