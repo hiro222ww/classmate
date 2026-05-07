@@ -82,23 +82,6 @@ export default function CallClient() {
   }, []);
 
   const [members, setMembers] = useState<Member[]>([]);
-
-  useEffect(() => {
-  if (!deviceId) return;
-
-  setMembers((prev) => {
-    if (prev.length > 0) return prev;
-
-    return [
-      {
-        device_id: deviceId,
-        display_name: "参加者",
-        photo_path: null,
-      },
-    ];
-  });
-}, [deviceId]);
-
   const [isMuted, setIsMuted] = useState(true);
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -106,9 +89,37 @@ export default function CallClient() {
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
+  const [nowMs, setNowMs] = useState(0);
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
+  const lastSpeakerIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setNowMs(Date.now());
+
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!deviceId) return;
+
+    setMembers((prev) => {
+      if (prev.length > 0) return prev;
+
+      return [
+        {
+          device_id: deviceId,
+          display_name: "参加者",
+          photo_path: null,
+        },
+      ];
+    });
+  }, [deviceId]);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
@@ -119,13 +130,8 @@ export default function CallClient() {
 
   const fetchMembers = useCallback(
     async (reason = "manual") => {
-      if (!sessionId || !classId) {
-  return;
-}
-
-      if (fetchingRef.current) {
-        return;
-      }
+      if (!sessionId || !classId) return;
+      if (fetchingRef.current) return;
 
       fetchingRef.current = true;
 
@@ -182,13 +188,10 @@ export default function CallClient() {
           const did = String(m.device_id ?? "").trim();
           if (!did) continue;
 
-          const existing = members.find((x) => x.device_id === did);
-
           nextMembers.push({
             device_id: did,
             display_name: String(m.display_name ?? "").trim() || "参加者",
             photo_path: String(m.photo_path ?? "").trim() || null,
-            lastSpokeAt: existing?.lastSpokeAt,
             is_in_call: m.is_in_call === true,
           });
         }
@@ -208,7 +211,16 @@ export default function CallClient() {
           return;
         }
 
-        setMembers(nextMembers);
+        setMembers((prev) => {
+          return nextMembers.map((m) => {
+            const existing = prev.find((x) => x.device_id === m.device_id);
+            return {
+              ...m,
+              lastSpokeAt: existing?.lastSpokeAt,
+            };
+          });
+        });
+
         setFetchErrorCount(0);
         clearRetryTimer();
 
@@ -224,7 +236,6 @@ export default function CallClient() {
         });
 
         setFetchErrorCount((prev) => prev + 1);
-
         clearRetryTimer();
 
         retryTimerRef.current = window.setTimeout(() => {
@@ -324,33 +335,7 @@ export default function CallClient() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [sessionId]);
-
-  // 一旦コメントアウト
-/*
-useEffect(() => {
-  if (!sessionId) return;
-
-  const channel = supabase
-    .channel(`call-profiles-${sessionId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "user_profiles",
-      },
-      async () => {
-        await fetchMembers("profiles_realtime");
-      }
-    )
-    .subscribe();
-
-  return () => {
-    void supabase.removeChannel(channel);
-  };
-}, [sessionId, fetchMembers]);
-*/
+  }, [sessionId, fetchMembers]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -446,18 +431,16 @@ useEffect(() => {
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
-  const lastSpeakerIdRef = useRef<string | null>(null);
-
   const speakingMemberId = useMemo(() => {
-    const now = Date.now();
     const SPEAKING_MS = 1500;
 
     const speaking = members.find(
-      (m) => !!m.lastSpokeAt && now - m.lastSpokeAt < SPEAKING_MS
+      (m) =>
+        !!m.lastSpokeAt && nowMs > 0 && nowMs - m.lastSpokeAt < SPEAKING_MS
     );
 
     return speaking?.device_id ?? null;
-  }, [members, micLevel]);
+  }, [members, nowMs]);
 
   useEffect(() => {
     if (speakingMemberId) {
@@ -489,17 +472,28 @@ useEffect(() => {
       const aP = priority[aState] ?? 99;
       const bP = priority[bState] ?? 99;
 
-      if (aP !== bP) {
-        return aP - bP;
-      }
+      if (aP !== bP) return aP - bP;
 
       return 0;
     });
   }, [members, speakingMemberId, peerStates]);
 
   const callMembers = useMemo(() => {
-  return members;
-}, [members]);
+    return members;
+  }, [members]);
+
+  useEffect(() => {
+    console.log("[call] callMembers before voice layer", {
+      count: callMembers.length,
+      deviceId,
+      callMembers: callMembers.map((m) => ({
+        device_id: m.device_id,
+        display_name: m.display_name,
+        is_in_call: m.is_in_call,
+        isMe: m.device_id === deviceId,
+      })),
+    });
+  }, [callMembers, deviceId]);
 
   if (!deviceId) {
     return null;
@@ -682,9 +676,10 @@ useEffect(() => {
             const status = getMemberStatus(member);
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
 
-            const now = Date.now();
             const isSpeaking =
-              !!member?.lastSpokeAt && now - member.lastSpokeAt < 1500;
+              !!member?.lastSpokeAt &&
+              nowMs > 0 &&
+              nowMs - member.lastSpokeAt < 1500;
 
             return (
               <div
@@ -782,12 +777,6 @@ useEffect(() => {
       </section>
 
       {/* <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} /> */}
-
-{/* 
-<section style={{ marginTop: 16 }}>
-  {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
-</section>
-*/}
 
       <section
         style={{
