@@ -498,11 +498,8 @@ useEffect(() => {
   }, [members, speakingMemberId, peerStates]);
 
   const callMembers = useMemo(() => {
-  return members.filter((m) => {
-    const id = String(m.device_id ?? "").trim();
-    return id && id !== deviceId;
-  });
-}, [members, deviceId]);
+  return members;
+}, [members]);
 
   if (!deviceId) {
     return null;
