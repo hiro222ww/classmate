@@ -32,6 +32,31 @@ export function useCallSignals(params: {
     onReadyChangeRef.current?.(ready);
   }
 
+  async function loadRecentSignals() {
+    if (!sessionId || !deviceId) return;
+
+    const since = new Date(Date.now() - 30_000).toISOString();
+
+    const { data, error } = await supabase
+      .from("call_signals")
+      .select("*")
+      .eq("session_id", sessionId)
+      .gte("created_at", since)
+      .neq("from_device_id", deviceId)
+      .or(`to_device_id.eq.${deviceId},to_device_id.is.null`)
+      .order("created_at", { ascending: true })
+      .limit(100);
+
+    if (error) {
+      callWarn("[call] recent signals load failed", error);
+      return;
+    }
+
+    for (const row of (data ?? []) as SignalRow[]) {
+      await onSignalRef.current(row);
+    }
+  }
+
   useEffect(() => {
     if (!sessionId || !deviceId) {
       updateReady(false);
@@ -73,6 +98,10 @@ export function useCallSignals(params: {
 
         if (status === "SUBSCRIBED") {
           updateReady(true);
+
+          // 🔥 購読前に送られた offer / answer / ice を取り戻す
+          void loadRecentSignals();
+
           return;
         }
 
