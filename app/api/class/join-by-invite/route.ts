@@ -127,22 +127,91 @@ async function ensureMembership(params: {
   };
 }
 
+async function ensureSessionMember(params: {
+  sessionId: string;
+  deviceId: string;
+}) {
+  const { sessionId, deviceId } = params;
+
+  const { data: profile, error: profileError } = await supabase
+    .from("user_profiles")
+    .select("display_name, photo_path")
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (profileError) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "profile_lookup_failed",
+          detail: profileError.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  const displayName = String(profile?.display_name ?? "").trim() || "参加者";
+  const photoPath = String(profile?.photo_path ?? "").trim() || null;
+
+  const { error } = await supabase.from("session_members").upsert(
+    {
+      session_id: sessionId,
+      device_id: deviceId,
+      display_name: displayName,
+      photo_path: photoPath,
+      is_in_call: false,
+    },
+    {
+      onConflict: "session_id,device_id",
+    }
+  );
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "session_member_upsert_failed",
+          detail: error.message,
+          code: (error as any)?.code ?? null,
+          hint: (error as any)?.hint ?? null,
+          details: (error as any)?.details ?? null,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    displayName,
+    photoPath,
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
 
     const classId = String(body?.classId ?? "").trim();
+    const sessionId = String(body?.sessionId ?? "").trim();
     const deviceId = String(body?.deviceId ?? "").trim();
 
     console.log("[join-by-invite] body =", body);
     console.log("[join-by-invite] classId =", classId);
+    console.log("[join-by-invite] sessionId =", sessionId);
     console.log("[join-by-invite] deviceId =", deviceId);
 
-    if (!classId || !deviceId) {
+    if (!classId || !sessionId || !deviceId) {
       return NextResponse.json(
         {
           ok: false,
           error: "missing_params",
+          required: ["classId", "sessionId", "deviceId"],
         },
         { status: 400 }
       );
@@ -178,6 +247,46 @@ export async function POST(req: Request) {
       );
     }
 
+    const { data: session, error: sessionError } = await supabase
+      .from("sessions")
+      .select("id,class_id,status")
+      .eq("id", sessionId)
+      .maybeSingle();
+
+    if (sessionError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_lookup_failed",
+          detail: sessionError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!session) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_not_found",
+          sessionId,
+        },
+        { status: 404 }
+      );
+    }
+
+    if (String(session.class_id) !== classId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_class_mismatch",
+          classId,
+          sessionClassId: session.class_id,
+        },
+        { status: 400 }
+      );
+    }
+
     const slotsRes = await getClassSlots(deviceId);
     if (!slotsRes.ok) return slotsRes.response;
 
@@ -189,13 +298,23 @@ export async function POST(req: Request) {
 
     if (!membershipRes.ok) return membershipRes.response;
 
+    const sessionMemberRes = await ensureSessionMember({
+      sessionId,
+      deviceId,
+    });
+
+    if (!sessionMemberRes.ok) return sessionMemberRes.response;
+
     return NextResponse.json({
       ok: true,
       classId,
+      sessionId,
       className: String(klass.name ?? "").trim() || "クラス",
       alreadyJoined: membershipRes.alreadyJoined,
       currentCount: membershipRes.currentCount,
       classSlots: slotsRes.classSlots,
+      displayName: sessionMemberRes.displayName,
+      photoPath: sessionMemberRes.photoPath,
     });
   } catch (e: any) {
     console.error("[join-by-invite] server error =", e);

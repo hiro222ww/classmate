@@ -747,9 +747,10 @@ const name = rawName === "You" ? "参加者" : rawName;
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          classId,
-          deviceId,
-        }),
+  classId,
+  sessionId, // ← 追加
+  deviceId,
+}),
         cache: "no-store",
       });
 
