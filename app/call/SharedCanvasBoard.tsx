@@ -51,6 +51,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
   const watchdogRef = useRef<number | null>(null);
   const fallbackPollRef = useRef<number | null>(null);
+  const clearBarrierAtMsRef = useRef<number>(0);
 
   const remoteProgressRef = useRef<Record<string, StrokePoint[]>>({});
   const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
@@ -81,21 +82,38 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     return { w: canvas.width, h: canvas.height };
   };
 
+  const getRowTimeMs = (row: ChalkStrokeRow) => {
+    const t = new Date(row.created_at).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+
   const normalizeRowsAfterLastClear = (rows: ChalkStrokeRow[]) => {
-    const sorted = [...rows].sort((a, b) => {
-      const at = String(a.created_at ?? "");
-      const bt = String(b.created_at ?? "");
+    const barrier = clearBarrierAtMsRef.current;
 
-      if (at !== bt) return at.localeCompare(bt);
+    const sorted = [...rows]
+      .filter((row) => {
+        if (row.kind === "clear") return true;
+        if (!barrier) return true;
+        return getRowTimeMs(row) > barrier;
+      })
+      .sort((a, b) => {
+        const at = String(a.created_at ?? "");
+        const bt = String(b.created_at ?? "");
 
-      return String(a.id ?? "").localeCompare(String(b.id ?? ""));
-    });
+        if (at !== bt) return at.localeCompare(bt);
+
+        return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+      });
 
     let lastClearIndex = -1;
 
     for (let i = 0; i < sorted.length; i++) {
       if (sorted[i].kind === "clear") {
         lastClearIndex = i;
+        clearBarrierAtMsRef.current = Math.max(
+          clearBarrierAtMsRef.current,
+          getRowTimeMs(sorted[i])
+        );
       }
     }
 
@@ -131,9 +149,33 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   };
 
   const resetBoardRowsForClear = (clearRow?: ChalkStrokeRow) => {
+    if (clearRow) {
+      clearBarrierAtMsRef.current = Math.max(
+        clearBarrierAtMsRef.current,
+        getRowTimeMs(clearRow)
+      );
+    } else {
+      clearBarrierAtMsRef.current = Date.now();
+    }
+
     persistedRowsRef.current = clearRow ? [clearRow] : [];
     pendingRowsRef.current = [];
     clearRemoteOnly();
+  };
+
+  const removeOneRemoteProgressFromDevice = (deviceId: string) => {
+    const prefix = `${deviceId}:`;
+
+    const keys = Object.keys(remoteProgressRef.current).filter((key) =>
+      key.startsWith(prefix)
+    );
+
+    if (keys.length === 0) return;
+
+    const targetKey = keys[0];
+
+    delete remoteProgressRef.current[targetKey];
+    delete remoteStyleRef.current[targetKey];
   };
 
   const redrawScene = () => {
@@ -406,6 +448,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       created_at: new Date().toISOString(),
     };
 
+    clearBarrierAtMsRef.current = Date.now();
+
     resetBoardRowsForClear(optimisticRow);
     paintBase();
     redrawScene();
@@ -494,9 +538,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          delete remoteProgressRef.current[key];
-          delete remoteStyleRef.current[key];
-          redrawScene();
+          // 消さない。DB INSERTが来るまで一時線を残す。
+          // ここで消すと「出る → 消える → 復活」になる。
           return;
         }
 
@@ -525,6 +568,11 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
         if (!p || p.sessionId !== sessionId) return;
         if (p.deviceId === deviceIdRef.current) return;
+
+        clearBarrierAtMsRef.current = Math.max(
+          clearBarrierAtMsRef.current,
+          p.clearAt
+        );
 
         const remoteClearRow: ChalkStrokeRow = {
           id: `remote-clear-${p.deviceId}-${p.clearAt}`,
@@ -560,9 +608,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             return;
           }
 
-          const key = `${row.device_id}:${row.id}`;
-          delete remoteProgressRef.current[key];
-          delete remoteStyleRef.current[key];
+          removeOneRemoteProgressFromDevice(String(row.device_id ?? "").trim());
 
           setPersistedRows(upsertRows(persistedRowsRef.current, [row]));
 
