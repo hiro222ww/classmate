@@ -24,7 +24,7 @@ export function useLocalMic({
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicId, setSelectedMicId] = useState("");
 
-  // 🎧 デバイス一覧取得
+  // 🎧 デバイス一覧
   useEffect(() => {
     async function loadDevices() {
       try {
@@ -44,7 +44,7 @@ export function useLocalMic({
     void loadDevices();
   }, []);
 
-  // 🎤 マイク取得（🔥ここが重要）
+  // 🎤 マイク取得（🔥ここが超重要）
   useEffect(() => {
     let mounted = true;
 
@@ -102,7 +102,7 @@ export function useLocalMic({
       }
     }
 
-    // 🔥 ここが修正ポイント（条件なしで必ず実行）
+    // 🔥 条件なしで必ず実行（ここが今回の本質）
     void init();
 
     return () => {
