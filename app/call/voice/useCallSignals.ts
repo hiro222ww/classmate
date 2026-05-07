@@ -15,15 +15,22 @@ export function useCallSignals(params: {
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const onSignalRef = useRef<(row: SignalRow) => Promise<void> | void>(() => {});
-
-  function updateReady(ready: boolean) {
-    setSignalReady(ready);
-    onReadyChange?.(ready);
-  }
+  const onReadyChangeRef = useRef<((ready: boolean) => void) | undefined>(
+    undefined
+  );
 
   useEffect(() => {
     onSignalRef.current = onSignal;
   }, [onSignal]);
+
+  useEffect(() => {
+    onReadyChangeRef.current = onReadyChange;
+  }, [onReadyChange]);
+
+  function updateReady(ready: boolean) {
+    setSignalReady(ready);
+    onReadyChangeRef.current?.(ready);
+  }
 
   useEffect(() => {
     if (!sessionId || !deviceId) {
@@ -90,7 +97,7 @@ export function useCallSignals(params: {
         channelRef.current = null;
       }
     };
-  }, [sessionId, deviceId, onReadyChange]);
+  }, [sessionId, deviceId]);
 
   return {
     signalReady,
