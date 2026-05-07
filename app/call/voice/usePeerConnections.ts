@@ -62,20 +62,17 @@ export function usePeerConnections({
   );
 
   const activeMembers = useMemo(() => {
-    const hasInCallInfo = members.some((m) => typeof m.is_in_call === "boolean");
-
-    if (!hasInCallInfo) return members;
-
-    return members.filter(
-      (m) => m.device_id === deviceId || m.is_in_call === true
-    );
-  }, [members, deviceId]);
+  return members.filter((m) => {
+    const id = String(m.device_id ?? "").trim();
+    return id && id !== deviceId;
+  });
+}, [members, deviceId]);
 
   const getRemoteIds = useCallback(() => {
-    return activeMembers
-      .map((m) => String(m.device_id ?? "").trim())
-      .filter((id): id is string => Boolean(id) && id !== deviceId);
-  }, [activeMembers, deviceId]);
+  return activeMembers
+    .map((m) => String(m.device_id ?? "").trim())
+    .filter((id): id is string => Boolean(id));
+}, [activeMembers]);
 
   const notifyStatus = useCallback(
     (text: string) => {
