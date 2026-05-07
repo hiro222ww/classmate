@@ -114,6 +114,16 @@ export default function CallVoiceLayer({
   onStatusChange,
   onPeerStatesChange,
 }: CallVoiceLayerProps) {
+  console.log("[voice-layer] render", {
+    sessionId,
+    deviceId,
+    membersCount: members.length,
+    members: members.map((m) => ({
+      device_id: m.device_id,
+      is_in_call: m.is_in_call,
+    })),
+    isMuted,
+  });
   const localStreamRef = useRef<MediaStream | null>(null);
   const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -1288,7 +1298,12 @@ const pc = new RTCPeerConnection({
   }, [micReady, micStreamVersion, onMicLevelChange]);
 
   useEffect(() => {
-    if (!sessionId || !deviceId) return;
+  console.log("[voice-layer] signal effect check", {
+    sessionId,
+    deviceId,
+  });
+
+  if (!sessionId || !deviceId) return;
 
     let alive = true;
 
@@ -1351,7 +1366,18 @@ const pc = new RTCPeerConnection({
   }, [sessionId, deviceId]);
 
   useEffect(() => {
-    const remoteIds = getRemoteIds();
+  const remoteIds = getRemoteIds();
+
+  console.log("[voice-layer] offer effect check", {
+    micReady,
+    signalReady,
+    remoteIds,
+    membersCount: members.length,
+    members: members.map((m) => ({
+      device_id: m.device_id,
+      is_in_call: m.is_in_call,
+    })),
+  });
 
     callLog("[call] offer effect check", {
       micReady,
