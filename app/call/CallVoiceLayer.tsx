@@ -501,7 +501,7 @@ setIceServers(nextIceServers);
 
 const pc = new RTCPeerConnection({
   iceServers: currentIceServers,
-  iceTransportPolicy: "all",
+  iceTransportPolicy: voiceRouteRef.current === "turn" ? "relay" : "all",
 });
 
       callLog("[call] create peer", {
