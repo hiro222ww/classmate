@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import RemoteAudio from "./voice/RemoteAudio";
+import { useLocalMic } from "./voice/useLocalMic";
 
-// 🔥 ここに移動
 async function detectConnectionType(pc: RTCPeerConnection) {
   const stats = await pc.getStats();
 
@@ -124,9 +125,6 @@ export default function CallVoiceLayer({
     })),
     isMuted,
   });
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
@@ -145,86 +143,42 @@ export default function CallVoiceLayer({
     () => {}
   );
 
-  const [micReady, setMicReady] = useState(false);
-  const [micStreamVersion, setMicStreamVersion] = useState(0);
   const [signalReady, setSignalReady] = useState(false);
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
   >({});
 
-  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
-  const [selectedMicId, setSelectedMicId] = useState("");
-
   const [iceServers, setIceServers] =
-  useState<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
+    useState<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
+  const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
 
-const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE_SERVERS);
+  const [voiceRoute, setVoiceRoute] = useState<VoiceRoute>("stun");
+  const voiceRouteRef = useRef<VoiceRoute>("stun");
+  const turnIceServersRef = useRef<RTCIceServer[] | null>(null);
+  const loadingTurnRef = useRef(false);
+  const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(true);
 
-const [voiceRoute, setVoiceRoute] = useState<VoiceRoute>("stun");
-const voiceRouteRef = useRef<VoiceRoute>("stun");
-const turnIceServersRef = useRef<RTCIceServer[] | null>(null);
-const loadingTurnRef = useRef(false);
+  const notifyStatus = useCallback(
+    (text: string) => {
+      onStatusChange?.(text);
+    },
+    [onStatusChange]
+  );
 
-const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(true);
-
-const enableTurnFallback = useCallback(async () => {
-  if (!turnFallbackEnabled) {
-    callWarn("[call] TURN fallback disabled by admin setting");
-    return false;
-  }
-
-  if (voiceRouteRef.current === "turn") return true;
-
-  if (turnIceServersRef.current && turnIceServersRef.current.length > 0) {
-    voiceRouteRef.current = "turn";
-    setVoiceRoute("turn");
-    iceServersRef.current = turnIceServersRef.current;
-setIceServers(turnIceServersRef.current);
-    return true;
-  }
-
-  if (loadingTurnRef.current) return false;
-
-  loadingTurnRef.current = true;
-
-  try {
-    const res = await fetch("/api/turn", {
-      method: "GET",
-      cache: "no-store",
-    });
-
-    const data = await res.json();
-
-    const nextIceServers = Array.isArray(data?.ice_servers)
-      ? data.ice_servers
-      : Array.isArray(data?.iceServers)
-        ? data.iceServers
-        : null;
-
-    if (nextIceServers && nextIceServers.length > 0) {
-      turnIceServersRef.current = nextIceServers;
-      voiceRouteRef.current = "turn";
-      setVoiceRoute("turn");
-      iceServersRef.current = nextIceServers;
-setIceServers(nextIceServers);
-
-      callWarn("[call] TURN fallback activated", {
-        count: nextIceServers.length,
-        urls: nextIceServers.map((s: any) => s.urls),
-      });
-
-      return true;
-    }
-
-    callWarn("[call] TURN response has no ice_servers", data);
-    return false;
-  } catch (e) {
-    callWarn("[call] TURN load failed", e);
-    return false;
-  } finally {
-    loadingTurnRef.current = false;
-  }
-}, [turnFallbackEnabled]);
+  const {
+    micReady,
+    audioInputs,
+    selectedMicId,
+    setSelectedMicId,
+    localStreamRef,
+    localAudioTrackRef,
+  } = useLocalMic({
+    deviceId,
+    isMuted,
+    onMicReadyChange,
+    onMicLevelChange,
+    onStatusChange: notifyStatus,
+  });
 
   const activeMembers = useMemo(() => {
     const hasInCallInfo = members.some((m) => typeof m.is_in_call === "boolean");
@@ -242,48 +196,6 @@ setIceServers(nextIceServers);
       .filter((id) => id && id !== deviceId);
   }, [activeMembers, deviceId]);
 
-  const notifyStatus = useCallback(
-    (text: string) => {
-      onStatusChange?.(text);
-    },
-    [onStatusChange]
-  );
-
-  useEffect(() => {
-  let alive = true;
-  
-
-  async function loadVoiceSettings() {
-    try {
-      const res = await fetch("/api/voice-settings", {
-        cache: "no-store",
-      });
-
-      const data = await res.json();
-
-      if (!alive) return;
-
-      const settings = data?.settings;
-
-      if (settings) {
-        setTurnFallbackEnabled(settings.turn_fallback_enabled !== false);
-
-        if (settings.voice_enabled === false) {
-          notifyStatus(settings.emergency_message || "通話機能は停止中です");
-        }
-      }
-    } catch {
-      setTurnFallbackEnabled(true);
-    }
-  }
-
-  void loadVoiceSettings();
-
-  return () => {
-    alive = false;
-  };
-}, [notifyStatus]);
-
   const emitPeerStates = useCallback(() => {
     onPeerStatesChange?.(Object.fromEntries(peerStatesRef.current.entries()));
   }, [onPeerStatesChange]);
@@ -295,6 +207,29 @@ setIceServers(nextIceServers);
     },
     [emitPeerStates]
   );
+
+  const clearReconnectTimer = useCallback((remoteId: string) => {
+    const timer = reconnectTimersRef.current.get(remoteId);
+    if (timer) {
+      window.clearTimeout(timer);
+      reconnectTimersRef.current.delete(remoteId);
+    }
+  }, []);
+
+  const getCurrentConnectionId = useCallback((remoteId: string) => {
+    return connectionIdsRef.current.get(remoteId) ?? null;
+  }, []);
+
+  const setCurrentConnectionId = useCallback(
+    (remoteId: string, connectionId: string) => {
+      connectionIdsRef.current.set(remoteId, connectionId);
+    },
+    []
+  );
+
+  const clearCurrentConnectionId = useCallback((remoteId: string) => {
+    connectionIdsRef.current.delete(remoteId);
+  }, []);
 
   const upsertRemoteAudio = useCallback(
     (remoteId: string, stream: MediaStream) => {
@@ -343,29 +278,6 @@ setIceServers(nextIceServers);
     onRemoteCountChange?.(Object.keys(remoteAudios).length);
   }, [remoteAudios, onRemoteCountChange]);
 
-  const clearReconnectTimer = useCallback((remoteId: string) => {
-    const timer = reconnectTimersRef.current.get(remoteId);
-    if (timer) {
-      window.clearTimeout(timer);
-      reconnectTimersRef.current.delete(remoteId);
-    }
-  }, []);
-
-  const getCurrentConnectionId = useCallback((remoteId: string) => {
-    return connectionIdsRef.current.get(remoteId) ?? null;
-  }, []);
-
-  const setCurrentConnectionId = useCallback(
-    (remoteId: string, connectionId: string) => {
-      connectionIdsRef.current.set(remoteId, connectionId);
-    },
-    []
-  );
-
-  const clearCurrentConnectionId = useCallback((remoteId: string) => {
-    connectionIdsRef.current.delete(remoteId);
-  }, []);
-
   const sendSignal = useCallback(
     async (
       toDeviceId: string | null,
@@ -393,10 +305,6 @@ setIceServers(nextIceServers);
   const closePeer = useCallback(
     (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
-
-      callLog("[call] close peer", remoteId, {
-        clearConnectionId: shouldClearConnectionId,
-      });
 
       const pc = pcsRef.current.get(remoteId);
 
@@ -445,8 +353,6 @@ setIceServers(nextIceServers);
       const queued = pendingIceRef.current.get(remoteId) ?? [];
       if (!queued.length) return;
 
-      callLog("[call] flush pending ice", remoteId, connectionId, queued.length);
-
       for (const candidate of queued) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -468,8 +374,6 @@ setIceServers(nextIceServers);
     (remoteId: string, delay = 4000) => {
       if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
-      callLog("[call] schedule reconnect", remoteId, { delay });
-
       clearReconnectTimer(remoteId);
 
       const timer = window.setTimeout(() => {
@@ -479,15 +383,74 @@ setIceServers(nextIceServers);
         closePeer(remoteId, { clearConnectionId: false });
         setCurrentConnectionId(remoteId, nextConnectionId);
 
-        callLog("[call] reconnect prepared", remoteId, nextConnectionId);
-
         void maybeStartOfferRef.current?.(remoteId);
       }, delay);
 
       reconnectTimersRef.current.set(remoteId, timer);
     },
-    [clearReconnectTimer, closePeer, deviceId, setCurrentConnectionId]
+    [
+      clearReconnectTimer,
+      closePeer,
+      deviceId,
+      localAudioTrackRef,
+      localStreamRef,
+      setCurrentConnectionId,
+    ]
   );
+
+  const enableTurnFallback = useCallback(async () => {
+    if (!turnFallbackEnabled) {
+      callWarn("[call] TURN fallback disabled by admin setting");
+      return false;
+    }
+
+    if (voiceRouteRef.current === "turn") return true;
+
+    if (turnIceServersRef.current && turnIceServersRef.current.length > 0) {
+      voiceRouteRef.current = "turn";
+      setVoiceRoute("turn");
+      iceServersRef.current = turnIceServersRef.current;
+      setIceServers(turnIceServersRef.current);
+      return true;
+    }
+
+    if (loadingTurnRef.current) return false;
+
+    loadingTurnRef.current = true;
+
+    try {
+      const res = await fetch("/api/turn", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = await res.json();
+
+      const nextIceServers = Array.isArray(data?.ice_servers)
+        ? data.ice_servers
+        : Array.isArray(data?.iceServers)
+          ? data.iceServers
+          : null;
+
+      if (nextIceServers && nextIceServers.length > 0) {
+        turnIceServersRef.current = nextIceServers;
+        voiceRouteRef.current = "turn";
+        setVoiceRoute("turn");
+        iceServersRef.current = nextIceServers;
+        setIceServers(nextIceServers);
+
+        return true;
+      }
+
+      callWarn("[call] TURN response has no ice_servers", data);
+      return false;
+    } catch (e) {
+      callWarn("[call] TURN load failed", e);
+      return false;
+    } finally {
+      loadingTurnRef.current = false;
+    }
+  }, [turnFallbackEnabled]);
 
   const createPeerConnection = useCallback(
     (remoteId: string, connectionId: string) => {
@@ -505,21 +468,14 @@ setIceServers(nextIceServers);
       setCurrentConnectionId(remoteId, connectionId);
 
       const currentIceServers =
-  iceServersRef.current.length > 0
-    ? iceServersRef.current
-    : FALLBACK_ICE_SERVERS;
+        iceServersRef.current.length > 0
+          ? iceServersRef.current
+          : FALLBACK_ICE_SERVERS;
 
-const pc = new RTCPeerConnection({
-  iceServers: currentIceServers,
-  iceTransportPolicy: voiceRouteRef.current === "turn" ? "relay" : "all",
-});
-
-      callLog("[call] create peer", {
-  remoteId,
-  connectionId,
-  voiceRoute: voiceRouteRef.current,
-  iceServers: currentIceServers.map((s) => s.urls),
-});
+      const pc = new RTCPeerConnection({
+        iceServers: currentIceServers,
+        iceTransportPolicy: voiceRouteRef.current === "turn" ? "relay" : "all",
+      });
 
       const localTrack = localAudioTrackRef.current;
       const localStream = localStreamRef.current;
@@ -534,23 +490,10 @@ const pc = new RTCPeerConnection({
         if (sender && isMuted) {
           void sender.replaceTrack(null);
         }
-
-        callLog("[call] add local track", {
-          remoteId,
-          enabled: localTrack.enabled,
-          readyState: localTrack.readyState,
-          trackId: localTrack.id,
-          muted: isMuted,
-        });
       }
 
       pc.onicecandidate = (event) => {
         if (!event.candidate) return;
-
-        callLog("[call] ICE candidate", {
-          remoteId,
-          candidate: event.candidate.candidate,
-        });
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
         if (!activeConnectionId || activeConnectionId !== connectionId) return;
@@ -569,16 +512,6 @@ const pc = new RTCPeerConnection({
 
         const stream = event.streams?.[0];
         if (!stream) return;
-
-        callLog("[call] ontrack", remoteId, connectionId, {
-          trackCount: stream.getTracks().length,
-          audioTracks: stream.getAudioTracks().map((t) => ({
-            enabled: t.enabled,
-            muted: t.muted,
-            readyState: t.readyState,
-            label: t.label,
-          })),
-        });
 
         upsertRemoteAudio(remoteId, stream);
 
@@ -608,47 +541,36 @@ const pc = new RTCPeerConnection({
       };
 
       pc.oniceconnectionstatechange = () => {
-        callLog("[call] ice state", remoteId, connectionId, pc.iceConnectionState);
         notifyStatus(`ice ${remoteId}: ${pc.iceConnectionState}`);
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
         if (!activeConnectionId || activeConnectionId !== connectionId) return;
 
         if (pc.iceConnectionState === "failed") {
-  callWarn("[call] ICE failed", {
-    remoteId,
-    connectionId,
-    voiceRoute: voiceRouteRef.current,
-  });
+          setPeerState(remoteId, "failed");
 
-  setPeerState(remoteId, "failed");
+          if (voiceRouteRef.current === "stun") {
+            void enableTurnFallback().then((ok) => {
+              if (!ok) {
+                scheduleReconnect(remoteId, 1500);
+                return;
+              }
 
-  if (voiceRouteRef.current === "stun") {
-    void enableTurnFallback().then((ok) => {
-      if (!ok) {
-        scheduleReconnect(remoteId, 1500);
-        return;
-      }
+              const nextConnectionId = makeConnectionId(deviceId, remoteId);
+              closePeer(remoteId, { clearConnectionId: false });
+              setCurrentConnectionId(remoteId, nextConnectionId);
+              scheduleReconnect(remoteId, 300);
+            });
 
-      const nextConnectionId = makeConnectionId(deviceId, remoteId);
-      closePeer(remoteId, { clearConnectionId: false });
-      setCurrentConnectionId(remoteId, nextConnectionId);
-      scheduleReconnect(remoteId, 300);
-    });
+            return;
+          }
 
-    return;
-  }
-
-  scheduleReconnect(remoteId, 1500);
-}
+          scheduleReconnect(remoteId, 1500);
+        }
       };
-
-
 
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-
-        callLog("[call] connection state", remoteId, connectionId, state);
 
         if (
           state === "failed" ||
@@ -663,102 +585,98 @@ const pc = new RTCPeerConnection({
         if (!activeConnectionId || activeConnectionId !== connectionId) return;
 
         if (state === "connecting") {
-  setPeerState(remoteId, "connecting");
+          setPeerState(remoteId, "connecting");
 
-  if (voiceRouteRef.current === "stun") {
-    window.setTimeout(() => {
-      const currentPc = pcsRef.current.get(remoteId);
-      if (!currentPc) return;
+          if (voiceRouteRef.current === "stun") {
+            window.setTimeout(() => {
+              const currentPc = pcsRef.current.get(remoteId);
+              if (!currentPc) return;
 
-      const stillBad =
-        currentPc.connectionState === "connecting" ||
-        currentPc.iceConnectionState === "checking" ||
-        currentPc.iceConnectionState === "disconnected";
+              const stillBad =
+                currentPc.connectionState === "connecting" ||
+                currentPc.iceConnectionState === "checking" ||
+                currentPc.iceConnectionState === "disconnected";
 
-      if (!stillBad) return;
+              if (!stillBad) return;
 
-      void enableTurnFallback().then((ok) => {
-        if (!ok) return;
+              void enableTurnFallback().then((ok) => {
+                if (!ok) return;
 
-        const nextConnectionId = makeConnectionId(deviceId, remoteId);
-        closePeer(remoteId, { clearConnectionId: false });
-        setCurrentConnectionId(remoteId, nextConnectionId);
-        scheduleReconnect(remoteId, 300);
-      });
-    }, 5000);
-  }
-}
+                const nextConnectionId = makeConnectionId(deviceId, remoteId);
+                closePeer(remoteId, { clearConnectionId: false });
+                setCurrentConnectionId(remoteId, nextConnectionId);
+                scheduleReconnect(remoteId, 300);
+              });
+            }, 5000);
+          }
+        }
 
-        
+        if (state === "connected") {
+          setPeerState(remoteId, "connected");
+          clearReconnectTimer(remoteId);
 
-       if (state === "connected") {
-  setPeerState(remoteId, "connected");
-  clearReconnectTimer(remoteId);
+          const sender = pc
+            .getSenders()
+            .find((s) => s.track?.kind === "audio" || s.track === null);
 
-  const sender = pc
-    .getSenders()
-    .find((s) => s.track?.kind === "audio" || s.track === null);
+          const track = localAudioTrackRef.current;
 
-  const track = localAudioTrackRef.current;
+          if (sender && track) {
+            void sender.replaceTrack(isMuted ? null : track);
+          }
 
-  if (sender && track) {
-    void sender.replaceTrack(isMuted ? null : track);
-  }
+          setTimeout(async () => {
+            try {
+              const result = await detectConnectionType(pc);
 
-  // 🔥 ここ追加（TURN判定ログ）
-  setTimeout(async () => {
-    try {
-      const result = await detectConnectionType(pc);
+              console.log("[call] route", result);
 
-      console.log("[call] route", result);
-
-      await fetch("/api/voice-connection-log", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          deviceId,
-          remoteDeviceId: remoteId,
-          route: result.route,
-          localCandidateType: result.localType,
-          remoteCandidateType: result.remoteType,
-          voiceRoute: voiceRouteRef.current,
-        }),
-      });
-    } catch (e) {
-      console.warn("[call] stats error", e);
-    }
-  }, 1000);
-}
+              await fetch("/api/voice-connection-log", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  sessionId,
+                  deviceId,
+                  remoteDeviceId: remoteId,
+                  route: result.route,
+                  localCandidateType: result.localType,
+                  remoteCandidateType: result.remoteType,
+                  voiceRoute: voiceRouteRef.current,
+                }),
+              });
+            } catch (e) {
+              console.warn("[call] stats error", e);
+            }
+          }, 1000);
+        }
 
         if (state === "disconnected") {
-          callWarn("[call] peer disconnected, wait", remoteId);
           setPeerState(remoteId, "connecting");
         }
 
         if (state === "failed") {
-  setPeerState(remoteId, "failed");
+          setPeerState(remoteId, "failed");
 
-  if (voiceRouteRef.current === "stun") {
-    void enableTurnFallback().then((ok) => {
-      if (!ok) {
-        closePeer(remoteId, { clearConnectionId: false });
-        scheduleReconnect(remoteId, 1500);
-        return;
-      }
+          if (voiceRouteRef.current === "stun") {
+            void enableTurnFallback().then((ok) => {
+              if (!ok) {
+                closePeer(remoteId, { clearConnectionId: false });
+                scheduleReconnect(remoteId, 1500);
+                return;
+              }
 
-      const nextConnectionId = makeConnectionId(deviceId, remoteId);
-      closePeer(remoteId, { clearConnectionId: false });
-      setCurrentConnectionId(remoteId, nextConnectionId);
-      scheduleReconnect(remoteId, 300);
-    });
+              const nextConnectionId = makeConnectionId(deviceId, remoteId);
+              closePeer(remoteId, { clearConnectionId: false });
+              setCurrentConnectionId(remoteId, nextConnectionId);
+              scheduleReconnect(remoteId, 300);
+            });
 
-    return;
-  }
+            return;
+          }
 
-  closePeer(remoteId, { clearConnectionId: false });
-  scheduleReconnect(remoteId, 1500);
-}
+          closePeer(remoteId, { clearConnectionId: false });
+          scheduleReconnect(remoteId, 1500);
+        }
 
         if (state === "closed") {
           setPeerState(remoteId, "idle");
@@ -769,34 +687,31 @@ const pc = new RTCPeerConnection({
       return pc;
     },
     [
-  closePeer,
-  clearReconnectTimer,
-  enableTurnFallback,
-  getCurrentConnectionId,
-  isMuted,
-  notifyStatus,
-  scheduleReconnect,
-  sendSignal,
-  setCurrentConnectionId,
-  setPeerState,
-  upsertRemoteAudio,
-]
+      clearReconnectTimer,
+      closePeer,
+      deviceId,
+      enableTurnFallback,
+      getCurrentConnectionId,
+      isMuted,
+      localAudioTrackRef,
+      localStreamRef,
+      notifyStatus,
+      scheduleReconnect,
+      sendSignal,
+      sessionId,
+      setCurrentConnectionId,
+      setPeerState,
+      upsertRemoteAudio,
+    ]
   );
 
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
       const isOfferOwner = deviceId < remoteId;
 
-      if (!isOfferOwner) {
-        callLog("[call] skip offer: responder side", {
-          deviceId,
-          remoteId,
-        });
-        return;
-      }
+      if (!isOfferOwner) return;
 
       if (!localAudioTrackRef.current && !localStreamRef.current) {
-        callLog("[call] skip offer: local audio not ready", remoteId);
         return;
       }
 
@@ -812,11 +727,6 @@ const pc = new RTCPeerConnection({
           existingPc.signalingState === "have-remote-offer" ||
           existingPc.signalingState !== "stable")
       ) {
-        callLog("[call] skip offer: existing pc busy", remoteId, {
-          connectionState: existingPc.connectionState,
-          iceConnectionState: existingPc.iceConnectionState,
-          signalingState: existingPc.signalingState,
-        });
         return;
       }
 
@@ -829,28 +739,14 @@ const pc = new RTCPeerConnection({
 
       const pc = createPeerConnection(remoteId, connectionId);
 
-      if (offeredPeersRef.current.has(remoteId)) {
-        callLog("[call] skip offer: already offered", remoteId, connectionId);
-        return;
-      }
-
-      if (pc.signalingState !== "stable") {
-        callLog(
-          "[call] skip offer: non-stable",
-          remoteId,
-          connectionId,
-          pc.signalingState
-        );
-        return;
-      }
+      if (offeredPeersRef.current.has(remoteId)) return;
+      if (pc.signalingState !== "stable") return;
 
       offeredPeersRef.current.add(remoteId);
       clearReconnectTimer(remoteId);
       setPeerState(remoteId, "connecting");
 
       try {
-        callLog("[call] create offer start", remoteId, connectionId);
-
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
         });
@@ -863,12 +759,6 @@ const pc = new RTCPeerConnection({
         }
 
         if (pc.signalingState !== "stable") {
-          callWarn(
-            "[call] abort offer before setLocalDescription",
-            remoteId,
-            connectionId,
-            pc.signalingState
-          );
           offeredPeersRef.current.delete(remoteId);
           return;
         }
@@ -879,8 +769,6 @@ const pc = new RTCPeerConnection({
           connectionId,
           sdp: pc.localDescription,
         });
-
-        callLog("[call] offer sent", remoteId, connectionId);
       } catch (e) {
         offeredPeersRef.current.delete(remoteId);
         callError("[call] create offer error", remoteId, connectionId, e);
@@ -891,6 +779,8 @@ const pc = new RTCPeerConnection({
       createPeerConnection,
       deviceId,
       getCurrentConnectionId,
+      localAudioTrackRef,
+      localStreamRef,
       sendSignal,
       setCurrentConnectionId,
       setPeerState,
@@ -903,15 +793,6 @@ const pc = new RTCPeerConnection({
 
   const handleSignal = useCallback(
     async (row: SignalRow) => {
-      callLog("[call] signal received raw", {
-        id: row.id,
-        type: row.signal_type,
-        from: row.from_device_id,
-        to: row.to_device_id,
-        me: deviceId,
-        session: row.session_id,
-      });
-
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
       processedSignalIdsRef.current.add(row.id);
 
@@ -924,28 +805,16 @@ const pc = new RTCPeerConnection({
       const incomingConnectionId = payload.connectionId;
 
       if (row.signal_type === "leave") {
-        callLog("[call] leave received", remoteId);
         closePeer(remoteId, { clearConnectionId: true });
         return;
       }
 
-      if (!incomingConnectionId) {
-        callWarn(
-          "[call] ignore signal without connectionId",
-          row.signal_type,
-          remoteId
-        );
-        return;
-      }
+      if (!incomingConnectionId) return;
 
       let currentConnectionId = getCurrentConnectionId(remoteId);
 
       if (row.signal_type === "offer") {
         if (currentConnectionId !== incomingConnectionId) {
-          callLog("[call] new offer connection id", remoteId, {
-            currentConnectionId,
-            incomingConnectionId,
-          });
           closePeer(remoteId, { clearConnectionId: false });
           setCurrentConnectionId(remoteId, incomingConnectionId);
           currentConnectionId = incomingConnectionId;
@@ -956,10 +825,6 @@ const pc = new RTCPeerConnection({
         !currentConnectionId ||
         currentConnectionId !== incomingConnectionId
       ) {
-        callWarn("[call] ignore stale signal", row.signal_type, remoteId, {
-          currentConnectionId,
-          incomingConnectionId,
-        });
         return;
       }
 
@@ -970,17 +835,7 @@ const pc = new RTCPeerConnection({
           const sdp = payload.sdp;
           if (!sdp) return;
 
-          if (pc.signalingState !== "stable") {
-            callWarn(
-              "[call] ignore offer in non-stable state",
-              remoteId,
-              incomingConnectionId,
-              pc.signalingState
-            );
-            return;
-          }
-
-          callLog("[call] applying offer", remoteId, incomingConnectionId);
+          if (pc.signalingState !== "stable") return;
 
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
@@ -995,7 +850,6 @@ const pc = new RTCPeerConnection({
             sdp: pc.localDescription,
           });
 
-          callLog("[call] answer sent", remoteId, incomingConnectionId);
           return;
         }
 
@@ -1003,22 +857,11 @@ const pc = new RTCPeerConnection({
           const sdp = payload.sdp;
           if (!sdp) return;
 
-          if (pc.signalingState !== "have-local-offer") {
-            callWarn(
-              "[call] ignore answer in invalid state",
-              remoteId,
-              incomingConnectionId,
-              pc.signalingState
-            );
-            return;
-          }
-
-          callLog("[call] applying answer", remoteId, incomingConnectionId);
+          if (pc.signalingState !== "have-local-offer") return;
 
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
 
-          callLog("[call] answer applied", remoteId, incomingConnectionId);
           return;
         }
 
@@ -1030,38 +873,17 @@ const pc = new RTCPeerConnection({
             const queued = pendingIceRef.current.get(remoteId) ?? [];
             queued.push(candidate);
             pendingIceRef.current.set(remoteId, queued);
-
-            callLog(
-              "[call] queue ice before remoteDescription",
-              remoteId,
-              incomingConnectionId,
-              queued.length
-            );
-
             return;
           }
 
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (e) {
-            callWarn(
-              "[call] addIceCandidate ignored",
-              remoteId,
-              incomingConnectionId,
-              e
-            );
+            callWarn("[call] addIceCandidate ignored", remoteId, e);
           }
-
-          return;
         }
       } catch (e) {
-        callError(
-          "[call] signal handle error",
-          row.signal_type,
-          remoteId,
-          incomingConnectionId,
-          e
-        );
+        callError("[call] signal handle error", row.signal_type, remoteId, e);
 
         if (row.signal_type === "offer" || row.signal_type === "answer") {
           closePeer(remoteId, { clearConnectionId: false });
@@ -1088,122 +910,38 @@ const pc = new RTCPeerConnection({
   }, [handleSignal]);
 
   useEffect(() => {
-    async function loadDevices() {
+    let alive = true;
+
+    async function loadVoiceSettings() {
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const inputs = devices.filter((d) => d.kind === "audioinput");
-
-        setAudioInputs(inputs);
-
-        const nonVirtual = inputs.find((d) => {
-          if (!d.label) return false;
-
-          const label = d.label.toLowerCase();
-
-          return (
-            !label.includes("steam") &&
-            !label.includes("virtual") &&
-            !label.includes("obs") &&
-            !label.includes("discord")
-          );
+        const res = await fetch("/api/voice-settings", {
+          cache: "no-store",
         });
 
-        if (nonVirtual) {
-          setSelectedMicId(nonVirtual.deviceId);
-        } else if (inputs[0]) {
-          setSelectedMicId(inputs[0].deviceId);
+        const data = await res.json();
+
+        if (!alive) return;
+
+        const settings = data?.settings;
+
+        if (settings) {
+          setTurnFallbackEnabled(settings.turn_fallback_enabled !== false);
+
+          if (settings.voice_enabled === false) {
+            notifyStatus(settings.emergency_message || "通話機能は停止中です");
+          }
         }
-      } catch (e) {
-        callWarn("[call] load audio devices failed", e);
+      } catch {
+        setTurnFallbackEnabled(true);
       }
     }
 
-    void loadDevices();
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const init = async () => {
-      try {
-        if (localStreamRef.current) {
-          localStreamRef.current.getTracks().forEach((t) => t.stop());
-          localStreamRef.current = null;
-          localAudioTrackRef.current = null;
-        }
-
-        const deviceConstraint = selectedMicId
-          ? { exact: selectedMicId }
-          : undefined;
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: deviceConstraint,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-
-        if (!mounted) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-
-        localStreamRef.current = stream;
-        localAudioTrackRef.current = stream.getAudioTracks()[0] ?? null;
-
-        setMicStreamVersion((v) => v + 1);
-
-        if (localAudioTrackRef.current) {
-          localAudioTrackRef.current.enabled = true;
-
-          for (const pc of pcsRef.current.values()) {
-            const sender = pc
-              .getSenders()
-              .find((s) => s.track?.kind === "audio" || s.track === null);
-
-            if (sender) {
-              void sender.replaceTrack(
-                isMuted ? null : localAudioTrackRef.current
-              );
-            }
-          }
-        }
-
-        callLog("[call] local audio track", {
-          deviceId,
-          trackId: localAudioTrackRef.current?.id ?? null,
-          label: localAudioTrackRef.current?.label ?? null,
-          enabled: localAudioTrackRef.current?.enabled ?? null,
-          muted: isMuted,
-        });
-
-        setMicReady(true);
-        onMicReadyChange?.(true);
-        notifyStatus("");
-      } catch (e) {
-        callError("[call] mic error", e);
-        setMicReady(false);
-        onMicReadyChange?.(false);
-        notifyStatus("マイク取得に失敗");
-      }
-    };
-
-    void init();
+    void loadVoiceSettings();
 
     return () => {
-      mounted = false;
-
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach((t) => t.stop());
-        localStreamRef.current = null;
-      }
-
-      localAudioTrackRef.current = null;
+      alive = false;
     };
-  }, [selectedMicId, deviceId, notifyStatus, onMicReadyChange]);
+  }, [notifyStatus]);
 
   useEffect(() => {
     const track = localAudioTrackRef.current;
@@ -1220,90 +958,15 @@ const pc = new RTCPeerConnection({
         void sender.replaceTrack(isMuted ? null : track);
       }
     }
+  }, [isMuted, localAudioTrackRef]);
 
-    callLog("[call] mute changed", {
-      muted: isMuted,
-      enabled: track.enabled,
-      readyState: track.readyState,
-      trackId: track.id,
+  useEffect(() => {
+    console.log("[voice-layer] signal effect check", {
+      sessionId,
+      deviceId,
     });
-  }, [isMuted]);
 
-  useEffect(() => {
-    if (!micReady) return;
-    if (!localStreamRef.current) return;
-
-    let raf = 0;
-    let closed = false;
-    let ctx: AudioContext | null = null;
-
-    const run = async () => {
-      try {
-        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-        if (!Ctx) return;
-
-        ctx = new Ctx();
-        audioCtxRef.current = ctx;
-
-        if (ctx.state === "suspended") {
-          await ctx.resume().catch(() => {});
-        }
-
-        const source = ctx.createMediaStreamSource(
-          localStreamRef.current as MediaStream
-        );
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-
-        const data = new Uint8Array(analyser.frequencyBinCount);
-
-        const tick = async () => {
-          if (closed) return;
-
-          if (ctx?.state === "suspended") {
-            await ctx.resume().catch(() => {});
-          }
-
-          analyser.getByteTimeDomainData(data);
-
-          let sum = 0;
-
-          for (let i = 0; i < data.length; i++) {
-            const v = (data[i] - 128) / 128;
-            sum += v * v;
-          }
-
-          const rms = Math.sqrt(sum / data.length);
-          const level = Math.min(1, Math.max(0, (rms - 0.005) * 12));
-
-          onMicLevelChange?.(level);
-          raf = requestAnimationFrame(tick);
-        };
-
-        tick();
-      } catch (e) {
-        callError("[call] meter error", e);
-      }
-    };
-
-    void run();
-
-    return () => {
-      closed = true;
-      if (raf) cancelAnimationFrame(raf);
-      if (ctx) void ctx.close().catch(() => {});
-      if (audioCtxRef.current === ctx) audioCtxRef.current = null;
-    };
-  }, [micReady, micStreamVersion, onMicLevelChange]);
-
-  useEffect(() => {
-  console.log("[voice-layer] signal effect check", {
-    sessionId,
-    deviceId,
-  });
-
-  if (!sessionId || !deviceId) return;
+    if (!sessionId || !deviceId) return;
 
     let alive = true;
 
@@ -1313,8 +976,6 @@ const pc = new RTCPeerConnection({
       void supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
-
-    callLog("🔥 SUBSCRIBE CREATED", { sessionId, deviceId });
 
     const channel = supabase
       .channel(`call-signals-${sessionId}-${deviceId}`)
@@ -1333,8 +994,6 @@ const pc = new RTCPeerConnection({
         }
       )
       .subscribe((status) => {
-        callLog("[call] signal subscribe status", status);
-
         if (!alive) return;
 
         if (status === "SUBSCRIBED") {
@@ -1347,7 +1006,6 @@ const pc = new RTCPeerConnection({
           status === "CHANNEL_ERROR" ||
           status === "TIMED_OUT"
         ) {
-          callWarn("[call] signal channel dead", status);
           setSignalReady(false);
         }
       });
@@ -1366,36 +1024,22 @@ const pc = new RTCPeerConnection({
   }, [sessionId, deviceId]);
 
   useEffect(() => {
-  const remoteIds = getRemoteIds();
+    const remoteIds = getRemoteIds();
 
-  console.log("[voice-layer] offer effect check", {
-    micReady,
-    signalReady,
-    remoteIds,
-    membersCount: members.length,
-    members: members.map((m) => ({
-      device_id: m.device_id,
-      is_in_call: m.is_in_call,
-    })),
-  });
-
-    callLog("[call] offer effect check", {
+    console.log("[voice-layer] offer effect check", {
       micReady,
       signalReady,
-      deviceId,
+      remoteIds,
+      membersCount: members.length,
       members: members.map((m) => ({
         device_id: m.device_id,
-        screen: m.screen,
         is_in_call: m.is_in_call,
       })),
-      remoteIds,
     });
 
     if (!micReady) return;
     if (!signalReady) return;
     if (remoteIds.length < 1) return;
-
-    callLog("[call] remoteIds for offer", { remoteIds });
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
@@ -1411,7 +1055,6 @@ const pc = new RTCPeerConnection({
         setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
       }
 
-      callLog("[call] try maybeStartOffer", { remoteId, deviceId });
       void maybeStartOffer(remoteId);
     }
   }, [
@@ -1441,7 +1084,6 @@ const pc = new RTCPeerConnection({
         if (hasRemoteStream) continue;
         if (pc && pc.connectionState === "connected") continue;
         if (pc && pc.signalingState !== "stable") continue;
-        if (pc && pc.connectionState === "connected") continue;
 
         void maybeStartOffer(remoteId);
       }
@@ -1470,11 +1112,6 @@ const pc = new RTCPeerConnection({
           pc.connectionState === "failed" || pc.iceConnectionState === "failed";
 
         if (badState) {
-          callWarn("[call] watchdog reconnect", remoteId, {
-            connectionState: pc.connectionState,
-            iceConnectionState: pc.iceConnectionState,
-          });
-
           scheduleReconnect(remoteId, 1500);
         }
       }
@@ -1516,194 +1153,6 @@ const pc = new RTCPeerConnection({
           onSpeaking={onRemoteSpeakingChange}
         />
       ))}
-    </>
-  );
-}
-
-function RemoteAudio({
-  stream,
-  remoteId,
-  onSpeaking,
-}: {
-  stream: MediaStream;
-  remoteId: string;
-  onSpeaking?: (remoteId: string, level: number) => void;
-}) {
-  const ref = useRef<HTMLAudioElement | null>(null);
-  const lastStreamRef = useRef<MediaStream | null>(null);
-  const [blocked, setBlocked] = useState(false);
-
-  const playAudio = useCallback(async () => {
-    const el = ref.current;
-    if (!el) return;
-
-    try {
-      el.muted = false;
-      el.defaultMuted = false;
-      el.volume = 1;
-
-      await el.play();
-      setBlocked(false);
-
-      callLog("[call] remote audio playing", remoteId, {
-        readyState: el.readyState,
-        paused: el.paused,
-        muted: el.muted,
-        volume: el.volume,
-        tracks: stream.getAudioTracks().map((t) => ({
-          enabled: t.enabled,
-          muted: t.muted,
-          readyState: t.readyState,
-          label: t.label,
-        })),
-      });
-    } catch (e: any) {
-      if (e?.name === "NotAllowedError") {
-        setBlocked(true);
-        callWarn("[call] autoplay blocked", remoteId);
-        return;
-      }
-
-      if (e?.name === "AbortError") {
-        callWarn("[call] remote audio play aborted", remoteId);
-        return;
-      }
-
-      callError("[call] remote audio play error", remoteId, e);
-    }
-  }, [remoteId, stream]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-
-    if (lastStreamRef.current !== stream || el.srcObject !== stream) {
-      el.srcObject = stream;
-      lastStreamRef.current = stream;
-    }
-
-    el.autoplay = true;
-    el.setAttribute("playsinline", "true");
-    el.volume = 1;
-    el.muted = false;
-    el.defaultMuted = false;
-
-    const tryPlay = () => {
-      callLog("[call] try play", remoteId, {
-        readyState: el.readyState,
-        paused: el.paused,
-      });
-
-      void playAudio();
-    };
-
-    el.addEventListener("canplay", tryPlay);
-    el.addEventListener("loadedmetadata", tryPlay);
-
-    void playAudio();
-
-    const retryTimer = window.setTimeout(() => {
-      void playAudio();
-    }, 300);
-
-    return () => {
-      window.clearTimeout(retryTimer);
-      el.removeEventListener("canplay", tryPlay);
-      el.removeEventListener("loadedmetadata", tryPlay);
-    };
-  }, [stream, remoteId, playAudio]);
-
-  useEffect(() => {
-    let raf = 0;
-    let closed = false;
-    let ctx: AudioContext | null = null;
-
-    async function run() {
-      try {
-        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-        if (!Ctx) return;
-
-        ctx = new Ctx();
-
-        if (ctx.state === "suspended") {
-          await ctx.resume().catch(() => {});
-        }
-
-        const source = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-
-        const data = new Uint8Array(analyser.frequencyBinCount);
-
-        const tick = async () => {
-          if (closed) return;
-
-          if (ctx?.state === "suspended") {
-            await ctx.resume().catch(() => {});
-          }
-
-          analyser.getByteTimeDomainData(data);
-
-          let sum = 0;
-
-          for (let i = 0; i < data.length; i++) {
-            const v = (data[i] - 128) / 128;
-            sum += v * v;
-          }
-
-          const rms = Math.sqrt(sum / data.length);
-          const level = Math.min(1, Math.max(0, (rms - 0.005) * 12));
-
-          if (level > 0.08) {
-            onSpeaking?.(remoteId, level);
-          }
-
-          raf = requestAnimationFrame(tick);
-        };
-
-        tick();
-      } catch {
-        // remote meter is optional
-      }
-    }
-
-    void run();
-
-    return () => {
-      closed = true;
-      if (raf) cancelAnimationFrame(raf);
-      if (ctx) void ctx.close().catch(() => {});
-    };
-  }, [stream, remoteId, onSpeaking]);
-
-  return (
-    <>
-      <audio
-        ref={ref}
-        data-remote={remoteId}
-        autoPlay
-        playsInline
-        style={{ display: "none" }}
-      />
-
-      {blocked && (
-        <button
-          type="button"
-          onClick={playAudio}
-          style={{
-            marginTop: 8,
-            padding: "8px 12px",
-            borderRadius: 999,
-            border: "1px solid rgba(255,255,255,0.35)",
-            background: "rgba(255,255,255,0.16)",
-            color: "#fff",
-            cursor: "pointer",
-          }}
-        >
-          🔊 音声を再生する
-        </button>
-      )}
     </>
   );
 }
