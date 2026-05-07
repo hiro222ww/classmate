@@ -19,7 +19,23 @@ type VoiceMetrics = {
   turn: number;
   p2p: number;
   unknown?: number;
+  failed?: number;
   turnRate: number;
+  failRate?: number;
+  avgConnectMs?: number;
+};
+
+type VoiceLog = {
+  id?: string;
+  session_id?: string | null;
+  device_id?: string | null;
+  os?: string | null;
+  member_count?: number | null;
+  route?: string | null;
+  used_turn?: boolean | null;
+  connection_state?: string | null;
+  time_to_connect_ms?: number | null;
+  created_at?: string | null;
 };
 
 const defaultSettings: VoiceSettings = {
@@ -35,10 +51,13 @@ const defaultSettings: VoiceSettings = {
 
 export default function AdminVoicePage() {
   const [authorized, setAuthorized] = useState(false);
-const [settings, setSettings] = useState<VoiceSettings>(defaultSettings);
-const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
+  const [settings, setSettings] = useState<VoiceSettings>(defaultSettings);
+  const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
+  const [logs, setLogs] = useState<VoiceLog[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [metricsLoading, setMetricsLoading] = useState(true);
+  const [logsLoading, setLogsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -67,13 +86,39 @@ const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
       const res = await fetch("/api/admin/voice-metrics", {
         cache: "no-store",
       });
-      const data = await res.json();
 
-      if (data.metrics) {
-        setMetrics(data.metrics);
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.metrics) {
+        console.warn("[voice admin] metrics failed", data);
+        setMetrics(null);
+        return;
       }
+
+      setMetrics(data.metrics);
     } finally {
       setMetricsLoading(false);
+    }
+  }
+
+  async function loadLogs() {
+    setLogsLoading(true);
+    try {
+      const res = await fetch("/api/admin/voice-logs?limit=30", {
+        cache: "no-store",
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.ok) {
+        console.warn("[voice admin] logs failed", data);
+        setLogs([]);
+        return;
+      }
+
+      setLogs(Array.isArray(data.logs) ? data.logs : []);
+    } finally {
+      setLogsLoading(false);
     }
   }
 
@@ -82,14 +127,14 @@ const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
     try {
       const pass = localStorage.getItem("admin_pass") || "";
 
-const res = await fetch("/api/admin/voice-settings", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    password: pass,
-    ...next,
-  }),
-});
+      const res = await fetch("/api/admin/voice-settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          password: pass,
+          ...next,
+        }),
+      });
 
       const data = await res.json();
 
@@ -105,7 +150,10 @@ const res = await fetch("/api/admin/voice-settings", {
     }
   }
 
-  function update<K extends keyof VoiceSettings>(key: K, value: VoiceSettings[K]) {
+  function update<K extends keyof VoiceSettings>(
+    key: K,
+    value: VoiceSettings[K]
+  ) {
     setSettings((prev) => ({
       ...prev,
       [key]: value,
@@ -113,60 +161,61 @@ const res = await fetch("/api/admin/voice-settings", {
   }
 
   useEffect(() => {
-  const saved = localStorage.getItem("admin_pass");
+    const saved = localStorage.getItem("admin_pass");
 
-  if (saved === "2766Uuuhiro") {
-    setAuthorized(true);
-    return;
+    if (saved === "2766Uuuhiro") {
+      setAuthorized(true);
+      return;
+    }
+
+    const pass = window.prompt("管理者パスワード");
+
+    if (pass === "2766Uuuhiro") {
+      localStorage.setItem("admin_pass", pass);
+      setAuthorized(true);
+      return;
+    }
+
+    setAuthorized(false);
+  }, []);
+
+  useEffect(() => {
+    if (!authorized) return;
+
+    void load();
+    void loadMetrics();
+    void loadLogs();
+
+    const channel = supabase
+      .channel("voice_logs")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "voice_connection_logs",
+        },
+        () => {
+          console.log("🔥 realtime update");
+          void loadMetrics();
+          void loadLogs();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [authorized]);
+
+  if (!authorized) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h2>403</h2>
+        <p>権限がありません</p>
+      </main>
+    );
   }
-
-  const pass = window.prompt("管理者パスワード");
-
-  if (pass === "2766Uuuhiro") {
-    localStorage.setItem("admin_pass", pass);
-    setAuthorized(true);
-    return;
-  }
-
-  setAuthorized(false);
-}, []);
-
-useEffect(() => {
-  if (!authorized) return;
-
-  // 🔥 初回ロード追加
-  void load();
-  void loadMetrics();
-
-  const channel = supabase
-    .channel("voice_logs")
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "voice_connection_logs",
-      },
-      () => {
-        console.log("🔥 realtime update");
-        loadMetrics();
-      }
-    )
-    .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, [authorized]);
-
-if (!authorized) {
-  return (
-    <main style={{ padding: 24 }}>
-      <h2>403</h2>
-      <p>権限がありません</p>
-    </main>
-  );
-}
 
   if (loading) {
     return (
@@ -210,6 +259,16 @@ if (!authorized) {
               <MetricCard label="TURN接続" value={`${metrics.turn}`} />
               <MetricCard label="P2P接続" value={`${metrics.p2p}`} />
               <MetricCard label="総接続ログ" value={`${metrics.total}`} />
+              <MetricCard label="不明" value={`${metrics.unknown ?? 0}`} />
+              <MetricCard label="失敗/切断" value={`${metrics.failed ?? 0}`} />
+              <MetricCard
+                label="失敗率"
+                value={`${metrics.failRate ?? 0}%`}
+              />
+              <MetricCard
+                label="平均接続時間"
+                value={`${metrics.avgConnectMs ?? 0}ms`}
+              />
             </div>
           ) : (
             <div style={{ color: "#6b7280", fontWeight: 800 }}>
@@ -223,6 +282,73 @@ if (!authorized) {
             style={smallButtonStyle}
           >
             統計を再読み込み
+          </button>
+        </section>
+
+        <section style={cardStyle}>
+          <h2 style={sectionTitle}>直近の接続ログ</h2>
+
+          {logsLoading ? (
+            <div style={{ color: "#6b7280", fontWeight: 800 }}>
+              読み込み中...
+            </div>
+          ) : logs.length === 0 ? (
+            <div style={{ color: "#6b7280", fontWeight: 800 }}>
+              接続ログはまだありません。
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {logs.map((log, i) => {
+                const route = String(log.route ?? "unknown");
+                const state = String(log.connection_state ?? "unknown");
+                const usedTurn =
+                  log.used_turn === true ||
+                  route === "relay" ||
+                  route === "turn";
+
+                return (
+                  <div
+                    key={log.id ?? `${log.created_at}-${i}`}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 12,
+                      padding: 12,
+                      background: "#f9fafb",
+                      display: "grid",
+                      gap: 4,
+                    }}
+                  >
+                    <div style={{ fontWeight: 900 }}>
+                      {usedTurn ? "TURN" : "P2P/不明"} / {state}
+                    </div>
+
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      OS: {log.os ?? "unknown"} / 人数:{" "}
+                      {log.member_count ?? "-"} / route: {route}
+                    </div>
+
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      接続時間: {log.time_to_connect_ms ?? "-"}ms /{" "}
+                      {log.created_at
+                        ? new Date(log.created_at).toLocaleString()
+                        : ""}
+                    </div>
+
+                    <div style={{ fontSize: 11, color: "#9ca3af" }}>
+                      session: {log.session_id ?? "-"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void loadLogs()}
+            style={smallButtonStyle}
+          >
+            ログを再読み込み
           </button>
         </section>
 
