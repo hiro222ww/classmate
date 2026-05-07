@@ -54,9 +54,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const clearBarrierAtMsRef = useRef<number>(0);
 
   const remoteProgressRef = useRef<Record<string, StrokePoint[]>>({});
-  const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>(
-    {}
-  );
+  const remoteStyleRef = useRef<Record<string, { color: string; width: number }>>({});
 
   const channelRef =
     useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
@@ -99,9 +97,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       .sort((a, b) => {
         const at = String(a.created_at ?? "");
         const bt = String(b.created_at ?? "");
-
         if (at !== bt) return at.localeCompare(bt);
-
         return String(a.id ?? "").localeCompare(String(b.id ?? ""));
       });
 
@@ -117,9 +113,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       }
     }
 
-    if (lastClearIndex >= 0) {
-      return sorted.slice(lastClearIndex);
-    }
+    if (lastClearIndex >= 0) return sorted.slice(lastClearIndex);
 
     return sorted;
   };
@@ -148,6 +142,38 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     remoteStyleRef.current = {};
   };
 
+  const materializeRemoteProgressAsPendingRows = () => {
+    const now = Date.now();
+    const rows: ChalkStrokeRow[] = [];
+
+    for (const key of Object.keys(remoteProgressRef.current)) {
+      const pts = remoteProgressRef.current[key];
+      const style = remoteStyleRef.current[key];
+
+      if (!pts || pts.length < 1) continue;
+
+      const [deviceId = "remote"] = key.split(":");
+
+      rows.push({
+        id: `remote-pending-${key}`,
+        session_id: sessionId,
+        device_id: deviceId,
+        display_name: "参加者",
+        color: style?.color ?? "#ffffff",
+        width: style?.width ?? 3,
+        points: pts,
+        kind: "stroke",
+        created_at: new Date(now - 1).toISOString(),
+      });
+    }
+
+    if (rows.length > 0) {
+      setPendingRows(upsertRows(pendingRowsRef.current, rows));
+    }
+
+    clearRemoteOnly();
+  };
+
   const resetBoardRowsForClear = (clearRow?: ChalkStrokeRow) => {
     if (clearRow) {
       clearBarrierAtMsRef.current = Math.max(
@@ -165,7 +191,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
   const removeOneRemoteProgressFromDevice = (deviceId: string) => {
     const prefix = `${deviceId}:`;
-
     const keys = Object.keys(remoteProgressRef.current).filter((key) =>
       key.startsWith(prefix)
     );
@@ -538,8 +563,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         const key = `${p.deviceId}:${p.strokeId}`;
 
         if (p.done) {
-          // 消さない。DB INSERTが来るまで一時線を残す。
-          // ここで消すと「出る → 消える → 復活」になる。
           return;
         }
 
@@ -609,7 +632,6 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           }
 
           removeOneRemoteProgressFromDevice(String(row.device_id ?? "").trim());
-
           setPersistedRows(upsertRows(persistedRowsRef.current, [row]));
 
           redrawScene();
@@ -746,6 +768,10 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
       const p = getBoardPoint(ev);
       if (!p) return;
+
+      if (tool === "eraser") {
+        materializeRemoteProgressAsPendingRows();
+      }
 
       strokeColorRef.current = tool === "eraser" ? BOARD_BG : penColor;
       strokeWidthRef.current = tool === "eraser" ? ERASER_WIDTH : penWidth;
@@ -996,14 +1022,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             />
           </label>
 
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {CHALK_COLORS.map((c) => (
               <button
                 key={c.value}
@@ -1064,15 +1083,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       </div>
 
       {isTouchLike ? (
-        <div
-          style={{
-            marginTop: 8,
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
+        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
             onClick={() => setTouchMode("draw")}
@@ -1116,14 +1127,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       ) : null}
 
       {info ? (
-        <div
-          style={{
-            marginTop: 8,
-            fontSize: 12,
-            color: "#92400e",
-            fontWeight: 800,
-          }}
-        >
+        <div style={{ marginTop: 8, fontSize: 12, color: "#92400e", fontWeight: 800 }}>
           {info}
         </div>
       ) : null}
