@@ -19,18 +19,21 @@ export function useLocalMic({
 }: UseLocalMicArgs) {
   const localStreamRef = useRef<MediaStream | null>(null);
   const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const onMicLevelChangeRef = useRef(onMicLevelChange);
 
   const [micReady, setMicReady] = useState(false);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicId, setSelectedMicId] = useState("");
 
-  // 🎧 デバイス一覧
+  useEffect(() => {
+    onMicLevelChangeRef.current = onMicLevelChange;
+  }, [onMicLevelChange]);
+
   useEffect(() => {
     async function loadDevices() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const inputs = devices.filter((d) => d.kind === "audioinput");
-
         setAudioInputs(inputs);
 
         if (inputs.length > 0) {
@@ -44,13 +47,11 @@ export function useLocalMic({
     void loadDevices();
   }, []);
 
-  // 🎤 マイク取得（🔥ここが超重要）
   useEffect(() => {
     let mounted = true;
 
     async function init() {
       try {
-        // 既存トラック停止
         localStreamRef.current?.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
         localAudioTrackRef.current = null;
@@ -79,7 +80,7 @@ export function useLocalMic({
         const track = stream.getAudioTracks()[0] ?? null;
 
         if (track) {
-          track.enabled = !isMuted;
+          track.enabled = true;
         }
 
         localStreamRef.current = stream;
@@ -102,24 +103,84 @@ export function useLocalMic({
       }
     }
 
-    // 🔥 条件なしで必ず実行（ここが今回の本質）
     void init();
 
     return () => {
       mounted = false;
-
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
       localAudioTrackRef.current = null;
     };
-  }, [selectedMicId, deviceId]);
+  }, [selectedMicId, deviceId, onMicReadyChange, onStatusChange]);
 
-  // 🔇 ミュート制御
+  useEffect(() => {
+    if (!micReady || !localStreamRef.current) return;
+
+    let raf = 0;
+    let closed = false;
+    let ctx: AudioContext | null = null;
+
+    async function run() {
+      try {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctx) return;
+
+        ctx = new Ctx();
+
+        if (ctx.state === "suspended") {
+          await ctx.resume().catch(() => {});
+        }
+
+        const source = ctx.createMediaStreamSource(localStreamRef.current!);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        const tick = async () => {
+          if (closed) return;
+
+          if (ctx?.state === "suspended") {
+            await ctx.resume().catch(() => {});
+          }
+
+          analyser.getByteTimeDomainData(data);
+
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sum += v * v;
+          }
+
+          const rms = Math.sqrt(sum / data.length);
+          const level = Math.min(1, Math.max(0, (rms - 0.005) * 12));
+
+          onMicLevelChangeRef.current?.(level);
+
+          raf = requestAnimationFrame(tick);
+        };
+
+        tick();
+      } catch (e) {
+        console.error("[local-mic] meter error", e);
+      }
+    }
+
+    void run();
+
+    return () => {
+      closed = true;
+      if (raf) cancelAnimationFrame(raf);
+      if (ctx) void ctx.close().catch(() => {});
+    };
+  }, [micReady]);
+
   useEffect(() => {
     const track = localAudioTrackRef.current;
     if (!track) return;
 
-    track.enabled = !isMuted;
+    track.enabled = true;
   }, [isMuted]);
 
   return {
