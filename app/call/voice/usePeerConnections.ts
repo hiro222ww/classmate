@@ -14,6 +14,7 @@ type Member = {
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
 type VoiceRoute = "stun" | "turn";
+type OsType = "windows" | "mac" | "ios" | "android" | "unknown";
 
 type RemoteAudioState = {
   stream: MediaStream;
@@ -47,6 +48,20 @@ function makeConnectionId(localId: string, remoteId: string) {
   return `${localId}__${remoteId}__${Date.now()}__${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+}
+
+function detectOs(): OsType {
+  const ua =
+    typeof navigator !== "undefined"
+      ? navigator.userAgent.toLowerCase()
+      : "";
+
+  if (ua.includes("windows")) return "windows";
+  if (ua.includes("iphone") || ua.includes("ipad")) return "ios";
+  if (ua.includes("android")) return "android";
+  if (ua.includes("mac")) return "mac";
+
+  return "unknown";
 }
 
 async function detectConnectionType(pc: RTCPeerConnection) {
@@ -99,6 +114,7 @@ export function usePeerConnections({
   const connectionIdsRef = useRef<Map<string, string>>(new Map());
   const offeredPeersRef = useRef<Set<string>>(new Set());
   const startedPeersRef = useRef<Set<string>>(new Set());
+
   const maybeStartOfferRef = useRef<((remoteId: string) => Promise<void>) | null>(
     null
   );
@@ -107,6 +123,10 @@ export function usePeerConnections({
   const voiceRouteRef = useRef<VoiceRoute>("stun");
   const turnIceServersRef = useRef<RTCIceServer[] | null>(null);
   const loadingTurnRef = useRef(false);
+
+  const osRef = useRef<OsType>(detectOs());
+  const connectStartedAtRef = useRef<Map<string, number>>(new Map());
+  const loggedConnectedRef = useRef<Set<string>>(new Set());
 
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
@@ -121,13 +141,8 @@ export function usePeerConnections({
   );
 
   const activeMembers = useMemo(() => {
-    const hasInCallInfo = members.some((m) => typeof m.is_in_call === "boolean");
-    if (!hasInCallInfo) return members;
-
-    return members.filter(
-      (m) => m.device_id === deviceId || m.is_in_call === true
-    );
-  }, [members, deviceId]);
+    return members;
+  }, [members]);
 
   const getRemoteIds = useCallback(() => {
     return activeMembers
@@ -169,6 +184,64 @@ export function usePeerConnections({
   const clearCurrentConnectionId = useCallback((remoteId: string) => {
     connectionIdsRef.current.delete(remoteId);
   }, []);
+
+  const markConnectStart = useCallback((remoteId: string) => {
+    if (!connectStartedAtRef.current.has(remoteId)) {
+      connectStartedAtRef.current.set(remoteId, Date.now());
+    }
+  }, []);
+
+  const logVoiceConnection = useCallback(
+    async (
+      remoteId: string,
+      pc: RTCPeerConnection,
+      phase: "connected" | "failed" = "connected"
+    ) => {
+      const connectionId = getCurrentConnectionId(remoteId);
+      const logKey = `${remoteId}:${connectionId ?? "none"}:${phase}`;
+
+      if (phase === "connected" && loggedConnectedRef.current.has(logKey)) {
+        return;
+      }
+
+      try {
+        const result =
+          phase === "connected"
+            ? await detectConnectionType(pc)
+            : { route: "unknown", localType: null, remoteType: null };
+
+        const startedAt = connectStartedAtRef.current.get(remoteId);
+        const timeToConnectMs = startedAt ? Date.now() - startedAt : null;
+
+        await fetch("/api/voice-connection-log", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            deviceId,
+            remoteDeviceId: remoteId,
+            phase,
+            route: result.route,
+            localCandidateType: result.localType,
+            remoteCandidateType: result.remoteType,
+            voiceRoute: voiceRouteRef.current,
+            connectionState:
+              phase === "connected" ? pc.connectionState : "failed",
+            timeToConnectMs,
+            os: osRef.current,
+            memberCount: members.length,
+          }),
+        });
+
+        if (phase === "connected") {
+          loggedConnectedRef.current.add(logKey);
+        }
+      } catch (e) {
+        console.warn("[call] voice log failed", e);
+      }
+    },
+    [deviceId, getCurrentConnectionId, members.length, sessionId]
+  );
 
   const upsertRemoteAudio = useCallback(
     (remoteId: string, stream: MediaStream) => {
@@ -240,6 +313,8 @@ export function usePeerConnections({
       pendingIceRef.current.delete(remoteId);
       clearReconnectTimer(remoteId);
 
+      connectStartedAtRef.current.delete(remoteId);
+
       peerStatesRef.current.delete(remoteId);
       emitPeerStates();
 
@@ -292,6 +367,7 @@ export function usePeerConnections({
         const nextConnectionId = makeConnectionId(deviceId, remoteId);
         closePeer(remoteId, { clearConnectionId: false });
         setCurrentConnectionId(remoteId, nextConnectionId);
+        connectStartedAtRef.current.set(remoteId, Date.now());
 
         void maybeStartOfferRef.current?.(remoteId);
       }, delay);
@@ -367,6 +443,7 @@ export function usePeerConnections({
       }
 
       setCurrentConnectionId(remoteId, connectionId);
+      markConnectStart(remoteId);
 
       const currentIceServers =
         iceServersRef.current.length > 0
@@ -426,7 +503,11 @@ export function usePeerConnections({
             audioEl.defaultMuted = false;
             audioEl.volume = 1;
             audioEl.play().catch((e) => {
-              console.warn("[call] delayed remote audio play failed", remoteId, e);
+              console.warn(
+                "[call] delayed remote audio play failed",
+                remoteId,
+                e
+              );
             });
           }
         }, 300);
@@ -440,6 +521,7 @@ export function usePeerConnections({
 
         if (pc.iceConnectionState === "failed") {
           setPeerState(remoteId, "failed");
+          void logVoiceConnection(remoteId, pc, "failed");
 
           if (voiceRouteRef.current === "stun") {
             void enableTurnFallback().then((ok) => {
@@ -451,6 +533,7 @@ export function usePeerConnections({
               const nextConnectionId = makeConnectionId(deviceId, remoteId);
               closePeer(remoteId, { clearConnectionId: false });
               setCurrentConnectionId(remoteId, nextConnectionId);
+              connectStartedAtRef.current.set(remoteId, Date.now());
               scheduleReconnect(remoteId, 300);
             });
 
@@ -497,6 +580,7 @@ export function usePeerConnections({
                 const nextConnectionId = makeConnectionId(deviceId, remoteId);
                 closePeer(remoteId, { clearConnectionId: false });
                 setCurrentConnectionId(remoteId, nextConnectionId);
+                connectStartedAtRef.current.set(remoteId, Date.now());
                 scheduleReconnect(remoteId, 300);
               });
             }, 5000);
@@ -517,26 +601,8 @@ export function usePeerConnections({
             void sender.replaceTrack(isMuted ? null : track);
           }
 
-          setTimeout(async () => {
-            try {
-              const result = await detectConnectionType(pc);
-
-              await fetch("/api/voice-connection-log", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  sessionId,
-                  deviceId,
-                  remoteDeviceId: remoteId,
-                  route: result.route,
-                  localCandidateType: result.localType,
-                  remoteCandidateType: result.remoteType,
-                  voiceRoute: voiceRouteRef.current,
-                }),
-              });
-            } catch (e) {
-              console.warn("[call] stats error", e);
-            }
+          window.setTimeout(() => {
+            void logVoiceConnection(remoteId, pc, "connected");
           }, 1000);
         }
 
@@ -546,6 +612,7 @@ export function usePeerConnections({
 
         if (state === "failed") {
           setPeerState(remoteId, "failed");
+          void logVoiceConnection(remoteId, pc, "failed");
 
           if (voiceRouteRef.current === "stun") {
             void enableTurnFallback().then((ok) => {
@@ -558,6 +625,7 @@ export function usePeerConnections({
               const nextConnectionId = makeConnectionId(deviceId, remoteId);
               closePeer(remoteId, { clearConnectionId: false });
               setCurrentConnectionId(remoteId, nextConnectionId);
+              connectStartedAtRef.current.set(remoteId, Date.now());
               scheduleReconnect(remoteId, 300);
             });
 
@@ -585,10 +653,11 @@ export function usePeerConnections({
       isMuted,
       localAudioTrackRef,
       localStreamRef,
+      logVoiceConnection,
+      markConnectStart,
       notifyStatus,
       scheduleReconnect,
       sendSignal,
-      sessionId,
       setCurrentConnectionId,
       setPeerState,
       upsertRemoteAudio,
@@ -623,6 +692,8 @@ export function usePeerConnections({
       if (!getCurrentConnectionId(remoteId)) {
         setCurrentConnectionId(remoteId, connectionId);
       }
+
+      markConnectStart(remoteId);
 
       const pc = createPeerConnection(remoteId, connectionId);
 
@@ -666,6 +737,7 @@ export function usePeerConnections({
       getCurrentConnectionId,
       localAudioTrackRef,
       localStreamRef,
+      markConnectStart,
       sendSignal,
       setCurrentConnectionId,
       setPeerState,
@@ -702,6 +774,7 @@ export function usePeerConnections({
         if (currentConnectionId !== incomingConnectionId) {
           closePeer(remoteId, { clearConnectionId: false });
           setCurrentConnectionId(remoteId, incomingConnectionId);
+          connectStartedAtRef.current.set(remoteId, Date.now());
           currentConnectionId = incomingConnectionId;
           offeredPeersRef.current.delete(remoteId);
           startedPeersRef.current.add(remoteId);
@@ -846,15 +919,28 @@ export function usePeerConnections({
       signalReady,
       remoteIds,
       membersCount: members.length,
+      os: osRef.current,
+      voiceRoute: voiceRouteRef.current,
       members: members.map((m) => ({
         device_id: m.device_id,
         is_in_call: m.is_in_call,
       })),
     });
 
-    if (!micReady) return;
-    if (!signalReady) return;
-    if (remoteIds.length < 1) return;
+    if (!micReady) {
+      console.log("[voice-peer] stop: micReady false");
+      return;
+    }
+
+    if (!signalReady) {
+      console.log("[voice-peer] stop: signalReady false");
+      return;
+    }
+
+    if (remoteIds.length < 1) {
+      console.log("[voice-peer] stop: no remoteIds");
+      return;
+    }
 
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {

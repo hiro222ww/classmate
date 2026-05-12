@@ -17,19 +17,28 @@ function safePhase(v: unknown): Phase {
 function safeRoute(v: unknown): Route {
   const s = String(v ?? "").trim();
 
-  if (
-    s === "turn" ||
-    s === "relay"
-  ) {
+  if (s === "turn" || s === "relay") {
     return "turn";
   }
 
-  if (
-    s === "p2p" ||
-    s === "host" ||
-    s === "srflx"
-  ) {
+  if (s === "p2p" || s === "host" || s === "srflx") {
     return "p2p";
+  }
+
+  return "unknown";
+}
+
+function safeOs(v: unknown) {
+  const s = String(v ?? "").trim().toLowerCase();
+
+  if (
+    s === "windows" ||
+    s === "mac" ||
+    s === "ios" ||
+    s === "android" ||
+    s === "unknown"
+  ) {
+    return s;
   }
 
   return "unknown";
@@ -52,6 +61,12 @@ export async function POST(req: Request) {
 
     const phase = safePhase(body.phase);
     const route = safeRoute(body.route);
+    const os = safeOs(body.os);
+
+    const memberCountRaw = Number(body.memberCount);
+    const memberCount = Number.isFinite(memberCountRaw)
+      ? memberCountRaw
+      : null;
 
     const localCandidateType =
       String(body.localCandidateType ?? "").trim() || null;
@@ -59,8 +74,7 @@ export async function POST(req: Request) {
     const remoteCandidateType =
       String(body.remoteCandidateType ?? "").trim() || null;
 
-    const voiceRoute =
-      String(body.voiceRoute ?? "").trim() || null;
+    const voiceRoute = String(body.voiceRoute ?? "").trim() || null;
 
     const connectionState =
       String(body.connectionState ?? "").trim() ||
@@ -94,6 +108,8 @@ export async function POST(req: Request) {
       local_candidate_type: localCandidateType,
       remote_candidate_type: remoteCandidateType,
       voice_route: voiceRoute,
+      os,
+      member_count: memberCount,
     });
 
     if (error) {
