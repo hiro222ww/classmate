@@ -29,6 +29,12 @@ function requireAdmin(req: Request) {
   return null;
 }
 
+type RoomMemberDto = {
+  device_id: string;
+  display_name: string | null;
+  joined_at: string | null;
+};
+
 type RoomDto = {
   session_id: string;
   class_id: string | null;
@@ -37,6 +43,7 @@ type RoomDto = {
   topic_key: string | null;
   status: string;
   member_count: number;
+  members: RoomMemberDto[];
   started_at: string | null;
   elapsed_minutes: number;
   report_count: number;
@@ -74,9 +81,6 @@ export async function GET(req: Request) {
       .order("created_at", { ascending: false })
       .limit(100);
 
-    console.log("[admin/rooms] sessionsErr =", sessionsErr);
-    console.log("[admin/rooms] sessions =", sessions);
-
     if (sessionsErr) {
       return NextResponse.json(
         { ok: false, error: `sessions query failed: ${sessionsErr.message}` },
@@ -104,6 +108,7 @@ export async function GET(req: Request) {
     }
 
     const sessionIds = sessionRows.map((s) => s.id);
+
     const classIds = Array.from(
       new Set(
         sessionRows
@@ -112,13 +117,13 @@ export async function GET(req: Request) {
       )
     );
 
-    const { data: classes, error: classesErr } = await supabaseAdmin
-      .from("classes")
-      .select("id, name, world_key, topic_key")
-      .in("id", classIds);
-
-    console.log("[admin/rooms] classesErr =", classesErr);
-    console.log("[admin/rooms] classes =", classes);
+    const { data: classes, error: classesErr } =
+      classIds.length > 0
+        ? await supabaseAdmin
+            .from("classes")
+            .select("id, name, world_key, topic_key")
+            .in("id", classIds)
+        : { data: [], error: null };
 
     if (classesErr) {
       return NextResponse.json(
@@ -136,38 +141,105 @@ export async function GET(req: Request) {
       }>).map((c) => [c.id, c])
     );
 
-    const { data: members, error: membersErr } = await supabaseAdmin
+    const { data: memberRowsRaw, error: membersErr } = await supabaseAdmin
       .from("session_members")
-      .select("session_id, device_id")
+      .select("session_id, device_id, created_at")
       .in("session_id", sessionIds);
-
-    console.log("[admin/rooms] membersErr =", membersErr);
-    console.log("[admin/rooms] members =", members);
 
     if (membersErr) {
       return NextResponse.json(
-        { ok: false, error: `session_members query failed: ${membersErr.message}` },
+        {
+          ok: false,
+          error: `session_members query failed: ${membersErr.message}`,
+        },
         { status: 500 }
       );
     }
 
-    const membersBySession = new Map<string, string[]>();
+    const memberRows = (memberRowsRaw ?? []) as Array<{
+      session_id: string;
+      device_id: string | null;
+      created_at: string | null;
+    }>;
 
-    for (const row of (members ?? []) as Array<{ session_id: string; device_id: string | null }>) {
+    const allDeviceIds = Array.from(
+      new Set(
+        memberRows
+          .map((m) => (m.device_id ?? "").trim())
+          .filter((v): v is string => !!v)
+      )
+    );
+
+    const { data: profilesRaw, error: profilesErr } =
+      allDeviceIds.length > 0
+        ? await supabaseAdmin
+            .from("user_profiles")
+            .select("device_id, display_name")
+            .in("device_id", allDeviceIds)
+        : { data: [], error: null };
+
+    if (profilesErr) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `user_profiles query failed: ${profilesErr.message}`,
+        },
+        { status: 500 }
+      );
+    }
+
+    const profileMap = new Map(
+      ((profilesRaw ?? []) as Array<{
+        device_id: string | null;
+        display_name: string | null;
+      }>)
+        .filter((p) => typeof p.device_id === "string" && !!p.device_id.trim())
+        .map((p) => [
+          p.device_id!.trim(),
+          {
+            display_name: p.display_name?.trim() || null,
+          },
+        ])
+    );
+
+    const membersBySession = new Map<string, RoomMemberDto[]>();
+
+    for (const row of memberRows) {
       const deviceId = (row.device_id ?? "").trim();
+      if (!deviceId) continue;
+
+      const profile = profileMap.get(deviceId);
+
       const list = membersBySession.get(row.session_id) ?? [];
-      if (deviceId) list.push(deviceId);
+      list.push({
+        device_id: deviceId,
+        display_name: profile?.display_name ?? null,
+        joined_at: row.created_at ?? null,
+      });
       membersBySession.set(row.session_id, list);
     }
 
     const rooms: RoomDto[] = sessionRows.map((s) => {
       const cls = s.class_id ? classMap.get(s.class_id) : undefined;
-      const deviceIds = membersBySession.get(s.id) ?? [];
-      const member_count = new Set(deviceIds).size;
+
+      const rawMembers = membersBySession.get(s.id) ?? [];
+
+      const uniqueMembersMap = new Map<string, RoomMemberDto>();
+      for (const m of rawMembers) {
+        if (!uniqueMembersMap.has(m.device_id)) {
+          uniqueMembersMap.set(m.device_id, m);
+        }
+      }
+
+      const members = Array.from(uniqueMembersMap.values());
+      const member_count = members.length;
 
       const report_count = 0;
       const short_leave_count = 0;
-      const join_leave_burst_count = Math.max(0, deviceIds.length - member_count);
+      const join_leave_burst_count = Math.max(
+        0,
+        rawMembers.length - member_count
+      );
       const block_count = 0;
 
       const risk_score =
@@ -184,6 +256,7 @@ export async function GET(req: Request) {
         topic_key: cls?.topic_key ?? null,
         status: s.status?.trim() || "unknown",
         member_count,
+        members,
         started_at: s.created_at ?? null,
         elapsed_minutes: diffMinutesFromNow(s.created_at ?? null),
         report_count,

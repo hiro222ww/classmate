@@ -1,7 +1,12 @@
-// app/admin/rooms/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
+type RoomMember = {
+  device_id: string;
+  display_name: string | null;
+  joined_at: string | null;
+};
 
 type RoomRow = {
   session_id: string;
@@ -11,6 +16,7 @@ type RoomRow = {
   topic_key: string | null;
   status: string;
   member_count: number;
+  members: RoomMember[];
   started_at: string | null;
   elapsed_minutes: number;
   report_count: number;
@@ -54,10 +60,22 @@ function fmtDateTime(iso: string | null) {
   }).format(d);
 }
 
+function shortId(id: string) {
+  if (!id) return "-";
+  if (id.length <= 12) return id;
+  return `${id.slice(0, 6)}…${id.slice(-4)}`;
+}
+
 function riskColor(level: RoomRow["risk_level"]) {
   if (level === "高") return "#b00020";
   if (level === "中") return "#9a6700";
   return "#2d6a4f";
+}
+
+function riskBg(level: RoomRow["risk_level"]) {
+  if (level === "高") return "#fff1f1";
+  if (level === "中") return "#fff8e1";
+  return "#fff";
 }
 
 export default function AdminRoomsPage() {
@@ -118,7 +136,7 @@ export default function AdminRoomsPage() {
 
   const pageStyle: React.CSSProperties = {
     padding: 16,
-    maxWidth: 1200,
+    maxWidth: 1280,
     margin: "0 auto",
     color: "#111",
   };
@@ -156,13 +174,23 @@ export default function AdminRoomsPage() {
 
   return (
     <main style={pageStyle}>
-      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>管理：ルーム一覧</h1>
+      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>
+        管理：ルーム一覧
+      </h1>
+
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-        sessions / session_members / classes をもとに、進行中セッションを一覧表示します。
+        sessions / session_members / classes / user_profiles をもとに、進行中セッションを一覧表示します。
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
           <input
             value={pass}
             onChange={(e) => setPass(e.target.value)}
@@ -183,6 +211,13 @@ export default function AdminRoomsPage() {
             style={btnGhost}
           >
             topicsへ
+          </button>
+
+          <button
+            onClick={() => (window.location.href = "/admin/voice")}
+            style={btnGhost}
+          >
+            voiceへ
           </button>
 
           {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
@@ -220,13 +255,23 @@ export default function AdminRoomsPage() {
       </section>
 
       <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>進行中ルーム</h2>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          進行中ルーム
+        </h2>
 
         <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1200, borderCollapse: "collapse", fontSize: 12 }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: 1400,
+              borderCollapse: "collapse",
+              fontSize: 12,
+            }}
+          >
             <thead>
               <tr style={{ borderBottom: "1px solid #eee" }}>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>クラス名</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>参加者</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>world</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>topic</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>人数</th>
@@ -240,12 +285,67 @@ export default function AdminRoomsPage() {
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>session_id</th>
               </tr>
             </thead>
+
             <tbody>
               {rooms.map((room) => (
-                <tr key={room.session_id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                <tr
+                  key={room.session_id}
+                  style={{
+                    borderBottom: "1px solid #f3f3f3",
+                    background: riskBg(room.risk_level),
+                  }}
+                >
                   <td style={{ padding: "8px 6px", fontWeight: 700 }}>
                     {room.class_name}
                   </td>
+
+                  <td style={{ padding: "8px 6px", minWidth: 240 }}>
+                    {room.members?.length ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 6,
+                        }}
+                      >
+                        {room.members.map((m) => (
+                          <div
+                            key={m.device_id}
+                            style={{
+                              padding: "6px 8px",
+                              borderRadius: 10,
+                              background: "#f6f6f6",
+                              border: "1px solid #eee",
+                            }}
+                          >
+                            <div style={{ fontWeight: 900 }}>
+                              {m.display_name || "名無し"}
+                            </div>
+
+                            <div
+                              style={{
+                                marginTop: 2,
+                                fontSize: 10,
+                                color: "#666",
+                                fontFamily:
+                                  "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                              }}
+                              title={m.device_id}
+                            >
+                              {shortId(m.device_id)}
+                            </div>
+
+                            <div style={{ marginTop: 2, fontSize: 10, color: "#888" }}>
+                              入室: {fmtDateTime(m.joined_at)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{ color: "#999" }}>なし</span>
+                    )}
+                  </td>
+
                   <td style={{ padding: "8px 6px" }}>{room.world_key ?? "-"}</td>
                   <td style={{ padding: "8px 6px" }}>{room.topic_key ?? "-"}</td>
                   <td style={{ padding: "8px 6px" }}>{room.member_count}</td>
@@ -255,6 +355,7 @@ export default function AdminRoomsPage() {
                   <td style={{ padding: "8px 6px" }}>{room.report_count}</td>
                   <td style={{ padding: "8px 6px" }}>{room.short_leave_count}</td>
                   <td style={{ padding: "8px 6px" }}>{room.join_leave_burst_count}</td>
+
                   <td style={{ padding: "8px 6px" }}>
                     <span
                       style={{
@@ -268,6 +369,7 @@ export default function AdminRoomsPage() {
                       {room.risk_level} ({room.risk_score})
                     </span>
                   </td>
+
                   <td
                     style={{
                       padding: "8px 6px",
@@ -275,15 +377,16 @@ export default function AdminRoomsPage() {
                         "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                       fontSize: 11,
                     }}
+                    title={room.session_id}
                   >
-                    {room.session_id}
+                    {shortId(room.session_id)}
                   </td>
                 </tr>
               ))}
 
               {rooms.length === 0 ? (
                 <tr>
-                  <td colSpan={12} style={{ padding: 10, color: "#666" }}>
+                  <td colSpan={13} style={{ padding: 10, color: "#666" }}>
                     進行中ルームがありません
                   </td>
                 </tr>
@@ -296,9 +399,11 @@ export default function AdminRoomsPage() {
       <section style={{ ...card, marginTop: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>メモ</h2>
         <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.8 }}>
-          現在のMVPでは、通報数・短時間退出・ブロック数は未接続です。<br />
-          そのため危険度は暫定的に「入退室頻度」のみで少しだけ反映されます。<br />
-          次に reports / blocks / session_metrics を足すと、ここを本番仕様にできます。
+          この画面では、進行中の forming / active セッションと参加者を確認できます。
+          <br />
+          現在のMVPでは、通報数・短時間退出・ブロック数は未接続です。
+          <br />
+          次に reports / blocks / admin actions を足すと、強制退出・一時BAN・通報確認まで拡張できます。
         </div>
       </section>
 
