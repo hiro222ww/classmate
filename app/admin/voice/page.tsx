@@ -14,6 +14,18 @@ type VoiceSettings = {
   emergency_message: string | null;
 };
 
+type HourlyMetric = {
+  hour: string;
+  total: number;
+  turn: number;
+  p2p: number;
+  failed: number;
+  unknown: number;
+  turnRate: number;
+  failRate: number;
+  avgConnectMs: number;
+};
+
 type VoiceMetrics = {
   total: number;
   turn: number;
@@ -23,6 +35,7 @@ type VoiceMetrics = {
   turnRate: number;
   failRate?: number;
   avgConnectMs?: number;
+  hourly?: HourlyMetric[];
 };
 
 type VoiceLog = {
@@ -50,7 +63,6 @@ const defaultSettings: VoiceSettings = {
 };
 
 export default function AdminVoicePage() {
-  const [authorized, setAuthorized] = useState(false);
   const [settings, setSettings] = useState<VoiceSettings>(defaultSettings);
   const [metrics, setMetrics] = useState<VoiceMetrics | null>(null);
   const [logs, setLogs] = useState<VoiceLog[]>([]);
@@ -66,9 +78,10 @@ export default function AdminVoicePage() {
       const res = await fetch("/api/admin/voice-settings", {
         cache: "no-store",
       });
-      const data = await res.json();
 
-      if (data.settings) {
+      const data = await res.json().catch(() => null);
+
+      if (data?.settings) {
         setSettings({
           ...defaultSettings,
           ...data.settings,
@@ -125,20 +138,15 @@ export default function AdminVoicePage() {
   async function save(next = settings) {
     setSaving(true);
     try {
-      const pass = localStorage.getItem("admin_pass") || "";
-
       const res = await fetch("/api/admin/voice-settings", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          password: pass,
-          ...next,
-        }),
+        body: JSON.stringify(next),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (data.settings) {
+      if (data?.settings) {
         setSettings({
           ...defaultSettings,
           ...data.settings,
@@ -161,27 +169,6 @@ export default function AdminVoicePage() {
   }
 
   useEffect(() => {
-    const saved = localStorage.getItem("admin_pass");
-
-    if (saved === "2766Uuuhiro") {
-      setAuthorized(true);
-      return;
-    }
-
-    const pass = window.prompt("管理者パスワード");
-
-    if (pass === "2766Uuuhiro") {
-      localStorage.setItem("admin_pass", pass);
-      setAuthorized(true);
-      return;
-    }
-
-    setAuthorized(false);
-  }, []);
-
-  useEffect(() => {
-    if (!authorized) return;
-
     void load();
     void loadMetrics();
     void loadLogs();
@@ -196,7 +183,6 @@ export default function AdminVoicePage() {
           table: "voice_connection_logs",
         },
         () => {
-          console.log("🔥 realtime update");
           void loadMetrics();
           void loadLogs();
         }
@@ -206,16 +192,7 @@ export default function AdminVoicePage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [authorized]);
-
-  if (!authorized) {
-    return (
-      <main style={{ padding: 24 }}>
-        <h2>403</h2>
-        <p>権限がありません</p>
-      </main>
-    );
-  }
+  }, []);
 
   if (loading) {
     return (
@@ -235,6 +212,12 @@ export default function AdminVoicePage() {
       }}
     >
       <div style={{ maxWidth: 860, margin: "0 auto" }}>
+        <div style={{ marginBottom: 16 }}>
+          <button type="button" onClick={() => (window.location.href = "/admin")} style={smallButtonStyle}>
+            管理トップへ
+          </button>
+        </div>
+
         <h1 style={{ fontSize: 28, marginBottom: 8 }}>通話管理</h1>
         <p style={{ color: "#6b7280", marginBottom: 24 }}>
           TURN課金・通話上限・緊急停止を管理します。
@@ -244,9 +227,7 @@ export default function AdminVoicePage() {
           <h2 style={sectionTitle}>接続統計（今日）</h2>
 
           {metricsLoading ? (
-            <div style={{ color: "#6b7280", fontWeight: 800 }}>
-              読み込み中...
-            </div>
+            <div style={{ color: "#6b7280", fontWeight: 800 }}>読み込み中...</div>
           ) : metrics ? (
             <div
               style={{
@@ -261,14 +242,8 @@ export default function AdminVoicePage() {
               <MetricCard label="総接続ログ" value={`${metrics.total}`} />
               <MetricCard label="不明" value={`${metrics.unknown ?? 0}`} />
               <MetricCard label="失敗/切断" value={`${metrics.failed ?? 0}`} />
-              <MetricCard
-                label="失敗率"
-                value={`${metrics.failRate ?? 0}%`}
-              />
-              <MetricCard
-                label="平均接続時間"
-                value={`${metrics.avgConnectMs ?? 0}ms`}
-              />
+              <MetricCard label="失敗率" value={`${metrics.failRate ?? 0}%`} />
+              <MetricCard label="平均接続時間" value={`${metrics.avgConnectMs ?? 0}ms`} />
             </div>
           ) : (
             <div style={{ color: "#6b7280", fontWeight: 800 }}>
@@ -276,11 +251,58 @@ export default function AdminVoicePage() {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => void loadMetrics()}
-            style={smallButtonStyle}
-          >
+          {metrics?.hourly && metrics.hourly.length > 0 && (
+            <div style={{ marginTop: 20, display: "grid", gap: 8 }}>
+              <div style={{ fontWeight: 900, fontSize: 14 }}>時間別接続状況</div>
+
+              {metrics.hourly.map((h) => (
+                <div
+                  key={h.hour}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 10,
+                    padding: 10,
+                    background: "#fff",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <strong>{h.hour}</strong>
+                    <span>
+                      TURN {h.turnRate}% / FAIL {h.failRate}%
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      height: 12,
+                      borderRadius: 999,
+                      overflow: "hidden",
+                      display: "flex",
+                      background: "#e5e7eb",
+                    }}
+                  >
+                    <div style={{ width: `${h.turnRate}%`, background: "#f59e0b" }} />
+                    <div style={{ width: `${h.failRate}%`, background: "#dc2626" }} />
+                    <div style={{ flex: 1, background: "#16a34a" }} />
+                  </div>
+
+                  <div style={{ marginTop: 6, fontSize: 11, color: "#6b7280" }}>
+                    total: {h.total} / p2p: {h.p2p} / turn: {h.turn} / avg:{" "}
+                    {h.avgConnectMs}ms
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button type="button" onClick={() => void loadMetrics()} style={smallButtonStyle}>
             統計を再読み込み
           </button>
         </section>
@@ -289,9 +311,7 @@ export default function AdminVoicePage() {
           <h2 style={sectionTitle}>直近の接続ログ</h2>
 
           {logsLoading ? (
-            <div style={{ color: "#6b7280", fontWeight: 800 }}>
-              読み込み中...
-            </div>
+            <div style={{ color: "#6b7280", fontWeight: 800 }}>読み込み中...</div>
           ) : logs.length === 0 ? (
             <div style={{ color: "#6b7280", fontWeight: 800 }}>
               接続ログはまだありません。
@@ -302,9 +322,7 @@ export default function AdminVoicePage() {
                 const route = String(log.route ?? "unknown");
                 const state = String(log.connection_state ?? "unknown");
                 const usedTurn =
-                  log.used_turn === true ||
-                  route === "relay" ||
-                  route === "turn";
+                  log.used_turn === true || route === "relay" || route === "turn";
 
                 return (
                   <div
@@ -323,15 +341,12 @@ export default function AdminVoicePage() {
                     </div>
 
                     <div style={{ fontSize: 12, color: "#6b7280" }}>
-                      OS: {log.os ?? "unknown"} / 人数:{" "}
-                      {log.member_count ?? "-"} / route: {route}
+                      OS: {log.os ?? "unknown"} / 人数: {log.member_count ?? "-"} / route: {route}
                     </div>
 
                     <div style={{ fontSize: 12, color: "#6b7280" }}>
                       接続時間: {log.time_to_connect_ms ?? "-"}ms /{" "}
-                      {log.created_at
-                        ? new Date(log.created_at).toLocaleString()
-                        : ""}
+                      {log.created_at ? new Date(log.created_at).toLocaleString() : ""}
                     </div>
 
                     <div style={{ fontSize: 11, color: "#9ca3af" }}>
@@ -343,11 +358,7 @@ export default function AdminVoicePage() {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => void loadLogs()}
-            style={smallButtonStyle}
-          >
+          <button type="button" onClick={() => void loadLogs()} style={smallButtonStyle}>
             ログを再読み込み
           </button>
         </section>
@@ -357,26 +368,17 @@ export default function AdminVoicePage() {
 
           <div style={rowStyle}>
             <span>通話機能</span>
-            <Toggle
-              checked={settings.voice_enabled}
-              onChange={(v) => update("voice_enabled", v)}
-            />
+            <Toggle checked={settings.voice_enabled} onChange={(v) => update("voice_enabled", v)} />
           </div>
 
           <div style={rowStyle}>
             <span>新規通話</span>
-            <Toggle
-              checked={settings.new_calls_enabled}
-              onChange={(v) => update("new_calls_enabled", v)}
-            />
+            <Toggle checked={settings.new_calls_enabled} onChange={(v) => update("new_calls_enabled", v)} />
           </div>
 
           <div style={rowStyle}>
             <span>TURN fallback</span>
-            <Toggle
-              checked={settings.turn_fallback_enabled}
-              onChange={(v) => update("turn_fallback_enabled", v)}
-            />
+            <Toggle checked={settings.turn_fallback_enabled} onChange={(v) => update("turn_fallback_enabled", v)} />
           </div>
 
           <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
@@ -388,8 +390,7 @@ export default function AdminVoicePage() {
                   voice_enabled: false,
                   new_calls_enabled: false,
                   turn_fallback_enabled: false,
-                  emergency_message:
-                    "現在、通話機能を一時停止しています。",
+                  emergency_message: "現在、通話機能を一時停止しています。",
                 };
                 setSettings(next);
                 void save(next);
@@ -405,8 +406,7 @@ export default function AdminVoicePage() {
                 const next = {
                   ...settings,
                   turn_fallback_enabled: false,
-                  emergency_message:
-                    "現在、安定接続モードを一時停止しています。",
+                  emergency_message: "現在、安定接続モードを一時停止しています。",
                 };
                 setSettings(next);
                 void save(next);
@@ -421,34 +421,13 @@ export default function AdminVoicePage() {
         <section style={cardStyle}>
           <h2 style={sectionTitle}>通話制限</h2>
 
-          <NumberField
-            label="1セッション最大分数"
-            value={settings.max_call_minutes}
-            onChange={(v) => update("max_call_minutes", v)}
-          />
-
-          <NumberField
-            label="最大人数"
-            value={settings.max_members_per_call}
-            onChange={(v) => update("max_members_per_call", v)}
-          />
-
-          <NumberField
-            label="無料ユーザー 1日上限分数"
-            value={settings.free_daily_minutes}
-            onChange={(v) => update("free_daily_minutes", v)}
-          />
-
-          <NumberField
-            label="有料ユーザー 1日上限分数"
-            value={settings.paid_daily_minutes}
-            onChange={(v) => update("paid_daily_minutes", v)}
-          />
+          <NumberField label="1セッション最大分数" value={settings.max_call_minutes} onChange={(v) => update("max_call_minutes", v)} />
+          <NumberField label="最大人数" value={settings.max_members_per_call} onChange={(v) => update("max_members_per_call", v)} />
+          <NumberField label="無料ユーザー 1日上限分数" value={settings.free_daily_minutes} onChange={(v) => update("free_daily_minutes", v)} />
+          <NumberField label="有料ユーザー 1日上限分数" value={settings.paid_daily_minutes} onChange={(v) => update("paid_daily_minutes", v)} />
 
           <label style={{ display: "block", marginTop: 16 }}>
-            <div style={{ marginBottom: 6, fontWeight: 700 }}>
-              緊急メッセージ
-            </div>
+            <div style={{ marginBottom: 6, fontWeight: 700 }}>緊急メッセージ</div>
             <textarea
               value={settings.emergency_message ?? ""}
               onChange={(e) => update("emergency_message", e.target.value)}
@@ -474,31 +453,14 @@ export default function AdminVoicePage() {
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 14,
-        padding: 14,
-        background: "#f9fafb",
-      }}
-    >
-      <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-        {label}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 24, fontWeight: 900 }}>
-        {value}
-      </div>
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 14, background: "#f9fafb" }}>
+      <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>{label}</div>
+      <div style={{ marginTop: 6, fontSize: 24, fontWeight: 900 }}>{value}</div>
     </div>
   );
 }
 
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
       type="button"
