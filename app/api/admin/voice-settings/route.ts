@@ -1,23 +1,16 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireAdmin } from "@/lib/adminAuth";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 const ID = "global";
 
-/**
- * 🔐 topicsと同じ：body.passwordで認証
- */
-function checkAdminPassword(passwordFromBody: unknown) {
-  const password = process.env.ADMIN_PASSWORD;
-  if (!password) return false;
-  return String(passwordFromBody ?? "").trim() === password;
-}
+export async function GET(req: Request) {
+  const denied = requireAdmin(req);
+  if (denied) return denied;
 
-/**
- * GET：読み取りだけ（公開OK）
- */
-export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("voice_settings")
     .select("*")
@@ -25,22 +18,17 @@ export async function GET() {
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ settings: data });
+  return NextResponse.json({ ok: true, settings: data });
 }
 
-/**
- * POST：更新（管理者のみ）
- */
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
+  const denied = requireAdmin(req);
+  if (denied) return denied;
 
-  // 🔐 認証チェック
-  if (!checkAdminPassword(body.password)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const body = await req.json().catch(() => ({}));
 
   const payload = {
     id: ID,
@@ -62,8 +50,8 @@ export async function POST(req: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ settings: data });
+  return NextResponse.json({ ok: true, settings: data });
 }

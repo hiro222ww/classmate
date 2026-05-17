@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireAdmin } from "@/lib/adminAuth";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 type VoiceRoute = "host" | "srflx" | "relay" | "turn" | "p2p" | "unknown";
 
@@ -29,6 +31,7 @@ function isP2pRow(r: VoiceConnectionLogRow) {
 function isFailedRow(r: VoiceConnectionLogRow) {
   const state = String(r.connection_state ?? "").trim();
   const phase = String(r.phase ?? "").trim();
+
   return (
     state === "failed" ||
     state === "disconnected" ||
@@ -37,7 +40,10 @@ function isFailedRow(r: VoiceConnectionLogRow) {
   );
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = requireAdmin(req);
+  if (denied) return denied;
+
   const since = new Date();
   since.setHours(0, 0, 0, 0);
 
@@ -50,13 +56,7 @@ export async function GET() {
     .order("created_at", { ascending: true });
 
   if (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error.message,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
   const rows = (data ?? []) as VoiceConnectionLogRow[];
@@ -82,9 +82,10 @@ export async function GET() {
   const avgConnectMs =
     connectedRows.length > 0
       ? Math.round(
-          connectedRows.reduce((sum, r) => {
-            return sum + Number(r.time_to_connect_ms ?? 0);
-          }, 0) / connectedRows.length
+          connectedRows.reduce(
+            (sum, r) => sum + Number(r.time_to_connect_ms ?? 0),
+            0
+          ) / connectedRows.length
         )
       : 0;
 
@@ -127,17 +128,11 @@ export async function GET() {
 
     current.total += 1;
 
-    if (isTurnRow(row)) {
-      current.turn += 1;
-    } else if (isP2pRow(row)) {
-      current.p2p += 1;
-    } else {
-      current.unknown += 1;
-    }
+    if (isTurnRow(row)) current.turn += 1;
+    else if (isP2pRow(row)) current.p2p += 1;
+    else current.unknown += 1;
 
-    if (isFailedRow(row)) {
-      current.failed += 1;
-    }
+    if (isFailedRow(row)) current.failed += 1;
 
     const state = String(row.connection_state ?? "").trim();
     const phase = String(row.phase ?? "").trim();
