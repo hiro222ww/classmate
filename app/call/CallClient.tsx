@@ -9,6 +9,7 @@ import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 import SessionMessages from "@/components/SessionMessages";
 import YouTubeWatchParty from "./YouTubeWatchParty";
+import MemberModerationButtons from "@/components/MemberModerationButtons";
 
 type Member = {
   device_id: string;
@@ -737,6 +738,8 @@ export default function CallClient() {
                 </div>
 
                 <div style={{ minWidth: 0, flex: 1 }}>
+
+                  
                   <div
                     style={{
                       fontSize: 14,
@@ -769,6 +772,18 @@ export default function CallClient() {
                   >
                     {isSpeaking ? "発話中" : status.text}
                   </div>
+
+                  {isFilled && !isMe && member?.device_id ? (
+  <div style={{ marginTop: 8 }}>
+    <MemberModerationButtons
+      myDeviceId={deviceId}
+      targetDeviceId={member.device_id}
+      targetName={member.display_name || "参加者"}
+      sessionId={sessionId}
+      classId={classId}
+    />
+  </div>
+) : null}
                 </div>
               </div>
             );

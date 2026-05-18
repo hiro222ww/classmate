@@ -19,6 +19,7 @@ import { pushRecentClass } from "@/lib/recentClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import SessionMessages from "@/components/SessionMessages";
+import MemberModerationButtons from "@/components/MemberModerationButtons";
 
 type MemberRow = {
   device_id?: string;
@@ -1204,6 +1205,9 @@ if (!shouldAutoStart) return;
                         />
 
                         <div style={{ minWidth: 0, flex: 1 }}>
+
+                          
+
                           <div
                             style={{
                               fontWeight: 800,
@@ -1213,6 +1217,8 @@ if (!shouldAutoStart) return;
                           >
                             {label}
                           </div>
+
+                          
 
                           <div
                             style={{
@@ -1242,6 +1248,15 @@ if (!shouldAutoStart) return;
   {isMe ? "待機中" : getMemberStatusLabel(presenceMap[did], sessionId)}
 </span>
                           </div>
+                          {!isMe && did ? (
+  <MemberModerationButtons
+    myDeviceId={deviceId}
+    targetDeviceId={did}
+    targetName={label}
+    sessionId={sessionId}
+    classId={classId}
+  />
+) : null}
                         </div>
                       </div>
                     );
