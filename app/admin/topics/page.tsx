@@ -422,9 +422,12 @@ export default function AdminTopicsPage() {
           <button onClick={loadAll} disabled={!authed || busy} style={{ ...btn, opacity: !authed || busy ? 0.6 : 1 }}>
             {busy ? "処理中…" : "読み込み"}
           </button>
-          <button onClick={() => (window.location.href = "/class/select")} style={btnGhost}>
-            戻る
-          </button>
+          <button
+  onClick={() => (window.location.href = "/admin")}
+  style={btnGhost}
+>
+  管理トップへ
+</button>
           {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
         </div>
       </section>
