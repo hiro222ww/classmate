@@ -1,6 +1,8 @@
 // app/admin/topics/page.tsx
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useEffect, useMemo, useState } from "react";
 
 type WorldRow = {
