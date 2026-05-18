@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+export const dynamic = "force-dynamic";
+
+import { useState } from "react";
 
 type RoomMember = {
   device_id: string;
@@ -79,7 +81,6 @@ function riskBg(level: RoomRow["risk_level"]) {
 }
 
 export default function AdminRoomsPage() {
-  const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [rooms, setRooms] = useState<RoomRow[]>([]);
@@ -89,31 +90,13 @@ export default function AdminRoomsPage() {
     dangerous_room_count: 0,
   });
 
-  const authed = useMemo(() => pass.trim().length > 0, [pass]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("ADMIN_PASSWORD");
-    if (saved) setPass(saved);
-  }, []);
-
-  function savePass() {
-    localStorage.setItem("ADMIN_PASSWORD", pass.trim());
-  }
-
   async function loadRooms() {
-    if (!authed) return;
-
     setBusy(true);
     setMsg("");
 
     try {
-      savePass();
-
       const res = await fetch("/api/admin/rooms?limit=100", {
         method: "GET",
-        headers: {
-          "x-admin-password": pass.trim(),
-        },
         cache: "no-store",
       });
 
@@ -148,14 +131,6 @@ export default function AdminRoomsPage() {
     background: "#fff",
   };
 
-  const input: React.CSSProperties = {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #ccc",
-    background: "#fff",
-    outline: "none",
-  };
-
   const btn: React.CSSProperties = {
     padding: "10px 12px",
     borderRadius: 12,
@@ -183,40 +158,24 @@ export default function AdminRoomsPage() {
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <input
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            placeholder="ADMIN_PASSWORD"
-            style={{ ...input, width: 260 }}
-          />
-
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <button
             onClick={loadRooms}
-            disabled={!authed || busy}
-            style={{ ...btn, opacity: !authed || busy ? 0.6 : 1 }}
+            disabled={busy}
+            style={{ ...btn, opacity: busy ? 0.6 : 1 }}
           >
             {busy ? "処理中…" : "読み込み"}
           </button>
 
-          <button
-            onClick={() => (window.location.href = "/admin/topics")}
-            style={btnGhost}
-          >
+          <button onClick={() => (window.location.href = "/admin")} style={btnGhost}>
+            管理トップ
+          </button>
+
+          <button onClick={() => (window.location.href = "/admin/topics")} style={btnGhost}>
             topicsへ
           </button>
 
-          <button
-            onClick={() => (window.location.href = "/admin/voice")}
-            style={btnGhost}
-          >
+          <button onClick={() => (window.location.href = "/admin/voice")} style={btnGhost}>
             voiceへ
           </button>
 
@@ -301,13 +260,7 @@ export default function AdminRoomsPage() {
 
                   <td style={{ padding: "8px 6px", minWidth: 240 }}>
                     {room.members?.length ? (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 6,
-                        }}
-                      >
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {room.members.map((m) => (
                           <div
                             key={m.device_id}
@@ -357,15 +310,7 @@ export default function AdminRoomsPage() {
                   <td style={{ padding: "8px 6px" }}>{room.join_leave_burst_count}</td>
 
                   <td style={{ padding: "8px 6px" }}>
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        fontWeight: 900,
-                        color: riskColor(room.risk_level),
-                      }}
-                    >
+                    <span style={{ fontWeight: 900, color: riskColor(room.risk_level) }}>
                       {room.risk_level} ({room.risk_score})
                     </span>
                   </td>
@@ -393,17 +338,6 @@ export default function AdminRoomsPage() {
               ) : null}
             </tbody>
           </table>
-        </div>
-      </section>
-
-      <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>メモ</h2>
-        <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.8 }}>
-          この画面では、進行中の forming / active セッションと参加者を確認できます。
-          <br />
-          現在のMVPでは、通報数・短時間退出・ブロック数は未接続です。
-          <br />
-          次に reports / blocks / admin actions を足すと、強制退出・一時BAN・通報確認まで拡張できます。
         </div>
       </section>
 
