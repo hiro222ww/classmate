@@ -625,7 +625,7 @@ void fetchEntitlements(id);
     try {
       if (!hasBoardAccess(b)) {
         alert(
-          `このボードは ${tierName(b.monthly_price)}（¥${b.monthly_price}/月）以上が必要です`
+          `このテーマは ${tierName(b.monthly_price)}（¥${b.monthly_price}/月）以上が必要です`
         );
         return;
       }
@@ -763,18 +763,20 @@ if (!classId || !sessionId) {
           </span>
         </div>
 
-        <p
-          style={{
-            marginTop: 10,
-            whiteSpace: "pre-wrap",
-            overflowWrap: "anywhere",
-            wordBreak: "break-word",
-            color: "#222",
-            lineHeight: 1.5,
-          }}
-        >
-          {b.description || "（説明なし）"}
-        </p>
+        {b.description ? (
+  <p
+    style={{
+      marginTop: 10,
+      whiteSpace: "pre-wrap",
+      overflowWrap: "anywhere",
+      wordBreak: "break-word",
+      color: "#222",
+      lineHeight: 1.5,
+    }}
+  >
+    {b.description}
+  </p>
+) : null}
 
         <button
           onClick={() => void joinMatchedBoard(b)}
@@ -1230,7 +1232,7 @@ opacity: busy || !deviceId ? 0.6 : 1,
           </section>
 
           <section style={{ marginTop: 14 }}>
-            <h2 style={{ margin: "10px 0", fontSize: 16, fontWeight: 900 }}>ボード</h2>
+            <h2 style={{ margin: "10px 0", fontSize: 16, fontWeight: 900 }}>テーマ</h2>
             <div
               style={{
                 display: "grid",
@@ -1245,7 +1247,7 @@ opacity: busy || !deviceId ? 0.6 : 1,
 
             {boards.length === 0 && !loading ? (
               <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-                条件に合うボードがありません
+                条件に合うテーマがありません
               </div>
             ) : null}
           </section>
