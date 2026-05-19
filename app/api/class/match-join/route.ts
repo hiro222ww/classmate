@@ -68,6 +68,7 @@ function deadlineError(matchDeadlineAt?: string | null) {
 type ProfileRow = {
   device_id: string;
   birth_date?: string | null;
+  gender?: string | null;
 };
 
 type AtomicMatchRow = {
@@ -88,9 +89,13 @@ type ClassDeadlineRow = {
 };
 
 type TopicDeadlineRow = {
-  key?: string | null;
-  world_key?: string | null;
+  topic_key?: string | null;
   match_deadline_at?: string | null;
+};
+
+type TopicGenderRestrictionRow = {
+  topic_key?: string | null;
+  gender_restriction?: string | null;
 };
 
 async function getBlockedDeviceIds(deviceId: string) {
@@ -162,7 +167,7 @@ async function sessionHasBlockedMember(
 async function getProfile(deviceId: string) {
   const { data, error } = await supabase
     .from("user_profiles")
-    .select("device_id,birth_date")
+    .select("device_id,birth_date,gender")
     .eq("device_id", deviceId)
     .maybeSingle();
 
@@ -435,7 +440,7 @@ async function getTopicDeadline(params: {
   worldKey: string;
   topicKey: string | null;
 }) {
-  const { worldKey, topicKey } = params;
+  const { topicKey } = params;
 
   if (!topicKey) {
     return {
@@ -444,17 +449,12 @@ async function getTopicDeadline(params: {
     };
   }
 
-  let query = supabase
+  const { data, error } = await supabase
     .from("topics")
-    .select("key,world_key,match_deadline_at")
-    .eq("key", topicKey)
-    .limit(1);
-
-  if (worldKey) {
-    query = query.eq("world_key", worldKey);
-  }
-
-  const { data, error } = await query.maybeSingle();
+    .select("topic_key,match_deadline_at")
+    .eq("topic_key", topicKey)
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
     return {
@@ -474,6 +474,71 @@ async function getTopicDeadline(params: {
     ok: true as const,
     row: (data as TopicDeadlineRow | null) ?? null,
   };
+}
+
+async function getTopicGenderRestriction(topicKey: string | null) {
+  if (!topicKey) {
+    return {
+      ok: true as const,
+      row: null,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("topics")
+    .select("topic_key,gender_restriction")
+    .eq("topic_key", topicKey)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "topic_gender_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    row: (data as TopicGenderRestrictionRow | null) ?? null,
+  };
+}
+
+function checkGenderRestriction(params: {
+  topic: TopicGenderRestrictionRow | null;
+  profile: ProfileRow;
+}) {
+  const genderRestriction = String(
+    params.topic?.gender_restriction ?? ""
+  ).trim();
+
+  if (!genderRestriction) {
+    return null;
+  }
+
+  const profileGender = String(params.profile.gender ?? "").trim();
+
+  if (genderRestriction !== profileGender) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "gender_restricted_topic",
+        genderRestriction,
+        profileGender: profileGender || null,
+        message: "このテーマは登録した性別では参加できません",
+      },
+      { status: 403 }
+    );
+  }
+
+  return null;
 }
 
 async function getClassDeadlineById(classId: string) {
@@ -685,6 +750,7 @@ export async function POST(req: Request) {
       deviceId,
       selfAge,
       birth_date: profileRes.profile.birth_date ?? null,
+      gender: profileRes.profile.gender ?? null,
     });
 
     const slotsRes = await getClassSlots(deviceId);
@@ -709,6 +775,17 @@ export async function POST(req: Request) {
       if (!forcedRes.ok) return forcedRes.response;
 
       const existingClass = forcedRes.row;
+
+      const topicGenderRes = await getTopicGenderRestriction(
+        existingClass.topic_key ?? null
+      );
+      if (!topicGenderRes.ok) return topicGenderRes.response;
+
+      const genderBlocked = checkGenderRestriction({
+        topic: topicGenderRes.row,
+        profile: profileRes.profile,
+      });
+      if (genderBlocked) return genderBlocked;
 
       console.log("[match-join] deadline check", {
         branch: "forcedClassId",
@@ -831,6 +908,15 @@ export async function POST(req: Request) {
         reused = false;
       }
     } else {
+      const topicGenderRes = await getTopicGenderRestriction(topicKey);
+      if (!topicGenderRes.ok) return topicGenderRes.response;
+
+      const genderBlocked = checkGenderRestriction({
+        topic: topicGenderRes.row,
+        profile: profileRes.profile,
+      });
+      if (genderBlocked) return genderBlocked;
+
       const topicRes = await getTopicDeadline({ worldKey, topicKey });
       if (!topicRes.ok) return topicRes.response;
 

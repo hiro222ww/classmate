@@ -24,15 +24,12 @@ type TopicRow = {
   is_sensitive: boolean;
   min_age: number;
   monthly_price: number;
+  gender_restriction?: string | null;
   is_archived?: boolean;
   created_at?: string;
 };
 
-function bad(
-  status: number,
-  error: string,
-  extra?: Record<string, any>
-) {
+function bad(status: number, error: string, extra?: Record<string, any>) {
   return NextResponse.json(
     {
       ok: false,
@@ -63,6 +60,16 @@ function toNum(v: any, fallback: number) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function normalizeGenderRestriction(v: any) {
+  const s = String(v ?? "").trim();
+
+  if (s === "male" || s === "female") {
+    return s;
+  }
+
+  return null;
+}
+
 function normalizeTopicInput(t: any) {
   const topic_key = String(t?.topic_key ?? "").trim();
   const title = String(t?.title ?? "").trim();
@@ -76,9 +83,10 @@ function normalizeTopicInput(t: any) {
 
   const min_age = toNum(t?.min_age, 0);
 
-  const monthly_price = toNum(
-    t?.monthly_price,
-    0
+  const monthly_price = toNum(t?.monthly_price, 0);
+
+  const gender_restriction = normalizeGenderRestriction(
+    t?.gender_restriction
   );
 
   return {
@@ -88,6 +96,7 @@ function normalizeTopicInput(t: any) {
     is_sensitive,
     min_age,
     monthly_price,
+    gender_restriction,
   };
 }
 
@@ -146,7 +155,6 @@ async function ensureDefaultBoard(
 
 export async function POST(req: Request) {
   try {
-    // 🔐 admin認証
     const denied = requireAdmin(req);
 
     if (denied) {
@@ -154,26 +162,16 @@ export async function POST(req: Request) {
     }
 
     if (!SUPABASE_URL) {
-      return bad(
-        500,
-        "SUPABASE_URL is not set"
-      );
+      return bad(500, "SUPABASE_URL is not set");
     }
 
     if (!SERVICE_ROLE) {
-      return bad(
-        500,
-        "SUPABASE_SERVICE_ROLE_KEY is not set"
-      );
+      return bad(500, "SUPABASE_SERVICE_ROLE_KEY is not set");
     }
 
-    const body = await req
-      .json()
-      .catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
 
-    const mode = String(
-      body?.mode ?? ""
-    ).trim();
+    const mode = String(body?.mode ?? "").trim();
 
     if (!mode) {
       return bad(400, "mode is required");
@@ -181,15 +179,8 @@ export async function POST(req: Request) {
 
     const supabase = getSupabase();
 
-    /**
-     * =========================
-     * list
-     * =========================
-     */
     if (mode === "list") {
-      const showArchived = Boolean(
-        body?.show_archived
-      );
+      const showArchived = Boolean(body?.show_archived);
 
       let q = supabase
         .from("topics")
@@ -201,19 +192,14 @@ export async function POST(req: Request) {
           is_sensitive,
           min_age,
           monthly_price,
+          gender_restriction,
           is_archived,
           created_at
         `
         )
-        .order("is_archived", {
-          ascending: true,
-        })
-        .order("monthly_price", {
-          ascending: true,
-        })
-        .order("created_at", {
-          ascending: true,
-        });
+        .order("is_archived", { ascending: true })
+        .order("monthly_price", { ascending: true })
+        .order("created_at", { ascending: true });
 
       if (!showArchived) {
         q = q.eq("is_archived", false);
@@ -230,11 +216,6 @@ export async function POST(req: Request) {
       });
     }
 
-    /**
-     * =========================
-     * create
-     * =========================
-     */
     if (mode === "create") {
       const t = body?.topic ?? {};
 
@@ -245,20 +226,15 @@ export async function POST(req: Request) {
         is_sensitive,
         min_age,
         monthly_price,
+        gender_restriction,
       } = normalizeTopicInput(t);
 
       if (!topic_key) {
-        return bad(
-          400,
-          "topic.topic_key is required"
-        );
+        return bad(400, "topic.topic_key is required");
       }
 
       if (!title) {
-        return bad(
-          400,
-          "topic.title is required"
-        );
+        return bad(400, "topic.title is required");
       }
 
       const row: any = {
@@ -268,28 +244,28 @@ export async function POST(req: Request) {
         is_sensitive,
         min_age,
         monthly_price,
+        gender_restriction,
         is_archived: false,
       };
 
-      const {
-        data: insTopic,
-        error: insErr,
-      } = await supabase
-        .from("topics")
-        .insert(row)
-        .select(
+      const { data: insTopic, error: insErr } =
+        await supabase
+          .from("topics")
+          .insert(row)
+          .select(
+            `
+            topic_key,
+            title,
+            description,
+            is_sensitive,
+            min_age,
+            monthly_price,
+            gender_restriction,
+            is_archived,
+            created_at
           `
-          topic_key,
-          title,
-          description,
-          is_sensitive,
-          min_age,
-          monthly_price,
-          is_archived,
-          created_at
-        `
-        )
-        .maybeSingle();
+          )
+          .maybeSingle();
 
       if (insErr) {
         return bad(500, insErr.message);
@@ -306,99 +282,69 @@ export async function POST(req: Request) {
             min_age,
           },
           {
-            world_key:
-              body?.default_world_key ??
-              null,
+            world_key: body?.default_world_key ?? null,
           }
         );
       } catch (e: any) {
         return bad(
           500,
-          e?.message ??
-            "class create failed",
+          e?.message ?? "class create failed",
           {
-            inserted_topic:
-              insTopic ?? null,
+            inserted_topic: insTopic ?? null,
           }
         );
       }
 
       return ok({
-        inserted_topic:
-          insTopic ?? null,
+        inserted_topic: insTopic ?? null,
       });
     }
 
-    /**
-     * =========================
-     * update
-     * =========================
-     */
     if (mode === "update") {
-      const topic_key = String(
-        body?.topic_key ?? ""
-      ).trim();
+      const topic_key = String(body?.topic_key ?? "").trim();
 
       const patch =
-        (body?.patch ??
-          {}) as Partial<TopicRow>;
+        (body?.patch ?? {}) as Partial<TopicRow>;
 
       if (!topic_key) {
-        return bad(
-          400,
-          "topic_key is required"
-        );
+        return bad(400, "topic_key is required");
       }
 
       const updatePatch: any = {};
 
-      if (
-        typeof patch.title === "string"
-      ) {
-        updatePatch.title =
-          patch.title;
+      if (typeof patch.title === "string") {
+        updatePatch.title = patch.title;
+      }
+
+      if (typeof patch.description === "string") {
+        updatePatch.description = patch.description;
+      }
+
+      if (typeof patch.is_sensitive === "boolean") {
+        updatePatch.is_sensitive = patch.is_sensitive;
+      }
+
+      if (typeof patch.min_age === "number") {
+        updatePatch.min_age = patch.min_age;
+      }
+
+      if (typeof patch.monthly_price === "number") {
+        updatePatch.monthly_price = patch.monthly_price;
       }
 
       if (
-        typeof patch.description ===
-        "string"
+        patch.gender_restriction === null ||
+        patch.gender_restriction === "male" ||
+        patch.gender_restriction === "female"
       ) {
-        updatePatch.description =
-          patch.description;
-      }
-
-      if (
-        typeof patch.is_sensitive ===
-        "boolean"
-      ) {
-        updatePatch.is_sensitive =
-          patch.is_sensitive;
-      }
-
-      if (
-        typeof patch.min_age ===
-        "number"
-      ) {
-        updatePatch.min_age =
-          patch.min_age;
-      }
-
-      if (
-        typeof patch.monthly_price ===
-        "number"
-      ) {
-        updatePatch.monthly_price =
-          patch.monthly_price;
+        updatePatch.gender_restriction = patch.gender_restriction;
       }
 
       const { error } =
         await supabase
           .from("topics")
           .update(updatePatch)
-          .eq(
-            "topic_key",
-            topic_key
-          );
+          .eq("topic_key", topic_key);
 
       if (error) {
         return bad(500, error.message);
@@ -407,39 +353,20 @@ export async function POST(req: Request) {
       return ok();
     }
 
-    /**
-     * =========================
-     * archive / unarchive
-     * =========================
-     */
-    if (
-      mode === "archive" ||
-      mode === "unarchive"
-    ) {
-      const topic_key = String(
-        body?.topic_key ?? ""
-      ).trim();
+    if (mode === "archive" || mode === "unarchive") {
+      const topic_key = String(body?.topic_key ?? "").trim();
 
       if (!topic_key) {
-        return bad(
-          400,
-          "topic_key is required"
-        );
+        return bad(400, "topic_key is required");
       }
 
-      const is_archived =
-        mode === "archive";
+      const is_archived = mode === "archive";
 
       const { error } =
         await supabase
           .from("topics")
-          .update({
-            is_archived,
-          })
-          .eq(
-            "topic_key",
-            topic_key
-          );
+          .update({ is_archived })
+          .eq("topic_key", topic_key);
 
       if (error) {
         return bad(500, error.message);
@@ -448,46 +375,26 @@ export async function POST(req: Request) {
       return ok();
     }
 
-    /**
-     * =========================
-     * delete
-     * =========================
-     */
     if (mode === "delete") {
-      const topic_key = String(
-        body?.topic_key ?? ""
-      ).trim();
+      const topic_key = String(body?.topic_key ?? "").trim();
 
       if (!topic_key) {
-        return bad(
-          400,
-          "topic_key is required"
-        );
+        return bad(400, "topic_key is required");
       }
 
-      const {
-        data: t,
-        error: tErr,
-      } = await supabase
-        .from("topics")
-        .select(
-          "topic_key,is_archived"
-        )
-        .eq(
-          "topic_key",
-          topic_key
-        )
-        .maybeSingle();
+      const { data: t, error: tErr } =
+        await supabase
+          .from("topics")
+          .select("topic_key,is_archived")
+          .eq("topic_key", topic_key)
+          .maybeSingle();
 
       if (tErr) {
         return bad(500, tErr.message);
       }
 
       if (!t) {
-        return bad(
-          404,
-          "topic not found"
-        );
+        return bad(404, "topic not found");
       }
 
       if (!t.is_archived) {
@@ -495,25 +402,17 @@ export async function POST(req: Request) {
           400,
           "topic must be archived before delete",
           {
-            code:
-              "must_archive_first",
+            code: "must_archive_first",
           }
         );
       }
 
-      const {
-        error: delAutoErr,
-      } = await supabase
-        .from("classes")
-        .delete()
-        .eq(
-          "topic_key",
-          topic_key
-        )
-        .eq(
-          "is_user_created",
-          false
-        );
+      const { error: delAutoErr } =
+        await supabase
+          .from("classes")
+          .delete()
+          .eq("topic_key", topic_key)
+          .eq("is_user_created", false);
 
       if (delAutoErr) {
         return bad(
@@ -522,19 +421,14 @@ export async function POST(req: Request) {
         );
       }
 
-      const {
-        count,
-        error: cErr,
-      } = await supabase
-        .from("classes")
-        .select("id", {
-          count: "exact",
-          head: true,
-        })
-        .eq(
-          "topic_key",
-          topic_key
-        );
+      const { count, error: cErr } =
+        await supabase
+          .from("classes")
+          .select("id", {
+            count: "exact",
+            head: true,
+          })
+          .eq("topic_key", topic_key);
 
       if (cErr) {
         return bad(500, cErr.message);
@@ -551,15 +445,11 @@ export async function POST(req: Request) {
         );
       }
 
-      const {
-        error: dErr,
-      } = await supabase
-        .from("topics")
-        .delete()
-        .eq(
-          "topic_key",
-          topic_key
-        );
+      const { error: dErr } =
+        await supabase
+          .from("topics")
+          .delete()
+          .eq("topic_key", topic_key);
 
       if (dErr) {
         return bad(500, dErr.message);
@@ -568,17 +458,12 @@ export async function POST(req: Request) {
       return ok();
     }
 
-    return bad(
-      400,
-      `unknown mode: ${mode}`
-    );
+    return bad(400, `unknown mode: ${mode}`);
   } catch (e: any) {
     return NextResponse.json(
       {
         ok: false,
-        error:
-          e?.message ??
-          "admin topics failed",
+        error: e?.message ?? "admin topics failed",
       },
       { status: 500 }
     );

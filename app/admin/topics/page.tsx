@@ -20,9 +20,10 @@ type TopicRow = {
   is_sensitive: boolean;
   min_age: number;
   monthly_price: number;
+  gender_restriction?: string | null;
   is_archived: boolean;
   created_at?: string;
-  default_world_key?: string | null; // listで付与
+  default_world_key?: string | null;
 };
 
 const PRICES = [0, 400, 800, 1200] as const;
@@ -32,6 +33,12 @@ function tierName(price: number) {
   if (price >= 800) return "ミドル";
   if (price >= 400) return "ライト";
   return "無料";
+}
+
+function genderRestrictionLabel(v: string | null | undefined) {
+  if (v === "male") return "男性のみ";
+  if (v === "female") return "女性のみ";
+  return "制限なし";
 }
 
 async function readJsonOrThrow(r: Response) {
@@ -53,16 +60,15 @@ export default function AdminTopicsPage() {
   const [topics, setTopics] = useState<TopicRow[]>([]);
   const [worlds, setWorlds] = useState<WorldRow[]>([]);
 
-  // topic add form
   const [newKey, setNewKey] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newPrice, setNewPrice] = useState<number>(0);
   const [newSensitive, setNewSensitive] = useState(false);
   const [newMinAge, setNewMinAge] = useState(0);
-  const [newWorldKey, setNewWorldKey] = useState<string>(""); // "" => null
+  const [newWorldKey, setNewWorldKey] = useState<string>("");
+  const [newGenderRestriction, setNewGenderRestriction] = useState<string>("");
 
-  // world add form
   const [wKey, setWKey] = useState("");
   const [wTitle, setWTitle] = useState("");
   const [wDesc, setWDesc] = useState("");
@@ -91,7 +97,9 @@ export default function AdminTopicsPage() {
 
       setTopics(tj.topics ?? []);
       setWorlds(wj.worlds ?? []);
-      setMsg(`読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length}）`);
+      setMsg(
+        `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length}）`
+      );
     } catch (e: any) {
       setMsg(e?.message ?? "load_failed");
     } finally {
@@ -99,7 +107,6 @@ export default function AdminTopicsPage() {
     }
   }
 
-  // -------- topics actions --------
   async function addTopic() {
     setMsg("");
     setBusy(true);
@@ -113,7 +120,6 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          
           mode: "create",
           topic: {
             topic_key,
@@ -122,6 +128,7 @@ export default function AdminTopicsPage() {
             monthly_price: Number(newPrice),
             is_sensitive: Boolean(newSensitive),
             min_age: Number(newMinAge),
+            gender_restriction: newGenderRestriction || null,
           },
           default_world_key: newWorldKey ? newWorldKey : null,
         }),
@@ -135,6 +142,7 @@ export default function AdminTopicsPage() {
       setNewSensitive(false);
       setNewMinAge(0);
       setNewWorldKey("");
+      setNewGenderRestriction("");
 
       setMsg("追加OK");
       await loadAll();
@@ -153,7 +161,6 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          
           mode: "update",
           topic_key: t.topic_key,
           patch: {
@@ -162,6 +169,7 @@ export default function AdminTopicsPage() {
             monthly_price: Number(t.monthly_price ?? 0),
             is_sensitive: Boolean(t.is_sensitive),
             min_age: Number(t.min_age ?? 0),
+            gender_restriction: t.gender_restriction ?? null,
             default_world_key: t.default_world_key ?? null,
           },
         }),
@@ -218,7 +226,13 @@ export default function AdminTopicsPage() {
   }
 
   async function hardDeleteTopic(topic_key: string) {
-    if (!confirm(`完全削除: ${topic_key}\n\n※ 先に非表示にしてから削除できます。\n本当に削除しますか？`)) return;
+    if (
+      !confirm(
+        `完全削除: ${topic_key}\n\n※ 先に非表示にしてから削除できます。\n本当に削除しますか？`
+      )
+    ) {
+      return;
+    }
 
     setMsg("");
     setBusy(true);
@@ -239,7 +253,6 @@ export default function AdminTopicsPage() {
     }
   }
 
-  // -------- worlds actions --------
   async function addWorld() {
     setMsg("");
     setBusy(true);
@@ -253,7 +266,6 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          
           mode: "create",
           world: {
             world_key,
@@ -289,7 +301,6 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          
           mode: "update",
           world_key: w.world_key,
           patch: {
@@ -312,7 +323,13 @@ export default function AdminTopicsPage() {
   }
 
   async function deleteWorld(world_key: string) {
-    if (!confirm(`世界観を削除: ${world_key}\n\n※ その世界観がボードに使われている場合は削除できません。`)) return;
+    if (
+      !confirm(
+        `世界観を削除: ${world_key}\n\n※ その世界観がボードに使われている場合は削除できません。`
+      )
+    ) {
+      return;
+    }
 
     setMsg("");
     setBusy(true);
@@ -333,9 +350,15 @@ export default function AdminTopicsPage() {
     }
   }
 
-  // -------- view models --------
-  const visibleTopics = useMemo(() => topics.filter((t) => !t.is_archived), [topics]);
-  const archivedTopics = useMemo(() => topics.filter((t) => t.is_archived), [topics]);
+  const visibleTopics = useMemo(
+    () => topics.filter((t) => !t.is_archived),
+    [topics]
+  );
+
+  const archivedTopics = useMemo(
+    () => topics.filter((t) => t.is_archived),
+    [topics]
+  );
 
   const worldLabel = (key: string | null | undefined) => {
     if (!key) return "（未設定）";
@@ -390,50 +413,127 @@ export default function AdminTopicsPage() {
 
   return (
     <main style={pageStyle}>
-      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>管理：世界観 / テーマ</h1>
+      <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>
+        管理：世界観 / テーマ
+      </h1>
+
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-        世界観（worlds）は編集可能。テーマ（topics）には世界観を割り当て可能（ユーザー側の絞り込みが復活）。
+        世界観（worlds）は編集可能。テーマ（topics）には世界観・性別制限・価格を設定可能。
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>          <button onClick={loadAll} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <button
+            onClick={loadAll}
+            disabled={busy}
+            style={{ ...btn, opacity: busy ? 0.6 : 1 }}
+          >
             {busy ? "処理中…" : "読み込み"}
           </button>
+
           <button
-  onClick={() => (window.location.href = "/admin")}
-  style={btnGhost}
->
-  管理トップへ
-</button>
+            onClick={() => {
+              window.location.href = "/admin";
+            }}
+            style={btnGhost}
+          >
+            管理トップへ
+          </button>
+
           {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
         </div>
       </section>
 
-      {/* Worlds */}
       <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>世界観（worlds）</h2>
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <input value={wKey} onChange={(e) => setWKey(e.target.value)} placeholder="world_key (例: hobby)" style={input} />
-          <input value={wTitle} onChange={(e) => setWTitle(e.target.value)} placeholder="title (表示名)" style={input} />
-          <input value={wDesc} onChange={(e) => setWDesc(e.target.value)} placeholder="description（任意）" style={{ ...input, gridColumn: "1 / -1" }} />
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          世界観（worlds）
+        </h2>
+
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+          }}
+        >
+          <input
+            value={wKey}
+            onChange={(e) => setWKey(e.target.value)}
+            placeholder="world_key (例: hobby)"
+            style={input}
+          />
+
+          <input
+            value={wTitle}
+            onChange={(e) => setWTitle(e.target.value)}
+            placeholder="title (表示名)"
+            style={input}
+          />
+
+          <input
+            value={wDesc}
+            onChange={(e) => setWDesc(e.target.value)}
+            placeholder="description（任意）"
+            style={{ ...input, gridColumn: "1 / -1" }}
+          />
 
           <label style={{ fontSize: 12, color: "#666" }}>
             min_age
-            <input type="number" value={wMinAge} onChange={(e) => setWMinAge(Number(e.target.value))} style={{ ...input, width: "100%", marginTop: 6 }} />
+            <input
+              type="number"
+              value={wMinAge}
+              onChange={(e) => setWMinAge(Number(e.target.value))}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            />
           </label>
 
-          <label style={{ fontSize: 12, color: "#666", display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={wSensitive} onChange={(e) => setWSensitive(e.target.checked)} />
+          <label
+            style={{
+              fontSize: 12,
+              color: "#666",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={wSensitive}
+              onChange={(e) => setWSensitive(e.target.checked)}
+            />
             is_sensitive（18+相当）
           </label>
 
-          <button onClick={addWorld} disabled={busy} style={{ ...btn, gridColumn: "1 / -1", opacity: busy ? 0.6 : 1 }}>
+          <button
+            onClick={addWorld}
+            disabled={busy}
+            style={{
+              ...btn,
+              gridColumn: "1 / -1",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
             世界観を追加
           </button>
         </div>
 
         <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", fontSize: 12 }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: 900,
+              borderCollapse: "collapse",
+              fontSize: 12,
+            }}
+          >
             <thead>
               <tr style={{ borderBottom: "1px solid #eee" }}>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>world_key</th>
@@ -444,91 +544,232 @@ export default function AdminTopicsPage() {
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>操作</th>
               </tr>
             </thead>
+
             <tbody>
               {worlds.map((w) => (
                 <tr key={w.world_key} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                  <td style={{ padding: "8px 6px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    }}
+                  >
                     {w.world_key}
                   </td>
+
                   <td style={{ padding: "8px 6px" }}>
                     <input
                       value={w.title}
-                      onChange={(e) => setWorlds((prev) => prev.map((x) => (x.world_key === w.world_key ? { ...x, title: e.target.value } : x)))}
+                      onChange={(e) =>
+                        setWorlds((prev) =>
+                          prev.map((x) =>
+                            x.world_key === w.world_key
+                              ? { ...x, title: e.target.value }
+                              : x
+                          )
+                        )
+                      }
                       style={{ ...input, padding: "6px 8px", width: 200 }}
                     />
                   </td>
+
                   <td style={{ padding: "8px 6px" }}>
                     <input
                       value={w.description ?? ""}
-                      onChange={(e) => setWorlds((prev) => prev.map((x) => (x.world_key === w.world_key ? { ...x, description: e.target.value } : x)))}
+                      onChange={(e) =>
+                        setWorlds((prev) =>
+                          prev.map((x) =>
+                            x.world_key === w.world_key
+                              ? { ...x, description: e.target.value }
+                              : x
+                          )
+                        )
+                      }
                       style={{ ...input, padding: "6px 8px", width: 360 }}
                     />
                   </td>
+
                   <td style={{ padding: "8px 6px" }}>
                     <input
                       type="checkbox"
                       checked={Boolean(w.is_sensitive)}
-                      onChange={(e) => setWorlds((prev) => prev.map((x) => (x.world_key === w.world_key ? { ...x, is_sensitive: e.target.checked } : x)))}
+                      onChange={(e) =>
+                        setWorlds((prev) =>
+                          prev.map((x) =>
+                            x.world_key === w.world_key
+                              ? { ...x, is_sensitive: e.target.checked }
+                              : x
+                          )
+                        )
+                      }
                     />
                   </td>
+
                   <td style={{ padding: "8px 6px" }}>
                     <input
                       type="number"
                       value={Number(w.min_age ?? 0)}
-                      onChange={(e) => setWorlds((prev) => prev.map((x) => (x.world_key === w.world_key ? { ...x, min_age: Number(e.target.value) } : x)))}
+                      onChange={(e) =>
+                        setWorlds((prev) =>
+                          prev.map((x) =>
+                            x.world_key === w.world_key
+                              ? { ...x, min_age: Number(e.target.value) }
+                              : x
+                          )
+                        )
+                      }
                       style={{ ...input, padding: "6px 8px", width: 90 }}
                     />
                   </td>
-                  <td style={{ padding: "8px 6px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => saveWorld(w)} disabled={busy} style={{ ...btn, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
+
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      onClick={() => saveWorld(w)}
+                      disabled={busy}
+                      style={{
+                        ...btn,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
                       保存
                     </button>
-                    <button onClick={() => deleteWorld(w.world_key)} disabled={busy} style={{ ...btnDanger, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
+
+                    <button
+                      onClick={() => deleteWorld(w.world_key)}
+                      disabled={busy}
+                      style={{
+                        ...btnDanger,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
                       削除
                     </button>
                   </td>
                 </tr>
               ))}
+
               {worlds.length === 0 ? (
-                <tr><td colSpan={6} style={{ padding: 10, color: "#666" }}>世界観がありません</td></tr>
+                <tr>
+                  <td colSpan={6} style={{ padding: 10, color: "#666" }}>
+                    世界観がありません
+                  </td>
+                </tr>
               ) : null}
             </tbody>
           </table>
         </div>
       </section>
 
-      {/* Topics */}
       <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>新しいテーマを追加</h2>
-        <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>topic_key は英数字と _ 推奨（例: movie_anime）</div>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          新しいテーマを追加
+        </h2>
 
-        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <input value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="topic_key" style={input} />
-          <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="タイトル" style={input} />
-          <input value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="説明（任意）" style={{ ...input, gridColumn: "1 / -1" }} />
+        <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
+          topic_key は英数字と _ 推奨（例: movie_anime）
+        </div>
+
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+          }}
+        >
+          <input
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            placeholder="topic_key"
+            style={input}
+          />
+
+          <input
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="タイトル"
+            style={input}
+          />
+
+          <input
+            value={newDesc}
+            onChange={(e) => setNewDesc(e.target.value)}
+            placeholder="説明（任意）"
+            style={{ ...input, gridColumn: "1 / -1" }}
+          />
 
           <label style={{ fontSize: 12, color: "#666" }}>
             月額（ティア）
-            <select value={newPrice} onChange={(e) => setNewPrice(Number(e.target.value))} style={{ ...input, width: "100%", marginTop: 6 }}>
+            <select
+              value={newPrice}
+              onChange={(e) => setNewPrice(Number(e.target.value))}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            >
               {PRICES.map((p) => (
-                <option key={p} value={p}>{p}（{tierName(p)}）</option>
+                <option key={p} value={p}>
+                  {p}（{tierName(p)}）
+                </option>
               ))}
             </select>
           </label>
 
           <label style={{ fontSize: 12, color: "#666" }}>
-            min_age
-            <input type="number" value={newMinAge} onChange={(e) => setNewMinAge(Number(e.target.value))} style={{ ...input, width: "100%", marginTop: 6 }} />
+            性別制限
+            <select
+              value={newGenderRestriction}
+              onChange={(e) => setNewGenderRestriction(e.target.value)}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            >
+              <option value="">制限なし</option>
+              <option value="male">男性のみ</option>
+              <option value="female">女性のみ</option>
+            </select>
           </label>
 
-          <label style={{ fontSize: 12, color: "#666", display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={newSensitive} onChange={(e) => setNewSensitive(e.target.checked)} />
+          <label style={{ fontSize: 12, color: "#666" }}>
+            min_age
+            <input
+              type="number"
+              value={newMinAge}
+              onChange={(e) => setNewMinAge(Number(e.target.value))}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            />
+          </label>
+
+          <label
+            style={{
+              fontSize: 12,
+              color: "#666",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={newSensitive}
+              onChange={(e) => setNewSensitive(e.target.checked)}
+            />
             sensitive（18+相当）
           </label>
 
           <label style={{ fontSize: 12, color: "#666" }}>
             世界観（割当）
-            <select value={newWorldKey} onChange={(e) => setNewWorldKey(e.target.value)} style={{ ...input, width: "100%", marginTop: 6 }}>
+            <select
+              value={newWorldKey}
+              onChange={(e) => setNewWorldKey(e.target.value)}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            >
               <option value="">（未設定 / null）</option>
               {worlds.map((w) => (
                 <option key={w.world_key} value={w.world_key}>
@@ -538,40 +779,306 @@ export default function AdminTopicsPage() {
             </select>
           </label>
 
-          <button onClick={addTopic} disabled={busy} style={{ ...btn, gridColumn: "1 / -1", opacity: busy ? 0.6 : 1 }}>
+          <button
+            onClick={addTopic}
+            disabled={busy}
+            style={{
+              ...btn,
+              gridColumn: "1 / -1",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
             追加
           </button>
         </div>
       </section>
 
       <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>表示中のテーマ</h2>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          表示中のテーマ
+        </h2>
 
         <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse", fontSize: 12 }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: 1250,
+              borderCollapse: "collapse",
+              fontSize: 12,
+            }}
+          >
             <thead>
               <tr style={{ borderBottom: "1px solid #eee" }}>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>topic_key</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>タイトル</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>世界観（割当）</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>世界観</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>月額</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>性別制限</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>18+</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>min_age</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>説明</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>操作</th>
               </tr>
             </thead>
+
             <tbody>
               {visibleTopics.map((t) => (
                 <tr key={t.topic_key} style={{ borderBottom: "1px solid #f3f3f3" }}>
-                  <td style={{ padding: "8px 6px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    }}
+                  >
                     {t.topic_key}
                   </td>
 
                   <td style={{ padding: "8px 6px" }}>
                     <input
                       value={t.title}
-                      onChange={(e) => setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, title: e.target.value } : x)))}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, title: e.target.value }
+                              : x
+                          )
+                        )
+                      }
+                      style={{ ...input, padding: "6px 8px", width: 180 }}
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <select
+                      value={t.default_world_key ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value || null;
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, default_world_key: v }
+                              : x
+                          )
+                        );
+                      }}
+                      style={{ ...input, padding: "6px 8px", width: 210 }}
+                    >
+                      <option value="">（未設定 / null）</option>
+                      {worlds.map((w) => (
+                        <option key={w.world_key} value={w.world_key}>
+                          {w.title} ({w.world_key})
+                        </option>
+                      ))}
+                    </select>
+
+                    <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                      現在: {worldLabel(t.default_world_key)}
+                    </div>
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <select
+                      value={Number(t.monthly_price ?? 0)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, monthly_price: v }
+                              : x
+                          )
+                        );
+                      }}
+                      style={{ ...input, padding: "6px 8px" }}
+                    >
+                      {PRICES.map((p) => (
+                        <option key={p} value={p}>
+                          {p}（{tierName(p)}）
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <select
+                      value={t.gender_restriction ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value || null;
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, gender_restriction: v }
+                              : x
+                          )
+                        );
+                      }}
+                      style={{ ...input, padding: "6px 8px", width: 120 }}
+                    >
+                      <option value="">制限なし</option>
+                      <option value="male">男性のみ</option>
+                      <option value="female">女性のみ</option>
+                    </select>
+
+                    <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                      現在: {genderRestrictionLabel(t.gender_restriction)}
+                    </div>
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(t.is_sensitive)}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, is_sensitive: e.target.checked }
+                              : x
+                          )
+                        )
+                      }
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      type="number"
+                      value={Number(t.min_age ?? 0)}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, min_age: Number(e.target.value) }
+                              : x
+                          )
+                        )
+                      }
+                      style={{ ...input, padding: "6px 8px", width: 80 }}
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      value={t.description ?? ""}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, description: e.target.value }
+                              : x
+                          )
+                        )
+                      }
+                      style={{ ...input, padding: "6px 8px", width: 260 }}
+                    />
+                  </td>
+
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      onClick={() => saveTopic(t)}
+                      disabled={busy}
+                      style={{
+                        ...btn,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      保存
+                    </button>
+
+                    <button
+                      onClick={() => archiveTopic(t.topic_key)}
+                      disabled={busy}
+                      style={{
+                        ...btnGhost,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
+                      非表示にする
+                    </button>
+                  </td>
+                </tr>
+              ))}
+
+              {visibleTopics.length === 0 ? (
+                <tr>
+                  <td colSpan={9} style={{ padding: 10, color: "#666" }}>
+                    表示中のテーマがありません
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section style={{ ...card, marginTop: 12, borderColor: "#f2b7c0" }}>
+        <h2
+          style={{
+            margin: 0,
+            fontSize: 16,
+            fontWeight: 900,
+            color: "#b00020",
+          }}
+        >
+          非表示のテーマ（復活 / 完全削除）
+        </h2>
+
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: 1050,
+              borderCollapse: "collapse",
+              fontSize: 12,
+            }}
+          >
+            <thead>
+              <tr style={{ borderBottom: "1px solid #f3d6db" }}>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>topic_key</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>タイトル</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>世界観</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>月額</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>性別制限</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>操作</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {archivedTopics.map((t) => (
+                <tr key={t.topic_key} style={{ borderBottom: "1px solid #f8e6ea" }}>
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    }}
+                  >
+                    {t.topic_key}
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      value={t.title}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, title: e.target.value }
+                              : x
+                          )
+                        )
+                      }
                       style={{ ...input, padding: "6px 8px", width: 200 }}
                     />
                   </td>
@@ -581,9 +1088,15 @@ export default function AdminTopicsPage() {
                       value={t.default_world_key ?? ""}
                       onChange={(e) => {
                         const v = e.target.value || null;
-                        setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, default_world_key: v } : x)));
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, default_world_key: v }
+                              : x
+                          )
+                        );
                       }}
-                      style={{ ...input, padding: "6px 8px", width: 230 }}
+                      style={{ ...input, padding: "6px 8px", width: 210 }}
                     >
                       <option value="">（未設定 / null）</option>
                       {worlds.map((w) => (
@@ -592,7 +1105,10 @@ export default function AdminTopicsPage() {
                         </option>
                       ))}
                     </select>
-                    <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>現在: {worldLabel(t.default_world_key)}</div>
+
+                    <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                      現在: {worldLabel(t.default_world_key)}
+                    </div>
                   </td>
 
                   <td style={{ padding: "8px 6px" }}>
@@ -600,127 +1116,90 @@ export default function AdminTopicsPage() {
                       value={Number(t.monthly_price ?? 0)}
                       onChange={(e) => {
                         const v = Number(e.target.value);
-                        setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, monthly_price: v } : x)));
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, monthly_price: v }
+                              : x
+                          )
+                        );
                       }}
                       style={{ ...input, padding: "6px 8px" }}
                     >
                       {PRICES.map((p) => (
-                        <option key={p} value={p}>{p}（{tierName(p)}）</option>
+                        <option key={p} value={p}>
+                          {p}（{tierName(p)}）
+                        </option>
                       ))}
                     </select>
                   </td>
 
                   <td style={{ padding: "8px 6px" }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(t.is_sensitive)}
-                      onChange={(e) => setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, is_sensitive: e.target.checked } : x)))}
-                    />
-                  </td>
-
-                  <td style={{ padding: "8px 6px" }}>
-                    <input
-                      type="number"
-                      value={Number(t.min_age ?? 0)}
-                      onChange={(e) => setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, min_age: Number(e.target.value) } : x)))}
-                      style={{ ...input, padding: "6px 8px", width: 90 }}
-                    />
-                  </td>
-
-                  <td style={{ padding: "8px 6px" }}>
-                    <input
-                      value={t.description ?? ""}
-                      onChange={(e) => setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, description: e.target.value } : x)))}
-                      style={{ ...input, padding: "6px 8px", width: 320 }}
-                    />
-                  </td>
-
-                  <td style={{ padding: "8px 6px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => saveTopic(t)} disabled={busy} style={{ ...btn, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
-                      保存
-                    </button>
-                    <button onClick={() => archiveTopic(t.topic_key)} disabled={busy} style={{ ...btnGhost, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
-                      非表示にする
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {visibleTopics.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: 10, color: "#666" }}>表示中のテーマがありません</td></tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section style={{ ...card, marginTop: 12, borderColor: "#f2b7c0" }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#b00020" }}>非表示のテーマ（復活 / 完全削除）</h2>
-
-        <div style={{ marginTop: 12, overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #f3d6db" }}>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>topic_key</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>タイトル</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>世界観（割当）</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>月額</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {archivedTopics.map((t) => (
-                <tr key={t.topic_key} style={{ borderBottom: "1px solid #f8e6ea" }}>
-                  <td style={{ padding: "8px 6px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
-                    {t.topic_key}
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>
-                    <input
-                      value={t.title}
-                      onChange={(e) => setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, title: e.target.value } : x)))}
-                      style={{ ...input, padding: "6px 8px", width: 220 }}
-                    />
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>
                     <select
-                      value={t.default_world_key ?? ""}
+                      value={t.gender_restriction ?? ""}
                       onChange={(e) => {
                         const v = e.target.value || null;
-                        setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, default_world_key: v } : x)));
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, gender_restriction: v }
+                              : x
+                          )
+                        );
                       }}
-                      style={{ ...input, padding: "6px 8px", width: 230 }}
+                      style={{ ...input, padding: "6px 8px", width: 120 }}
                     >
-                      <option value="">（未設定 / null）</option>
-                      {worlds.map((w) => (
-                        <option key={w.world_key} value={w.world_key}>
-                          {w.title} ({w.world_key})
-                        </option>
-                      ))}
+                      <option value="">制限なし</option>
+                      <option value="male">男性のみ</option>
+                      <option value="female">女性のみ</option>
                     </select>
-                    <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>現在: {worldLabel(t.default_world_key)}</div>
+
+                    <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                      現在: {genderRestrictionLabel(t.gender_restriction)}
+                    </div>
                   </td>
-                  <td style={{ padding: "8px 6px" }}>
-                    <select
-                      value={Number(t.monthly_price ?? 0)}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setTopics((prev) => prev.map((x) => (x.topic_key === t.topic_key ? { ...x, monthly_price: v } : x)));
+
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      onClick={() => saveTopic(t)}
+                      disabled={busy}
+                      style={{
+                        ...btn,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
                       }}
-                      style={{ ...input, padding: "6px 8px" }}
                     >
-                      {PRICES.map((p) => (
-                        <option key={p} value={p}>{p}（{tierName(p)}）</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td style={{ padding: "8px 6px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => saveTopic(t)} disabled={busy} style={{ ...btn, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       保存
                     </button>
-                    <button onClick={() => unarchiveTopic(t.topic_key)} disabled={busy} style={{ ...btnGhost, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
+
+                    <button
+                      onClick={() => unarchiveTopic(t.topic_key)}
+                      disabled={busy}
+                      style={{
+                        ...btnGhost,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
                       復活
                     </button>
-                    <button onClick={() => hardDeleteTopic(t.topic_key)} disabled={busy} style={{ ...btnDanger, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
+
+                    <button
+                      onClick={() => hardDeleteTopic(t.topic_key)}
+                      disabled={busy}
+                      style={{
+                        ...btnDanger,
+                        padding: "8px 10px",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >
                       完全削除
                     </button>
                   </td>
@@ -728,7 +1207,11 @@ export default function AdminTopicsPage() {
               ))}
 
               {archivedTopics.length === 0 ? (
-                <tr><td colSpan={5} style={{ padding: 10, color: "#666" }}>非表示のテーマがありません</td></tr>
+                <tr>
+                  <td colSpan={6} style={{ padding: 10, color: "#666" }}>
+                    非表示のテーマがありません
+                  </td>
+                </tr>
               ) : null}
             </tbody>
           </table>
@@ -739,4 +1222,3 @@ export default function AdminTopicsPage() {
     </main>
   );
 }
-

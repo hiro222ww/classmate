@@ -542,7 +542,7 @@ void fetchEntitlements(id);
       result.push({
         key: "free",
         title: "フリー",
-        description: "まずは気軽に入れる無料テーマ",
+        description: "",
         world_key: "default",
         topic_key: null,
         is_sensitive: false,
@@ -558,7 +558,7 @@ void fetchEntitlements(id);
       result.push({
         key: t.topic_key,
         title: t.title,
-        description: t.description || "このテーマで話せる入口",
+        description: t.description || "",
         world_key: "default",
         topic_key: t.topic_key,
         is_sensitive: t.is_sensitive,
@@ -722,7 +722,7 @@ if (!classId || !sessionId) {
     const freeBoard: EntryBoard = {
       key: "free",
       title: "フリー",
-      description: "まずは気軽に入れる無料テーマ",
+      description: "",
       world_key: "default",
       topic_key: null,
       is_sensitive: false,
@@ -800,20 +800,6 @@ if (!classId || !sessionId) {
                 : "参加する"}
         </button>
 
-        {b.monthly_price > 0 ? (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 11,
-              color: "#666",
-              lineHeight: 1.6,
-              overflowWrap: "anywhere",
-              wordBreak: "break-word",
-            }}
-          >
-            ※ “1テーマごと課金”ではありません。あなたの<strong>テーマプラン</strong>額以上がまとめて解放されます。
-          </div>
-        ) : null}
       </div>
     );
   }
