@@ -93,6 +93,72 @@ type TopicDeadlineRow = {
   match_deadline_at?: string | null;
 };
 
+async function getBlockedDeviceIds(deviceId: string) {
+  const { data, error } = await supabase
+    .from("user_blocks")
+    .select("blocked_device_id")
+    .eq("blocker_device_id", deviceId);
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "blocked_lookup_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    ids: (data ?? [])
+      .map((x: any) => String(x.blocked_device_id ?? "").trim())
+      .filter(Boolean),
+  };
+}
+
+async function sessionHasBlockedMember(
+  sessionId: string,
+  blockedDeviceIds: string[]
+) {
+  if (blockedDeviceIds.length === 0) {
+    return {
+      ok: true as const,
+      hasBlocked: false,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("session_members")
+    .select("device_id")
+    .eq("session_id", sessionId)
+    .in("device_id", blockedDeviceIds)
+    .limit(1);
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "blocked_session_check_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return {
+    ok: true as const,
+    hasBlocked: (data ?? []).length > 0,
+  };
+}
+
 async function getProfile(deviceId: string) {
   const { data, error } = await supabase
     .from("user_profiles")
@@ -458,6 +524,7 @@ async function runAtomicMatch(params: {
   requestedMinAge: number;
   requestedMaxAge: number;
   deviceId: string;
+  blockedDeviceIds: string[];
 }) {
   const {
     worldKey,
@@ -466,6 +533,7 @@ async function runAtomicMatch(params: {
     requestedMinAge,
     requestedMaxAge,
     deviceId,
+    blockedDeviceIds,
   } = params;
 
   const { data, error } = await supabase.rpc("match_join_atomic", {
@@ -475,6 +543,7 @@ async function runAtomicMatch(params: {
     p_requested_min_age: requestedMinAge,
     p_requested_max_age: requestedMaxAge,
     p_device_id: deviceId,
+    p_blocked_device_ids: blockedDeviceIds,
   });
 
   console.log("🔥 RPC RESULT", {
@@ -579,6 +648,12 @@ export async function POST(req: Request) {
       );
     }
 
+    const blockedRes = await getBlockedDeviceIds(deviceId);
+    if (!blockedRes.ok) return blockedRes.response;
+    const blockedDeviceIds = blockedRes.ids;
+
+    console.log("[class/match-join] blockedDeviceIds =", blockedDeviceIds);
+
     const prefsRes = await getMatchPrefs(deviceId);
     if (!prefsRes.ok) return prefsRes.response;
 
@@ -681,14 +756,13 @@ export async function POST(req: Request) {
       alreadyJoined = membershipRes.alreadyJoined;
       currentCount = membershipRes.currentCount;
 
-      const { data: existingSession, error: sessionErr } = await supabase
+      const { data: existingSessions, error: sessionErr } = await supabase
         .from("sessions")
         .select("id,status,created_at,capacity")
         .eq("class_id", classId)
         .in("status", ["forming", "waiting", "active"])
         .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .limit(10);
 
       if (sessionErr) {
         return NextResponse.json(
@@ -701,10 +775,32 @@ export async function POST(req: Request) {
         );
       }
 
-      if (existingSession?.id) {
-        sessionId = String(existingSession.id);
-        sessionStatus = String(existingSession.status ?? "forming");
-        sessionCreatedAt = existingSession.created_at ?? null;
+      let chosenSession:
+        | {
+            id: string;
+            status: string | null;
+            created_at: string | null;
+            capacity?: number | null;
+          }
+        | null = null;
+
+      for (const s of existingSessions ?? []) {
+        const check = await sessionHasBlockedMember(
+          String(s.id),
+          blockedDeviceIds
+        );
+        if (!check.ok) return check.response;
+
+        if (!check.hasBlocked) {
+          chosenSession = s as any;
+          break;
+        }
+      }
+
+      if (chosenSession?.id) {
+        sessionId = String(chosenSession.id);
+        sessionStatus = String(chosenSession.status ?? "forming");
+        sessionCreatedAt = chosenSession.created_at ?? null;
         reused = true;
       } else {
         const { data: createdSession, error: createSessionErr } = await supabase
@@ -764,6 +860,7 @@ export async function POST(req: Request) {
         requestedMinAge,
         requestedMaxAge,
         deviceId,
+        blockedDeviceIds,
       });
       if (!atomicRes.ok) return atomicRes.response;
 
@@ -822,6 +919,7 @@ export async function POST(req: Request) {
       reused,
       currentCount,
       classSlots,
+      blockedDeviceCount: blockedDeviceIds.length,
     });
   } catch (e: any) {
     console.error("[class/match-join] server error =", e);

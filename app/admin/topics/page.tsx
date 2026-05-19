@@ -3,7 +3,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 type WorldRow = {
   world_key: string;
@@ -47,7 +47,6 @@ async function readJsonOrThrow(r: Response) {
 }
 
 export default function AdminTopicsPage() {
-  const [pass, setPass] = useState("");
   const [msg, setMsg] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -70,28 +69,14 @@ export default function AdminTopicsPage() {
   const [wSensitive, setWSensitive] = useState(false);
   const [wMinAge, setWMinAge] = useState(0);
 
-  const authed = useMemo(() => pass.trim().length > 0, [pass]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("ADMIN_PASSWORD");
-    if (saved) setPass(saved);
-  }, []);
-
-  function savePass() {
-    localStorage.setItem("ADMIN_PASSWORD", pass.trim());
-  }
-
   async function loadAll() {
-    if (!authed) return;
     setBusy(true);
     setMsg("");
     try {
-      savePass();
-
       const topicsRes = await fetch("/api/admin/topics", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: pass.trim(), mode: "list", show_archived: true }),
+        body: JSON.stringify({ mode: "list", show_archived: true }),
         cache: "no-store",
       });
       const tj = await readJsonOrThrow(topicsRes);
@@ -99,7 +84,7 @@ export default function AdminTopicsPage() {
       const worldsRes = await fetch("/api/admin/worlds", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: pass.trim(), mode: "list" }),
+        body: JSON.stringify({ mode: "list" }),
         cache: "no-store",
       });
       const wj = await readJsonOrThrow(worldsRes);
@@ -119,8 +104,6 @@ export default function AdminTopicsPage() {
     setMsg("");
     setBusy(true);
     try {
-      savePass();
-
       const topic_key = newKey.trim();
       const title = newTitle.trim();
       if (!topic_key) throw new Error("topic_key is required");
@@ -130,7 +113,7 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          password: pass.trim(),
+          
           mode: "create",
           topic: {
             topic_key,
@@ -166,13 +149,11 @@ export default function AdminTopicsPage() {
     setMsg("");
     setBusy(true);
     try {
-      savePass();
-
       const res = await fetch("/api/admin/topics", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          password: pass.trim(),
+          
           mode: "update",
           topic_key: t.topic_key,
           patch: {
@@ -203,7 +184,7 @@ export default function AdminTopicsPage() {
       const res = await fetch("/api/admin/topics", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: pass.trim(), mode: "archive", topic_key }),
+        body: JSON.stringify({ mode: "archive", topic_key }),
       });
       await readJsonOrThrow(res);
 
@@ -223,7 +204,7 @@ export default function AdminTopicsPage() {
       const res = await fetch("/api/admin/topics", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: pass.trim(), mode: "unarchive", topic_key }),
+        body: JSON.stringify({ mode: "unarchive", topic_key }),
       });
       await readJsonOrThrow(res);
 
@@ -245,7 +226,7 @@ export default function AdminTopicsPage() {
       const res = await fetch("/api/admin/topics", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: pass.trim(), mode: "delete", topic_key }),
+        body: JSON.stringify({ mode: "delete", topic_key }),
       });
       await readJsonOrThrow(res);
 
@@ -263,8 +244,6 @@ export default function AdminTopicsPage() {
     setMsg("");
     setBusy(true);
     try {
-      savePass();
-
       const world_key = wKey.trim();
       const title = wTitle.trim();
       if (!world_key) throw new Error("world_key is required");
@@ -274,7 +253,7 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          password: pass.trim(),
+          
           mode: "create",
           world: {
             world_key,
@@ -310,7 +289,7 @@ export default function AdminTopicsPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          password: pass.trim(),
+          
           mode: "update",
           world_key: w.world_key,
           patch: {
@@ -341,7 +320,7 @@ export default function AdminTopicsPage() {
       const res = await fetch("/api/admin/worlds", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password: pass.trim(), mode: "delete", world_key }),
+        body: JSON.stringify({ mode: "delete", world_key }),
       });
       await readJsonOrThrow(res);
 
@@ -417,9 +396,7 @@ export default function AdminTopicsPage() {
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={pass} onChange={(e) => setPass(e.target.value)} placeholder="ADMIN_PASSWORD" style={{ ...input, width: 260 }} />
-          <button onClick={loadAll} disabled={!authed || busy} style={{ ...btn, opacity: !authed || busy ? 0.6 : 1 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>          <button onClick={loadAll} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>
             {busy ? "処理中…" : "読み込み"}
           </button>
           <button
@@ -450,7 +427,7 @@ export default function AdminTopicsPage() {
             is_sensitive（18+相当）
           </label>
 
-          <button onClick={addWorld} disabled={!authed || busy} style={{ ...btn, gridColumn: "1 / -1", opacity: !authed || busy ? 0.6 : 1 }}>
+          <button onClick={addWorld} disabled={busy} style={{ ...btn, gridColumn: "1 / -1", opacity: busy ? 0.6 : 1 }}>
             世界観を追加
           </button>
         </div>
@@ -503,10 +480,10 @@ export default function AdminTopicsPage() {
                     />
                   </td>
                   <td style={{ padding: "8px 6px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => saveWorld(w)} disabled={!authed || busy} style={{ ...btn, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => saveWorld(w)} disabled={busy} style={{ ...btn, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       保存
                     </button>
-                    <button onClick={() => deleteWorld(w.world_key)} disabled={!authed || busy} style={{ ...btnDanger, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => deleteWorld(w.world_key)} disabled={busy} style={{ ...btnDanger, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       削除
                     </button>
                   </td>
@@ -561,7 +538,7 @@ export default function AdminTopicsPage() {
             </select>
           </label>
 
-          <button onClick={addTopic} disabled={!authed || busy} style={{ ...btn, gridColumn: "1 / -1", opacity: !authed || busy ? 0.6 : 1 }}>
+          <button onClick={addTopic} disabled={busy} style={{ ...btn, gridColumn: "1 / -1", opacity: busy ? 0.6 : 1 }}>
             追加
           </button>
         </div>
@@ -659,10 +636,10 @@ export default function AdminTopicsPage() {
                   </td>
 
                   <td style={{ padding: "8px 6px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => saveTopic(t)} disabled={!authed || busy} style={{ ...btn, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => saveTopic(t)} disabled={busy} style={{ ...btn, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       保存
                     </button>
-                    <button onClick={() => archiveTopic(t.topic_key)} disabled={!authed || busy} style={{ ...btnGhost, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => archiveTopic(t.topic_key)} disabled={busy} style={{ ...btnGhost, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       非表示にする
                     </button>
                   </td>
@@ -737,13 +714,13 @@ export default function AdminTopicsPage() {
                     </select>
                   </td>
                   <td style={{ padding: "8px 6px", display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => saveTopic(t)} disabled={!authed || busy} style={{ ...btn, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => saveTopic(t)} disabled={busy} style={{ ...btn, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       保存
                     </button>
-                    <button onClick={() => unarchiveTopic(t.topic_key)} disabled={!authed || busy} style={{ ...btnGhost, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => unarchiveTopic(t.topic_key)} disabled={busy} style={{ ...btnGhost, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       復活
                     </button>
-                    <button onClick={() => hardDeleteTopic(t.topic_key)} disabled={!authed || busy} style={{ ...btnDanger, padding: "8px 10px", opacity: !authed || busy ? 0.6 : 1 }}>
+                    <button onClick={() => hardDeleteTopic(t.topic_key)} disabled={busy} style={{ ...btnDanger, padding: "8px 10px", opacity: busy ? 0.6 : 1 }}>
                       完全削除
                     </button>
                   </td>
@@ -762,3 +739,4 @@ export default function AdminTopicsPage() {
     </main>
   );
 }
+
