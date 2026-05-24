@@ -766,7 +766,7 @@ if (!classId || !sessionId) {
         {b.description ? (
   <p
     style={{
-      marginTop: 10,
+      marginTop: 14,
       whiteSpace: "pre-wrap",
       overflowWrap: "anywhere",
       wordBreak: "break-word",
@@ -782,6 +782,7 @@ if (!classId || !sessionId) {
           onClick={() => void joinMatchedBoard(b)}
           disabled={busy || !deviceId || profileMissing}
           style={{
+            marginTop: 14,
             width: "100%",
             padding: "10px 12px",
             borderRadius: 12,
