@@ -1,227 +1,228 @@
-import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-export const dynamic = "force-dynamic";
-
-type PresenceStatus = "offline" | "waiting" | "active";
-
-const ONLINE_WINDOW_MS = 15000;
-
-function getPresenceStatus(params: {
-  lastSeenAt?: string | null;
-  screen?: string | null;
-  sessionId?: string | null;
-}) {
-  const { lastSeenAt, screen, sessionId } = params;
-
-  if (!lastSeenAt) return "offline";
-
-  const ts = new Date(lastSeenAt).getTime();
-  if (!Number.isFinite(ts)) return "offline";
-
-  const alive = Date.now() - ts <= ONLINE_WINDOW_MS;
-  if (!alive) return "offline";
-
-  // 🔥 最優先：session_id があるなら通話中
-  if (sessionId) {
-    return "active";
-  }
-
-  const normalized = String(screen ?? "").trim().toLowerCase();
+function normalizePresenceStatus(
+  value: string
+): "waiting" | "calling" | "offline" {
+  const normalized = value.trim().toLowerCase();
 
   if (normalized === "call") {
-    return "active";
+    return "calling";
   }
 
-  if (normalized === "room" || normalized === "home") {
+  // 修正前:
+  // if (normalized === "room" || normalized === "home") {
+  //   return "waiting";
+  // }
+
+  // 修正後:
+  if (normalized === "room") {
     return "waiting";
   }
 
-  // 🔥 不明値でもオンライン扱い（安全側）
-  return "waiting";
+  if (normalized === "home") {
+    return "offline";
+  }
+
+  return "offline";
 }
 
-export async function GET(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const classId = String(searchParams.get("classId") ?? "").trim();
+    const body = await req.json();
 
-    if (!classId) {
+    const classId = String(
+      body.class_id ?? ""
+    ).trim();
+
+    const deviceId = String(
+      body.device_id ?? ""
+    ).trim();
+
+    // 修正前:
+    // const screen =
+    //   String(body.screen ?? "").trim() || "room";
+
+    // 修正後:
+    const screen =
+      String(body.screen ?? "").trim() || "home";
+
+    const sessionId =
+      String(
+        body.session_id ?? ""
+      ).trim() || null;
+
+    if (!classId || !deviceId) {
       return NextResponse.json(
-        { ok: false, error: "class_id_required" },
+        {
+          ok: false,
+          error: "missing_params",
+        },
         { status: 400 }
       );
     }
 
-    const sb = supabaseServer();
+    const status =
+      normalizePresenceStatus(screen);
 
-    const { data: memberships, error: membershipsError } = await sb
-      .from("class_memberships")
-      .select("device_id")
-      .eq("class_id", classId);
+    // 修正前:
+    /*
+    const payload = {
+      class_id: classId,
+      device_id: deviceId,
+      screen,
+      status,
+      session_id: sessionId,
+      last_seen_at: new Date().toISOString(),
+    };
+    */
 
-    if (membershipsError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "class_memberships_failed",
-          detail: membershipsError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    const memberIds = (memberships ?? [])
-      .map((m: any) => String(m.device_id ?? "").trim())
-      .filter(Boolean);
-
-    if (memberIds.length === 0) {
-      return NextResponse.json({ ok: true, presence: [] });
-    }
-
-    const { data: presenceRows, error: presenceError } = await sb
-      .from("class_presence")
-      .select("device_id, screen, session_id, last_seen_at")
-      .eq("class_id", classId)
-      .in("device_id", memberIds);
-
-    if (presenceError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "class_presence_lookup_failed",
-          detail: presenceError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    const byDevice = new Map<
+    // 修正後:
+    const payload: Record<
       string,
-      {
-        device_id: string;
-        status: PresenceStatus;
-        session_id: string | null;
-        updated_at: string | null;
-        screen: string | null;
-      }
-    >();
+      any
+    > = {
+      class_id: classId,
+      device_id: deviceId,
+      screen,
+      status,
+      last_seen_at:
+        new Date().toISOString(),
+    };
 
-    for (const row of presenceRows ?? []) {
-      const deviceId = String((row as any).device_id ?? "").trim();
-      if (!deviceId) continue;
-
-      const lastSeenAt = (row as any).last_seen_at ?? null;
-      const screenRaw = String((row as any).screen ?? "").trim();
-      const screen = screenRaw || null;
-
-      const sessionId = (row as any).session_id
-        ? String((row as any).session_id).trim()
-        : null;
-
-      const status = getPresenceStatus({
-        lastSeenAt,
-        screen,
-        sessionId,
-      });
-
-      byDevice.set(deviceId, {
-        device_id: deviceId,
-        status,
-        session_id: sessionId,
-        updated_at: lastSeenAt,
-        screen,
-      });
+    // nullで既存session_idを消さない
+    if (sessionId) {
+      payload.session_id = sessionId;
     }
 
-    const presence = memberIds.map((device_id) => {
-      return (
-        byDevice.get(device_id) ?? {
-          device_id,
-          status: "offline" as const,
-          session_id: null,
-          updated_at: null,
-          screen: null,
-        }
+    console.log(
+      "[presence POST]",
+      payload
+    );
+
+    const { error } =
+      await supabaseAdmin
+        .from("class_presence")
+        .upsert(payload, {
+          onConflict:
+            "class_id,device_id",
+        });
+
+    if (error) {
+      console.error(
+        "[presence POST] error",
+        error
       );
-    });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+        },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       ok: true,
-      presence,
-      onlineWindowMs: ONLINE_WINDOW_MS,
     });
   } catch (e: any) {
+    console.error(
+      "[presence POST] fatal",
+      e
+    );
+
     return NextResponse.json(
       {
         ok: false,
-        error: "server_error",
-        detail: e?.message ?? String(e),
+        error:
+          e?.message ??
+          "unknown_error",
       },
       { status: 500 }
     );
   }
 }
 
-export async function POST(req: Request) {
+export async function GET(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const { searchParams } =
+      new URL(req.url);
 
-    const classId = String(body.classId ?? "").trim();
-    const deviceId = String(body.deviceId ?? "").trim();
-    const screen = String(body.screen ?? "").trim() || "room";
-    const sessionId = String(body.sessionId ?? "").trim() || null;
+    const classId =
+      searchParams.get("classId");
 
     if (!classId) {
       return NextResponse.json(
-        { ok: false, error: "class_id_required" },
+        {
+          ok: false,
+          error: "missing_classId",
+        },
         { status: 400 }
       );
     }
 
-    if (!deviceId) {
-      return NextResponse.json(
-        { ok: false, error: "device_id_required" },
-        { status: 400 }
-      );
-    }
+    const now = Date.now();
 
-    const sb = supabaseServer();
+    const activeMs =
+      1000 * 60 * 2;
 
-    const payload = {
-      class_id: classId,
-      device_id: deviceId,
-      screen,
-      session_id: sessionId,
-      last_seen_at: new Date().toISOString(),
-    };
-
-    console.log("[presence POST]", payload);
-
-    const { error } = await sb
-      .from("class_presence")
-      .upsert(payload, {
-        onConflict: "class_id,device_id",
-      });
+    const { data, error } =
+      await supabaseAdmin
+        .from("class_presence")
+        .select("*")
+        .eq("class_id", classId);
 
     if (error) {
+      console.error(
+        "[presence GET] error",
+        error
+      );
+
       return NextResponse.json(
         {
           ok: false,
-          error: "class_presence_upsert_failed",
-          detail: error.message,
+          error: error.message,
         },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ ok: true });
+    const filtered = (
+      data ?? []
+    ).map((row: any) => {
+      const last = new Date(
+        row.last_seen_at
+      ).getTime();
+
+      const active =
+        now - last <= activeMs;
+
+      return {
+        ...row,
+        active,
+        effective_status: active
+          ? row.status
+          : "offline",
+      };
+    });
+
+    return NextResponse.json({
+      ok: true,
+      items: filtered,
+    });
   } catch (e: any) {
+    console.error(
+      "[presence GET] fatal",
+      e
+    );
+
     return NextResponse.json(
       {
         ok: false,
-        error: "server_error",
-        detail: e?.message ?? String(e),
+        error:
+          e?.message ??
+          "unknown_error",
       },
       { status: 500 }
     );

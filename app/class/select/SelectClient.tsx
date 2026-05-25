@@ -432,6 +432,9 @@ const [joinWindowText, setJoinWindowText] =
         await fetchProfile(id);
 if (!alive) return;
 
+await reloadJoinWindow();
+if (!alive) return;
+
 setLoading(false);
 
 void fetchEntitlements(id);
@@ -675,6 +678,11 @@ void fetchEntitlements(id);
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
       return;
     }
+
+    if (!joinWindowOpen) {
+  alert(joinWindowText ? `${joinWindowText} の時間外です。` : "ただいま入校時間外です。");
+  return;
+}
 
 
     if (hasProfile === false) {
@@ -1099,7 +1107,7 @@ color:
       >
         <Pill>クラス枠: {slots}</Pill>
         {joinWindowText ? (
-          
+
   <Pill>
     {joinWindowOpen
       ? joinWindowText
