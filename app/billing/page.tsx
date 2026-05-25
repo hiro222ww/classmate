@@ -5,32 +5,58 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 
+type PortalKind = "slot" | "theme";
+
 function BillingPageInner() {
   const searchParams = useSearchParams();
-  const dev = (searchParams.get("dev") ?? "").trim();
-  const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
 
-  const [loading, setLoading] = useState(false);
+  const dev = (searchParams.get("dev") ?? "").trim();
+
+  const devQuery = dev
+    ? `?dev=${encodeURIComponent(dev)}`
+    : "";
+
+  const [loadingKind, setLoadingKind] =
+    useState<PortalKind | null>(null);
+
   const [msg, setMsg] = useState("");
 
-  async function openBillingPortal() {
+  async function openBillingPortal(
+    kind: PortalKind
+  ) {
     try {
-      setLoading(true);
+      setLoadingKind(kind);
       setMsg("");
 
       const deviceId = getDeviceId();
 
-      const r = await fetch("/api/billing/create-portal-session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deviceId, dev }),
-        cache: "no-store",
-      });
+      const r = await fetch(
+        "/api/billing/create-portal-session",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            deviceId,
+            dev,
+            kind,
+          }),
+          cache: "no-store",
+        }
+      );
 
       const text = await r.text();
-      console.log("[billing portal] status:", r.status, "body:", text);
+
+      console.log(
+        "[billing portal] status:",
+        r.status,
+        "body:",
+        text
+      );
 
       let j: any = null;
+
       try {
         j = JSON.parse(text);
       } catch {
@@ -38,40 +64,53 @@ function BillingPageInner() {
       }
 
       if (!r.ok) {
-  const errMsg =
-    j?.error ??
-    (r.status === 404
-      ? "api/billing/create-portal-session が見つかりません"
-      : `billing_portal_failed:${r.status}`);
+        const errMsg =
+          j?.error ??
+          (r.status === 404
+            ? "api/billing/create-portal-session が見つかりません"
+            : `billing_portal_failed:${r.status}`);
 
-  // 🔥 ここ追加
-  if (errMsg === "customer_not_found") {
-    alert("まだ契約がありません。プランを選択してください。");
-    window.location.href = `/premium${devQuery}`;
-    return;
-  }
+        if (errMsg === "customer_not_found") {
+          alert(
+            "まだ契約がありません。プランを選択してください。"
+          );
 
-  setMsg(String(errMsg));
-  alert(String(errMsg));
-  return;
-}
+          window.location.href = `/premium${devQuery}`;
+
+          return;
+        }
+
+        setMsg(String(errMsg));
+        alert(String(errMsg));
+
+        return;
+      }
 
       if (j?.url) {
         window.top!.location.href = j.url;
+
         return;
       }
 
       setMsg("billing portal url missing");
+
       alert("billing portal url missing");
     } catch (e: any) {
-      const m = String(e?.message ?? "billing_portal_failed");
+      const m = String(
+        e?.message ?? "billing_portal_failed"
+      );
+
       console.error(e);
+
       setMsg(m);
+
       alert(m);
     } finally {
-      setLoading(false);
+      setLoadingKind(null);
     }
   }
+
+  const loading = loadingKind !== null;
 
   return (
     <main
@@ -94,12 +133,26 @@ function BillingPageInner() {
         }}
       >
         <div>
-          <div style={{ fontSize: 13, color: "#666", fontWeight: 800 }}>
+          <div
+            style={{
+              fontSize: 13,
+              color: "#666",
+              fontWeight: 800,
+            }}
+          >
             classmate
           </div>
-          <h1 style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 900 }}>
+
+          <h1
+            style={{
+              margin: "6px 0 0",
+              fontSize: 28,
+              fontWeight: 900,
+            }}
+          >
             お支払い管理
           </h1>
+
           <p
             style={{
               margin: "10px 0 0",
@@ -108,7 +161,8 @@ function BillingPageInner() {
               lineHeight: 1.7,
             }}
           >
-            契約内容、支払い方法、請求履歴、解約は Stripe の安全な管理画面で行えます。
+            クラススロットとテーマプランを
+            分けて管理できます。
           </p>
         </div>
 
@@ -139,71 +193,95 @@ function BillingPageInner() {
         }}
       >
         <div>
-          <div style={{ fontSize: 18, fontWeight: 900 }}>管理できること</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
-            外部のStripe画面に移動します。
+          <div
+            style={{
+              fontSize: 18,
+              fontWeight: 900,
+            }}
+          >
+            管理するプラン
+          </div>
+
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 13,
+              color: "#666",
+            }}
+          >
+            それぞれStripeの安全な
+            管理画面に移動します。
           </div>
         </div>
 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
             gap: 10,
           }}
         >
-          {[
-            ["契約内容", "現在のプラン確認"],
-            ["支払い方法", "カード変更など"],
-            ["請求履歴", "領収書・請求確認"],
-            ["解約", "自動更新の停止"],
-          ].map(([title, desc]) => (
-            <div
-              key={title}
-              style={{
-                border: "1px solid #eee",
-                borderRadius: 14,
-                padding: 14,
-                background: "#fafafa",
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>{title}</div>
-              <div
-                style={{
-                  marginTop: 5,
-                  fontSize: 12,
-                  color: "#666",
-                  lineHeight: 1.6,
-                }}
-              >
-                {desc}
-              </div>
-            </div>
-          ))}
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() =>
+              openBillingPortal("slot")
+            }
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: 14,
+              border: "1px solid #111",
+              background: "#111",
+              color: "#fff",
+              fontWeight: 900,
+              cursor: loading
+                ? "default"
+                : "pointer",
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loadingKind === "slot"
+              ? "開いています…"
+              : "クラススロットのお支払い管理"}
+          </button>
+
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() =>
+              openBillingPortal("theme")
+            }
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: 14,
+              border: "1px solid #d1d5db",
+              background: "#fff",
+              color: "#111",
+              fontWeight: 900,
+              cursor: loading
+                ? "default"
+                : "pointer",
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loadingKind === "theme"
+              ? "開いています…"
+              : "テーマプランのお支払い管理"}
+          </button>
         </div>
 
-        <button
-          type="button"
-          disabled={loading}
-          onClick={openBillingPortal}
+        <div
           style={{
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 14,
-            border: "1px solid #111",
-            background: "#111",
-            color: "#fff",
-            fontWeight: 900,
-            cursor: loading ? "default" : "pointer",
-            opacity: loading ? 0.7 : 1,
+            fontSize: 12,
+            color: "#666",
+            lineHeight: 1.7,
           }}
         >
-          {loading ? "開いています…" : "Stripe管理画面を開く"}
-        </button>
-
-        <div style={{ fontSize: 12, color: "#666", lineHeight: 1.7 }}>
-          ※ プラン変更は「プランを見る」ページから行ってください。
-          このページは主に支払い方法・請求・解約の管理用です。
+          ※ クラススロット管理では
+          クラススロットのみ、
+          テーマプラン管理では
+          テーマプランのみ変更できます。
         </div>
       </section>
 
@@ -224,35 +302,30 @@ function BillingPageInner() {
         </div>
       ) : null}
 
-      <div
+      <Link
+        href={`/premium${devQuery}`}
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-          fontSize: 14,
+          color: "#111",
+          fontWeight: 900,
+          textDecoration: "underline",
+          textUnderlineOffset: 3,
         }}
       >
-        <Link
-          href={`/premium${devQuery}`}
-          style={{ color: "#555", fontWeight: 800 }}
-        >
-          プランを見る
-        </Link>
-        <Link
-          href={`/class/select${devQuery}`}
-          style={{ color: "#555", fontWeight: 800 }}
-        >
-          クラス選択へ
-        </Link>
-      </div>
+        プランを見る
+      </Link>
     </main>
   );
 }
 
 export default function BillingPage() {
   return (
-    <Suspense fallback={<main style={{ padding: 24 }}>読み込み中...</main>}>
+    <Suspense
+      fallback={
+        <main style={{ padding: 24 }}>
+          読み込み中...
+        </main>
+      }
+    >
       <BillingPageInner />
     </Suspense>
   );

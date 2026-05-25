@@ -774,15 +774,45 @@ export default function CallClient() {
                   </div>
 
                   {isFilled && !isMe && member?.device_id ? (
-  <div style={{ marginTop: 8 }}>
-    <MemberModerationButtons
-      myDeviceId={deviceId}
-      targetDeviceId={member.device_id}
-      targetName={member.display_name || "参加者"}
-      sessionId={sessionId}
-      classId={classId}
-    />
-  </div>
+  <details style={{ marginTop: 4, position: "relative" }}>
+    <summary
+      style={{
+        listStyle: "none",
+        cursor: "pointer",
+        fontSize: 18,
+        color: "#9ca3af",
+        lineHeight: 1,
+        width: 28,
+        height: 28,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 999,
+      }}
+    >
+      ︙
+    </summary>
+
+    <div
+      style={{
+        marginTop: 6,
+        padding: 8,
+        borderRadius: 12,
+        border: "1px solid #e5e7eb",
+        background: "#fff",
+        boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
+        display: "inline-block",
+      }}
+    >
+      <MemberModerationButtons
+        myDeviceId={deviceId}
+        targetDeviceId={member.device_id}
+        targetName={member.display_name || "参加者"}
+        sessionId={sessionId}
+        classId={classId}
+      />
+    </div>
+  </details>
 ) : null}
                 </div>
               </div>
