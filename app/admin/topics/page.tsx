@@ -75,6 +75,15 @@ export default function AdminTopicsPage() {
   const [wSensitive, setWSensitive] = useState(false);
   const [wMinAge, setWMinAge] = useState(0);
 
+  const [globalJoinEnabled, setGlobalJoinEnabled] = useState(false);
+const [globalJoinStart, setGlobalJoinStart] = useState("21:00");
+const [globalJoinEnd, setGlobalJoinEnd] = useState("21:30");
+
+const [billingNoticeEnabled, setBillingNoticeEnabled] = useState(true);
+const [billingNoticeText, setBillingNoticeText] = useState(
+  "※ 現在、ベーシック・ミドル・プレミアムで利用できるテーマは同じです。プランの違いは、同時に参加できるクラス数です。"
+);
+
   async function loadAll() {
     setBusy(true);
     setMsg("");
@@ -97,15 +106,59 @@ export default function AdminTopicsPage() {
 
       setTopics(tj.topics ?? []);
       setWorlds(wj.worlds ?? []);
+      const settingsRes = await fetch("/api/admin/settings", {
+  cache: "no-store",
+});
+const sj = await readJsonOrThrow(settingsRes);
+
+const settings = sj.settings ?? {};
+
+setGlobalJoinEnabled(Boolean(settings.global_join_window?.enabled));
+setGlobalJoinStart(String(settings.global_join_window?.start ?? "21:00"));
+setGlobalJoinEnd(String(settings.global_join_window?.end ?? "21:30"));
+
+setBillingNoticeEnabled(Boolean(settings.billing_notice?.enabled));
+setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
       setMsg(
-        `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length}）`
-      );
+  `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length} / settings:OK）`
+);
     } catch (e: any) {
       setMsg(e?.message ?? "load_failed");
     } finally {
       setBusy(false);
     }
   }
+
+  async function saveSettings() {
+  setMsg("");
+  setBusy(true);
+
+  try {
+    const res = await fetch("/api/admin/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        global_join_window: {
+          enabled: globalJoinEnabled,
+          start: globalJoinStart,
+          end: globalJoinEnd,
+        },
+        billing_notice: {
+          enabled: billingNoticeEnabled,
+          text: billingNoticeText,
+        },
+      }),
+    });
+
+    await readJsonOrThrow(res);
+
+    setMsg("全体設定を保存しました");
+  } catch (e: any) {
+    setMsg(e?.message ?? "settings_save_failed");
+  } finally {
+    setBusy(false);
+  }
+}
 
   async function addTopic() {
     setMsg("");
@@ -450,6 +503,121 @@ export default function AdminTopicsPage() {
           {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
         </div>
       </section>
+
+      <section style={{ ...card, marginTop: 12 }}>
+  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+    全体設定
+  </h2>
+
+  <div style={{ marginTop: 10, display: "grid", gap: 14 }}>
+    <div
+      style={{
+        border: "1px solid #eee",
+        borderRadius: 14,
+        padding: 12,
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <label
+        style={{
+          fontSize: 13,
+          fontWeight: 900,
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={globalJoinEnabled}
+          onChange={(e) => setGlobalJoinEnabled(e.target.checked)}
+        />
+        全体で入校時間を制限する
+      </label>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <label style={{ fontSize: 12, color: "#666" }}>
+          開始
+          <input
+            type="time"
+            value={globalJoinStart}
+            onChange={(e) => setGlobalJoinStart(e.target.value)}
+            style={{ ...input, marginLeft: 8 }}
+          />
+        </label>
+
+        <label style={{ fontSize: 12, color: "#666" }}>
+          終了
+          <input
+            type="time"
+            value={globalJoinEnd}
+            onChange={(e) => setGlobalJoinEnd(e.target.value)}
+            style={{ ...input, marginLeft: 8 }}
+          />
+        </label>
+      </div>
+
+      <div style={{ fontSize: 12, color: "#666" }}>
+        ※ テーマ個別設定がない場合、この全体設定を使います。
+      </div>
+    </div>
+
+    <div
+      style={{
+        border: "1px solid #eee",
+        borderRadius: 14,
+        padding: 12,
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <label
+        style={{
+          fontSize: 13,
+          fontWeight: 900,
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={billingNoticeEnabled}
+          onChange={(e) => setBillingNoticeEnabled(e.target.checked)}
+        />
+        課金ページの注意文を表示する
+      </label>
+
+      <textarea
+        value={billingNoticeText}
+        onChange={(e) => setBillingNoticeText(e.target.value)}
+        rows={4}
+        style={{
+          ...input,
+          width: "100%",
+          resize: "vertical",
+          lineHeight: 1.7,
+        }}
+      />
+
+      <div style={{ fontSize: 12, color: "#666" }}>
+        ※ テーマ数やプラン内容を変える前の注意喚起に使えます。
+      </div>
+    </div>
+
+    <button
+      onClick={saveSettings}
+      disabled={busy}
+      style={{
+        ...btn,
+        opacity: busy ? 0.6 : 1,
+      }}
+    >
+      全体設定を保存
+    </button>
+  </div>
+</section>
 
       <section style={{ ...card, marginTop: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
