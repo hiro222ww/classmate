@@ -504,120 +504,69 @@ setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
         </div>
       </section>
 
-      <section style={{ ...card, marginTop: 12 }}>
-  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-    全体設定
-  </h2>
+            <section style={{ ...card, marginTop: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          入校受付時間
+        </h2>
 
-  <div style={{ marginTop: 10, display: "grid", gap: 14 }}>
-    <div
-      style={{
-        border: "1px solid #eee",
-        borderRadius: 14,
-        padding: 12,
-        display: "grid",
-        gap: 10,
-      }}
-    >
-      <label
-        style={{
-          fontSize: 13,
-          fontWeight: 900,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={globalJoinEnabled}
-          onChange={(e) => setGlobalJoinEnabled(e.target.checked)}
-        />
-        全体で入校時間を制限する
-      </label>
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+          }}
+        >
+          <label
+            style={{
+              fontSize: 13,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              gridColumn: "1 / -1",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={globalJoinEnabled}
+              onChange={(e) => setGlobalJoinEnabled(e.target.checked)}
+            />
+            入校受付時間を有効にする
+          </label>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <label style={{ fontSize: 12, color: "#666" }}>
-          開始
-          <input
-            type="time"
-            value={globalJoinStart}
-            onChange={(e) => setGlobalJoinStart(e.target.value)}
-            style={{ ...input, marginLeft: 8 }}
-          />
-        </label>
+          <label style={{ fontSize: 12, color: "#666" }}>
+            受付開始
+            <input
+              type="time"
+              value={globalJoinStart}
+              onChange={(e) => setGlobalJoinStart(e.target.value)}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            />
+          </label>
 
-        <label style={{ fontSize: 12, color: "#666" }}>
-          終了
-          <input
-            type="time"
-            value={globalJoinEnd}
-            onChange={(e) => setGlobalJoinEnd(e.target.value)}
-            style={{ ...input, marginLeft: 8 }}
-          />
-        </label>
-      </div>
+          <label style={{ fontSize: 12, color: "#666" }}>
+            受付終了
+            <input
+              type="time"
+              value={globalJoinEnd}
+              onChange={(e) => setGlobalJoinEnd(e.target.value)}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            />
+          </label>
 
-      <div style={{ fontSize: 12, color: "#666" }}>
-        ※ テーマ個別設定がない場合、この全体設定を使います。
-      </div>
-    </div>
-
-    <div
-      style={{
-        border: "1px solid #eee",
-        borderRadius: 14,
-        padding: 12,
-        display: "grid",
-        gap: 10,
-      }}
-    >
-      <label
-        style={{
-          fontSize: 13,
-          fontWeight: 900,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={billingNoticeEnabled}
-          onChange={(e) => setBillingNoticeEnabled(e.target.checked)}
-        />
-        課金ページの注意文を表示する
-      </label>
-
-      <textarea
-        value={billingNoticeText}
-        onChange={(e) => setBillingNoticeText(e.target.value)}
-        rows={4}
-        style={{
-          ...input,
-          width: "100%",
-          resize: "vertical",
-          lineHeight: 1.7,
-        }}
-      />
-
-      <div style={{ fontSize: 12, color: "#666" }}>
-        ※ テーマ数やプラン内容を変える前の注意喚起に使えます。
-      </div>
-    </div>
-
-    <button
-      onClick={saveSettings}
-      disabled={busy}
-      style={{
-        ...btn,
-        opacity: busy ? 0.6 : 1,
-      }}
-    >
-      全体設定を保存
-    </button>
-  </div>
-</section>
+          <button
+            onClick={saveSettings}
+            disabled={busy}
+            style={{
+              ...btn,
+              gridColumn: "1 / -1",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            入校受付時間を保存
+          </button>
+        </div>
+      </section>
 
       <section style={{ ...card, marginTop: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
