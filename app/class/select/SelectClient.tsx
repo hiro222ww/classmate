@@ -746,7 +746,7 @@ export default function SelectClient() {
         prefsLoaded,
       });
 
-      const matchRes = await fetch("/api/class/match-join", {
+      const matchRes = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

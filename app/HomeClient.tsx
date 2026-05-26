@@ -693,7 +693,7 @@ return () => {
         return;
       }
 
-      const res = await fetch("/api/class/match-join", {
+      const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -768,7 +768,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         return;
       }
 
-      const res = await fetch("/api/class/match-join", {
+      const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
