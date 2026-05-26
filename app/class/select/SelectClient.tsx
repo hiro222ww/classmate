@@ -146,33 +146,35 @@ function safeTrim(v: unknown) {
   return String(v ?? "").trim();
 }
 
-function isNowWithinWindow(
-  start?: string,
-  end?: string
-) {
+function getJstNowMinutes() {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+
+  return hour * 60 + minute;
+}
+
+function isNowWithinWindow(start?: string, end?: string) {
   if (!start || !end) return true;
 
-  const now = new Date();
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
 
-  const [sh, sm] = start
-    .split(":")
-    .map(Number);
-
-  const [eh, em] = end
-    .split(":")
-    .map(Number);
-
-  const nowMin =
-    now.getHours() * 60 +
-    now.getMinutes();
-
+  const nowMin = getJstNowMinutes();
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
 
-  return (
-    nowMin >= startMin &&
-    nowMin <= endMin
-  );
+  if (startMin <= endMin) {
+    return nowMin >= startMin && nowMin <= endMin;
+  }
+
+  return nowMin >= startMin || nowMin <= endMin;
 }
 
 export default function SelectClient() {
@@ -207,11 +209,8 @@ export default function SelectClient() {
   const [showNarrow, setShowNarrow] = useState(false);
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
-  const [joinWindowOpen, setJoinWindowOpen] =
-  useState(true);
-
-const [joinWindowText, setJoinWindowText] =
-  useState("");
+  const [joinWindowOpen, setJoinWindowOpen] = useState(true);
+  const [joinWindowText, setJoinWindowText] = useState("");
 
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -234,7 +233,7 @@ const [joinWindowText, setJoinWindowText] =
     }
   }
 
-    async function reloadJoinWindow() {
+  async function reloadJoinWindow() {
     try {
       const r = await fetch("/api/settings", {
         cache: "no-store",
@@ -247,17 +246,39 @@ const [joinWindowText, setJoinWindowText] =
       const start = String(gw.start ?? "");
       const end = String(gw.end ?? "");
 
-      const open =
-        !enabled || isNowWithinWindow(start, end);
+      const open = !enabled || isNowWithinWindow(start, end);
 
       setJoinWindowOpen(open);
-      setJoinWindowText(
-        enabled ? `入校受付 ${start}〜${end}` : ""
-      );
+      setJoinWindowText(enabled ? `入校受付 ${start}〜${end}` : "");
     } catch (e) {
       console.error("[class/select] join window load failed", e);
       setJoinWindowOpen(true);
       setJoinWindowText("");
+    }
+  }
+
+  async function postSelectPresence(id: string) {
+    if (!id) return;
+    if (typeof window === "undefined") return;
+
+    const path = window.location.pathname;
+
+    if (path.includes("/room") || path.includes("/call")) {
+      return;
+    }
+
+    try {
+      await fetch("/api/class/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          device_id: id,
+          screen: "home",
+        }),
+        cache: "no-store",
+      });
+    } catch (e) {
+      console.warn("[class/select] presence skipped", e);
     }
   }
 
@@ -430,14 +451,17 @@ const [joinWindowText, setJoinWindowText] =
         });
 
         await fetchProfile(id);
-if (!alive) return;
+        if (!alive) return;
 
-await reloadJoinWindow();
-if (!alive) return;
+        await reloadJoinWindow();
+        if (!alive) return;
 
-setLoading(false);
+        // 【修正】400エラーと誤退出扱いを防ぐため、Home画面でのpresence送信を停止
+        // void postSelectPresence(id);
 
-void fetchEntitlements(id);
+        setLoading(false);
+
+        void fetchEntitlements(id);
         if (!alive) return;
 
         if (paid === "1" && sessionId) {
@@ -541,7 +565,7 @@ void fetchEntitlements(id);
           }
         }
 
-                void reloadCatalog();
+        void reloadCatalog();
         void reloadJoinWindow();
       } catch (e: any) {
         console.error(e);
@@ -680,10 +704,9 @@ void fetchEntitlements(id);
     }
 
     if (!joinWindowOpen) {
-  alert(joinWindowText ? `${joinWindowText} の時間外です。` : "ただいま入校時間外です。");
-  return;
-}
-
+      alert(joinWindowText ? `${joinWindowText} の時間外です。` : "ただいま入校時間外です。");
+      return;
+    }
 
     if (hasProfile === false) {
       goProfileIfNeeded();
@@ -760,11 +783,11 @@ void fetchEntitlements(id);
       }
 
       const classId = safeTrim(matchJson?.classId);
-const sessionId = safeTrim(matchJson?.sessionId);
+      const sessionId = safeTrim(matchJson?.sessionId);
 
-if (!classId || !sessionId) {
-  throw new Error("match_join_missing_ids");
-}
+      if (!classId || !sessionId) {
+        throw new Error("match_join_missing_ids");
+      }
 
       const roomUrl =
         `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
@@ -835,19 +858,19 @@ if (!classId || !sessionId) {
         </div>
 
         {b.description ? (
-  <p
-    style={{
-      marginTop: 14,
-      whiteSpace: "pre-wrap",
-      overflowWrap: "anywhere",
-      wordBreak: "break-word",
-      color: "#222",
-      lineHeight: 1.5,
-    }}
-  >
-    {b.description}
-  </p>
-) : null}
+          <p
+            style={{
+              marginTop: 14,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+              color: "#222",
+              lineHeight: 1.5,
+            }}
+          >
+            {b.description}
+          </p>
+        ) : null}
 
         <button
           onClick={() => void joinMatchedBoard(b)}
@@ -859,33 +882,32 @@ if (!classId || !sessionId) {
             borderRadius: 12,
             border: "1px solid #ccc",
             background:
-  profileMissing || !joinWindowOpen
-    ? "#e5e5e5"
-    : locked
-      ? "#f3f3f3"
-      : "#111",
-color:
-  profileMissing || !joinWindowOpen
-    ? "#666"
-    : locked
-      ? "#111"
-      : "#fff",
+              profileMissing || !joinWindowOpen
+                ? "#e5e5e5"
+                : locked
+                  ? "#f3f3f3"
+                  : "#111",
+            color:
+              profileMissing || !joinWindowOpen
+                ? "#666"
+                : locked
+                  ? "#111"
+                  : "#fff",
             fontWeight: 900,
             cursor:
-  busy || !deviceId || profileMissing || !joinWindowOpen
-    ? "not-allowed"
-    : "pointer",
+              busy || !deviceId || profileMissing || !joinWindowOpen
+                ? "not-allowed"
+                : "pointer",
           }}
         >
           {profileMissing
-  ? "プロフィール登録が必要"
-  : !joinWindowOpen
-    ? "入校時間外"
-    : locked
-      ? `参加（要：${tierName(b.monthly_price)}以上）`
-      : "参加する"}
+            ? "プロフィール登録が必要"
+            : !joinWindowOpen
+              ? "入校時間外"
+              : locked
+                ? `参加（要：${tierName(b.monthly_price)}以上）`
+                : "参加する"}
         </button>
-
       </div>
     );
   }
@@ -1107,13 +1129,10 @@ color:
       >
         <Pill>クラス枠: {slots}</Pill>
         {joinWindowText ? (
-
-  <Pill>
-    {joinWindowOpen
-      ? joinWindowText
-      : `${joinWindowText}（時間外）`}
-  </Pill>
-) : null}
+          <Pill>
+            {joinWindowOpen ? joinWindowText : `${joinWindowText}（時間外）`}
+          </Pill>
+        ) : null}
 
         <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
         {loading ? <Pill>読み込み中…</Pill> : null}
@@ -1253,23 +1272,22 @@ color:
               borderRadius: 14,
               border: "none",
               background:
-  hasProfile === false || !joinWindowOpen ? "#d4d4d4" : "#111",
-color:
-  hasProfile === false || !joinWindowOpen ? "#666" : "#fff",
+                hasProfile === false || !joinWindowOpen ? "#d4d4d4" : "#111",
+              color: hasProfile === false || !joinWindowOpen ? "#666" : "#fff",
               fontWeight: 900,
               cursor:
-  busy || !deviceId || hasProfile === false || !joinWindowOpen
-    ? "not-allowed"
-    : "pointer",
-whiteSpace: "nowrap",
-opacity: busy || !deviceId ? 0.6 : 1,
+                busy || !deviceId || hasProfile === false || !joinWindowOpen
+                  ? "not-allowed"
+                  : "pointer",
+              whiteSpace: "nowrap",
+              opacity: busy || !deviceId ? 0.6 : 1,
             }}
           >
             {hasProfile === false
-  ? "プロフィール登録が必要"
-  : !joinWindowOpen
-    ? "入校時間外"
-    : "入る"}
+              ? "プロフィール登録が必要"
+              : !joinWindowOpen
+                ? "入校時間外"
+                : "入る"}
           </button>
         </div>
 

@@ -761,6 +761,20 @@ export async function POST(req: Request) {
     if (!allMembershipsRes.ok) return allMembershipsRes.response;
     const allMembershipIdsBefore = allMembershipsRes.ids;
 
+    // 【追加】すでに上限到達している場合、新規クラス作成/RPC実行を止める
+    // forcedClassId がある場合は既存クラス入室なので例外扱い
+    if (!forcedClassId && allMembershipIdsBefore.length >= classSlots) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "class_slots_limit",
+          currentCount: allMembershipIdsBefore.length,
+          classSlots,
+        },
+        { status: 400 }
+      );
+    }
+
     let classId = "";
     let className = "";
     let sessionId = "";
