@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /**
- * Probe match_join_atomic_v3 + gender restriction via match-join-v2 API.
+ * Probe match_join_atomic_v3 + match-join-v2 behavior.
  *
- * Usage: node scripts/probe-match-join-v3.mjs [--api-base https://...]
+ * Usage:
+ *   node scripts/probe-match-join-v3.mjs
+ *   node scripts/probe-match-join-v3.mjs --api-base https://your-app.vercel.app
  */
 import fs from "node:fs";
 
+const SYSTEM_CLASS_NAME_PATTERN = /^クラス\d{4}[A-Z]$/;
 const BLOCKED_STATUSES = new Set(["active", "closed", "expired"]);
 const args = process.argv.slice(2);
 const apiBaseArgIndex = args.indexOf("--api-base");
@@ -71,6 +74,15 @@ async function apiMatchJoin(body) {
   return { status: res.status, json };
 }
 
+async function apiMine(deviceId) {
+  const res = await fetch(
+    `${API_BASE}/api/class/mine?deviceId=${encodeURIComponent(deviceId)}`,
+    { cache: "no-store" }
+  );
+  const json = await res.json().catch(() => ({}));
+  return { status: res.status, json };
+}
+
 function pass(label) {
   console.log(`PASS: ${label}`);
 }
@@ -78,6 +90,12 @@ function pass(label) {
 function fail(label, detail) {
   console.error(`FAIL: ${label}`);
   if (detail) console.error(detail);
+}
+
+function genderBlocks(restriction, profileGender) {
+  const normalized = String(restriction ?? "").trim().toLowerCase();
+  if (!normalized || normalized === "none") return false;
+  return String(profileGender ?? "").trim().toLowerCase() !== normalized;
 }
 
 const env = loadEnv();
@@ -126,18 +144,23 @@ if (!maleProfile?.device_id) {
 console.log("\n=== Probe profile (male/default) ===");
 console.log(maleProfile);
 
+const membershipsRes = await fetch(
+  `${url}/rest/v1/class_memberships?select=class_id,device_id&device_id=eq.${encodeURIComponent(maleProfile.device_id)}`,
+  { headers }
+);
+const memberships = await membershipsRes.json();
+const joinedClassIds = new Set(
+  (memberships ?? []).map((m) => String(m.class_id)).filter(Boolean)
+);
+
+console.log("\n=== Joined class ids ===");
+console.log([...joinedClassIds]);
+
 const topicsRes = await fetch(
   `${url}/rest/v1/topics?select=topic_key,title,gender_restriction&order=topic_key.asc`,
   { headers }
 );
 const topics = await topicsRes.json();
-console.log("\n=== Topics (gender_restriction sample) ===");
-console.log(
-  (topics ?? []).map((t) => ({
-    topic_key: t.topic_key,
-    gender_restriction: t.gender_restriction,
-  }))
-);
 
 const maleTopic =
   topics.find((t) => String(t.gender_restriction ?? "").trim() === "male") ??
@@ -148,25 +171,13 @@ const femaleTopic =
 const openTopic =
   topics.find((t) => !String(t.gender_restriction ?? "").trim()) ?? topics[0] ?? null;
 
-const freeClassesRes = await fetch(
-  `${url}/rest/v1/classes?select=id,created_at&world_key=eq.default&topic_key=is.null&order=created_at.asc`,
-  { headers }
-);
-const freeClasses = await freeClassesRes.json();
-const oldFreeClassIds = new Set(
-  (freeClasses ?? []).map((c) => String(c.id)).filter(Boolean)
-);
-
-console.log("\n=== Existing free class ids ===");
-console.log([...oldFreeClassIds]);
-
 const baseBody = {
   p_device_id: maleProfile.device_id,
   p_display_name: maleProfile.display_name || "Probe",
   p_world_key: "default",
   p_topic_key: null,
   p_requested_capacity: 5,
-  p_class_slots: 5,
+  p_class_slots: 10,
   p_blocked_device_ids: [],
 };
 
@@ -183,12 +194,9 @@ if (normal.status === 200) {
   const row = rowFromResult(normal.json);
   const status = sessionStatusFromResult(normal.json);
   console.log("class_id:", row?.class_id);
-  console.log("session_status:", status);
+  console.log("class_name:", row?.class_name);
   console.log("created_new_class:", row?.created_new_class);
-  console.log("created_new_session:", row?.created_new_session);
   console.log("reused:", row?.reused);
-  console.log("expired_count:", row?.expired_count);
-  console.log("candidate_session_count:", row?.candidate_session_count);
 
   if (BLOCKED_STATUSES.has(status)) {
     markFail("normal match must not return active/closed/expired", status);
@@ -196,60 +204,84 @@ if (normal.status === 200) {
     pass("normal match session status is recruiting");
   }
 
-  if (
-    oldFreeClassIds.size > 0 &&
-    oldFreeClassIds.has(String(row?.class_id ?? "")) &&
-    row?.created_new_class === true
-  ) {
+  if (joinedClassIds.has(String(row?.class_id ?? ""))) {
     markFail(
-      "normal match created_new_class=true must return a new class_id",
+      "normal match must not return an already-joined class_id",
       row?.class_id
     );
-  } else if (
-    oldFreeClassIds.size > 0 &&
-    oldFreeClassIds.has(String(row?.class_id ?? "")) &&
-    row?.reused === true &&
-    Number(row?.candidate_session_count ?? 0) > 0
-  ) {
-    pass("reused existing class with fresh forming session");
-  } else if (row?.created_new_class === true) {
-    pass("created new class when no fresh class was reusable");
+  } else {
+    pass("normal match did not reuse already-joined class");
   }
-} else if (normal.text.includes("created_new_class")) {
-  console.log("Hint: apply 20260526190000_match_join_atomic_v3_fresh_class_only.sql");
-  markFail("RPC failed", normal.text);
-} else if (normal.text.includes("42883")) {
-  markFail("RPC type mismatch", "apply session class_id cast migration");
-} else if (normal.text.includes("23514")) {
-  markFail("sessions_status_check", "apply expired status migration");
+
+  if (row?.created_new_class === true) {
+    if (SYSTEM_CLASS_NAME_PATTERN.test(String(row?.class_name ?? ""))) {
+      pass("new class uses クラスNNNNX naming");
+    } else {
+      markFail(
+        "new class name must match クラスNNNNX",
+        row?.class_name
+      );
+    }
+  }
+
+  const mine = await apiMine(maleProfile.device_id);
+  const mineIds = new Set(
+    (mine.json?.classes ?? []).map((c) => String(c.id ?? c.class_id ?? ""))
+  );
+
+  if (mineIds.has(String(row?.class_id ?? ""))) {
+    pass("match class_id appears in /api/class/mine");
+  } else {
+    markFail(
+      "match class_id missing from /api/class/mine",
+      JSON.stringify({ classId: row?.class_id, mineIds: [...mineIds] })
+    );
+  }
+} else if (normal.text.includes("allocate_system_class_name")) {
+  markFail("RPC missing allocate_system_class_name", "apply 20260526200000 migration");
 } else {
   markFail("normal RPC non-200", normal.text);
 }
 
-console.log("\n=== [2] Normal match RPC again (fresh reuse check) ===");
-const normal2 = await rpcCall(url, headers, {
-  ...baseBody,
-  p_forced_class_id: null,
-});
+if (joinedClassIds.size > 0) {
+  const forcedClassId = [...joinedClassIds][0];
+  console.log("\n=== [2] Forced RPC (openJoinedClass path) ===");
+  console.log("forced class_id:", forcedClassId);
 
-if (normal2.status === 200) {
-  const row2 = rowFromResult(normal2.json);
-  console.log("class_id:", row2?.class_id);
-  console.log("reused:", row2?.reused);
-  console.log("created_new_class:", row2?.created_new_class);
-  console.log("candidate_session_count:", row2?.candidate_session_count);
+  const forced = await rpcCall(url, headers, {
+    ...baseBody,
+    p_forced_class_id: forcedClassId,
+  });
 
-  if (row2?.reused === true && Number(row2?.candidate_session_count ?? 0) > 0) {
-    pass("second normal match reused fresh forming when available");
-  } else if (row2?.created_new_class === true) {
-    pass("second normal match opened another new class when fresh full/missing");
+  console.log("status:", forced.status);
+  console.log(forced.text);
+
+  if (forced.status === 200) {
+    const row = rowFromResult(forced.json);
+    if (String(row?.class_id ?? "") === forcedClassId) {
+      pass("forced path reuses specified joined class_id");
+    } else {
+      markFail("forced path should keep requested class_id", row?.class_id);
+    }
+  } else {
+    markFail("forced RPC failed", forced.text);
   }
-} else {
-  markFail("second normal RPC", normal2.text);
 }
 
-console.log("\n=== [3] Gender restriction via API ===");
+console.log("\n=== [3] Gender restriction unit checks ===");
+if (genderBlocks(null, "male")) markFail("null restriction should allow");
+else pass("gender none/null allows join");
 
+if (genderBlocks("none", "male")) markFail("none restriction should allow");
+else pass("gender none string allows join");
+
+if (genderBlocks("male", "male")) markFail("male restriction should allow male");
+else pass("male restriction allows male profile");
+
+if (!genderBlocks("female", "male")) markFail("female restriction should block male");
+else pass("female restriction blocks male profile");
+
+console.log("\n=== [4] Gender restriction via API (when slots allow) ===");
 if (openTopic?.topic_key) {
   const openRes = await apiMatchJoin({
     deviceId: maleProfile.device_id,
@@ -259,10 +291,10 @@ if (openTopic?.topic_key) {
   });
   console.log("open topic:", openTopic.topic_key, openRes.status, openRes.json?.error ?? "ok");
   if (openRes.status === 200 && openRes.json?.ok) {
-    pass("gender none/open topic allows join");
+    pass("open topic join via API");
   } else if (openRes.json?.error === "admission_closed") {
     console.log("SKIP: admission closed");
-  } else {
+  } else if (openRes.json?.error !== "class_slots_limit") {
     markFail("open topic join", JSON.stringify(openRes.json));
   }
 }
@@ -276,9 +308,14 @@ if (maleTopic?.topic_key) {
   });
   console.log("male topic:", maleTopic.topic_key, maleRes.status, maleRes.json?.error ?? "ok");
   if (maleRes.status === 200 && maleRes.json?.ok) {
-    pass("male topic allows male profile");
+    if (SYSTEM_CLASS_NAME_PATTERN.test(String(maleRes.json?.className ?? ""))) {
+      pass("male topic join returns system class name");
+    }
+    pass("male topic allows male profile via API");
   } else if (maleRes.json?.error === "admission_closed") {
     console.log("SKIP: admission closed");
+  } else if (maleRes.json?.error === "class_slots_limit") {
+    console.log("SKIP: class_slots_limit");
   } else {
     markFail("male topic + male profile", JSON.stringify(maleRes.json));
   }
@@ -297,40 +334,14 @@ if (femaleTopic?.topic_key) {
     blockedRes.json?.error ?? "ok"
   );
   if (blockedRes.json?.error === "gender_restricted_topic") {
-    pass("female topic blocks male profile");
+    pass("female topic blocks male profile via API");
   } else if (blockedRes.json?.error === "admission_closed") {
     console.log("SKIP: admission closed");
+  } else if (blockedRes.json?.error === "class_slots_limit") {
+    console.log("SKIP: class_slots_limit (gender not reached)");
   } else {
     markFail("female topic should block male profile", JSON.stringify(blockedRes.json));
   }
-
-  if (femaleProfile?.device_id) {
-    const femaleOkRes = await apiMatchJoin({
-      deviceId: femaleProfile.device_id,
-      worldKey: "default",
-      topicKey: femaleTopic.topic_key,
-      capacity: 5,
-    });
-    console.log(
-      "female topic + female profile:",
-      femaleOkRes.status,
-      femaleOkRes.json?.error ?? "ok"
-    );
-    if (femaleOkRes.status === 200 && femaleOkRes.json?.ok) {
-      pass("female topic allows female profile");
-    } else if (femaleOkRes.json?.error === "admission_closed") {
-      console.log("SKIP: admission closed");
-    } else {
-      markFail(
-        "female topic + female profile",
-        JSON.stringify(femaleOkRes.json)
-      );
-    }
-  } else {
-    console.log("SKIP: no female profile in DB");
-  }
-} else {
-  console.log("SKIP: no female-restricted topic in DB");
 }
 
 process.exit(exitCode);

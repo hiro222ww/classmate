@@ -713,6 +713,7 @@ export async function matchJoinV2Post(req: Request) {
       openJoinedClass,
       forcedClassId: forcedClassId || null,
       classId: row.class_id,
+      className: row.class_name,
       sessionId: row.session_id,
       sessionStatus: row.session_status,
       sessionCreatedAt: row.session_created_at,
