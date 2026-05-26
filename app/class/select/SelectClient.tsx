@@ -783,7 +783,10 @@ export default function SelectClient() {
           return;
         }
 
-        if (matchJson?.error === "admission_closed") {
+        if (
+  matchJson?.error === "admission_closed" ||
+  matchJson?.error === "match_deadline_passed"
+) {
   alert("現在入校受付時間外です。");
   void reloadJoinWindow();
   return;
