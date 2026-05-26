@@ -68,6 +68,16 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
     );
   }
 
+  if (fields.code === "23514") {
+    return NextResponse.json(
+      postgresErrorBody("sessions_status_check_violation", error, {
+        message:
+          "sessions.status に expired が許可されていません。20260526170000 migration を適用してください。",
+      }),
+      { status: 500 }
+    );
+  }
+
   switch (errKey) {
     case "device_id_missing":
       return NextResponse.json({ ...body, error: errKey }, { status: 400 });
@@ -124,6 +134,16 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
           classId: parsed.classId ?? null,
         },
         { status: 404 }
+      );
+
+    case "session_create_failed":
+      return NextResponse.json(
+        {
+          ...body,
+          error: errKey,
+          classId: parsed.classId ?? null,
+        },
+        { status: 500 }
       );
 
     default:
