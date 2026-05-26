@@ -7,6 +7,7 @@ import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { DevModeSwitcher } from "@/components/DevModeSwitcher";
 import { isDevFeatureEnabled } from "@/lib/devMode";
+import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 
 type World = {
   world_key: string;
@@ -746,19 +747,22 @@ export default function SelectClient() {
         prefsLoaded,
       });
 
+      const matchBody = buildMatchJoinRequestBody({
+        deviceId,
+        topicKey: b.topic_key,
+        worldKey: b.world_key ?? "default",
+        capacity: 5,
+        minAge: finalMinAge,
+        maxAge: finalMaxAge,
+        openJoinedClassId: forcedClassId ?? null,
+      });
+
+      console.log("[select] match-join-v2 request body =", matchBody);
+
       const matchRes = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId,
-          topicKey: b.topic_key,
-          worldKey: b.world_key ?? "default",
-          capacity: 5,
-          preferJoinedClass: false,
-          classId: forcedClassId ?? undefined,
-          minAge: finalMinAge,
-          maxAge: finalMaxAge,
-        }),
+        body: JSON.stringify(matchBody),
         cache: "no-store",
       });
 

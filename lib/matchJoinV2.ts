@@ -497,7 +497,34 @@ export async function matchJoinV2Post(req: Request) {
     const worldKey = String(body.worldKey ?? "default").trim() || "default";
     const topicKey = normalizeTopicKey(body.topicKey);
     const requestedCapacity = normalizeCapacity(body.capacity);
-    const forcedClassId = String(body.classId ?? "").trim();
+    const openJoinedClass = body.openJoinedClass === true;
+    const rawClassId = String(
+      body.classId ?? body.forcedClassId ?? ""
+    ).trim();
+    const forcedClassId = openJoinedClass ? rawClassId : "";
+
+    console.log("[class/match-join-v2] request", {
+      deviceId,
+      worldKey,
+      topicKey,
+      openJoinedClass,
+      forcedClassId: forcedClassId || null,
+      rawClassId: rawClassId || null,
+      requestedCapacity,
+    });
+
+    if (!openJoinedClass && rawClassId) {
+      console.warn("[class/match-join-v2] ignored classId without openJoinedClass", {
+        rawClassId,
+      });
+    }
+
+    if (openJoinedClass && !forcedClassId) {
+      return NextResponse.json(
+        { ok: false, error: "open_joined_class_id_missing" },
+        { status: 400 }
+      );
+    }
 
     if (!deviceId) {
       return NextResponse.json(
@@ -617,6 +644,16 @@ export async function matchJoinV2Post(req: Request) {
     if (!atomicRes.ok) return atomicRes.response;
 
     const row = atomicRes.row;
+
+    console.log("[class/match-join-v2] success", {
+      openJoinedClass,
+      forcedClassId: forcedClassId || null,
+      classId: row.class_id,
+      sessionId: row.session_id,
+      sessionStatus: row.session_status,
+      reused: row.reused,
+      alreadyJoined: row.already_joined,
+    });
 
     return NextResponse.json({
       ok: true,

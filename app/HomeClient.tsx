@@ -6,6 +6,7 @@ import { getDeviceId } from "@/lib/device";
 import { DevPanel } from "@/components/DevPanel";
 import { withDev } from "@/lib/withDev";
 import { getClassStatusLabel } from "@/lib/recruitment";
+import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 
 type Profile = {
   device_id: string;
@@ -666,17 +667,20 @@ return () => {
         return;
       }
 
+      const openBody = buildMatchJoinRequestBody({
+        deviceId: currentDeviceId,
+        openJoinedClassId: target.id,
+        topicKey: target.topic_key,
+        worldKey: target.world_key ?? "default",
+        capacity: 5,
+      });
+
+      console.log("[home openClass] match-join-v2 request body =", openBody);
+
       const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId: currentDeviceId,
-          classId: target.id,
-          topicKey: target.topic_key,
-          worldKey: target.world_key ?? "default",
-          capacity: 5,
-          preferJoinedClass: true,
-        }),
+        body: JSON.stringify(openBody),
         cache: "no-store",
       });
 
@@ -754,16 +758,19 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         return;
       }
 
+      const quickBody = buildMatchJoinRequestBody({
+        deviceId: currentDeviceId,
+        topicKey: null,
+        worldKey: "default",
+        capacity: 5,
+      });
+
+      console.log("[home quick free] match-join-v2 request body =", quickBody);
+
       const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId: currentDeviceId,
-          topicKey: null,
-          worldKey: "default",
-          capacity: 5,
-          preferJoinedClass: false,
-        }),
+        body: JSON.stringify(quickBody),
         cache: "no-store",
       });
 

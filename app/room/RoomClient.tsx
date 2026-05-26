@@ -18,6 +18,7 @@ import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
+import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import SessionMessages from "@/components/SessionMessages";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
 
@@ -808,17 +809,20 @@ const name = rawName === "You" ? "参加者" : rawName;
         }
 
         if (error === "session_closed") {
+  const rematchBody = buildMatchJoinRequestBody({
+    deviceId,
+    openJoinedClassId: classId,
+    topicKey: null,
+    worldKey: "default",
+    capacity: 5,
+  });
+
+  console.log("[room] rematch match-join-v2 request body =", rematchBody);
+
   const rematchRes = await fetch("/api/class/match-join-v2", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-  deviceId,
-  classId,
-  topicKey: null, // ←これ追加
-  worldKey: "default",
-  capacity: 5,
-  preferJoinedClass: true,
-}),
+    body: JSON.stringify(rematchBody),
     cache: "no-store",
   });
 
