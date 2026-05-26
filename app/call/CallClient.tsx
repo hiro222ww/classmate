@@ -306,6 +306,19 @@ export default function CallClient() {
 
     return () => {
       window.clearInterval(timer);
+      if (classId && sessionId && deviceId) {
+        void fetch("/api/class/presence", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            classId,
+            deviceId,
+            screen: "room",
+            sessionId,
+          }),
+          cache: "no-store",
+        }).catch(() => {});
+      }
     };
   }, [classId, sessionId, deviceId, fetchMembers]);
 

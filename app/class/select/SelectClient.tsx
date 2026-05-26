@@ -821,9 +821,11 @@ return;
       const sessionId = safeTrim(matchJson?.sessionId);
       const sessionStatus = safeTrim(matchJson?.sessionStatus);
       const sessionCreatedAt = safeTrim(matchJson?.sessionCreatedAt);
-      const recruitmentSessionTtlMinutes = Number(
-        matchJson?.recruitmentSessionTtlMinutes ?? 5
-      );
+      const recruitmentSessionTtlUnlimited =
+        matchJson?.recruitmentSessionTtlUnlimited === true;
+      const recruitmentSessionTtlMinutes = recruitmentSessionTtlUnlimited
+        ? null
+        : Number(matchJson?.recruitmentSessionTtlMinutes ?? 5);
 
       console.log("[select] match-join resolved", {
         openJoinedClass: matchBody.openJoinedClass ?? false,

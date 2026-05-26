@@ -6,7 +6,7 @@ import {
   pickClassDisplaySession,
   type RecruitmentSessionRow,
 } from "@/lib/recruitment";
-import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
+import { getRecruitmentSessionTtlMinutes, getRecruitmentSessionTtlSetting } from "@/lib/recruitmentSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -167,6 +167,7 @@ export async function GET(req: Request) {
 
     // 5) sessions を取得（状態表示用）
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
+    const recruitmentSessionTtlSetting = await getRecruitmentSessionTtlSetting();
 
     await expireStaleRecruitmentSessions(supabaseAdmin, {
       classIds,
@@ -290,6 +291,7 @@ export async function GET(req: Request) {
       ok: true,
       classes,
       recruitment_session_ttl_minutes: recruitmentSessionTtlMinutes,
+      recruitment_session_ttl_unlimited: recruitmentSessionTtlSetting.unlimited,
       debug: {
         membershipCount: memberships?.length ?? 0,
         classRowCount: classRows?.length ?? 0,

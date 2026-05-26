@@ -32,11 +32,11 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const classId = String(
-      body.class_id ?? ""
+      body.class_id ?? body.classId ?? ""
     ).trim();
 
     const deviceId = String(
-      body.device_id ?? ""
+      body.device_id ?? body.deviceId ?? ""
     ).trim();
 
     // 修正前:
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     const sessionId =
       String(
-        body.session_id ?? ""
+        body.session_id ?? body.sessionId ?? ""
       ).trim() || null;
 
     if (!classId || !deviceId) {
@@ -210,6 +210,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       items: filtered,
+      presence: filtered,
     });
   } catch (e: any) {
     console.error(

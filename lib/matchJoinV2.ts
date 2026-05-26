@@ -8,7 +8,7 @@ import {
   isRecruitingSessionStatus,
   isSessionEligibleForNormalJoin,
 } from "@/lib/recruitment";
-import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
+import { getRecruitmentSessionTtlMinutes, getRecruitmentSessionTtlSetting } from "@/lib/recruitmentSettings";
 import {
   GENDER_RESTRICTED_TOPIC_MESSAGE,
   genderRestrictionBlocksJoin,
@@ -650,7 +650,11 @@ export async function matchJoinV2Post(req: Request) {
     if (!atomicRes.ok) return atomicRes.response;
 
     const row = atomicRes.row;
-    const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
+    const recruitmentSessionTtlSetting = await getRecruitmentSessionTtlSetting();
+    const recruitmentSessionTtlMinutes = recruitmentSessionTtlSetting.unlimited
+      ? null
+      : recruitmentSessionTtlSetting.minutes ??
+        (await getRecruitmentSessionTtlMinutes());
 
     if (!openJoinedClass && blocksNewJoinSessionStatus(row.session_status)) {
       console.warn("[class/match-join-v2] blocked non-recruiting session on normal path", {
@@ -692,6 +696,7 @@ export async function matchJoinV2Post(req: Request) {
           sessionStatus: row.session_status,
           sessionCreatedAt: row.session_created_at,
           recruitmentSessionTtlMinutes,
+          recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
         }
       );
 
@@ -703,6 +708,7 @@ export async function matchJoinV2Post(req: Request) {
           sessionId: String(row.session_id ?? ""),
           sessionCreatedAt: row.session_created_at ?? null,
           recruitmentSessionTtlMinutes,
+          recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
           message: "このクラスは現在募集していません。",
         },
         { status: 403 }
@@ -718,6 +724,7 @@ export async function matchJoinV2Post(req: Request) {
       sessionStatus: row.session_status,
       sessionCreatedAt: row.session_created_at,
       recruitmentSessionTtlMinutes,
+      recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
       createdNewSession: Boolean(row.created_new_session),
@@ -734,6 +741,7 @@ export async function matchJoinV2Post(req: Request) {
       sessionStatus: String(row.session_status ?? "forming"),
       sessionCreatedAt: row.session_created_at ?? null,
       recruitmentSessionTtlMinutes,
+      recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
       createdNewSession: Boolean(row.created_new_session),

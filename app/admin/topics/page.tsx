@@ -84,6 +84,10 @@ const [billingNoticeText, setBillingNoticeText] = useState(
   "※ 現在、ベーシック・ミドル・プレミアムで利用できるテーマは同じです。プランの違いは、同時に参加できるクラス数です。"
 );
 
+type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";
+const [recruitmentTtlMode, setRecruitmentTtlMode] =
+  useState<RecruitmentTtlMode>("5");
+
 useEffect(() => {
   loadAll();
 }, []);
@@ -132,6 +136,17 @@ setGlobalJoinEnd(String(settings.global_join_window?.end ?? "21:30"));
 
 setBillingNoticeEnabled(Boolean(settings.billing_notice?.enabled));
 setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
+
+const ttl = settings.recruitment_session_ttl_minutes ?? {};
+if (ttl.unlimited === true) {
+  setRecruitmentTtlMode("unlimited");
+} else if (Number(ttl.minutes) === 10) {
+  setRecruitmentTtlMode("10");
+} else if (Number(ttl.minutes) === 15) {
+  setRecruitmentTtlMode("15");
+} else {
+  setRecruitmentTtlMode("5");
+}
       setMsg(
   `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length} / settings:OK）`
 );
@@ -161,6 +176,10 @@ setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
       enabled: billingNoticeEnabled,
       text: billingNoticeText,
     },
+    recruitment_session_ttl_minutes:
+      recruitmentTtlMode === "unlimited"
+        ? { unlimited: true, minutes: null }
+        : { unlimited: false, minutes: Number(recruitmentTtlMode) },
   }),
 });
 
@@ -578,6 +597,71 @@ setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
             }}
           >
             入校受付時間を保存
+          </button>
+        </div>
+      </section>
+
+      <section style={{ ...card, marginTop: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          募集締切（forming/waiting TTL）
+        </h2>
+        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
+          通常「入る」の募集セッション有効時間。超過した forming/waiting は募集停止（expired）扱いになります。
+        </p>
+
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+            gap: 10,
+          }}
+        >
+          {(
+            [
+              { value: "5", label: "5分" },
+              { value: "10", label: "10分" },
+              { value: "15", label: "15分" },
+              { value: "unlimited", label: "無制限" },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              style={{
+                fontSize: 13,
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                padding: "10px 12px",
+                borderRadius: 12,
+                border:
+                  recruitmentTtlMode === opt.value
+                    ? "2px solid #111827"
+                    : "1px solid #e5e7eb",
+                background: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="radio"
+                name="recruitmentTtlMode"
+                checked={recruitmentTtlMode === opt.value}
+                onChange={() => setRecruitmentTtlMode(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+
+          <button
+            onClick={saveSettings}
+            disabled={busy}
+            style={{
+              ...btn,
+              gridColumn: "1 / -1",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            募集締切設定を保存
           </button>
         </div>
       </section>

@@ -1,10 +1,27 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  getRecruitmentSessionTtlSetting,
+  parseRecruitmentSessionTtlValue,
+  type RecruitmentSessionTtlSetting,
+} from "@/lib/recruitmentSettings";
+import { DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES } from "@/lib/recruitment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_SETTINGS = {
+const DEFAULT_SETTINGS: {
+  global_join_window: {
+    enabled: boolean;
+    start: string;
+    end: string;
+  };
+  billing_notice: {
+    enabled: boolean;
+    text: string;
+  };
+  recruitment_session_ttl_minutes: RecruitmentSessionTtlSetting;
+} = {
   global_join_window: {
     enabled: false,
     start: "21:00",
@@ -15,7 +32,8 @@ const DEFAULT_SETTINGS = {
     text: "",
   },
   recruitment_session_ttl_minutes: {
-    minutes: 5,
+    minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
+    unlimited: false,
   },
 };
 
@@ -50,16 +68,18 @@ export async function GET() {
       }
 
       if (row.key === "recruitment_session_ttl_minutes") {
-        settings.recruitment_session_ttl_minutes = {
-          ...settings.recruitment_session_ttl_minutes,
-          ...(row.value ?? {}),
-        };
+        settings.recruitment_session_ttl_minutes =
+          parseRecruitmentSessionTtlValue(row.value);
       }
     }
+
+    const ttlSetting = await getRecruitmentSessionTtlSetting();
 
     return NextResponse.json({
       ok: true,
       settings,
+      recruitment_session_ttl_minutes: ttlSetting.minutes,
+      recruitment_session_ttl_unlimited: ttlSetting.unlimited,
     });
   } catch (e: any) {
     console.error("[settings][GET]", e);

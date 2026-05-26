@@ -190,13 +190,14 @@ const normal = await rpcCall(url, headers, {
 console.log("status:", normal.status);
 console.log(normal.text);
 
-if (normal.status === 200) {
-  const row = rowFromResult(normal.json);
-  const status = sessionStatusFromResult(normal.json);
-  console.log("class_id:", row?.class_id);
-  console.log("class_name:", row?.class_name);
-  console.log("created_new_class:", row?.created_new_class);
-  console.log("reused:", row?.reused);
+  if (normal.status === 200) {
+    const row = rowFromResult(normal.json);
+    const status = sessionStatusFromResult(normal.json);
+    console.log("class_id:", row?.class_id);
+    console.log("class_name:", row?.class_name);
+    console.log("created_new_class:", row?.created_new_class);
+    console.log("reused:", row?.reused);
+    console.log("expired_count:", row?.expired_count);
 
   if (BLOCKED_STATUSES.has(status)) {
     markFail("normal match must not return active/closed/expired", status);
@@ -236,6 +237,16 @@ if (normal.status === 200) {
       "match class_id missing from /api/class/mine",
       JSON.stringify({ classId: row?.class_id, mineIds: [...mineIds] })
     );
+  }
+
+  console.log(
+    "mine TTL:",
+    mine.json?.recruitment_session_ttl_minutes,
+    "unlimited:",
+    mine.json?.recruitment_session_ttl_unlimited
+  );
+  if (mine.status === 200 && mine.json?.ok) {
+    pass("class/mine exposes recruitment TTL settings");
   }
 } else if (normal.text.includes("allocate_system_class_name")) {
   markFail("RPC missing allocate_system_class_name", "apply 20260526200000 migration");

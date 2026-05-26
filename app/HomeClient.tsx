@@ -79,6 +79,46 @@ async function readJsonSafe(res: Response) {
   }
 }
 
+function mapPresenceRow(
+  raw: Record<string, unknown>,
+  currentSessionId?: string
+): PresenceRow | null {
+  const deviceId = String(raw.device_id ?? "").trim();
+  if (!deviceId) return null;
+
+  const rowSessionId = String(raw.session_id ?? "").trim();
+  if (
+    currentSessionId &&
+    rowSessionId &&
+    rowSessionId !== currentSessionId
+  ) {
+    return {
+      device_id: deviceId,
+      status: "offline",
+      session_id: rowSessionId,
+      updated_at: String(raw.last_seen_at ?? "").trim() || null,
+    };
+  }
+
+  const effective = String(
+    raw.effective_status ?? raw.status ?? "offline"
+  ).trim().toLowerCase();
+
+  let status: PresenceStatus = "offline";
+  if (effective === "calling" || effective === "active" || effective === "call") {
+    status = "active";
+  } else if (effective === "waiting" || effective === "room") {
+    status = "waiting";
+  }
+
+  return {
+    device_id: deviceId,
+    status,
+    session_id: rowSessionId || null,
+    updated_at: String(raw.last_seen_at ?? "").trim() || null,
+  };
+}
+
 function getEffectiveStatus(p?: PresenceRow): PresenceStatus {
   if (!p?.updated_at) return "offline";
 
@@ -212,7 +252,9 @@ export default function HomeClient() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [classes, setClasses] = useState<MineClass[]>([]);
   const [recruitmentSessionTtlMinutes, setRecruitmentSessionTtlMinutes] =
-    useState(5);
+    useState<number | null>(5);
+  const [recruitmentSessionTtlUnlimited, setRecruitmentSessionTtlUnlimited] =
+    useState(false);
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
@@ -299,7 +341,11 @@ export default function HomeClient() {
           ? classesJson.classes
           : [];
 
-        if (Number(classesJson.recruitment_session_ttl_minutes) > 0) {
+        if (classesJson.recruitment_session_ttl_unlimited === true) {
+          setRecruitmentSessionTtlUnlimited(true);
+          setRecruitmentSessionTtlMinutes(null);
+        } else if (Number(classesJson.recruitment_session_ttl_minutes) > 0) {
+          setRecruitmentSessionTtlUnlimited(false);
           setRecruitmentSessionTtlMinutes(
             Number(classesJson.recruitment_session_ttl_minutes)
           );
@@ -394,8 +440,8 @@ async function loadMembersAndPresence() {
     const results = await Promise.all(
   classIds.map(async (classId) => {
     try {
-      let members = [];
-let presence = [];
+      let members: ClassMember[] = [];
+      let presence: PresenceRow[] = [];
 const classRow = classes.find((c) => c.id === classId);
 const sessionId = String(classRow?.session_id ?? "").trim();
 
@@ -420,9 +466,18 @@ try {
     { cache: "no-store" }
   );
   const presenceJson = await readJsonSafe(presenceRes);
-  presence = Array.isArray(presenceJson?.presence)
-    ? presenceJson.presence
-    : [];
+  const presenceItems = Array.isArray(presenceJson?.items)
+    ? presenceJson.items
+    : Array.isArray(presenceJson?.presence)
+      ? presenceJson.presence
+      : [];
+
+  const presenceMap: Record<string, PresenceRow> = {};
+  for (const raw of presenceItems) {
+    const mapped = mapPresenceRow(raw as Record<string, unknown>, sessionId);
+    if (mapped) presenceMap[mapped.device_id] = mapped;
+  }
+  presence = Object.values(presenceMap);
 } catch (e) {
   console.warn("[home] presence load failed", classId, e);
 }

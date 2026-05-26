@@ -7,10 +7,19 @@ export function recruitmentSessionCutoffIso(ttlMinutes: number) {
 export async function expireStaleRecruitmentSessions(
   sb: SupabaseClient,
   params: {
-    ttlMinutes: number;
+    ttlMinutes: number | null;
     classIds?: string[];
   }
 ) {
+  if (params.ttlMinutes === null) {
+    return {
+      ok: true,
+      error: null,
+      cutoff: null,
+      skipped: true,
+    };
+  }
+
   const cutoff = recruitmentSessionCutoffIso(params.ttlMinutes);
 
   let query = sb

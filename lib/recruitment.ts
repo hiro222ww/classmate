@@ -37,8 +37,10 @@ function sessionCreatedAtMs(sessionCreatedAt?: string | null) {
 
 export function isRecruitmentSessionFresh(
   sessionCreatedAt?: string | null,
-  ttlMinutes: number = DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+  ttlMinutes: number | null = DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
 ) {
+  if (ttlMinutes === null) return true;
+
   const createdMs = sessionCreatedAtMs(sessionCreatedAt);
   if (createdMs === null) return false;
 
@@ -84,11 +86,12 @@ export function isSessionEligibleForNormalJoin(params: {
   sessionStatus?: string | null;
   sessionCreatedAt?: string | null;
   matchDeadlineAt?: string | null;
-  recruitmentSessionTtlMinutes?: number;
+  recruitmentSessionTtlMinutes?: number | null;
 }) {
   const ttl =
-    params.recruitmentSessionTtlMinutes ??
-    DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES;
+    params.recruitmentSessionTtlMinutes === undefined
+      ? DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+      : params.recruitmentSessionTtlMinutes;
   const status = normalizeSessionStatus(params.sessionStatus);
 
   if (isDeadlinePassed(params.matchDeadlineAt ?? null)) return false;
@@ -99,7 +102,7 @@ export function isSessionEligibleForNormalJoin(params: {
 
 export function pickClassDisplaySession(
   sessions: RecruitmentSessionRow[],
-  ttlMinutes: number = DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+  ttlMinutes: number | null = DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
 ): RecruitmentSessionRow | null {
   let bestActive: RecruitmentSessionRow | null = null;
   let bestFreshRecruiting: RecruitmentSessionRow | null = null;
@@ -144,11 +147,12 @@ export function isRecruiting(params: {
   matchDeadlineAt?: string | null;
   hasActiveSession?: boolean;
   sessionCreatedAt?: string | null;
-  recruitmentSessionTtlMinutes?: number;
+  recruitmentSessionTtlMinutes?: number | null;
 }) {
   const ttl =
-    params.recruitmentSessionTtlMinutes ??
-    DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES;
+    params.recruitmentSessionTtlMinutes === undefined
+      ? DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+      : params.recruitmentSessionTtlMinutes;
 
   if (!params.hasActiveSession) return false;
   if (isDeadlinePassed(params.matchDeadlineAt ?? null)) return false;
@@ -165,14 +169,15 @@ export function getClassStatusLabel(params: {
   matchDeadlineAt?: string | null;
   hasActiveSession?: boolean;
   sessionCreatedAt?: string | null;
-  recruitmentSessionTtlMinutes?: number;
+  recruitmentSessionTtlMinutes?: number | null;
 }): ClassStatusLabel {
   const sessionStatus = normalizeSessionStatus(params.sessionStatus);
   const hasActiveSession = Boolean(params.hasActiveSession);
   const deadlinePassed = isDeadlinePassed(params.matchDeadlineAt ?? null);
   const ttl =
-    params.recruitmentSessionTtlMinutes ??
-    DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES;
+    params.recruitmentSessionTtlMinutes === undefined
+      ? DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+      : params.recruitmentSessionTtlMinutes;
 
   if (sessionStatus === "active") {
     return "通話中";
