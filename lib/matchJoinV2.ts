@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-export const dynamic = "force-dynamic";
-
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -67,17 +65,23 @@ function deadlineError(matchDeadlineAt?: string | null) {
 
 type ProfileRow = {
   device_id: string;
+  display_name?: string | null;
   birth_date?: string | null;
   gender?: string | null;
 };
 
-type AtomicMatchRow = {
-  class_id: string;
-  class_name: string;
-  session_id: string;
-  session_status: string | null;
-  session_created_at: string | null;
-  reused: boolean;
+type SessionRow = {
+  id: string;
+  status?: string | null;
+  created_at?: string | null;
+  capacity?: number | null;
+};
+
+type DbError = {
+  message: string;
+  code?: string;
+  hint?: string;
+  details?: string;
 };
 
 type ClassDeadlineRow = {
@@ -97,6 +101,58 @@ type TopicGenderRestrictionRow = {
   topic_key?: string | null;
   gender_restriction?: string | null;
 };
+
+type RunAtomicMatchParams = {
+  worldKey: string;
+  topicKey: string | null;
+  requestedCapacity: number;
+  requestedMinAge: number;
+  requestedMaxAge: number;
+  deviceId: string;
+  joinDisplayName: string;
+  blockedDeviceIds: string[];
+};
+
+function resolveJoinDisplayName(profile: ProfileRow) {
+  return String(profile.display_name ?? "").trim() || "参加者";
+}
+
+function errorDetail(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function upsertSessionMember(params: {
+  sessionId: string;
+  deviceId: string;
+  joinDisplayName: string;
+}) {
+  const { error } = await supabase.from("session_members").upsert(
+    {
+      session_id: params.sessionId,
+      device_id: params.deviceId,
+      display_name: params.joinDisplayName,
+    },
+    {
+      onConflict: "session_id,device_id",
+    }
+  );
+
+  if (error) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "session_member_upsert_failed",
+          detail: error.message,
+        },
+        { status: 500 }
+      ),
+    };
+  }
+
+  return { ok: true as const };
+}
 
 async function getBlockedDeviceIds(deviceId: string) {
   const { data, error } = await supabase
@@ -121,7 +177,7 @@ async function getBlockedDeviceIds(deviceId: string) {
   return {
     ok: true as const,
     ids: (data ?? [])
-      .map((x: any) => String(x.blocked_device_id ?? "").trim())
+      .map((x) => String(x.blocked_device_id ?? "").trim())
       .filter(Boolean),
   };
 }
@@ -165,16 +221,11 @@ async function sessionHasBlockedMember(
 }
 
 async function getProfile(deviceId: string) {
-  console.log("[match-join] profile lookup deviceId =", deviceId);
-
   const { data, error } = await supabase
     .from("user_profiles")
-    .select("device_id,birth_date,gender")
+    .select("device_id,display_name,birth_date,gender")
     .eq("device_id", deviceId)
     .maybeSingle();
-
-    console.log("[match-join] profile data =", data);
-  console.log("[match-join] profile error =", error);
 
   if (error) {
     return {
@@ -243,7 +294,7 @@ async function getAllMembershipIds(deviceId: string) {
   }
 
   const ids = (data ?? [])
-    .map((x: any) => String(x.class_id ?? "").trim())
+    .map((x) => String(x.class_id ?? "").trim())
     .filter(Boolean);
 
   return {
@@ -307,7 +358,7 @@ async function ensureMembership(params: {
   }
 
   const ids = (memberships ?? [])
-    .map((x: any) => String(x.class_id ?? "").trim())
+    .map((x) => String(x.class_id ?? "").trim())
     .filter(Boolean);
 
   if (ids.includes(classId)) {
@@ -355,9 +406,9 @@ async function ensureMembership(params: {
           ok: false,
           error: "membership_upsert_failed",
           detail: insErr.message,
-          code: (insErr as any)?.code ?? null,
-          hint: (insErr as any)?.hint ?? null,
-          details: (insErr as any)?.details ?? null,
+          code: (insErr as DbError).code ?? null,
+          hint: (insErr as DbError).hint ?? null,
+          details: (insErr as DbError).details ?? null,
         },
         { status: 500 }
       ),
@@ -525,8 +576,8 @@ function checkGenderRestriction(params: {
   ).trim();
 
   if (!genderRestriction || genderRestriction === "none") {
-  return null;
-}
+    return null;
+  }
 
   const profileGender = String(params.profile.gender ?? "").trim();
 
@@ -587,20 +638,13 @@ async function getClassDeadlineById(classId: string) {
   };
 }
 
-async function runAtomicMatch(params: {
-  worldKey: string;
-  topicKey: string | null;
-  requestedCapacity: number;
-  requestedMinAge: number;
-  requestedMaxAge: number;
-  deviceId: string;
-  blockedDeviceIds: string[];
-}) {
+async function runAtomicMatch(params: RunAtomicMatchParams) {
   const {
     worldKey,
     topicKey,
     requestedCapacity,
     deviceId,
+    joinDisplayName,
     blockedDeviceIds,
   } = params;
 
@@ -660,7 +704,7 @@ async function runAtomicMatch(params: {
     };
   }
 
-  let chosenSession: any = null;
+  let chosenSession: SessionRow | null = null;
 
   for (const s of sessions ?? []) {
     const blockedCheck = await sessionHasBlockedMember(
@@ -669,11 +713,11 @@ async function runAtomicMatch(params: {
     );
 
     if (!blockedCheck.ok) {
-  return {
-    ok: false as const,
-    response: blockedCheck.response,
-  };
-}
+      return {
+        ok: false as const,
+        response: blockedCheck.response,
+      };
+    }
     if (blockedCheck.hasBlocked) continue;
 
     const { count, error: countErr } = await supabase
@@ -698,7 +742,7 @@ async function runAtomicMatch(params: {
     const capacity = Number(s.capacity ?? requestedCapacity);
 
     if ((count ?? 0) < capacity) {
-      chosenSession = s;
+      chosenSession = s as SessionRow;
       break;
     }
   }
@@ -757,32 +801,12 @@ async function runAtomicMatch(params: {
     };
   }
 
-  const { error: sessionMemberErr } = await supabase
-    .from("session_members")
-    .upsert(
-      {
-        session_id: sessionId,
-        device_id: deviceId,
-      },
-      {
-        onConflict: "session_id,device_id",
-        ignoreDuplicates: true,
-      }
-    );
-
-  if (sessionMemberErr) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "session_member_upsert_failed",
-          detail: sessionMemberErr.message,
-        },
-        { status: 500 }
-      ),
-    };
-  }
+  const memberRes = await upsertSessionMember({
+    sessionId,
+    deviceId,
+    joinDisplayName,
+  });
+  if (!memberRes.ok) return memberRes;
 
   return {
     ok: true as const,
@@ -797,10 +821,8 @@ async function runAtomicMatch(params: {
   };
 }
 
-export async function POST(req: Request) {
+export async function matchJoinV2Post(req: Request) {
   try {
-      console.log("🔥 MATCH JOIN V2 DEPLOY CHECK 2026-05-26");
-
     const admissionUrl = new URL("/api/admission/status", req.url);
 
     const admissionRes = await fetch(admissionUrl, {
@@ -808,8 +830,6 @@ export async function POST(req: Request) {
     });
 
     const admission = await admissionRes.json().catch(() => null);
-
-    console.log("[match-join] admission status =", admission);
 
     if (!admissionRes.ok || !admission?.ok) {
       return NextResponse.json(
@@ -840,14 +860,6 @@ export async function POST(req: Request) {
     const requestedCapacity = normalizeCapacity(body.capacity);
     const forcedClassId = String(body.classId ?? "").trim();
 
-    console.log("🔥 MATCH JOIN ATOMIC MEMBERSHIP VERSION LOADED");
-    console.log("[class/match-join] body =", body);
-    console.log("[class/match-join] deviceId =", deviceId);
-    console.log("[class/match-join] topicKey =", topicKey);
-    console.log("[class/match-join] worldKey =", worldKey);
-    console.log("[class/match-join] requestedCapacity =", requestedCapacity);
-    console.log("[class/match-join] forcedClassId =", forcedClassId);
-
     if (!deviceId) {
       return NextResponse.json(
         { ok: false, error: "device_id_missing" },
@@ -858,8 +870,6 @@ export async function POST(req: Request) {
     const blockedRes = await getBlockedDeviceIds(deviceId);
     if (!blockedRes.ok) return blockedRes.response;
     const blockedDeviceIds = blockedRes.ids;
-
-    console.log("[class/match-join] blockedDeviceIds =", blockedDeviceIds);
 
     const prefsRes = await getMatchPrefs(deviceId);
     if (!prefsRes.ok) return prefsRes.response;
@@ -872,28 +882,12 @@ export async function POST(req: Request) {
     const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
     const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
 
-    console.log("[class/match-join] prefs fallback =", {
-      minAge: fallbackMinAge,
-      maxAge: fallbackMaxAge,
-    });
-    console.log("[class/match-join] final ages =", {
-      bodyMinAge: body.minAge ?? null,
-      bodyMaxAge: body.maxAge ?? null,
-      requestedMinAge,
-      requestedMaxAge,
-    });
-
     const profileRes = await getProfile(deviceId);
     if (!profileRes.ok) return profileRes.response;
 
-    const selfAge = calcAgeFromBirthDate(profileRes.profile.birth_date);
-
-    console.log("[class/match-join] self profile =", {
-      deviceId,
-      selfAge,
-      birth_date: profileRes.profile.birth_date ?? null,
-      gender: profileRes.profile.gender ?? null,
-    });
+    const selfProfile = profileRes.profile;
+    const joinDisplayName = resolveJoinDisplayName(selfProfile);
+    const selfAge = calcAgeFromBirthDate(selfProfile.birth_date);
 
     const slotsRes = await getClassSlots(deviceId);
     if (!slotsRes.ok) return slotsRes.response;
@@ -903,8 +897,6 @@ export async function POST(req: Request) {
     if (!allMembershipsRes.ok) return allMembershipsRes.response;
     const allMembershipIdsBefore = allMembershipsRes.ids;
 
-    // 【追加】すでに上限到達している場合、新規クラス作成/RPC実行を止める
-    // forcedClassId がある場合は既存クラス入室なので例外扱い
     if (!forcedClassId && allMembershipIdsBefore.length >= classSlots) {
       return NextResponse.json(
         {
@@ -939,40 +931,19 @@ export async function POST(req: Request) {
 
       const genderBlocked = checkGenderRestriction({
         topic: topicGenderRes.row,
-        profile: profileRes.profile,
+        profile: selfProfile,
       });
       if (genderBlocked) return genderBlocked;
-
-      console.log("[match-join] deadline check", {
-        branch: "forcedClassId",
-        forcedClassId,
-        classId: existingClass.id,
-        topicKey: existingClass.topic_key ?? null,
-        worldKey: existingClass.world_key ?? null,
-        matchDeadlineAt: existingClass.match_deadline_at ?? null,
-        now: new Date().toISOString(),
-      });
 
       const membershipCheck = await hasMembership(deviceId, forcedClassId);
       if (!membershipCheck.ok) return membershipCheck.response;
 
       const isExistingMember = membershipCheck.isMember;
 
-      console.log("[match-join] forced membership check", {
-        deviceId,
-        forcedClassId,
-        isExistingMember,
-      });
-
       if (
         !isExistingMember &&
         isDeadlinePassed(existingClass.match_deadline_at ?? null)
       ) {
-        console.log("[match-join] deadline blocked", {
-          branch: "forcedClassId",
-          classId: existingClass.id,
-          matchDeadlineAt: existingClass.match_deadline_at ?? null,
-        });
         return deadlineError(existingClass.match_deadline_at ?? null);
       }
 
@@ -1008,14 +979,7 @@ export async function POST(req: Request) {
         );
       }
 
-      let chosenSession:
-        | {
-            id: string;
-            status: string | null;
-            created_at: string | null;
-            capacity?: number | null;
-          }
-        | null = null;
+      let chosenSession: SessionRow | null = null;
 
       for (const s of existingSessions ?? []) {
         const check = await sessionHasBlockedMember(
@@ -1025,7 +989,7 @@ export async function POST(req: Request) {
         if (!check.ok) return check.response;
 
         if (!check.hasBlocked) {
-          chosenSession = s as any;
+          chosenSession = s as SessionRow;
           break;
         }
       }
@@ -1063,36 +1027,31 @@ export async function POST(req: Request) {
         sessionCreatedAt = createdSession.created_at ?? null;
         reused = false;
       }
+
+      const forcedMemberRes = await upsertSessionMember({
+        sessionId,
+        deviceId,
+        joinDisplayName,
+      });
+      if (!forcedMemberRes.ok) return forcedMemberRes.response;
     } else {
       const topicGenderRes = await getTopicGenderRestriction(topicKey);
       if (!topicGenderRes.ok) return topicGenderRes.response;
 
       const genderBlocked = checkGenderRestriction({
         topic: topicGenderRes.row,
-        profile: profileRes.profile,
+        profile: selfProfile,
       });
       if (genderBlocked) return genderBlocked;
 
       const topicRes = await getTopicDeadline({ worldKey, topicKey });
       if (!topicRes.ok) return topicRes.response;
 
-      if (topicRes.row?.match_deadline_at) {
-        console.log("[match-join] deadline check", {
-          branch: "topic-before-atomic",
-          topicKey,
-          worldKey,
-          matchDeadlineAt: topicRes.row.match_deadline_at,
-          now: new Date().toISOString(),
-        });
-
-        if (isDeadlinePassed(topicRes.row.match_deadline_at)) {
-          console.log("[match-join] deadline blocked", {
-            branch: "topic-before-atomic",
-            topicKey,
-            matchDeadlineAt: topicRes.row.match_deadline_at,
-          });
-          return deadlineError(topicRes.row.match_deadline_at);
-        }
+      if (
+        topicRes.row?.match_deadline_at &&
+        isDeadlinePassed(topicRes.row.match_deadline_at)
+      ) {
+        return deadlineError(topicRes.row.match_deadline_at);
       }
 
       const atomicRes = await runAtomicMatch({
@@ -1102,6 +1061,7 @@ export async function POST(req: Request) {
         requestedMinAge,
         requestedMaxAge,
         deviceId,
+        joinDisplayName,
         blockedDeviceIds,
       });
       if (!atomicRes.ok) return atomicRes.response;
@@ -1116,21 +1076,7 @@ export async function POST(req: Request) {
       const matchedClassRes = await getClassDeadlineById(classId);
       if (!matchedClassRes.ok) return matchedClassRes.response;
 
-      console.log("[match-join] deadline check", {
-        branch: "post-atomic-class",
-        classId: matchedClassRes.row.id,
-        topicKey: matchedClassRes.row.topic_key ?? null,
-        worldKey: matchedClassRes.row.world_key ?? null,
-        matchDeadlineAt: matchedClassRes.row.match_deadline_at ?? null,
-        now: new Date().toISOString(),
-      });
-
       if (isDeadlinePassed(matchedClassRes.row.match_deadline_at ?? null)) {
-        console.log("[match-join] deadline blocked", {
-          branch: "post-atomic-class",
-          classId: matchedClassRes.row.id,
-          matchDeadlineAt: matchedClassRes.row.match_deadline_at ?? null,
-        });
         return deadlineError(matchedClassRes.row.match_deadline_at ?? null);
       }
 
@@ -1163,13 +1109,13 @@ export async function POST(req: Request) {
       classSlots,
       blockedDeviceCount: blockedDeviceIds.length,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[class/match-join] server error =", e);
     return NextResponse.json(
       {
         ok: false,
         error: "server_error",
-        detail: e?.message ?? String(e),
+        detail: errorDetail(e),
       },
       { status: 500 }
     );

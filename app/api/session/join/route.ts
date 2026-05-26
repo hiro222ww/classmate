@@ -18,6 +18,10 @@ function extractUuid(v: unknown) {
   return m?.[0] ?? "";
 }
 
+function errorDetail(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function sanitizeDisplayName(v: unknown) {
   const s = String(v ?? "").trim();
   if (!s || s === "You" || s === "undefined" || s === "null") return "参加者";
@@ -61,10 +65,28 @@ async function ensureJoinableSession(sessionId: string) {
   };
 }
 
+type JoinBody = {
+  sessionId?: unknown;
+  session_id?: unknown;
+  session?: unknown;
+  sessionID?: unknown;
+  roomSessionId?: unknown;
+  session_id_raw?: unknown;
+  classId?: unknown;
+  class_id?: unknown;
+  class?: unknown;
+  deviceId?: unknown;
+  device_id?: unknown;
+  name?: unknown;
+  displayName?: unknown;
+  display_name?: unknown;
+  invite?: unknown;
+};
+
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
-    const body = (await req.json().catch(() => ({}))) as any;
+    const body = (await req.json().catch(() => ({}))) as JoinBody;
 
     const rawSessionCandidate =
       [
@@ -172,6 +194,32 @@ export async function POST(req: Request) {
 
     const now = new Date().toISOString();
 
+    const { data: profile, error: profileErr } = await supabaseAdmin
+      .from("user_profiles")
+      .select("display_name")
+      .eq("device_id", deviceId)
+      .maybeSingle();
+
+    if (profileErr) {
+      console.log("[session/join profileErr]", profileErr);
+      return NextResponse.json(
+        { ok: false, error: "profile_lookup_failed" },
+        { status: 500 }
+      );
+    }
+
+    const displayName =
+      String(profile?.display_name ?? "").trim() ||
+      sanitizeDisplayName(
+        body.name ??
+          body.displayName ??
+          body.display_name ??
+          url.searchParams.get("name") ??
+          url.searchParams.get("displayName")
+      );
+
+    console.log("[session/join displayName]", { deviceId, displayName });
+
         // ✅ クラス所属上限チェック
     // すでにこのクラスに入っている場合はOK。
     // 新しく別クラスへ参加する場合だけ class_slots を確認する。
@@ -239,7 +287,7 @@ export async function POST(req: Request) {
         {
           session_id: sessionId,
           device_id: deviceId,
-          display_name: name,
+          display_name: displayName,
           joined_at: now,
         },
         { onConflict: "session_id,device_id" }
@@ -301,11 +349,11 @@ export async function POST(req: Request) {
       memberCount: Number(count ?? 0),
       alreadyInSession: false,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[session/join server_error]", e);
 
     return NextResponse.json(
-      { ok: false, error: "server_error", detail: e?.message ?? String(e) },
+      { ok: false, error: "server_error", detail: errorDetail(e) },
       { status: 500 }
     );
   }

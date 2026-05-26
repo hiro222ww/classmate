@@ -19,10 +19,10 @@ const cards = [
     href: "/admin/reports",
   },
   {
-    title: "世界観 / テーマ",
-    desc: "worlds / topics の追加・編集",
-    href: "/admin/topics",
-  },
+  title: "世界観 / テーマ / 全体設定",
+  desc: "テーマ、入校時間、課金注意文の管理",
+  href: "/admin/topics",
+},
 ];
 
 export default function AdminHomePage() {

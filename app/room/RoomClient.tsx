@@ -808,7 +808,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         }
 
         if (error === "session_closed") {
-  const rematchRes = await fetch("/api/class/match-join", {
+  const rematchRes = await fetch("/api/class/match-join-v2", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

@@ -1,4 +1,5 @@
 // app/api/billing/create-portal-session/route.ts
+
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -16,14 +17,24 @@ function originFromEnv() {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
+
     const deviceId = String(body.deviceId ?? "").trim();
     const dev = String(body.dev ?? "").trim();
 
-    // ✅ theme / slot を受け取る
-    const kind = String(body.kind ?? "theme").trim();
+    const kind = String(body.kind ?? "").trim();
+
+    if (kind !== "slot" && kind !== "theme") {
+      return NextResponse.json(
+        { error: "invalid_portal_kind" },
+        { status: 400 }
+      );
+    }
 
     if (!deviceId) {
-      return NextResponse.json({ error: "deviceId_required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "deviceId_required" },
+        { status: 400 }
+      );
     }
 
     const { data, error } = await supabaseAdmin
@@ -34,11 +45,18 @@ export async function POST(req: Request) {
 
     if (error) {
       console.error("read user_billing_customers error:", error);
-      return NextResponse.json({ error: "db_error" }, { status: 500 });
+
+      return NextResponse.json(
+        { error: "db_error" },
+        { status: 500 }
+      );
     }
 
     if (!data?.stripe_customer_id) {
-      return NextResponse.json({ error: "customer_not_found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "customer_not_found" },
+        { status: 404 }
+      );
     }
 
     const origin = originFromEnv();
@@ -54,7 +72,9 @@ export async function POST(req: Request) {
 
     if (!configuration) {
       return NextResponse.json(
-        { error: `portal_configuration_missing:${kind}` },
+        {
+          error: `portal_configuration_missing:${kind}`,
+        },
         { status: 500 }
       );
     }
@@ -65,11 +85,16 @@ export async function POST(req: Request) {
       configuration,
     });
 
-    return NextResponse.json({ url: session.url });
+    return NextResponse.json({
+      url: session.url,
+    });
   } catch (e: any) {
     console.error("create portal session error:", e);
+
     return NextResponse.json(
-      { error: e?.message ?? "server_error" },
+      {
+        error: e?.message ?? "server_error",
+      },
       { status: 500 }
     );
   }
