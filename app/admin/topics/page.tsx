@@ -3,7 +3,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type WorldRow = {
   world_key: string;
@@ -84,29 +84,42 @@ const [billingNoticeText, setBillingNoticeText] = useState(
   "※ 現在、ベーシック・ミドル・プレミアムで利用できるテーマは同じです。プランの違いは、同時に参加できるクラス数です。"
 );
 
+useEffect(() => {
+  loadAll();
+}, []);
+
   async function loadAll() {
     setBusy(true);
     setMsg("");
     try {
       const topicsRes = await fetch("/api/admin/topics", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: "list", show_archived: true }),
-        cache: "no-store",
-      });
+  method: "POST",
+  credentials: "include",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    mode: "list",
+    show_archived: true,
+  }),
+  cache: "no-store",
+});
       const tj = await readJsonOrThrow(topicsRes);
 
       const worldsRes = await fetch("/api/admin/worlds", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode: "list" }),
-        cache: "no-store",
-      });
+  method: "POST",
+  credentials: "include",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    mode: "list",
+  }),
+  cache: "no-store",
+});
       const wj = await readJsonOrThrow(worldsRes);
 
       setTopics(tj.topics ?? []);
       setWorlds(wj.worlds ?? []);
       const settingsRes = await fetch("/api/admin/settings", {
+  method: "GET",
+  credentials: "include",
   cache: "no-store",
 });
 const sj = await readJsonOrThrow(settingsRes);
@@ -135,20 +148,21 @@ setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
 
   try {
     const res = await fetch("/api/admin/settings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        global_join_window: {
-          enabled: globalJoinEnabled,
-          start: globalJoinStart,
-          end: globalJoinEnd,
-        },
-        billing_notice: {
-          enabled: billingNoticeEnabled,
-          text: billingNoticeText,
-        },
-      }),
-    });
+  method: "POST",
+  credentials: "include",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    global_join_window: {
+      enabled: globalJoinEnabled,
+      start: globalJoinStart,
+      end: globalJoinEnd,
+    },
+    billing_notice: {
+      enabled: billingNoticeEnabled,
+      text: billingNoticeText,
+    },
+  }),
+});
 
     await readJsonOrThrow(res);
 
