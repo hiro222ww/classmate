@@ -9,6 +9,10 @@ import {
   isSessionEligibleForNormalJoin,
 } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
+import {
+  GENDER_RESTRICTED_TOPIC_MESSAGE,
+  genderRestrictionBlocksJoin,
+} from "@/lib/genderRestriction";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -440,24 +444,20 @@ function checkGenderRestriction(params: {
   topic: TopicGenderRestrictionRow | null;
   profile: ProfileRow;
 }) {
-  const genderRestriction = String(
-    params.topic?.gender_restriction ?? ""
-  ).trim();
-
-  if (!genderRestriction || genderRestriction === "none") {
-    return null;
-  }
-
-  const profileGender = String(params.profile.gender ?? "").trim();
-
-  if (genderRestriction !== profileGender) {
+  if (
+    genderRestrictionBlocksJoin({
+      genderRestriction: params.topic?.gender_restriction,
+      profileGender: params.profile.gender,
+    })
+  ) {
     return NextResponse.json(
       {
         ok: false,
         error: "gender_restricted_topic",
-        genderRestriction,
-        profileGender: profileGender || null,
-        message: "このテーマは登録した性別では参加できません",
+        genderRestriction:
+          String(params.topic?.gender_restriction ?? "").trim() || null,
+        profileGender: String(params.profile.gender ?? "").trim() || null,
+        message: GENDER_RESTRICTED_TOPIC_MESSAGE,
       },
       { status: 403 }
     );
@@ -720,6 +720,7 @@ export async function matchJoinV2Post(req: Request) {
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
       createdNewSession: Boolean(row.created_new_session),
+      createdNewClass: Boolean(row.created_new_class),
       reused: row.reused,
       alreadyJoined: row.already_joined,
     });
@@ -735,6 +736,7 @@ export async function matchJoinV2Post(req: Request) {
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
       createdNewSession: Boolean(row.created_new_session),
+      createdNewClass: Boolean(row.created_new_class),
       requestedCapacity,
       requestedMinAge,
       requestedMaxAge,

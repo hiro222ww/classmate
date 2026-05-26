@@ -30,6 +30,7 @@ export type MatchJoinAtomicV3Row = {
   expired_count?: number | null;
   candidate_session_count?: number | null;
   created_new_session?: boolean | null;
+  created_new_class?: boolean | null;
 };
 
 function parseRpcDetail(error: unknown): Record<string, unknown> {
@@ -227,6 +228,7 @@ export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
     expiredCount: Number(row.expired_count ?? 0),
     candidateSessionCount: Number(row.candidate_session_count ?? 0),
     createdNewSession: Boolean(row.created_new_session),
+    createdNewClass: Boolean(row.created_new_class),
     reused: Boolean(row.reused),
     alreadyJoined: Boolean(row.already_joined),
   });

@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "@/lib/adminAuth";
+import { normalizeGenderRestriction } from "@/lib/genderRestriction";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,16 +59,6 @@ function getSupabase() {
 function toNum(v: any, fallback: number) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function normalizeGenderRestriction(v: any) {
-  const s = String(v ?? "").trim();
-
-  if (s === "male" || s === "female") {
-    return s;
-  }
-
-  return null;
 }
 
 function normalizeTopicInput(t: any) {
@@ -334,10 +325,13 @@ export async function POST(req: Request) {
 
       if (
         patch.gender_restriction === null ||
+        patch.gender_restriction === "none" ||
         patch.gender_restriction === "male" ||
         patch.gender_restriction === "female"
       ) {
-        updatePatch.gender_restriction = patch.gender_restriction;
+        updatePatch.gender_restriction = normalizeGenderRestriction(
+          patch.gender_restriction
+        );
       }
 
       const { error } =

@@ -9,6 +9,7 @@ import { DevModeSwitcher } from "@/components/DevModeSwitcher";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
+import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
 
 type World = {
   world_key: string;
@@ -804,6 +805,11 @@ export default function SelectClient() {
           alert(
             matchJson?.message ?? "このクラスは現在募集していません。"
           );
+          return;
+        }
+
+        if (matchJson?.error === "gender_restricted_topic") {
+          alert(matchJson?.message ?? GENDER_RESTRICTED_TOPIC_MESSAGE);
           return;
         }
 

@@ -396,13 +396,15 @@ async function loadMembersAndPresence() {
     try {
       let members = [];
 let presence = [];
+const classRow = classes.find((c) => c.id === classId);
+const sessionId = String(classRow?.session_id ?? "").trim();
 
-// membersは必ず取得
+// membersは必ず取得（session_id があれば session_members 優先）
 try {
-  const membersRes = await fetch(
-    `/api/class/members?classId=${encodeURIComponent(classId)}`,
-    { cache: "no-store" }
-  );
+  const membersUrl = sessionId
+    ? `/api/class/members?classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(sessionId)}`
+    : `/api/class/members?classId=${encodeURIComponent(classId)}`;
+  const membersRes = await fetch(membersUrl, { cache: "no-store" });
   const membersJson = await readJsonSafe(membersRes);
   members = Array.isArray(membersJson?.members)
     ? membersJson.members
