@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
 
 export const dynamic = "force-dynamic";
 
@@ -135,7 +136,7 @@ async function ensureSessionMember(params: {
 
   const { data: profile, error: profileError } = await supabase
     .from("user_profiles")
-    .select("display_name, photo_path")
+    .select("display_name")
     .eq("device_id", deviceId)
     .maybeSingle();
 
@@ -154,14 +155,13 @@ async function ensureSessionMember(params: {
   }
 
   const displayName = String(profile?.display_name ?? "").trim() || "参加者";
-  const photoPath = String(profile?.photo_path ?? "").trim() || null;
 
   const { error } = await supabase.from("session_members").upsert(
     {
       session_id: sessionId,
       device_id: deviceId,
       display_name: displayName,
-      photo_path: photoPath,
+      joined_at: new Date().toISOString(),
       is_in_call: false,
     },
     {
@@ -170,17 +170,20 @@ async function ensureSessionMember(params: {
   );
 
   if (error) {
+    console.error("[join-by-invite] session_member_upsert_failed", {
+      sessionId,
+      deviceId,
+      displayName,
+      ...formatPostgresError(error),
+    });
+
     return {
       ok: false as const,
       response: NextResponse.json(
-        {
-          ok: false,
-          error: "session_member_upsert_failed",
-          detail: error.message,
-          code: (error as any)?.code ?? null,
-          hint: (error as any)?.hint ?? null,
-          details: (error as any)?.details ?? null,
-        },
+        postgresErrorBody("session_member_upsert_failed", error, {
+          sessionId,
+          deviceId,
+        }),
         { status: 500 }
       ),
     };
@@ -189,7 +192,7 @@ async function ensureSessionMember(params: {
   return {
     ok: true as const,
     displayName,
-    photoPath,
+    photoPath: null,
   };
 }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -294,9 +295,18 @@ export async function POST(req: Request) {
       );
 
     if (memberErr) {
-      console.log("[session/join memberErr]", memberErr);
+      console.error("[session/join] session_member_upsert_failed", {
+        sessionId,
+        deviceId,
+        displayName,
+        ...formatPostgresError(memberErr),
+      });
+
       return NextResponse.json(
-        { ok: false, error: memberErr.message },
+        postgresErrorBody("session_member_upsert_failed", memberErr, {
+          sessionId,
+          deviceId,
+        }),
         { status: 500 }
       );
     }

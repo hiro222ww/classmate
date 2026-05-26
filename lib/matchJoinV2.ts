@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -68,6 +69,7 @@ type ProfileRow = {
   display_name?: string | null;
   birth_date?: string | null;
   gender?: string | null;
+  photo_path?: string | null;
 };
 
 type SessionRow = {
@@ -126,26 +128,35 @@ async function upsertSessionMember(params: {
   deviceId: string;
   joinDisplayName: string;
 }) {
-  const { error } = await supabase.from("session_members").upsert(
-    {
-      session_id: params.sessionId,
-      device_id: params.deviceId,
-      display_name: params.joinDisplayName,
-    },
-    {
-      onConflict: "session_id,device_id",
-    }
-  );
+  const joinedAt = new Date().toISOString();
+  const row = {
+    session_id: params.sessionId,
+    device_id: params.deviceId,
+    display_name: params.joinDisplayName,
+    joined_at: joinedAt,
+    is_in_call: false,
+  };
+
+  const { error } = await supabase.from("session_members").upsert(row, {
+    onConflict: "session_id,device_id",
+  });
 
   if (error) {
+    console.error("[match-join-v2] session_member_upsert_failed", {
+      sessionId: params.sessionId,
+      deviceId: params.deviceId,
+      joinDisplayName: params.joinDisplayName,
+      row,
+      ...formatPostgresError(error),
+    });
+
     return {
       ok: false as const,
       response: NextResponse.json(
-        {
-          ok: false,
-          error: "session_member_upsert_failed",
-          detail: error.message,
-        },
+        postgresErrorBody("session_member_upsert_failed", error, {
+          sessionId: params.sessionId,
+          deviceId: params.deviceId,
+        }),
         { status: 500 }
       ),
     };
