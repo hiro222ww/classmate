@@ -165,11 +165,16 @@ async function sessionHasBlockedMember(
 }
 
 async function getProfile(deviceId: string) {
+  console.log("[match-join] profile lookup deviceId =", deviceId);
+
   const { data, error } = await supabase
     .from("user_profiles")
     .select("device_id,birth_date,gender")
     .eq("device_id", deviceId)
     .maybeSingle();
+
+    console.log("[match-join] profile data =", data);
+  console.log("[match-join] profile error =", error);
 
   if (error) {
     return {
