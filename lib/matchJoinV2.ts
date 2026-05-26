@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { formatPostgresError } from "@/lib/postgresError";
 import { callMatchJoinAtomicV3 } from "@/lib/matchJoinAtomicV3";
-import { blocksNewJoinSessionStatus, isDeadlinePassed } from "@/lib/recruitment";
+import {
+  blocksNewJoinSessionStatus,
+  isDeadlinePassed,
+  isRecruitingSessionStatus,
+  isSessionEligibleForNormalJoin,
+} from "@/lib/recruitment";
+import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -644,6 +650,7 @@ export async function matchJoinV2Post(req: Request) {
     if (!atomicRes.ok) return atomicRes.response;
 
     const row = atomicRes.row;
+    const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
 
     if (!openJoinedClass && blocksNewJoinSessionStatus(row.session_status)) {
       console.warn("[class/match-join-v2] blocked non-recruiting session on normal path", {
@@ -666,12 +673,50 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
+    if (
+      !openJoinedClass &&
+      isRecruitingSessionStatus(row.session_status) &&
+      !isSessionEligibleForNormalJoin({
+        sessionStatus: row.session_status,
+        sessionCreatedAt: row.session_created_at,
+        recruitmentSessionTtlMinutes,
+      })
+    ) {
+      console.warn(
+        "[class/match-join-v2] blocked stale or invalid session on normal path",
+        {
+          openJoinedClass,
+          forcedClassId: forcedClassId || null,
+          classId: row.class_id,
+          sessionId: row.session_id,
+          sessionStatus: row.session_status,
+          sessionCreatedAt: row.session_created_at,
+          recruitmentSessionTtlMinutes,
+        }
+      );
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "recruitment_closed",
+          sessionStatus: String(row.session_status ?? ""),
+          sessionId: String(row.session_id ?? ""),
+          sessionCreatedAt: row.session_created_at ?? null,
+          recruitmentSessionTtlMinutes,
+          message: "このクラスは現在募集していません。",
+        },
+        { status: 403 }
+      );
+    }
+
     console.log("[class/match-join-v2] success", {
       openJoinedClass,
       forcedClassId: forcedClassId || null,
       classId: row.class_id,
       sessionId: row.session_id,
       sessionStatus: row.session_status,
+      sessionCreatedAt: row.session_created_at,
+      recruitmentSessionTtlMinutes,
       reused: row.reused,
       alreadyJoined: row.already_joined,
     });
@@ -683,6 +728,7 @@ export async function matchJoinV2Post(req: Request) {
       sessionId: String(row.session_id),
       sessionStatus: String(row.session_status ?? "forming"),
       sessionCreatedAt: row.session_created_at ?? null,
+      recruitmentSessionTtlMinutes,
       requestedCapacity,
       requestedMinAge,
       requestedMaxAge,

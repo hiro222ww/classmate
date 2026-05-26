@@ -3,8 +3,12 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
 import {
   blocksNewJoinSessionStatus,
+  isRecruitingSessionStatus,
+  isSessionEligibleForNormalJoin,
   parseOpenJoinedClassFlag,
 } from "@/lib/recruitment";
+import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
+import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,7 +40,7 @@ function sanitizeDisplayName(v: unknown) {
 async function ensureJoinableSession(sessionId: string) {
   const { data, error } = await supabaseAdmin
     .from("sessions")
-    .select("id, class_id, status, capacity, topic")
+    .select("id, class_id, status, capacity, topic, created_at")
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -66,6 +70,7 @@ async function ensureJoinableSession(sessionId: string) {
       status,
       capacity: Number(data.capacity ?? 5),
       topic: String(data.topic ?? "").trim(),
+      createdAt: data.created_at ?? null,
     },
   };
 }
@@ -181,6 +186,12 @@ export async function POST(req: Request) {
     }
 
     const session = ensured.session;
+    const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
+
+    await expireStaleRecruitmentSessions(supabaseAdmin, {
+      classIds: session.classId ? [session.classId] : undefined,
+      ttlMinutes: recruitmentSessionTtlMinutes,
+    });
 
     if (blocksNewJoinSessionStatus(session.status) && !openJoinedClass) {
       const { data: existingSessionMember, error: existingSessionMemberErr } =
@@ -222,6 +233,38 @@ export async function POST(req: Request) {
           { status: 403 }
         );
       }
+    }
+
+    if (
+      !openJoinedClass &&
+      isRecruitingSessionStatus(session.status) &&
+      !isSessionEligibleForNormalJoin({
+        sessionStatus: session.status,
+        sessionCreatedAt: session.createdAt,
+        recruitmentSessionTtlMinutes,
+      })
+    ) {
+      console.log("[session/join] recruitment_closed stale session", {
+        sessionId,
+        sessionStatus: session.status,
+        sessionCreatedAt: session.createdAt,
+        recruitmentSessionTtlMinutes,
+        openJoinedClass,
+        deviceId,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "recruitment_closed",
+          sessionStatus: session.status,
+          sessionId,
+          sessionCreatedAt: session.createdAt,
+          recruitmentSessionTtlMinutes,
+          message: "このセッションは募集時間外です。",
+        },
+        { status: 403 }
+      );
     }
 
     // ✅ session_members が真実。
@@ -405,6 +448,8 @@ export async function POST(req: Request) {
       sessionId,
       classId,
       status: session.status,
+      sessionCreatedAt: session.createdAt,
+      recruitmentSessionTtlMinutes,
       openJoinedClass,
       deviceId,
       memberCount: Number(count ?? 0),

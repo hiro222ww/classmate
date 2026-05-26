@@ -14,6 +14,9 @@ const DEFAULT_SETTINGS = {
     enabled: true,
     text: "",
   },
+  recruitment_session_ttl_minutes: {
+    minutes: 5,
+  },
 };
 
 export async function GET() {
@@ -21,7 +24,11 @@ export async function GET() {
     const { data, error } = await supabaseAdmin
       .from("app_settings")
       .select("key, value")
-      .in("key", ["global_join_window", "billing_notice"]);
+      .in("key", [
+        "global_join_window",
+        "billing_notice",
+        "recruitment_session_ttl_minutes",
+      ]);
 
     if (error) throw error;
 
@@ -38,6 +45,13 @@ export async function GET() {
       if (row.key === "billing_notice") {
         settings.billing_notice = {
           ...settings.billing_notice,
+          ...(row.value ?? {}),
+        };
+      }
+
+      if (row.key === "recruitment_session_ttl_minutes") {
+        settings.recruitment_session_ttl_minutes = {
+          ...settings.recruitment_session_ttl_minutes,
           ...(row.value ?? {}),
         };
       }

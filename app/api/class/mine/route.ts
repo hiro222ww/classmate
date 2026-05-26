@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
+import {
+  getClassStatusLabel,
+  pickClassDisplaySession,
+  type RecruitmentSessionRow,
+} from "@/lib/recruitment";
+import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -159,6 +166,13 @@ export async function GET(req: Request) {
     );
 
     // 5) sessions を取得（状態表示用）
+    const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
+
+    await expireStaleRecruitmentSessions(supabaseAdmin, {
+      classIds,
+      ttlMinutes: recruitmentSessionTtlMinutes,
+    });
+
     const { data: sessionRows, error: sessionsErr } = await supabaseAdmin
       .from("sessions")
       .select("id,class_id,status,created_at")
@@ -179,26 +193,56 @@ export async function GET(req: Request) {
       );
     }
 
-    const sessionMap = new Map<
-      string,
-      { id: string; status: string; created_at: string | null }
-    >();
+    const sessionsByClass = new Map<string, RecruitmentSessionRow[]>();
 
     for (const row of sessionRows ?? []) {
       const classId = String((row as any)?.class_id ?? "").trim();
       if (!classId) continue;
 
-      const current = sessionMap.get(classId);
-      const nextCreatedAt = String((row as any)?.created_at ?? "").trim() || "";
-      const currentCreatedAt = String(current?.created_at ?? "").trim() || "";
+      const list = sessionsByClass.get(classId) ?? [];
+      list.push({
+        id: String((row as any)?.id ?? "").trim(),
+        status: String((row as any)?.status ?? "").trim(),
+        created_at: (row as any)?.created_at ?? null,
+      });
+      sessionsByClass.set(classId, list);
+    }
 
-      if (!current || nextCreatedAt > currentCreatedAt) {
-        sessionMap.set(classId, {
-          id: String((row as any)?.id ?? "").trim(),
-          status: String((row as any)?.status ?? "").trim(),
-          created_at: (row as any)?.created_at ?? null,
-        });
+    const sessionMap = new Map<
+      string,
+      {
+        id: string;
+        status: string;
+        created_at: string | null;
+        status_label: string;
+        is_recruiting: boolean;
       }
+    >();
+
+    for (const classId of classIds) {
+      const classRow = classMap.get(classId);
+      const picked = pickClassDisplaySession(
+        sessionsByClass.get(classId) ?? [],
+        recruitmentSessionTtlMinutes
+      );
+
+      if (!picked) continue;
+
+      const statusLabel = getClassStatusLabel({
+        sessionStatus: picked.status,
+        matchDeadlineAt: classRow?.match_deadline_at ?? null,
+        hasActiveSession: true,
+        sessionCreatedAt: picked.created_at,
+        recruitmentSessionTtlMinutes,
+      });
+
+      sessionMap.set(classId, {
+        id: picked.id,
+        status: picked.status,
+        created_at: picked.created_at,
+        status_label: statusLabel,
+        is_recruiting: statusLabel === "募集中",
+      });
     }
 
     // 6) merge
@@ -227,6 +271,8 @@ export async function GET(req: Request) {
         session_id: session?.id ?? null,
         session_status: session?.status ?? null,
         session_created_at: session?.created_at ?? null,
+        status_label: session?.status_label ?? null,
+        is_recruiting: Boolean(session?.is_recruiting),
       };
     });
 
@@ -243,6 +289,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       classes,
+      recruitment_session_ttl_minutes: recruitmentSessionTtlMinutes,
       debug: {
         membershipCount: memberships?.length ?? 0,
         classRowCount: classRows?.length ?? 0,

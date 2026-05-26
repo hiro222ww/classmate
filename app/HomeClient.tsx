@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { DevPanel } from "@/components/DevPanel";
 import { withDev } from "@/lib/withDev";
-import { getClassStatusLabel } from "@/lib/recruitment";
+import { getClassStatusLabel, isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 
 type Profile = {
@@ -33,6 +33,8 @@ type MineClass = {
   session_id?: string | null;
   session_status?: string | null;
   session_created_at?: string | null;
+  status_label?: string | null;
+  is_recruiting?: boolean;
 };
 
 type ClassMember = {
@@ -209,6 +211,8 @@ export default function HomeClient() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [classes, setClasses] = useState<MineClass[]>([]);
+  const [recruitmentSessionTtlMinutes, setRecruitmentSessionTtlMinutes] =
+    useState(5);
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
@@ -294,6 +298,12 @@ export default function HomeClient() {
         const nextClasses = Array.isArray(classesJson.classes)
           ? classesJson.classes
           : [];
+
+        if (Number(classesJson.recruitment_session_ttl_minutes) > 0) {
+          setRecruitmentSessionTtlMinutes(
+            Number(classesJson.recruitment_session_ttl_minutes)
+          );
+        }
 
         setClasses((prev) => {
           if (prev.length > 0 && nextClasses.length === 0) {
@@ -999,11 +1009,15 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               const members = membersByClass[c.id] ?? [];
               const presenceMap = presenceByClass[c.id] ?? {};
               const classLabel = formatClassLabel(c);
-              const classStatusLabel = getClassStatusLabel({
-                sessionStatus: c.session_status,
-                matchDeadlineAt: c.match_deadline_at,
-                hasActiveSession: c.has_active_session,
-              });
+              const classStatusLabel =
+                c.status_label ??
+                getClassStatusLabel({
+                  sessionStatus: c.session_status,
+                  matchDeadlineAt: c.match_deadline_at,
+                  hasActiveSession: c.has_active_session,
+                  sessionCreatedAt: c.session_created_at,
+                  recruitmentSessionTtlMinutes,
+                });
               const classStatusPill = getClassStatusStyle(classStatusLabel);
 
               return (

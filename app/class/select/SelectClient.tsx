@@ -8,6 +8,7 @@ import { pushRecentClass } from "@/lib/recentClasses";
 import { DevModeSwitcher } from "@/components/DevModeSwitcher";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
+import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 
 type World = {
   world_key: string;
@@ -813,6 +814,10 @@ return;
       const classId = safeTrim(matchJson?.classId);
       const sessionId = safeTrim(matchJson?.sessionId);
       const sessionStatus = safeTrim(matchJson?.sessionStatus);
+      const sessionCreatedAt = safeTrim(matchJson?.sessionCreatedAt);
+      const recruitmentSessionTtlMinutes = Number(
+        matchJson?.recruitmentSessionTtlMinutes ?? 5
+      );
 
       console.log("[select] match-join resolved", {
         openJoinedClass: matchBody.openJoinedClass ?? false,
@@ -820,9 +825,23 @@ return;
         classId,
         sessionId,
         sessionStatus,
+        sessionCreatedAt,
+        recruitmentSessionTtlMinutes,
       });
 
       if (sessionStatus === "active" && !matchBody.openJoinedClass) {
+        alert("このクラスは現在募集していません。");
+        return;
+      }
+
+      if (
+        !matchBody.openJoinedClass &&
+        !isSessionEligibleForNormalJoin({
+          sessionStatus,
+          sessionCreatedAt,
+          recruitmentSessionTtlMinutes,
+        })
+      ) {
         alert("このクラスは現在募集していません。");
         return;
       }
