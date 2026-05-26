@@ -234,28 +234,29 @@ export default function SelectClient() {
   }
 
   async function reloadJoinWindow() {
-    try {
-      const r = await fetch("/api/settings", {
-        cache: "no-store",
-      });
+  try {
+    const r = await fetch("/api/admission/status", {
+      cache: "no-store",
+    });
 
-      const j = await r.json().catch(() => null);
-      const gw = j?.settings?.global_join_window ?? {};
+    const j = await r.json().catch(() => null);
 
-      const enabled = Boolean(gw.enabled);
-      const start = String(gw.start ?? "");
-      const end = String(gw.end ?? "");
+    console.log("[class/select] admission status =", j);
 
-      const open = !enabled || isNowWithinWindow(start, end);
-
-      setJoinWindowOpen(open);
-      setJoinWindowText(enabled ? `入校受付 ${start}〜${end}` : "");
-    } catch (e) {
-      console.error("[class/select] join window load failed", e);
+    if (!r.ok || !j?.ok) {
       setJoinWindowOpen(true);
       setJoinWindowText("");
+      return;
     }
+
+    setJoinWindowOpen(Boolean(j.open));
+    setJoinWindowText(String(j.text ?? ""));
+  } catch (e) {
+    console.error("[class/select] admission status load failed", e);
+    setJoinWindowOpen(true);
+    setJoinWindowText("");
   }
+}
 
   async function postSelectPresence(id: string) {
     if (!id) return;
@@ -704,9 +705,13 @@ export default function SelectClient() {
     }
 
     if (!joinWindowOpen) {
-      alert(joinWindowText ? `${joinWindowText} の時間外です。` : "ただいま入校時間外です。");
-      return;
-    }
+  alert(
+    joinWindowText
+      ? `現在入校受付時間外です。受付時間：${joinWindowText}`
+      : "現在入校受付時間外です。"
+  );
+  return;
+}
 
     if (hasProfile === false) {
       goProfileIfNeeded();
@@ -778,8 +783,14 @@ export default function SelectClient() {
           return;
         }
 
-        alert(matchJson?.error ?? "match_join_failed");
-        return;
+        if (matchJson?.error === "admission_closed") {
+  alert("現在入校受付時間外です。");
+  void reloadJoinWindow();
+  return;
+}
+
+alert(matchJson?.error ?? "match_join_failed");
+return;
       }
 
       const classId = safeTrim(matchJson?.classId);
@@ -901,12 +912,12 @@ export default function SelectClient() {
           }}
         >
           {profileMissing
-            ? "プロフィール登録が必要"
-            : !joinWindowOpen
-              ? "入校時間外"
-              : locked
-                ? `参加（要：${tierName(b.monthly_price)}以上）`
-                : "参加する"}
+  ? "プロフィール登録が必要"
+  : !joinWindowOpen
+    ? "現在入校受付時間外"
+    : locked
+      ? `参加（要：${tierName(b.monthly_price)}以上）`
+      : "入る"}
         </button>
       </div>
     );
@@ -1284,10 +1295,10 @@ export default function SelectClient() {
             }}
           >
             {hasProfile === false
-              ? "プロフィール登録が必要"
-              : !joinWindowOpen
-                ? "入校時間外"
-                : "入る"}
+  ? "プロフィール登録が必要"
+  : !joinWindowOpen
+    ? "現在入校受付時間外"
+    : "入る"}
           </button>
         </div>
 
