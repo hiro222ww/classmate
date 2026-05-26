@@ -13,7 +13,7 @@ const SERVICE_ROLE =
   process.env.SUPABASE_SERVICE_ROLE ||
   "";
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+import { requireAdmin } from "@/lib/adminAuth";
 
 type WorldRow = {
   world_key: string;
@@ -36,12 +36,16 @@ function bad(status: number, error: string, extra?: Record<string, any>) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const password = String(body?.password ?? "").trim();
-    const mode = String(body?.mode ?? "").trim();
+    const denied = requireAdmin(req);
+
+if (denied) {
+  return denied;
+}
+
+const body = await req.json().catch(() => ({}));
+const mode = String(body?.mode ?? "").trim();
 
     console.log("[admin/worlds] env", {
-      hasAdminPassword: Boolean(ADMIN_PASSWORD),
       hasSupabaseUrl: Boolean(SUPABASE_URL),
       hasServiceRole: Boolean(SERVICE_ROLE),
       supabaseUrlHead: SUPABASE_URL ? SUPABASE_URL.slice(0, 32) : "",
@@ -49,14 +53,10 @@ export async function POST(req: Request) {
     });
 
     console.log("[admin/worlds] request", {
-      mode,
-      hasPassword: Boolean(password),
-      passwordLength: password.length,
-    });
+  mode,
+});
 
-    if (!ADMIN_PASSWORD) {
-      return bad(500, "ADMIN_PASSWORD is not set", { where: "env_admin_password" });
-    }
+  
     if (!SUPABASE_URL) {
       return bad(500, "SUPABASE_URL is not set", { where: "env_supabase_url" });
     }
@@ -66,9 +66,7 @@ export async function POST(req: Request) {
       });
     }
 
-    if (!password || password !== ADMIN_PASSWORD) {
-      return bad(401, "invalid password", { where: "password_check" });
-    }
+   
     if (!mode) {
       return bad(400, "mode is required", { where: "mode_check" });
     }
