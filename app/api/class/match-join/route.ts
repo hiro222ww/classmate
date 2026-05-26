@@ -519,9 +519,9 @@ function checkGenderRestriction(params: {
     params.topic?.gender_restriction ?? ""
   ).trim();
 
-  if (!genderRestriction) {
-    return null;
-  }
+  if (!genderRestriction || genderRestriction === "none") {
+  return null;
+}
 
   const profileGender = String(params.profile.gender ?? "").trim();
 
@@ -690,8 +690,40 @@ async function runAtomicMatch(params: {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
 
+    const admissionUrl = new URL("/api/admission/status", req.url);
+
+    const admissionRes = await fetch(admissionUrl, {
+      cache: "no-store",
+    });
+
+    const admission = await admissionRes.json().catch(() => null);
+
+    console.log("[match-join] admission status =", admission);
+
+    if (!admissionRes.ok || !admission?.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "admission_status_failed",
+          admission,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!admission.open) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "admission_closed",
+          admission,
+        },
+        { status: 403 }
+      );
+    }
+
+    const body = await req.json().catch(() => ({}));
     const deviceId = String(body.deviceId ?? "").trim();
     const worldKey = String(body.worldKey ?? "default").trim() || "default";
     const topicKey = normalizeTopicKey(body.topicKey);
