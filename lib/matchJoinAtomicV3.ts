@@ -48,6 +48,26 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
   const parsed = parseRpcDetail(error);
   const body = { ok: false as const, ...fields };
 
+  if (fields.code === "42883") {
+    return NextResponse.json(
+      postgresErrorBody("rpc_type_mismatch", error, {
+        message:
+          "sessions.class_id (text) と uuid 変数の型不一致です。class_id::uuid キャスト修正 SQL を適用してください。",
+      }),
+      { status: 500 }
+    );
+  }
+
+  if (fields.code === "42702") {
+    return NextResponse.json(
+      postgresErrorBody("rpc_ambiguous_column", error, {
+        message:
+          "match_join_atomic_v3 の RETURNS TABLE 列名がテーブル列と衝突しています。#variable_conflict use_column を適用してください。",
+      }),
+      { status: 500 }
+    );
+  }
+
   switch (errKey) {
     case "device_id_missing":
       return NextResponse.json({ ...body, error: errKey }, { status: 400 });

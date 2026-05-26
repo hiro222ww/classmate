@@ -1,9 +1,6 @@
--- match_join_atomic_v3
--- Atomic class/session join with recruitment-stop rules and concurrent-safe session pick/create.
--- Apply manually in Supabase SQL Editor or via `supabase db push` (not auto-run by app).
---
--- session_members columns used: session_id, device_id, display_name, joined_at, is_in_call
--- photo_path is intentionally NOT written.
+-- Fix: RETURNS TABLE column names (class_id, session_id, ...) shadow table columns
+-- causing PostgreSQL 42702 "column reference \"class_id\" is ambiguous".
+-- Re-apply after 20260526120000_match_join_atomic_v3.sql, then: NOTIFY pgrst, 'reload schema';
 
 CREATE OR REPLACE FUNCTION public.match_join_atomic_v3(
   p_device_id text,
@@ -254,13 +251,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.match_join_atomic_v3(
-  text, text, uuid, text, text, integer, integer, text[]
-) FROM PUBLIC;
-
 GRANT EXECUTE ON FUNCTION public.match_join_atomic_v3(
   text, text, uuid, text, text, integer, integer, text[]
 ) TO service_role;
 
-COMMENT ON FUNCTION public.match_join_atomic_v3 IS
-  'Atomically resolve class/session, enforce recruitment rules, upsert memberships and session_members.';
+NOTIFY pgrst, 'reload schema';
