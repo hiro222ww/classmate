@@ -770,7 +770,10 @@ export default function SelectClient() {
         throw new Error("non_json_response");
       }
 
-      console.log("[select] match-join response =", matchJson);
+      console.log(
+  "[select] match-join response =",
+  JSON.stringify(matchJson, null, 2)
+);
 
       if (!matchRes.ok || !matchJson?.ok) {
         if (matchJson?.error === "profile_required") {
