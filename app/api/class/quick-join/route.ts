@@ -1,6 +1,7 @@
 // app/api/class/quick-join/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 
 export const dynamic = "force-dynamic";
 
@@ -55,26 +56,19 @@ export async function POST(req: Request) {
 
     const classSlots = Math.max(1, Number(ent?.class_slots ?? 1));
 
-    // 2) 既存 membership
-    const { data: mine, error: mineErr } = await supabase
-      .from("class_memberships")
-      .select("class_id")
-      .eq("device_id", deviceId);
-
-    if (mineErr) {
+    const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
+    if (!billableRes.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "memberships_lookup_failed",
-          detail: mineErr.message,
+          detail: billableRes.error,
         },
         { status: 500 }
       );
     }
 
-    const currentIds = (mine ?? [])
-      .map((x: any) => String(x.class_id ?? "").trim())
-      .filter(Boolean);
+    const currentIds = billableRes.snapshot.billableClassIds;
 
     // 3) 対象クラスを探す
     let cls: any = null;

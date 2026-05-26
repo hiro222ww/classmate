@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getBillableMembershipSnapshot, getClassSlotsForDevice } from "@/lib/classMembershipSlots";
 import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
 import {
   blocksNewJoinSessionStatus,
@@ -334,42 +335,38 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!existingMembership) {
-      const { data: entitlement, error: entitlementErr } = await supabaseAdmin
-        .from("user_entitlements")
-        .select("class_slots")
-        .eq("device_id", deviceId)
-        .maybeSingle();
-
-      if (entitlementErr) {
-        console.log("[session/join entitlementErr]", entitlementErr);
+    if (!existingMembership && !openJoinedClass) {
+      const slotsRes = await getClassSlotsForDevice(supabaseAdmin, deviceId);
+      if (!slotsRes.ok) {
         return NextResponse.json(
-          { ok: false, error: "entitlement_check_failed" },
+          { ok: false, error: "entitlement_check_failed", detail: slotsRes.error },
           { status: 500 }
         );
       }
 
-      const classSlots = Number(entitlement?.class_slots ?? 1);
+      const classSlots = slotsRes.classSlots;
 
-      const { count: activeClassCount, error: countErr } = await supabaseAdmin
-        .from("class_memberships")
-        .select("*", { count: "exact", head: true })
-        .eq("device_id", deviceId);
-
-      if (countErr) {
-        console.log("[session/join activeClassCountErr]", countErr);
+      const billableRes = await getBillableMembershipSnapshot(
+        supabaseAdmin,
+        deviceId
+      );
+      if (!billableRes.ok) {
         return NextResponse.json(
-          { ok: false, error: "membership_count_failed" },
+          { ok: false, error: "membership_count_failed", detail: billableRes.error },
           { status: 500 }
         );
       }
 
-      if (Number(activeClassCount ?? 0) >= classSlots) {
+      if (billableRes.snapshot.billableCount >= classSlots) {
         return NextResponse.json(
           {
             ok: false,
             error: "class_slots_limit",
             message: "参加できるクラス数の上限に達しています。",
+            currentCount: billableRes.snapshot.billableCount,
+            totalMembershipCount: billableRes.snapshot.totalCount,
+            legacyMembershipCount: billableRes.snapshot.legacyCount,
+            classSlots,
           },
           { status: 403 }
         );

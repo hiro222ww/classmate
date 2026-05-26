@@ -181,7 +181,7 @@ function getClassStatusStyle(label: string) {
     };
   }
 
-  if (label === "募集締切" || label === "募集停止") {
+  if (label === "募集締切" || label === "募集停止" || label === "募集終了") {
     return {
       background: "#f3f4f6",
       color: "#6b7280",

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 
 export const dynamic = "force-dynamic";
 
@@ -159,11 +160,28 @@ export async function POST(req: Request) {
       );
     }
 
-    const currentIds = (mine ?? [])
-      .map((x: any) => String(x.class_id ?? "").trim())
-      .filter(Boolean);
+    const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
+    if (!billableRes.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "db_error",
+          where: "billable_memberships_lookup",
+          detail: billableRes.error,
+        },
+        { status: 500 }
+      );
+    }
 
-    console.log("[class/join] currentIds =", currentIds);
+    const currentIds = billableRes.snapshot.billableClassIds;
+
+    console.log("[class/join] billable currentIds =", currentIds);
+    console.log("[class/join] slot snapshot =", {
+      classSlots,
+      billableCount: billableRes.snapshot.billableCount,
+      totalCount: billableRes.snapshot.totalCount,
+      legacyCount: billableRes.snapshot.legacyCount,
+    });
 
     if (currentIds.includes(classId)) {
       console.log("[class/join] already joined");
@@ -177,7 +195,9 @@ export async function POST(req: Request) {
 
     if (currentIds.length >= classSlots) {
       console.log("[class/join] class slots limit", {
-        current: currentIds.length,
+        billable: currentIds.length,
+        total: billableRes.snapshot.totalCount,
+        legacy: billableRes.snapshot.legacyCount,
         limit: classSlots,
       });
 
@@ -186,8 +206,10 @@ export async function POST(req: Request) {
           ok: false,
           error: "class_slots_limit",
           currentCount: currentIds.length,
+          totalMembershipCount: billableRes.snapshot.totalCount,
+          legacyMembershipCount: billableRes.snapshot.legacyCount,
           classSlots,
-          detail: `current=${currentIds.length}, limit=${classSlots}`,
+          detail: `billable=${currentIds.length}, limit=${classSlots}`,
         },
         { status: 400 }
       );

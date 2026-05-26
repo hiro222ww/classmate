@@ -12,7 +12,7 @@ export type ClassStatusLabel =
   | "募集締切"
   | "募集停止"
   | "待機中"
-  | "休止中";
+  | "募集終了";
 
 export type RecruitmentSessionRow = {
   id: string;
@@ -207,7 +207,7 @@ export function getClassStatusLabel(params: {
     return "待機中";
   }
 
-  return "休止中";
+  return "募集終了";
 }
 
 export function sessionStatusesForJoin(isExistingMember: boolean) {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
+import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 
 export const dynamic = "force-dynamic";
 
@@ -43,28 +44,22 @@ async function ensureMembership(params: {
 }) {
   const { deviceId, classId, classSlots } = params;
 
-  const { data: memberships, error } = await supabase
-    .from("class_memberships")
-    .select("class_id")
-    .eq("device_id", deviceId);
-
-  if (error) {
+  const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
+  if (!billableRes.ok) {
     return {
       ok: false as const,
       response: NextResponse.json(
         {
           ok: false,
           error: "memberships_lookup_failed",
-          detail: error.message,
+          detail: billableRes.error,
         },
         { status: 500 }
       ),
     };
   }
 
-  const ids = (memberships ?? [])
-    .map((x: any) => String(x.class_id ?? "").trim())
-    .filter(Boolean);
+  const ids = billableRes.snapshot.billableClassIds;
 
   if (ids.includes(classId)) {
     return {
@@ -82,6 +77,8 @@ async function ensureMembership(params: {
           ok: false,
           error: "class_slots_limit",
           currentCount: ids.length,
+          totalMembershipCount: billableRes.snapshot.totalCount,
+          legacyMembershipCount: billableRes.snapshot.legacyCount,
           classSlots,
         },
         { status: 400 }

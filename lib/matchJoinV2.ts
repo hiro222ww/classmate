@@ -13,6 +13,7 @@ import {
   GENDER_RESTRICTED_TOPIC_MESSAGE,
   genderRestrictionBlocksJoin,
 } from "@/lib/genderRestriction";
+import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -565,16 +566,39 @@ export async function matchJoinV2Post(req: Request) {
     if (!slotsRes.ok) return slotsRes.response;
     const classSlots = slotsRes.classSlots;
 
-    const allMembershipsRes = await getAllMembershipIds(deviceId);
-    if (!allMembershipsRes.ok) return allMembershipsRes.response;
-    const allMembershipIdsBefore = allMembershipsRes.ids;
+    const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
+    if (!billableRes.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "memberships_lookup_failed",
+          detail: billableRes.error,
+        },
+        { status: 500 }
+      );
+    }
 
-    if (!forcedClassId && allMembershipIdsBefore.length >= classSlots) {
+    const membershipSnapshot = billableRes.snapshot;
+    const allMembershipIdsBefore = membershipSnapshot.billableClassIds;
+
+    if (!forcedClassId && membershipSnapshot.billableCount >= classSlots) {
+      console.warn("[class/match-join-v2] class_slots_limit", {
+        deviceId,
+        classSlots,
+        billableCount: membershipSnapshot.billableCount,
+        totalMembershipCount: membershipSnapshot.totalCount,
+        legacyMembershipCount: membershipSnapshot.legacyCount,
+        billableClassIds: membershipSnapshot.billableClassIds,
+        legacyClassIds: membershipSnapshot.legacyClassIds,
+      });
+
       return NextResponse.json(
         {
           ok: false,
           error: "class_slots_limit",
-          currentCount: allMembershipIdsBefore.length,
+          currentCount: membershipSnapshot.billableCount,
+          totalMembershipCount: membershipSnapshot.totalCount,
+          legacyMembershipCount: membershipSnapshot.legacyCount,
           classSlots,
         },
         { status: 400 }
@@ -752,7 +776,12 @@ export async function matchJoinV2Post(req: Request) {
       selfAge,
       alreadyJoined: Boolean(row.already_joined),
       reused: Boolean(row.reused),
-      currentCount: Number(row.current_count ?? allMembershipIdsBefore.length),
+      currentCount: Number(
+        row.current_count ?? membershipSnapshot.billableCount
+      ),
+      billableMembershipCount: membershipSnapshot.billableCount,
+      totalMembershipCount: membershipSnapshot.totalCount,
+      legacyMembershipCount: membershipSnapshot.legacyCount,
       classSlots,
       blockedDeviceCount: blockedDeviceIds.length,
     });

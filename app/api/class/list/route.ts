@@ -1,6 +1,7 @@
 // app/api/class/list/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { isLegacyEntryClassName } from "@/lib/legacyClassNames";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,22 +18,6 @@ const ANON_KEY =
 
 function bad(status: number, error: string) {
   return NextResponse.json({ ok: false, error }, { status });
-}
-
-function isLegacyEntryClassName(name: string | null | undefined) {
-  const s = String(name ?? "").trim();
-  if (!s) return false;
-
-  return (
-    s === "女子校" ||
-    s === "男子校" ||
-    s === "フリークラス" ||
-    s === "ホームルーム" ||
-    s.startsWith("フリークラス") ||
-    s.startsWith("女子校") ||
-    s.startsWith("男子校") ||
-    s.startsWith("ホームルーム")
-  );
 }
 
 export async function GET() {

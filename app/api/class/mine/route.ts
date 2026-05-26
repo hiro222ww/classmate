@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 import {
+  getBillableMembershipSnapshot,
+  getClassSlotsForDevice,
+} from "@/lib/classMembershipSlots";
+import { isLegacyEntryClassName } from "@/lib/legacyClassNames";
+import {
   getClassStatusLabel,
   pickClassDisplaySession,
   type RecruitmentSessionRow,
@@ -9,22 +14,6 @@ import {
 import { getRecruitmentSessionTtlMinutes, getRecruitmentSessionTtlSetting } from "@/lib/recruitmentSettings";
 
 export const dynamic = "force-dynamic";
-
-function isLegacyEntryClassName(name: string | null | undefined) {
-  const s = String(name ?? "").trim();
-  if (!s) return false;
-
-  return (
-    s === "女子校" ||
-    s === "男子校" ||
-    s === "フリークラス" ||
-    s === "ホームルーム" ||
-    s.startsWith("フリークラス") ||
-    s.startsWith("女子校") ||
-    s.startsWith("男子校") ||
-    s.startsWith("ホームルーム")
-  );
-}
 
 export async function GET(req: Request) {
   try {
@@ -283,22 +272,42 @@ export async function GET(req: Request) {
     );
     const legacyFilteredCount = merged.length - classes.length;
 
-    console.log("[class/mine] merged classes =", merged);
-    console.log("[class/mine] filtered classes =", classes);
-    console.log("[class/mine] legacyFilteredCount =", legacyFilteredCount);
+    const [slotsRes, billableRes] = await Promise.all([
+      getClassSlotsForDevice(supabaseAdmin, normalizedDeviceId),
+      getBillableMembershipSnapshot(supabaseAdmin, normalizedDeviceId),
+    ]);
+
+    const classSlots = slotsRes.ok ? slotsRes.classSlots : null;
+    const membershipSnapshot = billableRes.ok ? billableRes.snapshot : null;
+
+    console.log("[class/mine] slot snapshot", {
+      classSlots,
+      membershipSnapshot,
+      visibleClassCount: classes.length,
+    });
 
     return NextResponse.json({
       ok: true,
       classes,
+      class_slots: classSlots,
+      membership_count_billable: membershipSnapshot?.billableCount ?? null,
+      membership_count_total: membershipSnapshot?.totalCount ?? null,
+      membership_count_legacy: membershipSnapshot?.legacyCount ?? null,
       recruitment_session_ttl_minutes: recruitmentSessionTtlMinutes,
       recruitment_session_ttl_unlimited: recruitmentSessionTtlSetting.unlimited,
       debug: {
         membershipCount: memberships?.length ?? 0,
+        visibleClassCount: classes.length,
+        billableMembershipCount: membershipSnapshot?.billableCount ?? null,
+        legacyMembershipCount: membershipSnapshot?.legacyCount ?? null,
+        classSlots,
         classRowCount: classRows?.length ?? 0,
         topicRowCount: topicRows?.length ?? 0,
         sessionRowCount: sessionRows?.length ?? 0,
         joinFailedCount: classes.filter((c: any) => !c.join_ok).length,
         legacyFilteredCount,
+        billableClassIds: membershipSnapshot?.billableClassIds ?? [],
+        legacyClassIds: membershipSnapshot?.legacyClassIds ?? [],
       },
     });
   } catch (e: any) {
