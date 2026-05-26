@@ -27,6 +27,9 @@ export type MatchJoinAtomicV3Row = {
   reused: boolean;
   already_joined: boolean;
   current_count: number;
+  expired_count?: number | null;
+  candidate_session_count?: number | null;
+  created_new_session?: boolean | null;
 };
 
 function parseRpcDetail(error: unknown): Record<string, unknown> {
@@ -105,6 +108,15 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
       );
 
     case "recruitment_closed":
+      console.warn("[match-join-v2] match_join_atomic_v3 recruitment_closed", {
+        ...fields,
+        parsed,
+        worldKey: parsed.worldKey ?? null,
+        topicKey: parsed.topicKey ?? null,
+        sessionStatus: parsed.sessionStatus ?? null,
+        reason: parsed.reason ?? null,
+      });
+
       return NextResponse.json(
         {
           ...body,
@@ -206,6 +218,18 @@ export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
       ),
     };
   }
+
+  console.log("[match-join-v2] match_join_atomic_v3 result", {
+    classId: row.class_id,
+    sessionId: row.session_id,
+    sessionStatus: row.session_status,
+    sessionCreatedAt: row.session_created_at,
+    expiredCount: Number(row.expired_count ?? 0),
+    candidateSessionCount: Number(row.candidate_session_count ?? 0),
+    createdNewSession: Boolean(row.created_new_session),
+    reused: Boolean(row.reused),
+    alreadyJoined: Boolean(row.already_joined),
+  });
 
   return { ok: true as const, row };
 }
