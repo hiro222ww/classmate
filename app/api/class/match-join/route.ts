@@ -601,7 +601,7 @@ async function runAtomicMatch(params: {
     blockedDeviceIds,
   } = params;
 
-  const { data, error } = await supabase.rpc("match_join_atomic", {
+  const { data, error } = await supabase.rpc("match_join_atomic_v2", {
     p_world_key: worldKey,
     p_topic_key: topicKey,
     p_requested_capacity: requestedCapacity,
