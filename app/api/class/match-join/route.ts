@@ -600,97 +600,201 @@ async function runAtomicMatch(params: {
     worldKey,
     topicKey,
     requestedCapacity,
-    requestedMinAge,
-    requestedMaxAge,
     deviceId,
     blockedDeviceIds,
   } = params;
 
-  const { data, error } = await supabase.rpc("match_join_atomic_live", {
-  p_blocked_device_ids: blockedDeviceIds,
-  p_device_id: deviceId,
-  p_requested_capacity: requestedCapacity,
-  p_requested_max_age: requestedMaxAge,
-  p_requested_min_age: requestedMinAge,
-  p_topic_key: topicKey,
-  p_world_key: worldKey,
-});
+  let classQuery = supabase
+    .from("classes")
+    .select("id,name,world_key,topic_key")
+    .eq("world_key", worldKey)
+    .order("created_at", { ascending: true })
+    .limit(1);
 
-  console.log("🔥 RPC RESULT", {
-    params,
-    data,
-    error,
-  });
+  if (topicKey) {
+    classQuery = classQuery.eq("topic_key", topicKey);
+  } else {
+    classQuery = classQuery.is("topic_key", null);
+  }
 
-  if (error) {
-    console.error("❌ RPC ERROR FULL", error);
+  const { data: classRow, error: classErr } = await classQuery.maybeSingle();
 
-    const message = String(error.message ?? "");
-    const detail = String((error as any).details ?? (error as any).detail ?? "");
+  if (classErr) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, error: "class_lookup_failed", detail: classErr.message },
+        { status: 500 }
+      ),
+    };
+  }
 
-    if (message.includes("class_slots_limit")) {
-      let parsed: any = null;
+  if (!classRow?.id) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, error: "class_not_found", worldKey, topicKey },
+        { status: 404 }
+      ),
+    };
+  }
 
-      try {
-        parsed = detail ? JSON.parse(detail) : null;
-      } catch {
-        parsed = null;
-      }
+  const classId = String(classRow.id);
+  const className = String(classRow.name ?? "").trim() || "クラス";
 
+  const { data: sessions, error: sessionsErr } = await supabase
+    .from("sessions")
+    .select("id,status,created_at,capacity")
+    .eq("class_id", classId)
+    .in("status", ["forming", "waiting", "active"])
+    .order("created_at", { ascending: true })
+    .limit(10);
+
+  if (sessionsErr) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { ok: false, error: "session_lookup_failed", detail: sessionsErr.message },
+        { status: 500 }
+      ),
+    };
+  }
+
+  let chosenSession: any = null;
+
+  for (const s of sessions ?? []) {
+    const blockedCheck = await sessionHasBlockedMember(
+      String(s.id),
+      blockedDeviceIds
+    );
+
+    if (!blockedCheck.ok) {
+  return {
+    ok: false as const,
+    response: blockedCheck.response,
+  };
+}
+    if (blockedCheck.hasBlocked) continue;
+
+    const { count, error: countErr } = await supabase
+      .from("session_members")
+      .select("device_id", { count: "exact", head: true })
+      .eq("session_id", String(s.id));
+
+    if (countErr) {
       return {
         ok: false as const,
         response: NextResponse.json(
           {
             ok: false,
-            error: "class_slots_limit",
-            currentCount: parsed?.currentCount ?? null,
-            classSlots: parsed?.classSlots ?? null,
+            error: "session_member_count_failed",
+            detail: countErr.message,
           },
-          { status: 400 }
+          { status: 500 }
         ),
       };
     }
 
-    if (message.includes("match_deadline_passed")) {
+    const capacity = Number(s.capacity ?? requestedCapacity);
+
+    if ((count ?? 0) < capacity) {
+      chosenSession = s;
+      break;
+    }
+  }
+
+  if (!chosenSession) {
+    const { data: created, error: createErr } = await supabase
+      .from("sessions")
+      .insert({
+        class_id: classId,
+        topic: className,
+        status: "forming",
+        capacity: requestedCapacity,
+      })
+      .select("id,status,created_at,capacity")
+      .single();
+
+    if (createErr) {
       return {
         ok: false as const,
-        response: deadlineError(null),
+        response: NextResponse.json(
+          { ok: false, error: "session_create_failed", detail: createErr.message },
+          { status: 500 }
+        ),
       };
     }
 
+    chosenSession = created;
+  }
+
+  const sessionId = String(chosenSession.id);
+
+  const { error: membershipErr } = await supabase
+    .from("class_memberships")
+    .upsert(
+      {
+        device_id: deviceId,
+        class_id: classId,
+      },
+      {
+        onConflict: "device_id,class_id",
+        ignoreDuplicates: true,
+      }
+    );
+
+  if (membershipErr) {
     return {
       ok: false as const,
       response: NextResponse.json(
         {
           ok: false,
-          error: "match_join_atomic_failed",
-          detail: error.message,
-          raw: error,
+          error: "membership_upsert_failed",
+          detail: membershipErr.message,
         },
         { status: 500 }
       ),
     };
   }
 
-  const row = ((data ?? [])[0] ?? null) as AtomicMatchRow | null;
+  const { error: sessionMemberErr } = await supabase
+    .from("session_members")
+    .upsert(
+      {
+        session_id: sessionId,
+        device_id: deviceId,
+      },
+      {
+        onConflict: "session_id,device_id",
+        ignoreDuplicates: true,
+      }
+    );
 
-  if (!row?.class_id || !row?.session_id) {
-    console.error("❌ RPC EMPTY", data);
-
+  if (sessionMemberErr) {
     return {
       ok: false as const,
       response: NextResponse.json(
         {
           ok: false,
-          error: "match_join_atomic_empty",
-          data,
+          error: "session_member_upsert_failed",
+          detail: sessionMemberErr.message,
         },
         { status: 500 }
       ),
     };
   }
 
-  return { ok: true as const, row };
+  return {
+    ok: true as const,
+    row: {
+      class_id: classId,
+      class_name: className,
+      session_id: sessionId,
+      session_status: String(chosenSession.status ?? "forming"),
+      session_created_at: chosenSession.created_at ?? null,
+      reused: true,
+    },
+  };
 }
 
 export async function POST(req: Request) {
