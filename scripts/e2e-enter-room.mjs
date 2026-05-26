@@ -77,7 +77,8 @@ async function main() {
 
   const bodyText = await page.locator("body").innerText();
   const bad = [
-    "match_join_atomic_failed",
+    "match_join_atomic_v3_failed",
+    "match_join_atomic_v3_empty",
     "session_member_upsert_failed",
     "match_join_failed",
     "classId required",

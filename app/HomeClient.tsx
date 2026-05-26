@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { DevPanel } from "@/components/DevPanel";
 import { withDev } from "@/lib/withDev";
+import { getClassStatusLabel } from "@/lib/recruitment";
 
 type Profile = {
   device_id: string;
@@ -120,34 +121,6 @@ function statusStyle(status: PresenceStatus) {
   };
 }
 
-function getClassStatusLabel(c: MineClass) {
-  const sessionStatus = String(c.session_status ?? "").trim();
-  const hasActiveSession = Boolean(c.has_active_session);
-
-  if (sessionStatus === "active") {
-    return "通話中";
-  }
-
-  const deadlineMs = c.match_deadline_at
-    ? new Date(c.match_deadline_at).getTime()
-    : NaN;
-
-  if (Number.isFinite(deadlineMs)) {
-    if (deadlineMs > Date.now() && hasActiveSession) {
-      return "募集中";
-    }
-    if (deadlineMs <= Date.now()) {
-      return "募集締切";
-    }
-  }
-
-  if (hasActiveSession) {
-    return "待機中";
-  }
-
-  return "休止中";
-}
-
 function getClassStatusStyle(label: string) {
   if (label === "通話中") {
     return {
@@ -165,7 +138,7 @@ function getClassStatusStyle(label: string) {
     };
   }
 
-  if (label === "募集締切") {
+  if (label === "募集締切" || label === "募集停止") {
     return {
       background: "#f3f4f6",
       color: "#6b7280",
@@ -720,6 +693,19 @@ return () => {
           return;
         }
 
+        if (
+          json?.error === "match_deadline_passed" ||
+          json?.error === "recruitment_closed"
+        ) {
+          alert(
+            json?.message ??
+              (json?.error === "match_deadline_passed"
+                ? "このマッチングは締め切られました"
+                : "このクラスは現在募集していません")
+          );
+          return;
+        }
+
         alert(json?.error || "open_class_failed");
         return;
       }
@@ -790,6 +776,19 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             `クラス参加上限に達しています。現在のプランでは最大 ${
               json?.classSlots ?? "指定"
             } クラスまで参加できます。不要なクラスを抜けるか、プランを変更してください。`
+          );
+          return;
+        }
+
+        if (
+          json?.error === "match_deadline_passed" ||
+          json?.error === "recruitment_closed"
+        ) {
+          alert(
+            json?.message ??
+              (json?.error === "match_deadline_passed"
+                ? "このマッチングは締め切られました"
+                : "このクラスは現在募集していません")
           );
           return;
         }
@@ -988,7 +987,11 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               const members = membersByClass[c.id] ?? [];
               const presenceMap = presenceByClass[c.id] ?? {};
               const classLabel = formatClassLabel(c);
-              const classStatusLabel = getClassStatusLabel(c);
+              const classStatusLabel = getClassStatusLabel({
+                sessionStatus: c.session_status,
+                matchDeadlineAt: c.match_deadline_at,
+                hasActiveSession: c.has_active_session,
+              });
               const classStatusPill = getClassStatusStyle(classStatusLabel);
 
               return (

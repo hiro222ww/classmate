@@ -787,15 +787,22 @@ export default function SelectClient() {
         }
 
         if (
-  matchJson?.error === "admission_closed" ||
-  matchJson?.error === "match_deadline_passed"
-) {
-  alert("現在入校受付時間外です。");
-  void reloadJoinWindow();
-  return;
-}
+          matchJson?.error === "admission_closed" ||
+          matchJson?.error === "match_deadline_passed"
+        ) {
+          alert("現在入校受付時間外です。");
+          void reloadJoinWindow();
+          return;
+        }
 
-alert(matchJson?.error ?? "match_join_failed");
+        if (matchJson?.error === "recruitment_closed") {
+          alert(
+            matchJson?.message ?? "このクラスは現在募集していません。"
+          );
+          return;
+        }
+
+        alert(matchJson?.error ?? "match_join_failed");
 return;
       }
 
