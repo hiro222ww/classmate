@@ -695,6 +695,7 @@ async function runAtomicMatch(params: {
 
 export async function POST(req: Request) {
   try {
+      console.log("🔥 MATCH JOIN V2 DEPLOY CHECK 2026-05-26");
 
     const admissionUrl = new URL("/api/admission/status", req.url);
 
