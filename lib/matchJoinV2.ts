@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { formatPostgresError } from "@/lib/postgresError";
 import { callMatchJoinAtomicV3 } from "@/lib/matchJoinAtomicV3";
-import { isDeadlinePassed } from "@/lib/recruitment";
+import { blocksNewJoinSessionStatus, isDeadlinePassed } from "@/lib/recruitment";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -644,6 +644,27 @@ export async function matchJoinV2Post(req: Request) {
     if (!atomicRes.ok) return atomicRes.response;
 
     const row = atomicRes.row;
+
+    if (!openJoinedClass && blocksNewJoinSessionStatus(row.session_status)) {
+      console.warn("[class/match-join-v2] blocked non-recruiting session on normal path", {
+        openJoinedClass,
+        forcedClassId: forcedClassId || null,
+        classId: row.class_id,
+        sessionId: row.session_id,
+        sessionStatus: row.session_status,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "recruitment_closed",
+          sessionStatus: String(row.session_status ?? ""),
+          sessionId: String(row.session_id ?? ""),
+          message: "このクラスは現在募集していません。",
+        },
+        { status: 403 }
+      );
+    }
 
     console.log("[class/match-join-v2] success", {
       openJoinedClass,

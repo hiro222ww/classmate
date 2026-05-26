@@ -87,6 +87,7 @@ type MineClassRow = {
   class_id?: string;
   id?: string;
   name?: string;
+  world_key?: string | null;
   topic_key?: string | null;
   topic_title?: string | null;
   description?: string;
@@ -182,6 +183,81 @@ async function readJsonSafe(res: Response) {
   } catch {
     return {};
   }
+}
+
+async function resolveClassMatchKeys(deviceId: string, classId: string) {
+  let worldKey = "default";
+  let topicKey: string | null = null;
+
+  if (!deviceId || !classId) {
+    return { worldKey, topicKey };
+  }
+
+  try {
+    const mineRes = await fetch(
+      `/api/class/mine?deviceId=${encodeURIComponent(deviceId)}`,
+      { cache: "no-store" }
+    );
+    const mineJson = await readJsonSafe(mineRes);
+    const row = Array.isArray(mineJson?.classes)
+      ? mineJson.classes.find(
+          (c: MineClassRow) =>
+            String(c.id ?? c.class_id ?? "").trim() === classId
+        )
+      : null;
+
+    if (row) {
+      worldKey = String(row.world_key ?? "default").trim() || "default";
+      const rawTopic = row.topic_key;
+      topicKey =
+        rawTopic === null || rawTopic === undefined
+          ? null
+          : String(rawTopic).trim() || null;
+    }
+  } catch (e) {
+    console.warn("[room rematch] class/mine lookup failed", e);
+  }
+
+  return { worldKey, topicKey };
+}
+
+async function rematchRoomSession(params: {
+  deviceId: string;
+  classId: string;
+  openJoinedClassId?: string | null;
+}) {
+  const { worldKey, topicKey } = await resolveClassMatchKeys(
+    params.deviceId,
+    params.classId
+  );
+
+  const rematchBody = buildMatchJoinRequestBody({
+    deviceId: params.deviceId,
+    worldKey,
+    topicKey,
+    capacity: 5,
+    openJoinedClassId: params.openJoinedClassId ?? null,
+  });
+
+  console.log("[room] rematch match-join-v2 request body =", rematchBody);
+
+  const rematchRes = await fetch("/api/class/match-join-v2", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(rematchBody),
+    cache: "no-store",
+  });
+
+  const rematchJson = await readJsonSafe(rematchRes);
+
+  console.log("[room] rematch match-join-v2 response =", {
+    ok: rematchJson?.ok,
+    sessionId: rematchJson?.sessionId ?? rematchJson?.session_id,
+    sessionStatus: rematchJson?.sessionStatus ?? rematchJson?.session_status,
+    error: rematchJson?.error,
+  });
+
+  return { rematchRes, rematchJson };
 }
 
 function getFreshPresenceStatus(p?: PresenceRow): PresenceStatus {
@@ -345,6 +421,9 @@ export default function RoomClient() {
     (searchParams.get("session_id") ?? "").trim() ||
     (searchParams.get("session") ?? "").trim();
   const autojoin = (searchParams.get("autojoin") ?? "").trim() === "1";
+  const openJoinedClass =
+    (searchParams.get("openJoinedClass") ?? "").trim() === "1" ||
+    (searchParams.get("openJoinedClass") ?? "").trim() === "true";
   const dev = (searchParams.get("dev") ?? "").trim();
   
   const invite = (searchParams.get("invite") ?? "").trim() === "1";
@@ -701,7 +780,8 @@ setMembers((prev) => {
 
     const roomUrl = withDev(
       `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-        `&sessionId=${encodeURIComponent(sessionId)}`
+        `&sessionId=${encodeURIComponent(sessionId)}` +
+        (openJoinedClass ? "&openJoinedClass=1" : "")
     );
 
     pushRecentClass(
@@ -712,7 +792,7 @@ setMembers((prev) => {
       },
       20
     );
-  }, [classId, sessionId, topicTitle, classLabel]);
+  }, [classId, sessionId, topicTitle, classLabel, openJoinedClass]);
 
   useEffect(() => {
   if (pathname !== "/room") return;
@@ -769,6 +849,13 @@ const name = rawName === "You" ? "参加者" : rawName;
 }
     }
 
+    console.log("[room join] request", {
+      urlSessionId: sessionId,
+      classId,
+      deviceId,
+      openJoinedClass,
+    });
+
     const res = await fetch(
       `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
       {
@@ -783,6 +870,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           name,
           capacity: 5,
           invite: searchParams.get("invite") === "1",
+          openJoinedClass,
         }),
         cache: "no-store",
       }
@@ -808,25 +896,11 @@ const name = rawName === "You" ? "参加者" : rawName;
           throw new Error("ルームが見つかりません");
         }
 
-        if (error === "session_closed") {
-  const rematchBody = buildMatchJoinRequestBody({
+        if (error === "session_closed" || error === "recruitment_closed") {
+  const { rematchRes, rematchJson } = await rematchRoomSession({
     deviceId,
-    openJoinedClassId: classId,
-    topicKey: null,
-    worldKey: "default",
-    capacity: 5,
+    classId,
   });
-
-  console.log("[room] rematch match-join-v2 request body =", rematchBody);
-
-  const rematchRes = await fetch("/api/class/match-join-v2", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(rematchBody),
-    cache: "no-store",
-  });
-
-  const rematchJson = await readJsonSafe(rematchRes);
 
   const nextSessionId = String(
     rematchJson?.sessionId ?? rematchJson?.session_id ?? ""
@@ -836,7 +910,17 @@ const name = rawName === "You" ? "参加者" : rawName;
     rematchJson?.classId ?? rematchJson?.class_id ?? classId
   ).trim();
 
+  const nextSessionStatus = String(
+    rematchJson?.sessionStatus ?? rematchJson?.session_status ?? ""
+  ).trim();
+
   if (rematchRes.ok && rematchJson?.ok && nextSessionId && nextClassId) {
+    console.log("[room join] rematch redirect", {
+      fromSessionId: sessionId,
+      toSessionId: nextSessionId,
+      sessionStatus: nextSessionStatus,
+    });
+
     router.replace(
       withDev(
         `/room?autojoin=1&classId=${encodeURIComponent(nextClassId)}` +
@@ -869,6 +953,13 @@ const name = rawName === "You" ? "参加者" : rawName;
       }
 
       if (cancelled) return;
+
+      console.log("[room join] response", {
+        ok: json?.ok,
+        sessionId: json?.sessionId,
+        status: json?.status,
+        urlSessionId: sessionId,
+      });
 
       // ✅ 成功した後だけ固定する
 joinedSessionKeyRef.current = joinKey;
@@ -919,6 +1010,7 @@ await fetchStatus({ force: true });
   pathname,
   fetchStatus,
   searchParams,
+  openJoinedClass,
 ]);
 
   useEffect(() => {

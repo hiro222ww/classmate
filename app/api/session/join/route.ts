@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
+import {
+  blocksNewJoinSessionStatus,
+  parseOpenJoinedClassFlag,
+} from "@/lib/recruitment";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -82,6 +86,7 @@ type JoinBody = {
   displayName?: unknown;
   display_name?: unknown;
   invite?: unknown;
+  openJoinedClass?: unknown;
 };
 
 export async function POST(req: Request) {
@@ -136,14 +141,18 @@ export async function POST(req: Request) {
     );
 
     const invite = Boolean(body.invite);
+    const openJoinedClass = parseOpenJoinedClassFlag(
+      body.openJoinedClass ?? url.searchParams.get("openJoinedClass")
+    );
 
-    console.log("[session/join]", {
+    console.log("[session/join] request", {
       rawSessionCandidate,
       sessionId,
       requestedClassId,
       deviceId,
       name,
       invite,
+      openJoinedClass,
     });
 
     if (!sessionId || !isUuid(sessionId)) {
@@ -172,6 +181,48 @@ export async function POST(req: Request) {
     }
 
     const session = ensured.session;
+
+    if (blocksNewJoinSessionStatus(session.status) && !openJoinedClass) {
+      const { data: existingSessionMember, error: existingSessionMemberErr } =
+        await supabaseAdmin
+          .from("session_members")
+          .select("device_id")
+          .eq("session_id", sessionId)
+          .eq("device_id", deviceId)
+          .maybeSingle();
+
+      if (existingSessionMemberErr) {
+        console.log(
+          "[session/join existingSessionMemberErr]",
+          existingSessionMemberErr
+        );
+        return NextResponse.json(
+          { ok: false, error: "session_member_check_failed" },
+          { status: 500 }
+        );
+      }
+
+      if (!existingSessionMember) {
+        console.log("[session/join] recruitment_closed", {
+          sessionId,
+          sessionStatus: session.status,
+          openJoinedClass,
+          deviceId,
+          requestedClassId,
+        });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "recruitment_closed",
+            sessionStatus: session.status,
+            sessionId,
+            message: "このセッションは現在募集していません。",
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     // ✅ session_members が真実。
     // 招待リンク側の classId が古い/ズレていても、session.class_id を正として補正する。
@@ -349,6 +400,15 @@ export async function POST(req: Request) {
       .from("session_members")
       .select("*", { count: "exact", head: true })
       .eq("session_id", sessionId);
+
+    console.log("[session/join] success", {
+      sessionId,
+      classId,
+      status: session.status,
+      openJoinedClass,
+      deviceId,
+      memberCount: Number(count ?? 0),
+    });
 
     return NextResponse.json({
       ok: true,

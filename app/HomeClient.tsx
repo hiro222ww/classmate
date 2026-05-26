@@ -192,11 +192,16 @@ export default function HomeClient() {
 
   const dev = (searchParams.get("dev") ?? "").trim();
 
-  function buildRoomUrl(classId: string, sessionId: string) {
+  function buildRoomUrl(
+    classId: string,
+    sessionId: string,
+    opts?: { openJoinedClass?: boolean }
+  ) {
     return withDev(
       `/room?autojoin=1&classId=${encodeURIComponent(
         classId
-      )}&sessionId=${encodeURIComponent(sessionId)}`
+      )}&sessionId=${encodeURIComponent(sessionId)}` +
+        (opts?.openJoinedClass ? "&openJoinedClass=1" : "")
     );
   }
 
@@ -739,7 +744,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         return;
       }
 
-      router.push(buildRoomUrl(classId, sessionId));
+      router.push(buildRoomUrl(classId, sessionId, { openJoinedClass: true }));
     } catch (e: any) {
       console.error("[home openClass] error =", e);
       alert(e?.message || "open_class_failed");

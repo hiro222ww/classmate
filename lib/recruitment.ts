@@ -97,3 +97,9 @@ export function sessionStatusesForJoin(isExistingMember: boolean) {
 
   return ["forming", "waiting"];
 }
+
+export function parseOpenJoinedClassFlag(v: unknown) {
+  if (v === true) return true;
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}

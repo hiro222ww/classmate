@@ -812,6 +812,20 @@ return;
 
       const classId = safeTrim(matchJson?.classId);
       const sessionId = safeTrim(matchJson?.sessionId);
+      const sessionStatus = safeTrim(matchJson?.sessionStatus);
+
+      console.log("[select] match-join resolved", {
+        openJoinedClass: matchBody.openJoinedClass ?? false,
+        forcedClassId: matchBody.classId ?? null,
+        classId,
+        sessionId,
+        sessionStatus,
+      });
+
+      if (sessionStatus === "active" && !matchBody.openJoinedClass) {
+        alert("このクラスは現在募集していません。");
+        return;
+      }
 
       if (!classId || !sessionId) {
         throw new Error("match_join_missing_ids");
