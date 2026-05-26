@@ -601,15 +601,15 @@ async function runAtomicMatch(params: {
     blockedDeviceIds,
   } = params;
 
-  const { data, error } = await supabase.rpc("match_join_atomic_v2", {
-    p_world_key: worldKey,
-    p_topic_key: topicKey,
-    p_requested_capacity: requestedCapacity,
-    p_requested_min_age: requestedMinAge,
-    p_requested_max_age: requestedMaxAge,
-    p_device_id: deviceId,
-    p_blocked_device_ids: blockedDeviceIds,
-  });
+  const { data, error } = await supabase.rpc("match_join_atomic", {
+  p_blocked_device_ids: blockedDeviceIds,
+  p_device_id: deviceId,
+  p_requested_capacity: requestedCapacity,
+  p_requested_max_age: requestedMaxAge,
+  p_requested_min_age: requestedMinAge,
+  p_topic_key: topicKey,
+  p_world_key: worldKey,
+});
 
   console.log("🔥 RPC RESULT", {
     params,
