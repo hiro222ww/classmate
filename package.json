@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:probe": "node scripts/probe-match-join-v3.mjs",
+    "test:verify-match-lock": "node scripts/verify-match-lock-migration.mjs",
     "test:prelaunch": "node scripts/run-prelaunch-tests.mjs",
     "test:e2e:concurrent": "node scripts/e2e-concurrent-join.mjs",
     "test:e2e:recovery": "node scripts/e2e-recovery.mjs",
