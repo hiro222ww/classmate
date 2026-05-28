@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { formatPostgresError } from "@/lib/postgresError";
@@ -500,6 +501,7 @@ export async function matchJoinV2Post(req: Request) {
     }
 
     const body = await req.json().catch(() => ({}));
+    const requestId = randomUUID();
     const deviceId = String(body.deviceId ?? "").trim();
     const worldKey = String(body.worldKey ?? "default").trim() || "default";
     const topicKey = normalizeTopicKey(body.topicKey);
@@ -509,16 +511,6 @@ export async function matchJoinV2Post(req: Request) {
       body.classId ?? body.forcedClassId ?? ""
     ).trim();
     const forcedClassId = openJoinedClass ? rawClassId : "";
-
-    console.log("[class/match-join-v2] request", {
-      deviceId,
-      worldKey,
-      topicKey,
-      openJoinedClass,
-      forcedClassId: forcedClassId || null,
-      rawClassId: rawClassId || null,
-      requestedCapacity,
-    });
 
     if (!openJoinedClass && rawClassId) {
       console.warn("[class/match-join-v2] ignored classId without openJoinedClass", {
@@ -554,6 +546,19 @@ export async function matchJoinV2Post(req: Request) {
     const rawMaxAge = normalizeAge(body.maxAge, fallbackMaxAge);
     const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
     const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
+
+    console.log("[class/match-join-v2] request", {
+      requestId,
+      deviceId,
+      worldKey,
+      topicKey,
+      minAge: requestedMinAge,
+      maxAge: requestedMaxAge,
+      capacity: requestedCapacity,
+      openJoinedClass,
+      forcedClassId: forcedClassId || null,
+      rawClassId: rawClassId || null,
+    });
 
     const profileRes = await getProfile(deviceId);
     if (!profileRes.ok) return profileRes.response;
@@ -669,6 +674,8 @@ export async function matchJoinV2Post(req: Request) {
       requestedCapacity,
       classSlots,
       blockedDeviceIds,
+      requestedMinAge,
+      requestedMaxAge,
     });
 
     if (!atomicRes.ok) return atomicRes.response;
@@ -740,12 +747,20 @@ export async function matchJoinV2Post(req: Request) {
     }
 
     console.log("[class/match-join-v2] success", {
+      requestId,
+      deviceId,
+      worldKey,
+      topicKey,
+      minAge: requestedMinAge,
+      maxAge: requestedMaxAge,
+      capacity: requestedCapacity,
       openJoinedClass,
       forcedClassId: forcedClassId || null,
       classId: row.class_id,
       className: row.class_name,
       sessionId: row.session_id,
       sessionStatus: row.session_status,
+      status: row.session_status,
       sessionCreatedAt: row.session_created_at,
       recruitmentSessionTtlMinutes,
       recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
@@ -755,11 +770,15 @@ export async function matchJoinV2Post(req: Request) {
       createdNewClass: Boolean(row.created_new_class),
       reused: row.reused,
       alreadyJoined: row.already_joined,
+      billableCount: membershipSnapshot.billableCount,
+      classSlots,
     });
 
-    return NextResponse.json({
-      ok: true,
-      classId: String(row.class_id),
+    return NextResponse.json(
+      {
+        ok: true,
+        requestId,
+        classId: String(row.class_id),
       className: String(row.class_name ?? "").trim() || "クラス",
       sessionId: String(row.session_id),
       sessionStatus: String(row.session_status ?? "forming"),

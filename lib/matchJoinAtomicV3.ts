@@ -16,6 +16,8 @@ export type MatchJoinAtomicV3Params = {
   requestedCapacity: number;
   classSlots: number;
   blockedDeviceIds: string[];
+  requestedMinAge: number;
+  requestedMaxAge: number;
 };
 
 export type MatchJoinAtomicV3Row = {
@@ -177,6 +179,8 @@ export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
     p_requested_capacity: params.requestedCapacity,
     p_class_slots: params.classSlots,
     p_blocked_device_ids: params.blockedDeviceIds,
+    p_requested_min_age: params.requestedMinAge,
+    p_requested_max_age: params.requestedMaxAge,
   });
 
   if (error) {
@@ -187,6 +191,8 @@ export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
         worldKey: params.worldKey,
         topicKey: params.topicKey,
         requestedCapacity: params.requestedCapacity,
+        requestedMinAge: params.requestedMinAge,
+        requestedMaxAge: params.requestedMaxAge,
         classSlots: params.classSlots,
         blockedDeviceCount: params.blockedDeviceIds.length,
       },
