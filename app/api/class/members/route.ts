@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  logDisplayNameResolution,
+  normalizeDisplayNameInput,
+  pickLatestSessionMemberByDevice,
+  resolveDisplayName,
+} from "@/lib/resolveDisplayName";
 
 export const dynamic = "force-dynamic";
 
 function normalizeDeviceId(v: unknown) {
-  return String(v ?? "").trim();
-}
-
-function normalizeName(v: unknown) {
-  return String(v ?? "").trim();
+  return normalizeDisplayNameInput(v);
 }
 
 async function loadProfiles(
@@ -22,7 +24,7 @@ async function loadProfiles(
   if (ids.length === 0) {
     return {
       ok: true as const,
-      profileMap: new Map<string, any>(),
+      profileMap: new Map<string, { display_name?: string | null; photo_path?: string | null }>(),
     };
   }
 
@@ -35,21 +37,96 @@ async function loadProfiles(
     return {
       ok: false as const,
       error,
-      profileMap: new Map<string, any>(),
+      profileMap: new Map<string, { display_name?: string | null; photo_path?: string | null }>(),
     };
   }
 
-  const profileMap = new Map<string, any>();
+  const profileMap = new Map<
+    string,
+    { display_name?: string | null; photo_path?: string | null }
+  >();
 
   for (const p of data ?? []) {
-    const did = normalizeDeviceId((p as any).device_id);
+    const did = normalizeDeviceId((p as { device_id?: string }).device_id);
     if (!did) continue;
-    profileMap.set(did, p);
+    profileMap.set(did, p as { display_name?: string | null; photo_path?: string | null });
   }
 
   return {
     ok: true as const,
     profileMap,
+  };
+}
+
+async function loadPresenceDisplayNames(
+  sb: typeof supabaseAdmin,
+  classId: string,
+  deviceIds: string[]
+) {
+  const ids = Array.from(
+    new Set(deviceIds.map((id) => normalizeDeviceId(id)).filter(Boolean))
+  );
+
+  const presenceMap = new Map<string, string>();
+
+  if (!classId || ids.length === 0) {
+    return presenceMap;
+  }
+
+  const { data, error } = await sb
+    .from("class_presence")
+    .select("device_id, display_name, last_seen_at")
+    .eq("class_id", classId)
+    .in("device_id", ids)
+    .order("last_seen_at", { ascending: false });
+
+  if (error) {
+    if (String(error.message ?? "").includes("display_name")) {
+      return presenceMap;
+    }
+    console.warn("[class/members] presence lookup failed", error.message);
+    return presenceMap;
+  }
+
+  for (const row of data ?? []) {
+    const did = normalizeDeviceId((row as { device_id?: string }).device_id);
+    if (!did || presenceMap.has(did)) continue;
+    const name = normalizeDisplayNameInput(
+      (row as { display_name?: string | null }).display_name
+    );
+    if (name) presenceMap.set(did, name);
+  }
+
+  return presenceMap;
+}
+
+function buildMemberRow(input: {
+  deviceId: string;
+  joinedAt: string | null;
+  profile?: { display_name?: string | null; photo_path?: string | null } | null;
+  sessionMemberDisplayName?: unknown;
+  presenceDisplayName?: unknown;
+  context: string;
+  classId: string;
+  sessionId?: string | null;
+}) {
+  const resolved = resolveDisplayName({
+    profileDisplayName: input.profile?.display_name,
+    sessionMemberDisplayName: input.sessionMemberDisplayName,
+    presenceDisplayName: input.presenceDisplayName,
+  });
+
+  logDisplayNameResolution(input.context, input.deviceId, resolved, {
+    classId: input.classId,
+    sessionId: input.sessionId ?? null,
+  });
+
+  return {
+    device_id: input.deviceId,
+    joined_at: input.joinedAt,
+    display_name: resolved.displayName,
+    display_name_source: resolved.source,
+    photo_path: input.profile?.photo_path ?? null,
   };
 }
 
@@ -69,7 +146,6 @@ export async function GET(req: Request) {
 
     const sb = supabaseAdmin;
 
-    // ===== session_members（今いる人） =====
     if (sessionId) {
       const { data: sessionRows, error: sessionErr } = await sb
         .from("session_members")
@@ -88,9 +164,8 @@ export async function GET(req: Request) {
         );
       }
 
-      const deviceIds = (sessionRows ?? [])
-        .map((row: any) => normalizeDeviceId(row.device_id))
-        .filter(Boolean);
+      const latestByDevice = pickLatestSessionMemberByDevice(sessionRows ?? []);
+      const deviceIds = Array.from(latestByDevice.keys());
 
       const profilesRes = await loadProfiles(sb, deviceIds);
 
@@ -105,24 +180,25 @@ export async function GET(req: Request) {
         );
       }
 
-      const members = (sessionRows ?? [])
-        .map((row: any) => {
-          const did = normalizeDeviceId(row.device_id);
-          if (!did) return null;
+      const presenceMap = await loadPresenceDisplayNames(sb, classId, deviceIds);
 
-          const profile = profilesRes.profileMap.get(did);
-
-          return {
-            device_id: did,
-            joined_at: row.joined_at ?? null,
-            display_name:
-              normalizeName(profile?.display_name) ||
-              normalizeName(row.display_name) ||
-              "メンバー",
-            photo_path: profile?.photo_path ?? null,
-          };
-        })
-        .filter(Boolean);
+      const members = Array.from(latestByDevice.entries())
+        .map(([did, row]) =>
+          buildMemberRow({
+            deviceId: did,
+            joinedAt: (row as { joined_at?: string | null }).joined_at ?? null,
+            profile: profilesRes.profileMap.get(did),
+            sessionMemberDisplayName: (row as { display_name?: string | null })
+              .display_name,
+            presenceDisplayName: presenceMap.get(did),
+            context: "class/members:session",
+            classId,
+            sessionId,
+          })
+        )
+        .sort((a, b) =>
+          String(a.joined_at ?? "").localeCompare(String(b.joined_at ?? ""))
+        );
 
       return NextResponse.json({
         ok: true,
@@ -133,7 +209,6 @@ export async function GET(req: Request) {
       });
     }
 
-    // ===== class_memberships（所属者） =====
     const { data: membershipRows, error: membershipErr } = await sb
       .from("class_memberships")
       .select("device_id, joined_at")
@@ -152,7 +227,7 @@ export async function GET(req: Request) {
     }
 
     const deviceIds = (membershipRows ?? [])
-      .map((row: any) => normalizeDeviceId(row.device_id))
+      .map((row) => normalizeDeviceId((row as { device_id?: string }).device_id))
       .filter(Boolean);
 
     const profilesRes = await loadProfiles(sb, deviceIds);
@@ -168,21 +243,21 @@ export async function GET(req: Request) {
       );
     }
 
+    const presenceMap = await loadPresenceDisplayNames(sb, classId, deviceIds);
+
     const members = (membershipRows ?? [])
-      .map((row: any) => {
-        const did = normalizeDeviceId(row.device_id);
+      .map((row) => {
+        const did = normalizeDeviceId((row as { device_id?: string }).device_id);
         if (!did) return null;
 
-        const profile = profilesRes.profileMap.get(did);
-
-        return {
-          device_id: did,
-          joined_at: row.joined_at ?? null,
-          display_name:
-            normalizeName(profile?.display_name) ||
-            "メンバー",
-          photo_path: profile?.photo_path ?? null,
-        };
+        return buildMemberRow({
+          deviceId: did,
+          joinedAt: (row as { joined_at?: string | null }).joined_at ?? null,
+          profile: profilesRes.profileMap.get(did),
+          presenceDisplayName: presenceMap.get(did),
+          context: "class/members:membership",
+          classId,
+        });
       })
       .filter(Boolean);
 
@@ -192,12 +267,13 @@ export async function GET(req: Request) {
       classId,
       members,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
       {
         ok: false,
         error: "server_error",
-        detail: e?.message ?? String(e),
+        detail: message,
       },
       { status: 500 }
     );

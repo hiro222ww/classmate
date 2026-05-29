@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  logDisplayNameResolution,
+  pickLatestSessionMemberByDevice,
+  resolveDisplayName,
+} from "@/lib/resolveDisplayName";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,6 +46,7 @@ type SessionMemberRow = {
 
 type UserProfileRow = {
   device_id?: string | null;
+  display_name?: string | null;
   photo_path?: string | null;
 };
 
@@ -57,12 +63,6 @@ type PresenceInfo = {
   last_seen_at: string | null;
   is_in_call: boolean;
 };
-
-function sanitizeDisplayName(v: string | null | undefined) {
-  const s = String(v ?? "").trim();
-  if (!s || s === "You") return "参加者";
-  return s;
-}
 
 function normalizePhotoPath(v: string | null | undefined) {
   let s = String(v ?? "").trim();
@@ -131,37 +131,37 @@ async function getRawMembers(sb: ReturnType<typeof admin>, sessionId: string) {
   };
 }
 
-async function getPhotoPathMap(
+async function getProfileMap(
   sb: ReturnType<typeof admin>,
   deviceIds: string[]
 ) {
   if (deviceIds.length === 0) {
     return {
       ok: true as const,
-      photoPathMap: new Map<string, string | null>(),
+      profileMap: new Map<string, UserProfileRow>(),
     };
   }
 
   const { data, error } = await sb
     .from("user_profiles")
-    .select("device_id,photo_path")
+    .select("device_id,display_name,photo_path")
     .in("device_id", deviceIds);
 
   if (error) {
     return { ok: false as const, error };
   }
 
-  const map = new Map<string, string | null>();
+  const map = new Map<string, UserProfileRow>();
 
   for (const row of (Array.isArray(data) ? data : []) as UserProfileRow[]) {
     const did = String(row.device_id ?? "").trim();
     if (!did) continue;
-    map.set(did, normalizePhotoPath(row.photo_path));
+    map.set(did, row);
   }
 
   return {
     ok: true as const,
-    photoPathMap: map,
+    profileMap: map,
   };
 }
 
@@ -219,58 +219,47 @@ async function getPresenceMap(
 
 function buildMembers(
   rawMembers: SessionMemberRow[],
-  photoPathMap: Map<string, string | null>,
+  profileMap: Map<string, UserProfileRow>,
   presenceMap: Map<string, PresenceInfo>
 ) {
-  const byDevice = new Map<
-    string,
-    {
-      device_id: string;
-      display_name: string;
-      photo_path: string | null;
-      avatar_url: null;
-      joined_at: string;
-      screen: string;
-      presence_session_id: string | null;
-      last_seen_at: string | null;
-      is_in_call: boolean;
+  const latestByDevice = pickLatestSessionMemberByDevice(rawMembers);
+
+  const members = Array.from(latestByDevice.entries()).map(
+    ([deviceId, row]) => {
+      const joinedAt =
+        String(row.joined_at ?? "").trim() || new Date(0).toISOString();
+      const profile = profileMap.get(deviceId);
+
+      const resolved = resolveDisplayName({
+        profileDisplayName: profile?.display_name,
+        sessionMemberDisplayName: row.display_name,
+      });
+
+      logDisplayNameResolution("session/status", deviceId, resolved);
+
+      const presence = presenceMap.get(deviceId) ?? {
+        screen: "offline",
+        session_id: null,
+        last_seen_at: null,
+        is_in_call: false,
+      };
+
+      return {
+        device_id: deviceId,
+        display_name: resolved.displayName,
+        display_name_source: resolved.source,
+        photo_path: normalizePhotoPath(profile?.photo_path),
+        avatar_url: null,
+        joined_at: joinedAt,
+        screen: presence.screen,
+        presence_session_id: presence.session_id,
+        last_seen_at: presence.last_seen_at,
+        is_in_call: presence.is_in_call,
+      };
     }
-  >();
-
-  for (const row of rawMembers) {
-    const deviceId = String(row.device_id ?? "").trim();
-    if (!deviceId) continue;
-
-    const displayName = sanitizeDisplayName(row.display_name);
-    const joinedAt =
-      String(row.joined_at ?? "").trim() || new Date(0).toISOString();
-
-    const presence = presenceMap.get(deviceId) ?? {
-      screen: "offline",
-      session_id: null,
-      last_seen_at: null,
-      is_in_call: false,
-    };
-
-    const prev = byDevice.get(deviceId);
-    if (prev && prev.joined_at <= joinedAt) continue;
-
-    byDevice.set(deviceId, {
-      device_id: deviceId,
-      display_name: displayName,
-      photo_path: photoPathMap.get(deviceId) ?? null,
-      avatar_url: null,
-      joined_at: joinedAt,
-      screen: presence.screen,
-      presence_session_id: presence.session_id,
-      last_seen_at: presence.last_seen_at,
-      is_in_call: presence.is_in_call,
-    });
-  }
-
-  return Array.from(byDevice.values()).sort((a, b) =>
-    a.joined_at.localeCompare(b.joined_at)
   );
+
+  return members.sort((a, b) => a.joined_at.localeCompare(b.joined_at));
 }
 
 export async function GET(req: Request) {
@@ -350,10 +339,10 @@ export async function GET(req: Request) {
       )
     );
 
-    const photoMapRes = await getPhotoPathMap(sb, deviceIds);
-    if (!photoMapRes.ok) {
+    const profileMapRes = await getProfileMap(sb, deviceIds);
+    if (!profileMapRes.ok) {
       return NextResponse.json(
-        { ok: false, error: photoMapRes.error.message },
+        { ok: false, error: profileMapRes.error.message },
         { status: 500 }
       );
     }
@@ -368,7 +357,7 @@ export async function GET(req: Request) {
 
     const members = buildMembers(
       rawMembersRes.members,
-      photoMapRes.photoPathMap,
+      profileMapRes.profileMap,
       presenceMapRes.presenceMap
     );
 

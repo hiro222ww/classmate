@@ -10,6 +10,10 @@ import { withDev } from "@/lib/withDev";
 import SessionMessages from "@/components/SessionMessages";
 import YouTubeWatchParty from "./YouTubeWatchParty";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
+import {
+  formatMemberDisplayName,
+  logMemberDisplayNamesFromApi,
+} from "@/lib/resolveDisplayName";
 
 type Member = {
   device_id: string;
@@ -34,6 +38,7 @@ type SessionStatusResponse = {
   members?: Array<{
     device_id?: string;
     display_name?: string | null;
+    display_name_source?: string | null;
     photo_path?: string | null;
     joined_at?: string | null;
     is_in_call?: boolean | null;
@@ -183,6 +188,7 @@ export default function CallClient() {
         }
 
         const incoming = Array.isArray(json.members) ? json.members : [];
+        logMemberDisplayNamesFromApi("call:session/status", incoming);
         const nextMembers: Member[] = [];
 
         for (const m of incoming) {
@@ -191,7 +197,7 @@ export default function CallClient() {
 
           nextMembers.push({
             device_id: did,
-            display_name: String(m.display_name ?? "").trim() || "参加者",
+            display_name: formatMemberDisplayName(m),
             photo_path: String(m.photo_path ?? "").trim() || null,
             is_in_call: m.is_in_call === true,
           });
@@ -820,7 +826,7 @@ export default function CallClient() {
       <MemberModerationButtons
         myDeviceId={deviceId}
         targetDeviceId={member.device_id}
-        targetName={member.display_name || "参加者"}
+        targetName={formatMemberDisplayName(member)}
         sessionId={sessionId}
         classId={classId}
       />
@@ -907,10 +913,9 @@ export default function CallClient() {
         <SessionMessages
           sessionId={sessionId}
           deviceId={deviceId}
-          displayName={
-            members.find((m) => m.device_id === deviceId)?.display_name ||
-            "参加者"
-          }
+          displayName={formatMemberDisplayName(
+            members.find((m) => m.device_id === deviceId) ?? {}
+          )}
           title="メッセージ"
           maxHeight={240}
           collapsible

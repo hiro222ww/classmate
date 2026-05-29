@@ -19,12 +19,19 @@ import { pushRecentClass } from "@/lib/recentClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
+import {
+  formatMemberDisplayName,
+  logMemberDisplayNamesFromApi,
+  pickLatestSessionMemberByDevice,
+  resolveDisplayName,
+} from "@/lib/resolveDisplayName";
 import SessionMessages from "@/components/SessionMessages";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
 
 type MemberRow = {
   device_id?: string;
   display_name?: string;
+  display_name_source?: string | null;
   photo_path?: string | null;
   avatar_url?: string | null;
   joined_at?: string;
@@ -326,13 +333,15 @@ function dedupeMembers(
 ): MemberRow[] {
   const normalizedMyDeviceId = String(myDeviceId ?? "").trim();
   const normalizedMyName = normalizeName(myDisplayName);
+  const latestByDevice = pickLatestSessionMemberByDevice(list);
 
   const others = new Map<string, MemberRow>();
   let me: MemberRow | null = null;
 
-  for (const row of list) {
+  for (const row of latestByDevice.values()) {
     const did = String(row.device_id ?? "").trim();
-    const name = normalizeName(row.display_name);
+    if (!did) continue;
+
     const photoPath =
       row.photo_path && String(row.photo_path).trim()
         ? String(row.photo_path).trim()
@@ -343,32 +352,38 @@ function dedupeMembers(
         : null;
     const joinedAt = String(row.joined_at ?? "").trim();
 
+    const resolved = resolveDisplayName({
+      profileDisplayName:
+        did === normalizedMyDeviceId ? normalizedMyName : undefined,
+      sessionMemberDisplayName: row.display_name,
+    });
+
+    const memberRow: MemberRow = {
+      device_id: did,
+      display_name: resolved.displayName,
+      display_name_source: resolved.source,
+      photo_path: photoPath,
+      avatar_url: avatarUrl,
+      joined_at: joinedAt,
+    };
+
     const isMeByDevice =
       !!did && !!normalizedMyDeviceId && did === normalizedMyDeviceId;
 
     if (isMeByDevice) {
-      if (!me) {
-        me = {
-          device_id: did || normalizedMyDeviceId,
-          display_name: name || normalizedMyName || "",
-          photo_path: photoPath,
-          avatar_url: avatarUrl,
-          joined_at: joinedAt,
-        };
-      }
+      const selfResolved = resolveDisplayName({
+        profileDisplayName: normalizedMyName,
+        sessionMemberDisplayName: row.display_name,
+      });
+      me = {
+        ...memberRow,
+        display_name: selfResolved.displayName,
+        display_name_source: selfResolved.source,
+      };
       continue;
     }
 
-    if (!did) continue;
-    if (!others.has(did)) {
-      others.set(did, {
-        device_id: did,
-        display_name: name,
-        photo_path: photoPath,
-        avatar_url: avatarUrl,
-        joined_at: joinedAt,
-      });
-    }
+    others.set(did, memberRow);
   }
 
   const sortedOthers = Array.from(others.values()).sort((a, b) =>
@@ -637,6 +652,7 @@ setMembers((prev) => {
   const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
   const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
   if (prevNorm === nextNorm) return prev;
+  logMemberDisplayNamesFromApi("room:session/status", incomingMembers);
   return incomingMembers;
 });
 
@@ -1265,10 +1281,11 @@ if (!shouldAutoStart) return;
                     const isMe = did === String(deviceId ?? "").trim();
 
                     const label = isMe
-                      ? normalizeName(displayName) ||
-                        normalizeName(m.display_name) ||
-                        "参加者"
-                      : normalizeName(m.display_name) || "参加者";
+                      ? resolveDisplayName({
+                          profileDisplayName: displayName,
+                          sessionMemberDisplayName: m.display_name,
+                        }).displayName
+                      : formatMemberDisplayName(m);
 
                     const memberStatus = isMe
                       ? "waiting"

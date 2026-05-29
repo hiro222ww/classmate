@@ -7,6 +7,11 @@ import { DevPanel } from "@/components/DevPanel";
 import { withDev } from "@/lib/withDev";
 import { getClassStatusLabel, isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
+import {
+  DISPLAY_NAME_FALLBACK,
+  formatMemberDisplayName,
+  logMemberDisplayNamesFromApi,
+} from "@/lib/resolveDisplayName";
 
 type Profile = {
   device_id: string;
@@ -40,6 +45,7 @@ type MineClass = {
 type ClassMember = {
   device_id: string;
   display_name: string;
+  display_name_source?: string | null;
   photo_path?: string | null;
   joined_at?: string | null;
 };
@@ -506,6 +512,10 @@ return {
 
         for (const row of results) {
           nextMembersByClass[row.classId] = row.members;
+          logMemberDisplayNamesFromApi(
+            `home:${row.classId.slice(0, 8)}`,
+            row.members
+          );
 
           const presenceMap: Record<string, PresenceRow> = {};
           for (const p of row.presence) {
@@ -536,7 +546,7 @@ return {
               pushBrowserNotification(
                 notificationsEnabled,
                 "通話が始まりました",
-                `${member.display_name}さんが「${classTitle}」で通話中です`
+                `${formatMemberDisplayName(member)}さんが「${classTitle}」で通話中です`
               );
             }
 
@@ -547,7 +557,7 @@ return {
               pushBrowserNotification(
                 notificationsEnabled,
                 "クラスメートがオンラインになりました",
-                `${member.display_name}さんが「${classTitle}」に来ています`
+                `${formatMemberDisplayName(member)}さんが「${classTitle}」に来ています`
               );
             }
           }
@@ -636,9 +646,10 @@ return () => {
               if (!senderId || senderId === deviceId) continue;
 
               const members = membersByClass[row.classId] ?? [];
+              const senderMember = members.find((m) => m.device_id === senderId);
+              const senderName = formatMemberDisplayName(senderMember ?? {});
               const sender =
-                members.find((m) => m.device_id === senderId)?.display_name ||
-                "クラスメート";
+                senderName === DISPLAY_NAME_FALLBACK ? "クラスメート" : senderName;
 
               const body =
                 String(msg.message ?? "").trim() || "新しいメッセージがあります";
@@ -1180,7 +1191,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                   color: "#111",
                                 }}
                               >
-                                {m.display_name || "メンバー"}
+                                {formatMemberDisplayName(m)}
                                 {isMe ? "（あなた）" : ""}
                               </div>
 
