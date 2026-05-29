@@ -263,6 +263,8 @@ export default function HomeClient() {
     useState(false);
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
+  const [joinWindowOpen, setJoinWindowOpen] = useState(true);
+  const [joinWindowText, setJoinWindowText] = useState("");
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
@@ -284,6 +286,53 @@ export default function HomeClient() {
       const saved = localStorage.getItem("notifications_enabled");
       setNotificationsEnabled(saved === "true");
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function reloadJoinWindow() {
+      try {
+        const res = await fetch("/api/admission/status", { cache: "no-store" });
+        const json = await readJsonSafe(res);
+
+        console.log("[home] admission status =", json);
+
+        if (cancelled) return;
+
+        if (!res.ok || !json?.ok) {
+          setJoinWindowOpen(true);
+          setJoinWindowText("");
+          return;
+        }
+
+        setJoinWindowOpen(Boolean(json.open));
+        setJoinWindowText(String(json.text ?? ""));
+      } catch (e) {
+        console.warn("[home] admission status load failed", e);
+        if (!cancelled) {
+          setJoinWindowOpen(true);
+          setJoinWindowText("");
+        }
+      }
+    }
+
+    void reloadJoinWindow();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void reloadJoinWindow();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(reloadJoinWindow, 60_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   
@@ -832,6 +881,15 @@ console.log("[home] resolved ids", { classId, sessionId, json });
   }
 
   async function quickJoinFreeAndOpen() {
+    if (!joinWindowOpen) {
+      alert(
+        joinWindowText
+          ? `現在入校受付時間外です。${joinWindowText}`
+          : "現在入校受付時間外です。"
+      );
+      return;
+    }
+
     try {
       setQuickBusy(true);
 
@@ -871,9 +929,15 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         }
 
         if (
+          json?.error === "admission_closed" ||
           json?.error === "match_deadline_passed" ||
           json?.error === "recruitment_closed"
         ) {
+          if (json?.error === "admission_closed") {
+            alert("現在入校受付時間外です。");
+            return;
+          }
+
           alert(
             json?.message ??
               (json?.error === "match_deadline_passed"
@@ -995,22 +1059,23 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button
           onClick={() => router.push(withDev("/class/select"))}
+          disabled={!joinWindowOpen}
           style={{
             padding: "12px 16px",
             borderRadius: 12,
             border: "1px solid #ddd",
-            background: "#111",
-            color: "#fff",
+            background: !joinWindowOpen ? "#d4d4d4" : "#111",
+            color: !joinWindowOpen ? "#666" : "#fff",
             fontWeight: 900,
-            cursor: "pointer",
+            cursor: !joinWindowOpen ? "default" : "pointer",
           }}
         >
-          はじめる（入る場所を選ぶ）
+          {!joinWindowOpen ? "入校受付時間外" : "はじめる（入る場所を選ぶ）"}
         </button>
 
         <button
           onClick={quickJoinFreeAndOpen}
-          disabled={quickBusy}
+          disabled={quickBusy || !joinWindowOpen}
           style={{
             padding: "12px 16px",
             borderRadius: 12,
@@ -1018,11 +1083,15 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             background: "#fff",
             color: "#111",
             fontWeight: 900,
-            cursor: quickBusy ? "default" : "pointer",
-            opacity: quickBusy ? 0.7 : 1,
+            cursor: quickBusy || !joinWindowOpen ? "default" : "pointer",
+            opacity: quickBusy || !joinWindowOpen ? 0.7 : 1,
           }}
         >
-          {quickBusy ? "参加中…" : "フリーですぐ入る"}
+          {quickBusy
+            ? "参加中…"
+            : !joinWindowOpen
+              ? "入校受付時間外"
+              : "フリーですぐ入る"}
         </button>
 
         <button
@@ -1057,6 +1126,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           </button>
         ) : null}
       </div>
+
+      {joinWindowText ? (
+        <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 700 }}>
+          {joinWindowOpen ? joinWindowText : `${joinWindowText}（時間外）`}
+        </div>
+      ) : null}
 
       <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 12 }}>
         <div style={{ fontWeight: 900, marginBottom: 8 }}>自分のクラス</div>

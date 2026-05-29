@@ -490,6 +490,12 @@ export async function matchJoinV2Post(req: Request) {
     }
 
     if (!admission.open) {
+      console.warn("[class/match-join-v2] admission_closed", {
+        admissionWindowEnabled: admission.admissionWindowEnabled,
+        current: admission.current,
+        window: admission.window,
+      });
+
       return NextResponse.json(
         {
           ok: false,
