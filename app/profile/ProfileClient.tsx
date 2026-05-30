@@ -512,6 +512,18 @@ export default function ProfileClient() {
         </div>
       )}
 
+      <p style={{ margin: 0, opacity: 0.7, fontSize: 13, lineHeight: 1.6 }}>
+        {minorsEnabled !== true ? (
+          "現在は18歳以上の方のみ登録できます。"
+        ) : (
+          <>
+            18歳未満の方は保護者の同意が必要です。
+            <br />
+            保護者の同意を得たうえでご利用ください。
+          </>
+        )}
+      </p>
+
       <div style={{ display: "grid", gap: 6 }}>
         <label style={{ fontWeight: 700 }}>ニックネーム（必須）</label>
         <input
@@ -571,15 +583,13 @@ export default function ProfileClient() {
               background: "#fff3cd",
             }}
           >
-            <div style={{ fontWeight: 800, color: "#664d03" }}>
-              18歳未満の方は保護者の同意が必要です
-            </div>
             <label
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
                 color: "#664d03",
+                fontWeight: 700,
               }}
             >
               <input
