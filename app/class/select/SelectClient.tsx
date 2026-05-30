@@ -701,11 +701,11 @@ export default function SelectClient() {
       return;
     }
 
-    if (!joinWindowOpen) {
+    if (!joinWindowOpen && !forcedClassId) {
   alert(
     joinWindowText
-      ? `現在入校受付時間外です。受付時間：${joinWindowText}`
-      : "現在入校受付時間外です。"
+      ? `現在は入校受付時間外です。受付時間になったら、もう一度お試しください。\n受付時間：${joinWindowText}`
+      : "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
   );
   return;
 }
@@ -790,7 +790,10 @@ export default function SelectClient() {
           matchJson?.error === "admission_closed" ||
           matchJson?.error === "match_deadline_passed"
         ) {
-          alert("現在入校受付時間外です。");
+          alert(
+            matchJson?.message ??
+              "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
+          );
           void reloadJoinWindow();
           return;
         }

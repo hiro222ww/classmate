@@ -10,6 +10,12 @@ import {
 } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
+import {
+  ADMISSION_CLOSED_MESSAGE,
+  canRejoinFromEligibility,
+  loadRejoinEligibility,
+} from "@/lib/admissionMembership";
+import { getAdmissionStatus } from "@/lib/admissionWindow";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -189,13 +195,41 @@ export async function POST(req: Request) {
     const session = ensured.session;
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
 
+    const rejoinEligibility = await loadRejoinEligibility({
+      deviceId,
+      classId: session.classId,
+      sessionId,
+    });
+    const canRejoin = canRejoinFromEligibility(rejoinEligibility);
+
+    if (!canRejoin) {
+      const admission = await getAdmissionStatus();
+      if (!admission.open) {
+        console.log("[session/join] admission_closed", {
+          sessionId,
+          classId: session.classId,
+          deviceId,
+        });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "admission_closed",
+            admission,
+            message: ADMISSION_CLOSED_MESSAGE,
+          },
+          { status: 403 }
+        );
+      }
+    }
+
     await expireStaleRecruitmentSessions(supabaseAdmin, {
       classIds: session.classId ? [session.classId] : undefined,
       ttlMinutes: recruitmentSessionTtlMinutes,
     });
 
-    if (blocksNewJoinSessionStatus(session.status) && !openJoinedClass) {
-      const { data: existingSessionMember, error: existingSessionMemberErr } =
+    if (blocksNewJoinSessionStatus(session.status) && !canRejoin) {
+      const { data: existingSessionMemberRow, error: existingSessionMemberErr } =
         await supabaseAdmin
           .from("session_members")
           .select("device_id")
@@ -214,11 +248,12 @@ export async function POST(req: Request) {
         );
       }
 
-      if (!existingSessionMember) {
+      if (!existingSessionMemberRow) {
         console.log("[session/join] recruitment_closed", {
           sessionId,
           sessionStatus: session.status,
           openJoinedClass,
+          canRejoin,
           deviceId,
           requestedClassId,
         });
@@ -237,7 +272,7 @@ export async function POST(req: Request) {
     }
 
     if (
-      !openJoinedClass &&
+      !canRejoin &&
       isRecruitingSessionStatus(session.status) &&
       !isSessionEligibleForNormalJoin({
         sessionStatus: session.status,
@@ -251,6 +286,7 @@ export async function POST(req: Request) {
         sessionCreatedAt: session.createdAt,
         recruitmentSessionTtlMinutes,
         openJoinedClass,
+        canRejoin,
         deviceId,
       });
 
@@ -335,7 +371,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!existingMembership && !openJoinedClass) {
+    if (!existingMembership && !canRejoin) {
       const slotsRes = await getClassSlotsForDevice(supabaseAdmin, deviceId);
       if (!slotsRes.ok) {
         return NextResponse.json(
@@ -448,6 +484,7 @@ export async function POST(req: Request) {
       sessionCreatedAt: session.createdAt,
       recruitmentSessionTtlMinutes,
       openJoinedClass,
+      canRejoin,
       deviceId,
       memberCount: Number(count ?? 0),
     });

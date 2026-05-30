@@ -916,6 +916,7 @@ const name = rawName === "You" ? "参加者" : rawName;
   const { rematchRes, rematchJson } = await rematchRoomSession({
     deviceId,
     classId,
+    openJoinedClassId: classId,
   });
 
   const nextSessionId = String(

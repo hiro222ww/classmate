@@ -2,7 +2,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
+import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
 
+/** @deprecated Legacy endpoint. Prefer `/api/class/match-join-v2`. Not used by the current app UI. */
 export const dynamic = "force-dynamic";
 
 const supabase = createClient(
@@ -116,6 +118,12 @@ export async function POST(req: Request) {
 
     // 4) なければ作る
     if (!cls) {
+      const admissionBlocked = await blockNewJoinIfAdmissionClosed({
+        deviceId,
+        classId: "",
+      });
+      if (admissionBlocked) return admissionBlocked;
+
       const fallbackName = isFree ? "フリークラス" : `${topicKey}ルーム`;
 
       const { data: created, error: createErr } = await supabase
@@ -173,6 +181,12 @@ export async function POST(req: Request) {
         class: cls,
       });
     }
+
+    const admissionBlocked = await blockNewJoinIfAdmissionClosed({
+      deviceId,
+      classId,
+    });
+    if (admissionBlocked) return admissionBlocked;
 
     // 6) 総枠数だけ制限
     if (currentIds.length >= classSlots) {

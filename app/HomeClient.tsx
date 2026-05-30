@@ -842,6 +842,14 @@ return () => {
           return;
         }
 
+        if (json?.error === "admission_closed") {
+          alert(
+            json?.message ??
+              "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
+          );
+          return;
+        }
+
         alert(json?.error || "open_class_failed");
         return;
       }

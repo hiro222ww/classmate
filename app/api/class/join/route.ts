@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
+import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
 
+/** @deprecated Legacy endpoint. Prefer `/api/class/match-join-v2`. Not used by the current app UI. */
 export const dynamic = "force-dynamic";
 
 const supabase = createClient(
@@ -192,6 +194,12 @@ export async function POST(req: Request) {
         memberships: currentIds,
       });
     }
+
+    const admissionBlocked = await blockNewJoinIfAdmissionClosed({
+      deviceId,
+      classId,
+    });
+    if (admissionBlocked) return admissionBlocked;
 
     if (currentIds.length >= classSlots) {
       console.log("[class/join] class slots limit", {

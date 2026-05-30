@@ -15,6 +15,11 @@ import {
   genderRestrictionBlocksJoin,
 } from "@/lib/genderRestriction";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
+import {
+  blockNewJoinIfAdmissionClosed,
+  canRejoinFromEligibility,
+  loadRejoinEligibility,
+} from "@/lib/admissionMembership";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -468,44 +473,21 @@ function checkGenderRestriction(params: {
   return null;
 }
 
+async function enforceAdmissionForNewJoin(params: {
+  deviceId: string;
+  classId?: string;
+}) {
+  const blocked = await blockNewJoinIfAdmissionClosed({
+    deviceId: params.deviceId,
+    classId: params.classId ?? "",
+  });
+  if (blocked) return blocked;
+
+  return null;
+}
+
 export async function matchJoinV2Post(req: Request) {
   try {
-    const admissionUrl = new URL("/api/admission/status", req.url);
-
-    const admissionRes = await fetch(admissionUrl, {
-      cache: "no-store",
-    });
-
-    const admission = await admissionRes.json().catch(() => null);
-
-    if (!admissionRes.ok || !admission?.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "admission_status_failed",
-          admission,
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!admission.open) {
-      console.warn("[class/match-join-v2] admission_closed", {
-        admissionWindowEnabled: admission.admissionWindowEnabled,
-        current: admission.current,
-        window: admission.window,
-      });
-
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "admission_closed",
-          admission,
-        },
-        { status: 403 }
-      );
-    }
-
     const body = await req.json().catch(() => ({}));
     const requestId = randomUUID();
     const deviceId = String(body.deviceId ?? "").trim();
@@ -536,6 +518,25 @@ export async function matchJoinV2Post(req: Request) {
         { ok: false, error: "device_id_missing" },
         { status: 400 }
       );
+    }
+
+    const admissionBlocked = await enforceAdmissionForNewJoin({
+      deviceId,
+      classId: forcedClassId,
+    });
+    if (admissionBlocked) return admissionBlocked;
+
+    const rejoinEligibility = forcedClassId
+      ? await loadRejoinEligibility({ deviceId, classId: forcedClassId })
+      : { existingClassMember: false, existingSessionMember: false };
+    const canRejoinTargetClass = canRejoinFromEligibility(rejoinEligibility);
+
+    if (canRejoinTargetClass) {
+      console.log("[class/match-join-v2] rejoin eligible", {
+        deviceId,
+        classId: forcedClassId,
+        openJoinedClass,
+      });
     }
 
     const blockedRes = await getBlockedDeviceIds(deviceId);
@@ -693,9 +694,10 @@ export async function matchJoinV2Post(req: Request) {
       : recruitmentSessionTtlSetting.minutes ??
         (await getRecruitmentSessionTtlMinutes());
 
-    if (!openJoinedClass && blocksNewJoinSessionStatus(row.session_status)) {
+    if (!canRejoinTargetClass && blocksNewJoinSessionStatus(row.session_status)) {
       console.warn("[class/match-join-v2] blocked non-recruiting session on normal path", {
         openJoinedClass,
+        canRejoinTargetClass,
         forcedClassId: forcedClassId || null,
         classId: row.class_id,
         sessionId: row.session_id,
@@ -715,7 +717,7 @@ export async function matchJoinV2Post(req: Request) {
     }
 
     if (
-      !openJoinedClass &&
+      !canRejoinTargetClass &&
       isRecruitingSessionStatus(row.session_status) &&
       !isSessionEligibleForNormalJoin({
         sessionStatus: row.session_status,
@@ -727,6 +729,7 @@ export async function matchJoinV2Post(req: Request) {
         "[class/match-join-v2] blocked stale or invalid session on normal path",
         {
           openJoinedClass,
+          canRejoinTargetClass,
           forcedClassId: forcedClassId || null,
           classId: row.class_id,
           sessionId: row.session_id,
