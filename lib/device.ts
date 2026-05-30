@@ -1,4 +1,8 @@
-import { getDevDeviceId, isDevFeatureEnabled } from "@/lib/devMode";
+import {
+  getDevDeviceId,
+  isDevFeatureEnabled,
+  resolveDevDeviceIdFromKey,
+} from "@/lib/devMode";
 
 export const DEVICE_ID_KEY = "classmate_device_id";
 
@@ -30,8 +34,9 @@ export function getDeviceId(): string {
     const params = new URLSearchParams(window.location.search);
     const devFromUrl = params.get("dev");
 
-    if (devFromUrl && /^\d+$/.test(devFromUrl)) {
-      return `test-device-${devFromUrl}`;
+    if (devFromUrl) {
+      const resolved = resolveDevDeviceIdFromKey(devFromUrl);
+      if (resolved) return resolved;
     }
   } catch {
     // ignore

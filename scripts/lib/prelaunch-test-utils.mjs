@@ -116,15 +116,66 @@ export function devDeviceId(devKey) {
   return `test-device-${devKey}`;
 }
 
-export async function ensureDevDevices(sb, { url, key }, devKeys, classSlots = 5) {
+/** WebRTC E2E 専用 — test-device-* とは別 namespace */
+export const WEBRTC_E2E_DEVICE_PREFIX = "webrtc-test-device-";
+
+export function webrtcTestDeviceId(devKey) {
+  return `${WEBRTC_E2E_DEVICE_PREFIX}${String(devKey ?? "").trim()}`;
+}
+
+export function webrtcDevParam(devKey) {
+  return `webrtc${String(devKey ?? "").trim()}`;
+}
+
+export function isWebrtcE2eDeviceId(deviceId) {
+  return /^webrtc-test-device-\d+$/.test(String(deviceId ?? "").trim());
+}
+
+/**
+ * webrtc-test-device-* の presence / session_members / class_memberships のみ削除。
+ * user_profiles / user_entitlements / test-device-* は触らない。
+ */
+export async function cleanupWebrtcE2eDeviceState(sb, { url, key }, devKeys) {
+  const tables = ["class_presence", "session_members", "class_memberships"];
+
   for (const devKey of devKeys) {
-    const deviceId = devDeviceId(devKey);
+    const deviceId = webrtcTestDeviceId(devKey);
+    if (!isWebrtcE2eDeviceId(deviceId)) {
+      throw new Error(`refusing cleanup for deviceId=${deviceId}`);
+    }
+
+    for (const table of tables) {
+      const res = await sbFetch(
+        url,
+        key,
+        `/rest/v1/${table}?device_id=eq.${encodeURIComponent(deviceId)}`,
+        {
+          method: "DELETE",
+          headers: { Prefer: "return=minimal" },
+        }
+      );
+      if (!res.ok && res.status !== 404) {
+        console.warn(`[webrtc-e2e-cleanup] ${table} ${deviceId} status=${res.status}`);
+      }
+    }
+  }
+}
+
+export async function ensureDevDevices(
+  sb,
+  { url, key },
+  devKeys,
+  classSlots = 5,
+  { deviceIdFn = devDeviceId, displayNamePrefix = "E2E" } = {}
+) {
+  for (const devKey of devKeys) {
+    const deviceId = deviceIdFn(devKey);
     await sbFetch(url, key, "/rest/v1/user_profiles", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({
         device_id: deviceId,
-        display_name: `E2E-${devKey}`,
+        display_name: `${displayNamePrefix}-${devKey}`,
         gender: Number(devKey) % 2 === 0 ? "female" : "male",
         birth_date: "2000-01-01",
       }),

@@ -1,3 +1,8 @@
+import {
+  CLASS_SLOT_MONTHLY_YEN,
+  formatTopicPlanLine,
+} from "@/lib/planTiers";
+
 export default function AboutPage() {
   return (
     <main
@@ -33,15 +38,26 @@ export default function AboutPage() {
       </p>
 
       <ul style={{ marginBottom: 16, paddingLeft: 24 }}>
-        <li>同時に参加できるクラス数の上限拡張（例：1→3または5クラス）</li>
-        <li>特定テーマのクラスへの参加権限</li>
+        <li>同時に参加できるクラス数の上限拡張（1クラス → 3クラスまたは5クラス）</li>
+        <li>特定テーマのクラスへの参加権限（テーマプラン）</li>
       </ul>
 
-      <p style={{ marginBottom: 8, fontWeight: "bold" }}>料金例</p>
+      <p style={{ marginBottom: 8, fontWeight: "bold" }}>料金（税込・月額）</p>
       <ul style={{ marginBottom: 16, paddingLeft: 24 }}>
-        <li>クラス枠拡張プラン：月額 700円 / 1000円</li>
-        <li>テーマプラン：月額 400円 / 800円 / 1200円</li>
+        <li>
+          クラス枠拡張プラン：3クラス（月額 {CLASS_SLOT_MONTHLY_YEN[3]} 円）/
+          5クラス（月額 {CLASS_SLOT_MONTHLY_YEN[5]} 円）
+        </li>
+        <li>
+          テーマプラン：{formatTopicPlanLine(400)} / {formatTopicPlanLine(800)} /{" "}
+          {formatTopicPlanLine(1200)}
+        </li>
       </ul>
+
+      <p style={{ marginBottom: 16 }}>
+        ベータ期間中は、テーマプランはベーシック（¥400/月）のみ新規お申し込み可能です。
+        スタンダード・プレミアムは正式版に向けて準備中です。
+      </p>
 
       <p style={{ marginBottom: 16 }}>
         ※料金や提供内容は、今後変更される場合があります。
@@ -53,6 +69,7 @@ export default function AboutPage() {
 
       <p style={{ marginBottom: 24 }}>
         ユーザーはいつでもサブスクリプションを解約できます。解約後も現在の請求期間の終了までは引き続き利用でき、次回以降の請求は発生しません。
+        プラン変更・解約はアプリ内の支払い管理ページ（Stripe Customer Portal）から行えます。
       </p>
 
       <h2 style={{ fontSize: 20, fontWeight: "bold", marginBottom: 12 }}>

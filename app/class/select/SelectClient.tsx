@@ -10,6 +10,7 @@ import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
+import { tierName } from "@/lib/planTiers";
 
 type World = {
   world_key: string;
@@ -112,13 +113,6 @@ async function readJsonOrThrow(r: Response, label: string) {
   }
 
   return j;
-}
-
-function tierName(price: number) {
-  if (price >= 1200) return "プレミアム";
-  if (price >= 800) return "スタンダード";
-  if (price >= 400) return "ベーシック";
-  return "無料";
 }
 
 function Pill({ children }: { children: React.ReactNode }) {

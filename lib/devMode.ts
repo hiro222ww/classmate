@@ -96,12 +96,29 @@ export function getDevUserKey(): string {
 }
 
 /**
+ * ?dev= の値から E2E / dev 用 deviceId を解決
+ * - "1" -> test-device-1
+ * - "webrtc1" / "webrtc-1" -> webrtc-test-device-1（WebRTC E2E 専用・既存 test-device と分離）
+ */
+export function resolveDevDeviceIdFromKey(key: string): string {
+  const k = String(key ?? "").trim();
+  if (!k) return "";
+
+  const webrtcMatch = k.match(/^webrtc-?(\d+)$/i);
+  if (webrtcMatch) {
+    return `webrtc-test-device-${webrtcMatch[1]}`;
+  }
+
+  return `test-device-${k}`;
+}
+
+/**
  * dev用deviceId生成
  */
 export function getDevDeviceId(): string {
   const key = getDevUserKey();
   if (!key) return "";
-  return `test-device-${key}`;
+  return resolveDevDeviceIdFromKey(key);
 }
 
 export function isDevMode(): boolean {

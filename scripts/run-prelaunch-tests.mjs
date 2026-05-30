@@ -53,7 +53,14 @@ if (!skipPlaywright) {
     await import("playwright");
     results.push({
       label: "e2e-enter-room (playwright)",
-      code: run("e2e-enter-room", "node", ["scripts/e2e-enter-room.mjs"]),
+      code: run("e2e-enter-room", "node", ["scripts/e2e-enter-room.mjs", ...apiArgs]),
+    });
+    results.push({
+      label: "e2e-webrtc-call (playwright)",
+      code: run("e2e-webrtc-call", "node", [
+        "scripts/e2e-webrtc-call.mjs",
+        ...apiArgs,
+      ]),
     });
   } catch {
     console.log("\nSKIP: playwright not installed — run `npm i -D playwright` for UI E2E");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { tierName } from "@/lib/planTiers";
 
 type TopicRow = {
   topic_key: string;
@@ -14,13 +15,6 @@ type TopicRow = {
 };
 
 const PRICES = [0, 400, 800, 1200] as const;
-
-function tierName(price: number) {
-  if (price >= 1200) return "プレミアム";
-  if (price >= 800) return "ミドル";
-  if (price >= 400) return "ライト";
-  return "無料";
-}
 
 async function postAdmin(body: any) {
   const r = await fetch("/api/admin/topics", {

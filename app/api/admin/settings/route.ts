@@ -31,7 +31,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   billing_notice: {
     enabled: true,
-    text: "※ 現在、ベーシック・ミドル・プレミアムで利用できるテーマは同じです。プランの違いは、同時に参加できるクラス数です。",
+    text: "※ ベータ期間中はテーマプランの内容を整理中です。現在はベーシック（¥400/月）で対象テーマを利用できます。",
   },
   recruitment_session_ttl_minutes: {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,

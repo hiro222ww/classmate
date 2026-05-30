@@ -28,6 +28,7 @@ node scripts/run-prelaunch-tests.mjs --skip-build --api-base https://...
 | `scripts/e2e-growth.mjs` | forming 増殖 / orphan class / 命名 |
 | `scripts/e2e-entitlements.mjs` | class_slots 反映 / mine 整合 |
 | `scripts/e2e-enter-room.mjs` | Playwright: select→room UI 経路 |
+| `scripts/e2e-webrtc-call.mjs` | Playwright: 2–5 クライアント WebRTC call（[詳細](WEBRTC_PRELAUNCH.md)） |
 
 ---
 

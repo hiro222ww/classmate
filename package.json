@@ -14,7 +14,8 @@
     "test:e2e:recovery": "node scripts/e2e-recovery.mjs",
     "test:e2e:zombie": "node scripts/e2e-zombie-stale.mjs",
     "test:e2e:growth": "node scripts/e2e-growth.mjs",
-    "test:e2e:entitlements": "node scripts/e2e-entitlements.mjs"
+    "test:e2e:entitlements": "node scripts/e2e-entitlements.mjs",
+    "test:e2e:webrtc": "node scripts/e2e-webrtc-call.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.93.1",
@@ -30,6 +31,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.5",
+    "playwright": "^1.52.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

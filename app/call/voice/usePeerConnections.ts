@@ -131,7 +131,8 @@ export function usePeerConnections({
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
   >({});
-  const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(true);
+  const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
+  const turnFallbackEnabledRef = useRef(false);
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -384,8 +385,12 @@ export function usePeerConnections({
     ]
   );
 
+  useEffect(() => {
+    turnFallbackEnabledRef.current = turnFallbackEnabled;
+  }, [turnFallbackEnabled]);
+
   const enableTurnFallback = useCallback(async () => {
-    if (!turnFallbackEnabled) return false;
+    if (!turnFallbackEnabledRef.current) return false;
     if (voiceRouteRef.current === "turn") return true;
 
     if (turnIceServersRef.current && turnIceServersRef.current.length > 0) {
@@ -427,7 +432,7 @@ export function usePeerConnections({
     } finally {
       loadingTurnRef.current = false;
     }
-  }, [turnFallbackEnabled]);
+  }, []);
 
   const createPeerConnection = useCallback(
     (remoteId: string, connectionId: string) => {
@@ -523,7 +528,10 @@ export function usePeerConnections({
           setPeerState(remoteId, "failed");
           void logVoiceConnection(remoteId, pc, "failed");
 
-          if (voiceRouteRef.current === "stun") {
+          if (
+            voiceRouteRef.current === "stun" &&
+            turnFallbackEnabledRef.current
+          ) {
             void enableTurnFallback().then((ok) => {
               if (!ok) {
                 scheduleReconnect(remoteId, 1500);
@@ -562,10 +570,14 @@ export function usePeerConnections({
         if (state === "connecting") {
           setPeerState(remoteId, "connecting");
 
-          if (voiceRouteRef.current === "stun") {
+          if (
+            voiceRouteRef.current === "stun" &&
+            turnFallbackEnabledRef.current
+          ) {
             window.setTimeout(() => {
               const currentPc = pcsRef.current.get(remoteId);
               if (!currentPc) return;
+              if (!turnFallbackEnabledRef.current) return;
 
               const stillBad =
                 currentPc.connectionState === "connecting" ||
@@ -614,7 +626,10 @@ export function usePeerConnections({
           setPeerState(remoteId, "failed");
           void logVoiceConnection(remoteId, pc, "failed");
 
-          if (voiceRouteRef.current === "stun") {
+          if (
+            voiceRouteRef.current === "stun" &&
+            turnFallbackEnabledRef.current
+          ) {
             void enableTurnFallback().then((ok) => {
               if (!ok) {
                 closePeer(remoteId, { clearConnectionId: false });
@@ -876,14 +891,16 @@ export function usePeerConnections({
         const settings = data?.settings;
 
         if (settings) {
-          setTurnFallbackEnabled(settings.turn_fallback_enabled !== false);
+          setTurnFallbackEnabled(settings.turn_fallback_enabled === true);
 
           if (settings.voice_enabled === false) {
             notifyStatus(settings.emergency_message || "通話機能は停止中です");
           }
+        } else {
+          setTurnFallbackEnabled(false);
         }
       } catch {
-        setTurnFallbackEnabled(true);
+        setTurnFallbackEnabled(false);
       }
     }
 

@@ -53,10 +53,14 @@ type VoiceLog = {
 const defaultSettings: VoiceSettings = {
   voice_enabled: true,
   new_calls_enabled: true,
-  turn_fallback_enabled: true,
+  turn_fallback_enabled: false,
   max_members_per_call: 5,
   emergency_message: "",
 };
+
+function turnFallbackModeLabel(enabled: boolean) {
+  return enabled ? "P2P + TURN fallback" : "P2Pのみ";
+}
 
 export default function AdminVoicePage() {
   const [settings, setSettings] =
@@ -282,6 +286,42 @@ export default function AdminVoicePage() {
         >
           TURN・接続状況・緊急停止を管理します。
         </p>
+
+        <div
+          style={{
+            marginBottom: 24,
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid #e5e7eb",
+            background: "#f9fafb",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "center",
+          }}
+        >
+          <span style={{ fontWeight: 800, color: "#374151" }}>
+            現在の接続モード:
+          </span>
+          <span
+            style={{
+              display: "inline-flex",
+              padding: "4px 10px",
+              borderRadius: 999,
+              background: settings.turn_fallback_enabled ? "#dbeafe" : "#ecfdf5",
+              color: settings.turn_fallback_enabled ? "#1d4ed8" : "#047857",
+              fontWeight: 900,
+              fontSize: 13,
+            }}
+          >
+            {turnFallbackModeLabel(settings.turn_fallback_enabled)}
+          </span>
+          <span style={{ fontSize: 12, color: "#6b7280" }}>
+            {settings.turn_fallback_enabled
+              ? "ICE 失敗時に Twilio TURN へ fallback します（従量課金あり）"
+              : "Twilio TURN は使いません（P2P / STUN のみ）"}
+          </span>
+        </div>
 
         {/* 接続統計 */}
 
@@ -519,19 +559,31 @@ export default function AdminVoicePage() {
           </div>
 
           <div style={rowStyle}>
-            <span>TURN fallback</span>
+            <div>
+              <div style={{ fontWeight: 800 }}>接続モード</div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+                OFF: P2Pのみ / ON: P2P + TURN fallback
+              </div>
+            </div>
 
             <Toggle
-              checked={
-                settings.turn_fallback_enabled
-              }
-              onChange={(v) =>
-                update(
-                  "turn_fallback_enabled",
-                  v
-                )
-              }
+              checked={settings.turn_fallback_enabled}
+              onChange={(v) => update("turn_fallback_enabled", v)}
             />
+          </div>
+
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: "#6b7280",
+              lineHeight: 1.6,
+            }}
+          >
+            保存後のモード:{" "}
+            <strong>
+              {turnFallbackModeLabel(settings.turn_fallback_enabled)}
+            </strong>
           </div>
         </section>
 

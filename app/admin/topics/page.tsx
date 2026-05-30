@@ -4,6 +4,7 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect, useMemo, useState } from "react";
+import { tierName } from "@/lib/planTiers";
 
 type WorldRow = {
   world_key: string;
@@ -27,13 +28,6 @@ type TopicRow = {
 };
 
 const PRICES = [0, 400, 800, 1200] as const;
-
-function tierName(price: number) {
-  if (price >= 1200) return "プレミアム";
-  if (price >= 800) return "ミドル";
-  if (price >= 400) return "ライト";
-  return "無料";
-}
 
 function genderRestrictionLabel(v: string | null | undefined) {
   if (v === "male") return "男性のみ";
@@ -81,7 +75,7 @@ const [globalJoinEnd, setGlobalJoinEnd] = useState("21:30");
 
 const [billingNoticeEnabled, setBillingNoticeEnabled] = useState(true);
 const [billingNoticeText, setBillingNoticeText] = useState(
-  "※ 現在、ベーシック・ミドル・プレミアムで利用できるテーマは同じです。プランの違いは、同時に参加できるクラス数です。"
+  "※ ベータ期間中はテーマプランの内容を整理中です。現在はベーシック（¥400/月）で対象テーマを利用できます。"
 );
 
 type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";

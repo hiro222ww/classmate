@@ -18,7 +18,7 @@ export async function GET() {
     settings: data ?? {
       voice_enabled: true,
       new_calls_enabled: true,
-      turn_fallback_enabled: true,
+      turn_fallback_enabled: false,
       max_call_minutes: 30,
       max_members_per_call: 5,
       free_daily_minutes: 30,
