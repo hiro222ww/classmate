@@ -208,17 +208,21 @@ export default function ProfileClient() {
   const [compressing, setCompressing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [minorsEnabled, setMinorsEnabled] = useState(false);
 
   const age = useMemo(() => calcAge(birthDate), [birthDate]);
   const isMinor = age !== null && age < 18;
   const isAdult = age !== null && age >= 18;
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
+  const ageAllowed =
+    isAdult || (minorsEnabled === true && isMinor && guardianConsent);
+
   const canSubmit =
     displayName.trim().length > 0 &&
     isValidISODateString(birthDate) &&
     (gender === "male" || gender === "female") &&
-    isAdult &&
+    ageAllowed &&
     termsAgreed &&
     !compressing &&
     !submitting;
@@ -244,14 +248,31 @@ export default function ProfileClient() {
       setPhotoInfo("");
 
       try {
-        const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
-          method: "GET",
-          cache: "no-store",
-        });
+        const [profileRes, settingsRes] = await Promise.all([
+          fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
+            method: "GET",
+            cache: "no-store",
+          }),
+          fetch("/api/settings", { cache: "no-store" }),
+        ]);
 
-        if (!res.ok) return;
+        if (!settingsRes.ok) {
+          setMinorsEnabled(false);
+        } else {
+          const settingsJson = (await settingsRes.json().catch(() => null)) as {
+            minors_enabled?: boolean;
+            settings?: { minors_enabled?: boolean };
+          } | null;
 
-        const json = (await res.json().catch(() => null)) as ProfileResponse | null;
+          setMinorsEnabled(
+            settingsJson?.minors_enabled === true ||
+              settingsJson?.settings?.minors_enabled === true
+          );
+        }
+
+        if (!profileRes.ok) return;
+
+        const json = (await profileRes.json().catch(() => null)) as ProfileResponse | null;
         const profile = json?.profile ?? null;
 
         if (cancelled || !profile) return;
@@ -345,13 +366,20 @@ export default function ProfileClient() {
       return;
     }
 
-    if (gender !== "male" && gender !== "female") {
-      setErrorMsg("性別を選択してください。");
+    if (isMinor && minorsEnabled !== true) {
+      setErrorMsg(
+        "現在、18歳未満の方の登録は受け付けていません。今後の運用状況に応じて受付を開始する可能性があります。"
+      );
       return;
     }
 
-    if (!isAdult) {
-      setErrorMsg("現在は18歳以上の方のみご利用いただけます。");
+    if (isMinor && minorsEnabled && !guardianConsent) {
+      setErrorMsg("保護者の同意が必要です。");
+      return;
+    }
+
+    if (gender !== "male" && gender !== "female") {
+      setErrorMsg("性別を選択してください。");
       return;
     }
 
@@ -395,6 +423,18 @@ export default function ProfileClient() {
       }
 
       if (!res.ok) {
+        if (json?.error === "minors_disabled") {
+          setErrorMsg(
+            "現在、18歳未満の方の登録は受け付けていません。今後の運用状況に応じて受付を開始する可能性があります。"
+          );
+          return;
+        }
+
+        if (json?.error === "guardian_consent_required") {
+          setErrorMsg("保護者の同意が必要です。");
+          return;
+        }
+
         const serverMsg =
           json?.message ||
           json?.error ||
@@ -500,7 +540,27 @@ export default function ProfileClient() {
 
         {age !== null && <p style={{ margin: 0, color: "#555" }}>年齢：{age}歳</p>}
 
-        {isMinor && (
+        {isMinor && minorsEnabled !== true && (
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid #f5c2c7",
+              background: "#f8d7da",
+            }}
+          >
+            <div style={{ fontWeight: 800, color: "#842029" }}>
+              現在、18歳未満の方の登録は受け付けていません。
+            </div>
+            <p style={{ margin: 0, color: "#842029", fontSize: 13, lineHeight: 1.6 }}>
+              今後の運用状況に応じて受付を開始する可能性があります。
+            </p>
+          </div>
+        )}
+
+        {isMinor && minorsEnabled === true && (
           <div
             style={{
               display: "grid",
@@ -512,7 +572,7 @@ export default function ProfileClient() {
             }}
           >
             <div style={{ fontWeight: 800, color: "#664d03" }}>
-              現在は18歳以上のみ利用できます
+              18歳未満の方は保護者の同意が必要です
             </div>
             <label
               style={{
@@ -527,7 +587,7 @@ export default function ProfileClient() {
                 checked={guardianConsent}
                 onChange={(e) => setGuardianConsent(e.target.checked)}
               />
-              保護者の同意を得ています（将来用）
+              保護者の同意を得ています
             </label>
           </div>
         )}

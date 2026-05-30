@@ -6,6 +6,7 @@ import {
   type RecruitmentSessionTtlSetting,
 } from "@/lib/recruitmentSettings";
 import { DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES } from "@/lib/recruitment";
+import { getMinorsEnabled, parseMinorsEnabledValue } from "@/lib/minorsSettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS: {
     text: string;
   };
   recruitment_session_ttl_minutes: RecruitmentSessionTtlSetting;
+  minors_enabled: boolean;
 } = {
   global_join_window: {
     enabled: false,
@@ -35,6 +37,7 @@ const DEFAULT_SETTINGS: {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
     unlimited: false,
   },
+  minors_enabled: false,
 };
 
 export async function GET() {
@@ -46,6 +49,7 @@ export async function GET() {
         "global_join_window",
         "billing_notice",
         "recruitment_session_ttl_minutes",
+        "minors_enabled",
       ]);
 
     if (error) throw error;
@@ -71,13 +75,19 @@ export async function GET() {
         settings.recruitment_session_ttl_minutes =
           parseRecruitmentSessionTtlValue(row.value);
       }
+
+      if (row.key === "minors_enabled") {
+        settings.minors_enabled = parseMinorsEnabledValue(row.value);
+      }
     }
 
     const ttlSetting = await getRecruitmentSessionTtlSetting();
+    const minorsEnabled = await getMinorsEnabled();
 
     return NextResponse.json({
       ok: true,
       settings,
+      minors_enabled: minorsEnabled,
       recruitment_session_ttl_minutes: ttlSetting.minutes,
       recruitment_session_ttl_unlimited: ttlSetting.unlimited,
     });

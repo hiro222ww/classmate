@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
+import { getAge } from "@/lib/age";
+import { getMinorsEnabled } from "@/lib/minorsSettings";
 
 type ProfileRow = {
   device_id: string;
@@ -49,19 +51,7 @@ function toProfileResponse(row: Partial<ProfileRow> | null) {
 
 function calcAge(birthDateISO: string): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDateISO)) return null;
-
-  const birth = new Date(`${birthDateISO}T00:00:00`);
-  if (Number.isNaN(birth.getTime())) return null;
-
-  const today = new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  const m = today.getMonth() - birth.getMonth();
-
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
-    age--;
-  }
-
-  return age;
+  return getAge(birthDateISO);
 }
 
 /**
@@ -214,18 +204,37 @@ export async function POST(req: Request) {
   }
 
   if (age < 18) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "adults_only",
-      },
-      {
-        status: 403,
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    const minorsEnabled = await getMinorsEnabled();
+
+    if (minorsEnabled !== true) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "minors_disabled",
         },
-      }
-    );
+        {
+          status: 403,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
+
+    if (!guardian_consent) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "guardian_consent_required",
+        },
+        {
+          status: 403,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
   }
 
   const { data: existingProfile, error: existingError } = await supabaseAdmin
@@ -376,8 +385,6 @@ export async function POST(req: Request) {
     display_name: profile?.display_name ?? null,
     photo_path: profile?.photo_path ?? null,
   });
-
-  void guardian_consent;
 
   return NextResponse.json(
     {

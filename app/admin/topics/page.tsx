@@ -81,6 +81,7 @@ const [billingNoticeText, setBillingNoticeText] = useState(
 type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";
 const [recruitmentTtlMode, setRecruitmentTtlMode] =
   useState<RecruitmentTtlMode>("5");
+const [minorsEnabled, setMinorsEnabled] = useState(false);
 
 useEffect(() => {
   loadAll();
@@ -141,6 +142,8 @@ if (ttl.unlimited === true) {
 } else {
   setRecruitmentTtlMode("5");
 }
+
+setMinorsEnabled(settings.minors_enabled === true);
       setMsg(
   `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length} / settings:OK）`
 );
@@ -174,6 +177,7 @@ if (ttl.unlimited === true) {
       recruitmentTtlMode === "unlimited"
         ? { unlimited: true, minutes: null }
         : { unlimited: false, minutes: Number(recruitmentTtlMode) },
+    minors_enabled: minorsEnabled,
   }),
 });
 
@@ -656,6 +660,83 @@ if (ttl.unlimited === true) {
             }}
           >
             募集締切設定を保存
+          </button>
+        </div>
+      </section>
+
+      <section style={{ ...card, marginTop: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+            未成年登録
+          </h2>
+          <span
+            style={{
+              display: "inline-flex",
+              padding: "4px 10px",
+              borderRadius: 999,
+              background: minorsEnabled ? "#dbeafe" : "#f3f4f6",
+              color: minorsEnabled ? "#1d4ed8" : "#374151",
+              fontWeight: 900,
+              fontSize: 12,
+            }}
+          >
+            {minorsEnabled ? "未成年登録 ON" : "未成年登録 OFF"}
+          </span>
+        </div>
+
+        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
+          18歳未満のプロフィール登録を許可します。本番初期運用ではOFF推奨。
+        </p>
+
+        <div
+          style={{
+            marginTop: 12,
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid #e5e7eb",
+            background: "#f9fafb",
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          <div style={{ fontWeight: 800, color: "#374151" }}>
+            {minorsEnabled ? "未成年登録：許可中" : "未成年登録：停止中"}
+          </div>
+
+          <label
+            style={{
+              fontSize: 13,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={minorsEnabled}
+              onChange={(e) => setMinorsEnabled(e.target.checked)}
+            />
+            18歳未満のプロフィール登録を許可する
+          </label>
+
+          <button
+            onClick={saveSettings}
+            disabled={busy}
+            style={{
+              ...btn,
+              width: "fit-content",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            未成年登録設定を保存
           </button>
         </div>
       </section>

@@ -3,6 +3,10 @@ import { requireAdmin } from "@/lib/adminAuth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { clearRecruitmentSessionTtlCache } from "@/lib/recruitmentSettings";
 import { DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES } from "@/lib/recruitment";
+import {
+  clearMinorsEnabledCache,
+  parseMinorsEnabledValue,
+} from "@/lib/minorsSettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +25,7 @@ type AppSettings = {
     minutes: number | null;
     unlimited: boolean;
   };
+  minors_enabled: boolean;
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -37,6 +42,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
     unlimited: false,
   },
+  minors_enabled: false,
 };
 
 function normalizeRecruitmentTtlInput(raw: unknown): AppSettings["recruitment_session_ttl_minutes"] {
@@ -66,6 +72,7 @@ async function readSettings(): Promise<AppSettings> {
       "global_join_window",
       "billing_notice",
       "recruitment_session_ttl_minutes",
+      "minors_enabled",
     ]);
 
   if (error) throw error;
@@ -91,6 +98,10 @@ async function readSettings(): Promise<AppSettings> {
       settings.recruitment_session_ttl_minutes = normalizeRecruitmentTtlInput(
         row.value
       );
+    }
+
+    if (row.key === "minors_enabled") {
+      settings.minors_enabled = parseMinorsEnabledValue(row.value);
     }
   }
 
@@ -129,11 +140,23 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => ({}));
 
+    if (
+      "minors_enabled" in body &&
+      typeof body.minors_enabled !== "boolean"
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_minors_enabled" },
+        { status: 400 }
+      );
+    }
+
     const globalJoinWindow = body.global_join_window ?? {};
     const billingNotice = body.billing_notice ?? {};
     const recruitmentTtl = normalizeRecruitmentTtlInput(
       body.recruitment_session_ttl_minutes
     );
+
+    const existing = await readSettings();
 
     const nextSettings: AppSettings = {
       global_join_window: {
@@ -146,6 +169,10 @@ export async function POST(req: Request) {
         text: String(billingNotice.text ?? "").trim(),
       },
       recruitment_session_ttl_minutes: recruitmentTtl,
+      minors_enabled:
+        "minors_enabled" in body
+          ? body.minors_enabled === true
+          : existing.minors_enabled,
     };
 
     const rows = [
@@ -164,6 +191,11 @@ export async function POST(req: Request) {
         value: nextSettings.recruitment_session_ttl_minutes,
         updated_at: new Date().toISOString(),
       },
+      {
+        key: "minors_enabled",
+        value: nextSettings.minors_enabled,
+        updated_at: new Date().toISOString(),
+      },
     ];
 
     const { error } = await supabaseAdmin
@@ -173,6 +205,7 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     clearRecruitmentSessionTtlCache();
+    clearMinorsEnabledCache();
 
     return NextResponse.json({
       ok: true,
