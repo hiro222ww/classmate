@@ -8,7 +8,7 @@ import { useLocalMic } from "./voice/useLocalMic";
 import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
 import { voiceDebugLog } from "./voice/voiceDiagnostics";
-import { logVoiceClientEnv } from "@/lib/voiceClientEnv";
+import { logVoiceClientEnv, getVoiceMode } from "@/lib/voiceClientEnv";
 
 type Member = {
   device_id: string;
@@ -133,7 +133,11 @@ export default function CallVoiceLayer({
 
       {Object.entries(peer.remoteAudios).map(([remoteId, state]) => (
         <RemoteAudio
-          key={`${remoteId}-${state.attachSeq}`}
+          key={
+            getVoiceMode() === "ios_conservative"
+              ? remoteId
+              : `${remoteId}-${state.attachSeq}`
+          }
           stream={state.stream}
           remoteId={remoteId}
           onSpeaking={onRemoteSpeakingChange}
