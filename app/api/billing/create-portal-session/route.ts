@@ -7,12 +7,31 @@ import {
 
 export const runtime = "nodejs";
 
+const PORTAL_ACTIONS: PortalAction[] = [
+  "manage",
+  "cancel",
+  "update_theme",
+  "update_slots",
+];
+
 function originFromEnv() {
   return (
     process.env.NEXT_PUBLIC_APP_ORIGIN ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000"
   );
+}
+
+function portalConfigEnvForAction(action: PortalAction) {
+  switch (action) {
+    case "manage":
+    case "cancel":
+      return "STRIPE_PORTAL_CONFIG_MAINTENANCE";
+    case "update_theme":
+      return "STRIPE_PORTAL_CONFIG_THEME";
+    case "update_slots":
+      return "STRIPE_PORTAL_CONFIG_SLOTS";
+  }
 }
 
 export async function POST(req: Request) {
@@ -24,12 +43,12 @@ export async function POST(req: Request) {
     const kind = String(body.kind ?? "").trim();
     const action = String(body.action ?? "manage").trim() as PortalAction;
 
-    if (kind !== "slot" && kind !== "theme") {
-      return NextResponse.json({ error: "invalid_portal_kind" }, { status: 400 });
+    if (!PORTAL_ACTIONS.includes(action)) {
+      return NextResponse.json({ error: "invalid_portal_action" }, { status: 400 });
     }
 
-    if (action !== "manage" && action !== "cancel") {
-      return NextResponse.json({ error: "invalid_portal_action" }, { status: 400 });
+    if (action === "cancel" && kind !== "slot" && kind !== "theme") {
+      return NextResponse.json({ error: "invalid_portal_kind" }, { status: 400 });
     }
 
     if (!deviceId) {
@@ -56,12 +75,22 @@ export async function POST(req: Request) {
       ? `${origin}/billing?dev=${encodeURIComponent(dev)}`
       : `${origin}/billing`;
 
-    const category = kind === "slot" ? "slots" : "topic_plan";
+    const category =
+      action === "cancel"
+        ? kind === "slot"
+          ? ("slots" as const)
+          : ("topic_plan" as const)
+        : action === "update_theme"
+          ? ("topic_plan" as const)
+          : action === "update_slots"
+            ? ("slots" as const)
+            : undefined;
+
     const portalRes = await createBillingPortalSession({
       customerId: data.stripe_customer_id,
       returnUrl,
-      category,
       action,
+      category,
     });
 
     if (!portalRes.ok) {
@@ -77,8 +106,11 @@ export async function POST(req: Request) {
         kind,
         action,
         error: portalRes.error,
-        maintenanceConfigConfigured: Boolean(
-          String(process.env.STRIPE_PORTAL_CONFIG_MAINTENANCE ?? "").trim()
+        configEnv: portalConfigEnvForAction(action),
+        configConfigured: Boolean(
+          String(
+            process.env[portalConfigEnvForAction(action)] ?? ""
+          ).trim()
         ),
       });
 

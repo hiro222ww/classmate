@@ -73,6 +73,7 @@ async function syncEntitlementsByCustomer(customerId: string) {
     can_create_classes,
     theme_pass,
     unknownPriceIds,
+    categoryMismatches,
   } = resolved;
 
   if (unknownPriceIds.length > 0) {
@@ -80,6 +81,14 @@ async function syncEntitlementsByCustomer(customerId: string) {
       customerId,
       deviceId,
       unknownPriceIds,
+    });
+  }
+
+  if (categoryMismatches.length > 0) {
+    console.warn("[webhook] category mismatches during entitlement sync", {
+      customerId,
+      deviceId,
+      categoryMismatches,
     });
   }
 

@@ -6,7 +6,18 @@ import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 
 type PortalKind = "slot" | "theme";
-type PortalAction = "manage" | "cancel";
+type PortalAction = "manage" | "cancel" | "update_theme" | "update_slots";
+
+function portalConfigHint(action: PortalAction) {
+  switch (action) {
+    case "update_theme":
+      return "STRIPE_PORTAL_CONFIG_THEME";
+    case "update_slots":
+      return "STRIPE_PORTAL_CONFIG_SLOTS";
+    default:
+      return "STRIPE_PORTAL_CONFIG_MAINTENANCE";
+  }
+}
 
 function BillingPageInner() {
   const searchParams = useSearchParams();
@@ -16,8 +27,11 @@ function BillingPageInner() {
   const [loadingKey, setLoadingKey] = useState("");
   const [msg, setMsg] = useState("");
 
-  async function openBillingPortal(kind: PortalKind, action: PortalAction) {
-    const loadingToken = `${kind}:${action}`;
+  async function openBillingPortal(
+    kind: PortalKind | null,
+    action: PortalAction
+  ) {
+    const loadingToken = kind ? `${kind}:${action}` : action;
 
     try {
       setLoadingKey(loadingToken);
@@ -28,7 +42,12 @@ function BillingPageInner() {
       const r = await fetch("/api/billing/create-portal-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deviceId, dev, kind, action }),
+        body: JSON.stringify({
+          deviceId,
+          dev,
+          ...(kind ? { kind } : {}),
+          action,
+        }),
         cache: "no-store",
       });
 
@@ -60,7 +79,7 @@ function BillingPageInner() {
           errMsg.startsWith("portal_configuration_invalid")
         ) {
           alert(
-            "お支払い管理の設定が未完了です。管理者に STRIPE_PORTAL_CONFIG_MAINTENANCE の設定を確認してください。"
+            `お支払い管理の設定が未完了です。管理者に ${portalConfigHint(action)} の設定を確認してください。`
           );
           return;
         }
@@ -93,9 +112,12 @@ function BillingPageInner() {
     kind: PortalKind;
     title: string;
     description: string;
+    updateAction: "update_theme" | "update_slots";
+    updateLabel: string;
   }) {
     const manageKey = `${params.kind}:manage`;
     const cancelKey = `${params.kind}:cancel`;
+    const updateKey = `${params.kind}:${params.updateAction}`;
 
     return (
       <section
@@ -121,6 +143,27 @@ function BillingPageInner() {
             {params.description}
           </p>
         </div>
+
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() =>
+            void openBillingPortal(params.kind, params.updateAction)
+          }
+          style={{
+            width: "100%",
+            padding: "14px 16px",
+            borderRadius: 14,
+            border: "1px solid #111",
+            background: "#fff",
+            color: "#111",
+            fontWeight: 900,
+            cursor: loading ? "default" : "pointer",
+            opacity: loading ? 0.7 : 1,
+          }}
+        >
+          {loadingKey === updateKey ? "開いています…" : params.updateLabel}
+        </button>
 
         <button
           type="button"
@@ -200,8 +243,8 @@ function BillingPageInner() {
               lineHeight: 1.7,
             }}
           >
-            クラススロットとテーマプランを分けて管理できます。プラン変更はアプリ内のプラン画面から行い、Stripe
-            Portal では支払い方法・請求履歴・解約のみ行えます。
+            クラススロットとテーマプランを分けて管理できます。プラン変更は Stripe
+            Portal の更新画面から行い、支払い方法・請求履歴・解約もここから行えます。
           </p>
         </div>
 
@@ -225,14 +268,18 @@ function BillingPageInner() {
         kind: "slot",
         title: "クラススロット",
         description:
-          "支払い方法や請求履歴の確認、クラススロット契約の解約ができます。プラン変更はプラン画面から行ってください。",
+          "クラス枠の変更、支払い方法や請求履歴の確認、クラススロット契約の解約ができます。",
+        updateAction: "update_slots",
+        updateLabel: "クラス枠を変更",
       })}
 
       {renderPlanSection({
         kind: "theme",
         title: "テーマプラン",
         description:
-          "支払い方法や請求履歴の確認、テーマプラン契約の解約ができます。プラン変更はプラン画面から行ってください。",
+          "支援額の変更、支払い方法や請求履歴の確認、テーマプラン契約の解約ができます。",
+        updateAction: "update_theme",
+        updateLabel: "支援額を変更",
       })}
 
       <div
@@ -243,8 +290,8 @@ function BillingPageInner() {
           padding: "0 4px",
         }}
       >
-        ※ 解約は選択した種類の契約だけを対象にします。プランのアップグレードは Stripe
-        Portal では行えません。
+        ※ 解約は選択した種類の契約だけを対象にします。プラン変更は種類ごとの Stripe
+        Portal 更新画面を開き、表示される候補だけ選べます。
       </div>
 
       {msg ? (

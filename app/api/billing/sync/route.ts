@@ -149,6 +149,7 @@ export async function POST(req: Request) {
       can_create_classes,
       theme_pass,
       unknownPriceIds,
+      categoryMismatches,
     } = resolved;
 
     if (unknownPriceIds.length > 0) {
@@ -156,6 +157,14 @@ export async function POST(req: Request) {
         deviceId,
         customerId,
         unknownPriceIds,
+      });
+    }
+
+    if (categoryMismatches.length > 0) {
+      console.warn("[billing/sync] category mismatches", {
+        deviceId,
+        customerId,
+        categoryMismatches,
       });
     }
 

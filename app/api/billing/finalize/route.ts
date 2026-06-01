@@ -140,6 +140,7 @@ export async function POST(req: Request) {
       can_create_classes,
       theme_pass,
       unknownPriceIds,
+      categoryMismatches,
     } = resolved;
 
     const hasKnownPrice = topic_plan > 0 || class_slots > 1;
@@ -160,6 +161,13 @@ export async function POST(req: Request) {
       console.warn("[billing/finalize] ignored unknown priceIds", {
         deviceId,
         unknownPriceIds,
+      });
+    }
+
+    if (categoryMismatches.length > 0) {
+      console.warn("[billing/finalize] category mismatches", {
+        deviceId,
+        categoryMismatches,
       });
     }
 

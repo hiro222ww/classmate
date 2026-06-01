@@ -61,6 +61,14 @@ export async function POST(req: Request) {
         const deviceId = rows?.[0]?.device_id;
         if (deviceId) {
           const resolved = computeEntitlementsFromSubscriptions([sub]);
+          if (resolved.categoryMismatches.length > 0) {
+            console.warn("[stripe/webhook] category mismatches", {
+              customerId,
+              deviceId,
+              subscriptionId: sub.id,
+              categoryMismatches: resolved.categoryMismatches,
+            });
+          }
           await supabaseAdmin.from("user_entitlements").upsert(
             {
               device_id: deviceId,

@@ -76,9 +76,9 @@ async function main() {
   console.log("Add to Vercel / .env.local:");
   console.log(`STRIPE_PORTAL_CONFIG_MAINTENANCE=${config.id}`);
   console.log("");
-  console.log(
-    "Remove deprecated vars if present: STRIPE_PORTAL_CONFIG_SLOTS, STRIPE_PORTAL_CONFIG_THEME"
-  );
+  console.log("Also configure in Stripe Dashboard (subscription updates ON):");
+  console.log("STRIPE_PORTAL_CONFIG_THEME=bpc_...   # theme ¥400/800/1200 only");
+  console.log("STRIPE_PORTAL_CONFIG_SLOTS=bpc_...   # class slots 3/5 only");
 }
 
 void main();

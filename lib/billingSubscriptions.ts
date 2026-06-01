@@ -1,7 +1,9 @@
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
 import {
+  assertPriceIdMatchesCategory,
   type BillingCategory,
+  isSellableTopicAmount,
   rankForPriceId,
 } from "@/lib/billingCatalog";
 
@@ -56,6 +58,13 @@ export async function updateSubscriptionItemPrice(params: {
   nextPriceId: string;
   nextRank: number;
 }) {
+  try {
+    assertPriceIdMatchesCategory(params.nextPriceId, params.category);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "price_category_mismatch";
+    return { ok: false as const, error: message };
+  }
+
   const existing = await findActiveSubscriptionItem({
     customerId: params.customerId,
     category: params.category,
@@ -65,8 +74,19 @@ export async function updateSubscriptionItemPrice(params: {
     return { ok: false as const, error: "subscription_not_found" };
   }
 
-  if (params.nextRank <= existing.rank) {
+  if (existing.priceId === params.nextPriceId) {
+    return { ok: false as const, error: "same_plan_not_allowed" };
+  }
+
+  if (params.category === "slots" && params.nextRank <= existing.rank) {
     return { ok: false as const, error: "downgrade_or_same_plan_not_allowed" };
+  }
+
+  if (
+    params.category === "topic_plan" &&
+    !isSellableTopicAmount(params.nextRank)
+  ) {
+    return { ok: false as const, error: "invalid_or_unsellable_topic_plan" };
   }
 
   const updated = await stripe.subscriptions.update(existing.subscription.id, {

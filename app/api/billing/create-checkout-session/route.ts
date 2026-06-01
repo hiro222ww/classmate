@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSellableCheckoutBody } from "@/lib/billingCatalog";
+import { assertSellableCheckoutBody, computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
 import {
   findActiveSubscriptionItem,
   updateSubscriptionItemPrice,
@@ -32,6 +32,32 @@ async function getCustomerIdByDeviceId(deviceId: string) {
     .maybeSingle();
 
   return String(data?.stripe_customer_id ?? "").trim() || null;
+}
+
+async function syncEntitlementsForCustomer(customerId: string, deviceId: string) {
+  const subs = await stripe.subscriptions.list({
+    customer: customerId,
+    status: "all",
+    limit: 100,
+    expand: ["data.items.data.price"],
+  });
+
+  const resolved = computeEntitlementsFromSubscriptions(subs.data);
+
+  await supabaseAdmin.from("user_entitlements").upsert(
+    {
+      device_id: deviceId,
+      plan: resolved.plan,
+      class_slots: resolved.class_slots,
+      can_create_classes: resolved.can_create_classes,
+      topic_plan: resolved.topic_plan,
+      theme_pass: resolved.theme_pass,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "device_id" }
+  );
+
+  return resolved;
 }
 
 function buildSuccessUrl(origin: string, dev: string) {
@@ -114,10 +140,13 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: updateRes.error }, { status: 400 });
         }
 
+        const resolved = await syncEntitlementsForCustomer(customerId, deviceId);
+
         return NextResponse.json({
           ok: true,
           updated: true,
           subscriptionId: updateRes.subscription.id,
+          entitlements: resolved,
         });
       }
     }

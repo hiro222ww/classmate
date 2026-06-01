@@ -1,32 +1,41 @@
-/** テーマプラン tier 名（400 / 800 / 1200） */
-export function tierName(price: number) {
-  switch (price) {
-    case 1200:
-      return "プレミアム";
-    case 800:
-      return "スタンダード";
+/** テーマプラン表示名（ベータ期間中は機能差なし・応援額の違いのみ） */
+export function topicSupportPlanName(amount: number) {
+  switch (amount) {
     case 400:
-      return "ベーシック";
+      return "ベータプラン";
+    case 800:
+      return "応援プラン";
+    case 1200:
+      return "もっと応援プラン";
     default:
-      if (price >= 1200) return "プレミアム";
-      if (price >= 800) return "スタンダード";
-      if (price >= 400) return "ベーシック";
+      if (amount >= 1200) return "もっと応援プラン";
+      if (amount >= 800) return "応援プラン";
+      if (amount >= 400) return "ベータプラン";
       return "無料";
   }
 }
 
-/** ベータ期間中に UI から新規購入できるテーマプラン（topic_plan ロジックは変更しない） */
-export const BETA_AVAILABLE_TOPIC_PLAN = 400;
+/** @deprecated UIでは topicSupportPlanName を使う */
+export function tierName(price: number) {
+  return topicSupportPlanName(price);
+}
+
+export const TOPIC_PLAN_BETA_INTRO =
+  "ベータ期間中は、どのテーマプランでも利用できるテーマ・機能は同じです。金額の違いは、Classmateの開発継続を応援するための任意の支援額です。";
+
+export const TOPIC_PLAN_SAME_ACCESS_NOTE =
+  "ベータ期間中は利用できる内容は同じです。";
 
 export const TOPIC_PLAN_BETA_DESCRIPTION: Record<400 | 800 | 1200, string> = {
-  400: "現在：対象テーマ利用可能",
-  800: "正式版に向けて準備中",
-  1200: "正式版に向けて準備中",
+  400: "現在公開中のテーマを利用できます。",
+  800: "利用できる内容はベータプランと同じです。Classmateの開発継続を応援したい方向けです。",
+  1200:
+    "利用できる内容はベータプランと同じです。今後のテーマ追加・通話品質改善の開発支援になります。",
 };
 
-export function formatTopicPlanLine(price: number) {
-  if (price <= 0) return "無料";
-  return `${tierName(price)}（¥${price}/月）`;
+export function formatTopicPlanLine(supportAmount: number) {
+  if (supportAmount <= 0) return "無料";
+  return `${topicSupportPlanName(supportAmount)}（¥${supportAmount}/月）`;
 }
 
 /** クラス枠の表示用月額（Stripe 設定と About ページで一致させる） */
