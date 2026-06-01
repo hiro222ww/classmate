@@ -240,6 +240,14 @@ export function logCallNavigationType(params: {
   });
 }
 
+function getNavigationTypeForDiagnostics(): string {
+  if (typeof performance === "undefined") return "unknown";
+  const entry = performance.getEntriesByType("navigation")[0] as
+    | PerformanceNavigationTiming
+    | undefined;
+  return entry?.type ?? "unknown";
+}
+
 export function installCallPageDiagnostics(params: {
   sessionId: string;
   deviceId: string;
@@ -281,6 +289,7 @@ export function installCallPageDiagnostics(params: {
       sessionId,
       deviceId,
       persisted: event.persisted,
+      extra: { navigationType: getNavigationTypeForDiagnostics() },
     });
   };
 

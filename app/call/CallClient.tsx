@@ -105,6 +105,14 @@ function getAvatarUrl(photoPath?: string | null) {
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
+function getCallNavigationType(): string {
+  if (typeof performance === "undefined") return "unknown";
+  const entry = performance.getEntriesByType("navigation")[0] as
+    | PerformanceNavigationTiming
+    | undefined;
+  return entry?.type ?? "unknown";
+}
+
 export default function CallClient() {
   const router = useRouter();
   const pathname = usePathname();
@@ -168,7 +176,11 @@ export default function CallClient() {
     if (!sessionId || !deviceId) return;
 
     logCallNavigationType({ sessionId, deviceId });
-    logCallLifecycle("mount", { sessionId, deviceId });
+    logCallLifecycle("mount", {
+      sessionId,
+      deviceId,
+      extra: { navigationType: getCallNavigationType() },
+    });
     clearLocalLeftCall(sessionId, deviceId);
     localExitedPeersRef.current.delete(deviceId);
 
@@ -180,6 +192,24 @@ export default function CallClient() {
       cleanupDiagnostics();
     };
   }, [sessionId, deviceId]);
+
+  const prevSessionIdRef = useRef("");
+  useEffect(() => {
+    const prev = prevSessionIdRef.current;
+    if (prev && prev !== sessionId) {
+      console.log("[call] sessionId changed", {
+        from: prev,
+        to: sessionId,
+        navigationType: getCallNavigationType(),
+        currentPath:
+          typeof window !== "undefined"
+            ? window.location.pathname + window.location.search
+            : "",
+        timestamp: Date.now(),
+      });
+    }
+    prevSessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   useEffect(() => {
     for (const [id, state] of Object.entries(peerStates)) {
