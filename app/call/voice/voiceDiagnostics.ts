@@ -424,7 +424,10 @@ export type VoiceMeshPeerSummaryParams = {
   peers: VoiceMeshPeerSummaryEntry[];
 };
 
-export function logVoiceMeshPeerSummary(params: VoiceMeshPeerSummaryParams) {
+export function logVoiceMeshPeerSummary(
+  params: VoiceMeshPeerSummaryParams,
+  onAfterPeerLines?: (peers: VoiceMeshPeerSummaryEntry[]) => void
+) {
   const header = formatVoiceMeshSummaryHeader(params);
   recordCallReloadContext({ lastMeshSummary: header });
 
@@ -432,6 +435,8 @@ export function logVoiceMeshPeerSummary(params: VoiceMeshPeerSummaryParams) {
   for (const peer of params.peers) {
     console.log(formatVoiceMeshPeerLine(peer));
   }
+
+  onAfterPeerLines?.(params.peers);
 
   console.log("[voice-mesh] peer-summary", {
     ...params,

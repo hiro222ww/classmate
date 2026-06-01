@@ -184,10 +184,24 @@ export function usePeerConnections({
       reason: string,
       opts?: EnsurePeerConnectionOpts
     ) => boolean) | null
-  >(null);
-  const recoverMissingPcsFromMeshRef = useRef<
-    ((peers: VoiceMeshPeerSummaryEntry[]) => void) | null
-  >(null);
+  >((remoteId, reason) => {
+    console.log(
+      `[voice-peer] ensurePeerConnection skipped remote=${compactDeviceId(remoteId)} ` +
+        `requested=${reason} skip=ensure_not_initialized`
+    );
+    return false;
+  });
+  const scanAndEnsureMissingPcsRef = useRef<
+    (trigger: string, peers: VoiceMeshPeerSummaryEntry[]) => void
+  >((trigger, peers) => {
+    const missing = peers.filter(
+      (peer) => !peer.pcExists && peer.isInCall !== false
+    );
+    console.log(
+      `[voice-peer] recoverMissingPcsFromMesh start trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
+        `skip=scan_not_initialized`
+    );
+  });
   const scheduleReconnectRef = useRef<
     ((
       remoteId: string,
@@ -621,9 +635,16 @@ export function usePeerConnections({
           peers,
         };
 
-        logVoiceMeshPeerSummary(summary);
-        checkVoiceMeshExpectations(summary);
-        recoverMissingPcsFromMeshRef.current?.(peers);
+        logVoiceMeshPeerSummary(summary, (loggedPeers) => {
+          scanAndEnsureMissingPcsRef.current(trigger, loggedPeers);
+        });
+        try {
+          checkVoiceMeshExpectations(summary);
+        } catch (err) {
+          console.log(
+            `[voice-peer] checkVoiceMeshExpectations error trigger=${trigger} err=${String(err)}`
+          );
+        }
       };
 
       if (opts?.immediate) {
@@ -1847,26 +1868,50 @@ export function usePeerConnections({
     ]
   );
 
-  const recoverMissingPcsFromMesh = useCallback(
-    (peers: VoiceMeshPeerSummaryEntry[]) => {
-      for (const peer of peers) {
-        if (peer.pcExists) continue;
-        if (peer.isInCall === false) {
-          logEnsureSkipped(peer.remoteDeviceId, "mesh_missing_pc", "member_not_in_call");
-          continue;
-        }
+  ensurePeerConnectionRef.current = ensurePeerConnection;
+
+  const scanAndEnsureMissingPcs = useCallback(
+    (trigger: string, peers: VoiceMeshPeerSummaryEntry[]) => {
+      const missing = peers.filter(
+        (peer) => !peer.pcExists && peer.isInCall !== false
+      );
+      const localTrackState =
+        localAudioTrackRef.current?.readyState ??
+        localStreamRef.current?.getAudioTracks()[0]?.readyState ??
+        "none";
+
+      console.log(
+        `[voice-peer] recoverMissingPcsFromMesh start trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
+          `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState}`
+      );
+
+      if (missing.length === 0) {
+        console.log(
+          `[voice-peer] recoverMissingPcsFromMesh done trigger=${trigger} missing=0`
+        );
+        return;
+      }
+
+      for (const peer of missing) {
+        console.log(
+          `[voice-peer] recoverMissingPcsFromMesh missing remote=${compactDeviceId(peer.remoteDeviceId)} ` +
+            `inCall=${peer.isInCall !== false} pc=false force=true`
+        );
         ensurePeerConnection(peer.remoteDeviceId, "mesh_missing_pc", {
           force: true,
         });
       }
     },
-    [ensurePeerConnection, logEnsureSkipped]
+    [
+      ensurePeerConnection,
+      localAudioTrackRef,
+      localStreamRef,
+      micReady,
+      signalReady,
+    ]
   );
 
-  useEffect(() => {
-    recoverMissingPcsFromMeshRef.current = recoverMissingPcsFromMesh;
-    ensurePeerConnectionRef.current = ensurePeerConnection;
-  }, [ensurePeerConnection, recoverMissingPcsFromMesh]);
+  scanAndEnsureMissingPcsRef.current = scanAndEnsureMissingPcs;
 
   useEffect(() => {
     createPeerConnectionRef.current = createPeerConnection;
@@ -1952,7 +1997,22 @@ export function usePeerConnections({
   );
 
   const healPeerConnections = useCallback(() => {
-    if (!micReady || !signalReady) return;
+    const buildHealScanPeers = () => {
+      const remoteIds = getRemoteIds();
+      const peerIds = Array.from(
+        new Set([...remoteIds, ...Array.from(pcsRef.current.keys())])
+      );
+      return peerIds.map((remoteId) => buildMeshPeerSummary(remoteId));
+    };
+
+    const runHealScan = (scanTrigger: string) => {
+      scanAndEnsureMissingPcsRef.current(scanTrigger, buildHealScanPeers());
+    };
+
+    if (!micReady || !signalReady) {
+      runHealScan(!micReady ? "healRun_mic_not_ready" : "healRun_signal_not_ready");
+      return;
+    }
 
     const remoteIds = getRemoteIds();
 
@@ -2154,6 +2214,7 @@ export function usePeerConnections({
         });
       }
       runMissingPcSafetyNet();
+      runHealScan("healRun");
       emitPeerStates();
       emitMeshSummary("healRun", { immediate: true });
       return;
@@ -2196,6 +2257,7 @@ export function usePeerConnections({
     }
 
     runMissingPcSafetyNet();
+    runHealScan("healRun");
 
     emitPeerStates();
 
@@ -2210,6 +2272,7 @@ export function usePeerConnections({
 
     emitMeshSummary("healRun", { immediate: true });
   }, [
+    buildMeshPeerSummary,
     closePeer,
     deviceId,
     emitMeshSummary,
