@@ -196,6 +196,30 @@ export default function CallClient() {
     };
   }, [sessionId, deviceId]);
 
+  useEffect(() => {
+    const unlockRemoteAudio = () => {
+      requestRemoteAudioUnlock();
+    };
+
+    document.addEventListener("pointerdown", unlockRemoteAudio, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("touchstart", unlockRemoteAudio, {
+      capture: true,
+      passive: true,
+    });
+
+    return () => {
+      document.removeEventListener("pointerdown", unlockRemoteAudio, {
+        capture: true,
+      });
+      document.removeEventListener("touchstart", unlockRemoteAudio, {
+        capture: true,
+      });
+    };
+  }, []);
+
   const prevSessionIdRef = useRef("");
   useEffect(() => {
     const prev = prevSessionIdRef.current;

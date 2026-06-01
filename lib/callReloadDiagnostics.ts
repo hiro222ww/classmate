@@ -102,40 +102,51 @@ export function saveCallReloadSnapshot(params: {
   }
 }
 
+export function logReloadSnapshotOnMount(params: {
+  sessionId: string;
+  deviceId: string;
+}): CallReloadSnapshot | null {
+  const nav = getNavigationType();
+
+  try {
+    const raw = sessionStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) {
+      console.log(
+        `[call-lifecycle] reload-snapshot-restored present=false nav=${nav} ` +
+          `trigger=- vis=- close=- track=- heal=- err=- reject=- chunk=-`
+      );
+      return null;
+    }
+
+    sessionStorage.removeItem(SNAPSHOT_KEY);
+    const snapshot = JSON.parse(raw) as CallReloadSnapshot;
+    const ageSec = Math.max(0, Math.round((Date.now() - snapshot.savedAt) / 1000));
+    const chunkError =
+      isLikelyChunkLoadError(snapshot.lastError ?? "") ||
+      isLikelyChunkLoadError(snapshot.lastRejection ?? "");
+
+    console.log(
+      `[call-lifecycle] reload-snapshot-restored present=true age=${ageSec}s nav=${nav} ` +
+        `trigger=${snapshot.trigger} vis=${snapshot.visibilityState} prevNav=${snapshot.navigationType} ` +
+        `close=${snapshot.lastClosePeer ?? "-"} track=${snapshot.lastRemoteTrackEvent ?? "-"} ` +
+        `heal=${snapshot.lastHealAction ?? "-"} err=${snapshot.lastError ?? "-"} ` +
+        `reject=${snapshot.lastRejection ?? "-"} chunk=${chunkError}`
+    );
+
+    return snapshot;
+  } catch {
+    console.log(
+      `[call-lifecycle] reload-snapshot-restored present=false nav=${nav} parseError=true`
+    );
+    return null;
+  }
+}
+
 export function consumeCallReloadSnapshot(params: {
   sessionId: string;
   deviceId: string;
 }): CallReloadSnapshot | null {
-  try {
-    const raw = sessionStorage.getItem(SNAPSHOT_KEY);
-    if (!raw) return null;
-
-    sessionStorage.removeItem(SNAPSHOT_KEY);
-    const snapshot = JSON.parse(raw) as CallReloadSnapshot;
-
-    console.log(
-      `[call-lifecycle] reload-snapshot restored age=${Math.round((Date.now() - snapshot.savedAt) / 1000)}s ` +
-        `prevSession=${snapshot.sessionId.slice(-8)} prevDevice=${snapshot.deviceId.slice(-3)} ` +
-        `trigger=${snapshot.trigger} vis=${snapshot.visibilityState} nav=${snapshot.navigationType}`
-    );
-    console.log(formatSnapshotLine(snapshot));
-    console.log("[call-lifecycle] reload-snapshot detail", snapshot);
-
-    if (
-      snapshot.sessionId &&
-      snapshot.sessionId !== params.sessionId &&
-      snapshot.deviceId === params.deviceId
-    ) {
-      console.warn("[call-lifecycle] reload-snapshot session mismatch", {
-        snapshotSessionId: snapshot.sessionId,
-        currentSessionId: params.sessionId,
-      });
-    }
-
-    return snapshot;
-  } catch {
-    return null;
-  }
+  return logReloadSnapshotOnMount(params);
 }
 
 export function isLikelyChunkLoadError(message: string): boolean {
