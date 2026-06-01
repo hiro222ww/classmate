@@ -1,3 +1,4 @@
+-- Bidirectional age filtering for match_join_atomic_v3
 -- Serialize normal match per (world, topic, age range, capacity) to reduce concurrent class/session split.
 -- Apply in Supabase SQL Editor, then NOTIFY pgrst, 'reload schema';
 

@@ -584,6 +584,28 @@ export async function matchJoinV2Post(req: Request) {
     const joinDisplayName = resolveJoinDisplayName(selfProfile);
     const selfAge = calcAgeFromBirthDate(selfProfile.birth_date);
 
+    if (!canRejoinTargetClass && !forcedClassId && selfAge === null) {
+      return NextResponse.json(
+        { ok: false, error: "profile_age_required" },
+        { status: 400 }
+      );
+    }
+
+    console.log("[class/match-join-v2] age filter", {
+      deviceId,
+      selfAge,
+      requestedMinAge,
+      requestedMaxAge,
+      prefsLoadedFromDb: {
+        minAge: fallbackMinAge,
+        maxAge: fallbackMaxAge,
+      },
+      bodyMinAge: body.minAge ?? null,
+      bodyMaxAge: body.maxAge ?? null,
+      canRejoinTargetClass,
+      openJoinedClass,
+    });
+
     const slotsRes = await getClassSlots(deviceId);
     if (!slotsRes.ok) return slotsRes.response;
     const classSlots = slotsRes.classSlots;

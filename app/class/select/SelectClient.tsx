@@ -755,6 +755,11 @@ export default function SelectClient() {
       return;
     }
 
+    if (!prefsLoaded) {
+      alert("年齢設定を読み込み中です。数秒後にもう一度お試しください。");
+      return;
+    }
+
     setBusy(true);
     setJoinLimitMessage("");
 
@@ -936,7 +941,9 @@ return;
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
     const admissionClosed = !joinWindowOpen;
-    const joinDisabled = busy || !deviceId || profileMissing || admissionClosed;
+    const prefsNotReady = !prefsLoaded;
+    const joinDisabled =
+      busy || !deviceId || profileMissing || admissionClosed || prefsNotReady;
 
     return (
       <div
@@ -1464,7 +1471,7 @@ return;
 
           <button
             onClick={() => void enterQuickFreeTheme()}
-            disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen}
+            disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded}
             style={{
               padding: "12px 14px",
               borderRadius: 14,

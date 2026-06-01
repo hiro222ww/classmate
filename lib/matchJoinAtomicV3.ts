@@ -85,6 +85,9 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
   }
 
   switch (errKey) {
+    case "profile_age_required":
+      return NextResponse.json({ ...body, error: errKey }, { status: 400 });
+
     case "device_id_missing":
       return NextResponse.json({ ...body, error: errKey }, { status: 400 });
 
