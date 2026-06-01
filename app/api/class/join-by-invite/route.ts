@@ -305,6 +305,13 @@ export async function POST(req: Request) {
 
     if (!sessionMemberRes.ok) return sessionMemberRes.response;
 
+    console.log("[invite] join-by-invite success", {
+      classId,
+      sessionId,
+      deviceId,
+      alreadyJoined: membershipRes.alreadyJoined,
+    });
+
     return NextResponse.json({
       ok: true,
       classId,

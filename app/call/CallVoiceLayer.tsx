@@ -21,6 +21,7 @@ type CallVoiceLayerProps = {
   sessionId: string;
   deviceId: string;
   members: Member[];
+  membersSyncRevision?: number;
   isMuted: boolean;
   onMicReadyChange?: (ready: boolean) => void;
   onMicLevelChange?: (level: number) => void;
@@ -34,6 +35,7 @@ export default function CallVoiceLayer({
   sessionId,
   deviceId,
   members,
+  membersSyncRevision = 0,
   isMuted,
   onMicReadyChange,
   onMicLevelChange,
@@ -76,6 +78,7 @@ export default function CallVoiceLayer({
     sessionId,
     deviceId,
     members,
+    membersSyncRevision,
     isMuted,
     micReady: mic.micReady,
     signalReady: signaling.signalReady,

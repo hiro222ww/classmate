@@ -25,6 +25,7 @@ type UsePeerConnectionsArgs = {
   sessionId: string;
   deviceId: string;
   members: Member[];
+  membersSyncRevision?: number;
   isMuted: boolean;
   micReady: boolean;
   signalReady: boolean;
@@ -94,6 +95,7 @@ export function usePeerConnections({
   sessionId,
   deviceId,
   members,
+  membersSyncRevision = 0,
   isMuted,
   micReady,
   signalReady,
@@ -127,6 +129,10 @@ export function usePeerConnections({
   const osRef = useRef<OsType>(detectOs());
   const connectStartedAtRef = useRef<Map<string, number>>(new Map());
   const loggedConnectedRef = useRef<Set<string>>(new Set());
+  const healRunSeqRef = useRef(0);
+  const peerHealActionRef = useRef<
+    Map<string, { lastAction: string; consecutive: number }>
+  >(new Map());
 
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
@@ -146,9 +152,10 @@ export function usePeerConnections({
   }, [members]);
 
   const getRemoteIds = useCallback(() => {
+    const selfId = String(deviceId ?? "").trim();
     return activeMembers
       .map((m) => String(m.device_id ?? "").trim())
-      .filter((id) => id && id !== deviceId);
+      .filter((id) => id && id !== selfId);
   }, [activeMembers, deviceId]);
 
   const emitPeerStates = useCallback(() => {
@@ -763,6 +770,189 @@ export function usePeerConnections({
     maybeStartOfferRef.current = maybeStartOffer;
   }, [maybeStartOffer]);
 
+  const logHealPeerAction = useCallback(
+    (
+      remoteId: string,
+      action:
+        | "create"
+        | "reconnect"
+        | "close-extra"
+        | "retry-offer"
+        | "skip",
+      pc: RTCPeerConnection | null | undefined,
+      opts?: {
+        hasRemoteStream?: boolean;
+        healRun?: number;
+        scheduledInMs?: number;
+      }
+    ) => {
+      const prev = peerHealActionRef.current.get(remoteId);
+      const consecutive =
+        prev?.lastAction === action ? prev.consecutive + 1 : 1;
+
+      peerHealActionRef.current.set(remoteId, { lastAction: action, consecutive });
+
+      const hasRemoteStream =
+        opts?.hasRemoteStream ?? remoteStreamsRef.current.has(remoteId);
+      const remoteStream = remoteStreamsRef.current.get(remoteId);
+      const remoteTracksCount = remoteStream?.getAudioTracks().length ?? 0;
+
+      const payload = {
+        healRun: opts?.healRun ?? healRunSeqRef.current,
+        deviceId,
+        remoteDeviceId: remoteId,
+        action,
+        consecutive,
+        repeatWarning:
+          consecutive >= 3 &&
+          (action === "reconnect" || action === "retry-offer"),
+        signalingState: pc?.signalingState ?? null,
+        connectionState: pc?.connectionState ?? null,
+        iceConnectionState: pc?.iceConnectionState ?? null,
+        hasRemoteStream,
+        remoteTracksCount,
+        ...(opts?.scheduledInMs != null
+          ? { scheduledInMs: opts.scheduledInMs }
+          : {}),
+      };
+
+      if (payload.repeatWarning) {
+        console.warn("[voice-peer] healPeerConnections", payload);
+      } else {
+        console.log("[voice-peer] healPeerConnections", payload);
+      }
+    },
+    [deviceId]
+  );
+
+  const healPeerConnections = useCallback(() => {
+    if (!micReady || !signalReady) return;
+
+    healRunSeqRef.current += 1;
+    const healRun = healRunSeqRef.current;
+
+    const remoteIds = getRemoteIds();
+
+    for (const existingId of Array.from(pcsRef.current.keys())) {
+      if (!remoteIds.includes(existingId)) {
+        logHealPeerAction(
+          existingId,
+          "close-extra",
+          pcsRef.current.get(existingId),
+          { healRun }
+        );
+        closePeer(existingId, { clearConnectionId: true });
+      }
+    }
+
+    for (const remoteId of remoteIds) {
+      const pc = pcsRef.current.get(remoteId);
+      const hasStream = remoteStreamsRef.current.has(remoteId);
+      const connected = pc?.connectionState === "connected";
+
+      if (hasStream && connected) {
+        setPeerState(remoteId, "connected");
+        logHealPeerAction(remoteId, "skip", pc, {
+          healRun,
+          hasRemoteStream: true,
+        });
+        continue;
+      }
+
+      const failed =
+        !pc ||
+        pc.connectionState === "failed" ||
+        pc.iceConnectionState === "failed" ||
+        pc.connectionState === "closed";
+
+      if (failed) {
+        logHealPeerAction(remoteId, pc ? "reconnect" : "create", pc, {
+          healRun,
+          hasRemoteStream: hasStream,
+        });
+
+        offeredPeersRef.current.delete(remoteId);
+        startedPeersRef.current.delete(remoteId);
+        if (pc) {
+          closePeer(remoteId, { clearConnectionId: false });
+        }
+        if (!getCurrentConnectionId(remoteId)) {
+          setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
+        }
+        connectStartedAtRef.current.set(remoteId, Date.now());
+        void maybeStartOffer(remoteId);
+        continue;
+      }
+
+      const stuckOffer =
+        offeredPeersRef.current.has(remoteId) &&
+        !hasStream &&
+        pc.signalingState === "have-local-offer";
+
+      if (stuckOffer) {
+        const startedAt = connectStartedAtRef.current.get(remoteId) ?? Date.now();
+        if (Date.now() - startedAt > 6000) {
+          logHealPeerAction(remoteId, "retry-offer", pc, {
+            healRun,
+            hasRemoteStream: hasStream,
+            scheduledInMs: 300,
+          });
+          offeredPeersRef.current.delete(remoteId);
+          closePeer(remoteId, { clearConnectionId: false });
+          scheduleReconnect(remoteId, 300);
+        } else {
+          logHealPeerAction(remoteId, "skip", pc, {
+            healRun,
+            hasRemoteStream: hasStream,
+          });
+        }
+        continue;
+      }
+
+      if (!hasStream && !offeredPeersRef.current.has(remoteId)) {
+        logHealPeerAction(remoteId, pc ? "retry-offer" : "create", pc, {
+          healRun,
+          hasRemoteStream: hasStream,
+        });
+
+        if (!getCurrentConnectionId(remoteId)) {
+          setCurrentConnectionId(remoteId, makeConnectionId(deviceId, remoteId));
+        }
+        markConnectStart(remoteId);
+        void maybeStartOffer(remoteId);
+        continue;
+      }
+
+      logHealPeerAction(remoteId, "skip", pc, {
+        healRun,
+        hasRemoteStream: hasStream,
+      });
+    }
+
+    emitPeerStates();
+
+    console.log("[voice-peer] healPeerConnections done", {
+      healRun,
+      deviceId,
+      remoteDeviceIds: remoteIds,
+      peerConnectionCount: pcsRef.current.size,
+    });
+  }, [
+    closePeer,
+    deviceId,
+    emitPeerStates,
+    getCurrentConnectionId,
+    getRemoteIds,
+    logHealPeerAction,
+    markConnectStart,
+    maybeStartOffer,
+    micReady,
+    scheduleReconnect,
+    setCurrentConnectionId,
+    setPeerState,
+    signalReady,
+  ]);
+
   const handleSignal = useCallback(
     async (row: SignalRow) => {
       if (!row || processedSignalIdsRef.current.has(row.id)) return;
@@ -975,6 +1165,8 @@ export function usePeerConnections({
 
       void maybeStartOffer(remoteId);
     }
+
+    healPeerConnections();
   }, [
     members,
     micReady,
@@ -984,6 +1176,7 @@ export function usePeerConnections({
     emitPeerStates,
     getCurrentConnectionId,
     getRemoteIds,
+    healPeerConnections,
     maybeStartOffer,
     setCurrentConnectionId,
   ]);
@@ -993,24 +1186,31 @@ export function usePeerConnections({
     if (!signalReady) return;
 
     const timer = window.setInterval(() => {
-      const remoteIds = getRemoteIds();
-
-      for (const remoteId of remoteIds) {
-        const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
-        const pc = pcsRef.current.get(remoteId);
-
-        if (hasRemoteStream) continue;
-        if (pc && pc.connectionState === "connected") continue;
-        if (pc && pc.signalingState !== "stable") continue;
-
-        void maybeStartOffer(remoteId);
-      }
+      healPeerConnections();
     }, 3000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, signalReady, deviceId, maybeStartOffer, getRemoteIds]);
+  }, [micReady, signalReady, healPeerConnections]);
+
+  useEffect(() => {
+    if (membersSyncRevision <= 0) return;
+    healPeerConnections();
+  }, [membersSyncRevision, healPeerConnections]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        healPeerConnections();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [healPeerConnections]);
 
   useEffect(() => {
     if (!micReady) return;

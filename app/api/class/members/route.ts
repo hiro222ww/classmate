@@ -24,7 +24,10 @@ async function loadProfiles(
   if (ids.length === 0) {
     return {
       ok: true as const,
-      profileMap: new Map<string, { display_name?: string | null; photo_path?: string | null }>(),
+      profileMap: new Map<
+        string,
+        { display_name?: string | null; photo_path?: string | null }
+      >(),
     };
   }
 
@@ -37,7 +40,10 @@ async function loadProfiles(
     return {
       ok: false as const,
       error,
-      profileMap: new Map<string, { display_name?: string | null; photo_path?: string | null }>(),
+      profileMap: new Map<
+        string,
+        { display_name?: string | null; photo_path?: string | null }
+      >(),
     };
   }
 
@@ -49,7 +55,10 @@ async function loadProfiles(
   for (const p of data ?? []) {
     const did = normalizeDeviceId((p as { device_id?: string }).device_id);
     if (!did) continue;
-    profileMap.set(did, p as { display_name?: string | null; photo_path?: string | null });
+    profileMap.set(
+      did,
+      p as { display_name?: string | null; photo_path?: string | null }
+    );
   }
 
   return {

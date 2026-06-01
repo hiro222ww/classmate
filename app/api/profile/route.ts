@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { getAge } from "@/lib/age";
+import { canViewMemberProfile } from "@/lib/memberProfileAccess";
 import { getMinorsEnabled } from "@/lib/minorsSettings";
 
 type ProfileRow = {
@@ -54,13 +55,33 @@ function calcAge(birthDateISO: string): number | null {
   return getAge(birthDateISO);
 }
 
+function toPublicProfileResponse(
+  row: Partial<ProfileRow> | null,
+  age: number | null
+) {
+  if (!row) return null;
+
+  return {
+    device_id: normalizeString(row.device_id) || null,
+    display_name: normalizeString(row.display_name) || null,
+    photo_path: normalizePhotoPath(row.photo_path),
+    gender: normalizeString(row.gender) || null,
+    age,
+  };
+}
+
 /**
  * プロフィール取得
  * GET /api/profile?device_id=xxxx
+ * 他人参照時: viewer_device_id + class_id または session_id が必要
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const device_id = normalizeString(searchParams.get("device_id"));
+  const viewer_device_id =
+    normalizeString(searchParams.get("viewer_device_id")) || device_id;
+  const class_id = normalizeString(searchParams.get("class_id"));
+  const session_id = normalizeString(searchParams.get("session_id"));
 
   if (!device_id) {
     return NextResponse.json(
@@ -108,8 +129,56 @@ export async function GET(req: Request) {
   }
 
   const profile = toProfileResponse(data);
+  const isSelf = device_id === viewer_device_id;
 
-  console.log("[profile][GET] result", {
+  if (!isSelf) {
+    const allowed = await canViewMemberProfile({
+      viewerDeviceId: viewer_device_id,
+      targetDeviceId: device_id,
+      classId: class_id || undefined,
+      sessionId: session_id || undefined,
+    });
+
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "profile_view_forbidden",
+        },
+        {
+          status: 403,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
+
+    const age = profile?.birth_date ? calcAge(profile.birth_date) : null;
+    const publicProfile = toPublicProfileResponse(data, age);
+
+    console.log("[profile][GET] public result", {
+      viewer_device_id,
+      device_id,
+      class_id: class_id || null,
+      session_id: session_id || null,
+      found: !!publicProfile,
+    });
+
+    return NextResponse.json(
+      {
+        ok: true,
+        profile: publicProfile,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
+  }
+
+  console.log("[profile][GET] self result", {
     device_id,
     found: !!profile,
     display_name: profile?.display_name ?? null,

@@ -1,0 +1,10 @@
+{
+  "name": "Classmate",
+  "short_name": "Classmate",
+  "description": "大人になっても自然と仲間ができる場所",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111827",
+  "lang": "ja"
+}

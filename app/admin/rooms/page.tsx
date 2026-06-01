@@ -20,6 +20,8 @@ type RoomRow = {
   member_count: number;
   members: RoomMember[];
   started_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
   elapsed_minutes: number;
   report_count: number;
   short_leave_count: number;
@@ -35,18 +37,27 @@ type Summary = {
   dangerous_room_count: number;
 };
 
-async function readJsonOrThrow(r: Response) {
+type LoadState = "idle" | "success" | "empty" | "auth_error" | "fetch_error";
+
+async function readJsonResponse(r: Response) {
   const raw = await r.text();
   const ct = r.headers.get("content-type") ?? "";
 
   if (!ct.includes("application/json")) {
-    console.error("Non-JSON response:", raw);
+    console.error("[admin/rooms-ui] non-json response", {
+      status: r.status,
+      raw,
+    });
     throw new Error("non_json_response");
   }
 
-  const j = JSON.parse(raw);
-  if (!r.ok) throw new Error(j?.error ?? "request_failed");
-  return j;
+  return JSON.parse(raw) as {
+    ok?: boolean;
+    error?: string;
+    detail?: string;
+    rooms?: RoomRow[];
+    summary?: Summary;
+  };
 }
 
 function fmtDateTime(iso: string | null) {
@@ -83,6 +94,7 @@ function riskBg(level: RoomRow["risk_level"]) {
 export default function AdminRoomsPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [loadState, setLoadState] = useState<LoadState>("idle");
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [summary, setSummary] = useState<Summary>({
     active_room_count: 0,
@@ -90,27 +102,71 @@ export default function AdminRoomsPage() {
     dangerous_room_count: 0,
   });
 
+  const emptySummary: Summary = {
+    active_room_count: 0,
+    active_user_count: 0,
+    dangerous_room_count: 0,
+  };
+
   async function loadRooms() {
     setBusy(true);
     setMsg("");
+    setLoadState("idle");
 
     try {
       const res = await fetch("/api/admin/rooms?limit=100", {
         method: "GET",
         cache: "no-store",
+        credentials: "same-origin",
       });
 
-      const j = await readJsonOrThrow(res);
-      setRooms(j.rooms ?? []);
-      setSummary(
-        j.summary ?? {
-          active_room_count: 0,
-          active_user_count: 0,
-          dangerous_room_count: 0,
-        }
-      );
-      setMsg(`読み込みOK（rooms: ${(j.rooms ?? []).length}）`);
+      if (res.status === 401) {
+        console.warn("[admin/rooms-ui] auth error", { status: 401 });
+        setRooms([]);
+        setSummary(emptySummary);
+        setLoadState("auth_error");
+        setMsg("未ログインまたは認証切れです。再ログインしてください。");
+        return;
+      }
+
+      const j = await readJsonResponse(res);
+
+      if (!res.ok || !j.ok) {
+        console.error("[admin/rooms-ui] fetch failed", {
+          status: res.status,
+          error: j.error,
+          detail: j.detail,
+        });
+        setRooms([]);
+        setSummary(emptySummary);
+        setLoadState("fetch_error");
+        setMsg(
+          `取得エラー: ${j.error ?? `HTTP ${res.status}`}${
+            j.detail ? ` (${j.detail})` : ""
+          }`
+        );
+        return;
+      }
+
+      const nextRooms = j.rooms ?? [];
+      setRooms(nextRooms);
+      setSummary(j.summary ?? emptySummary);
+
+      if (nextRooms.length === 0) {
+        console.log("[admin/rooms-ui] fetch ok, empty", { count: 0 });
+        setLoadState("empty");
+        setMsg("読み込みOK — 表示対象ルームは0件です");
+        return;
+      }
+
+      console.log("[admin/rooms-ui] fetch ok", { count: nextRooms.length });
+      setLoadState("success");
+      setMsg(`読み込みOK（rooms: ${nextRooms.length}）`);
     } catch (e: any) {
+      console.error("[admin/rooms-ui] unexpected error", e);
+      setRooms([]);
+      setSummary(emptySummary);
+      setLoadState("fetch_error");
       setMsg(e?.message ?? "load_failed");
     } finally {
       setBusy(false);
@@ -147,6 +203,24 @@ export default function AdminRoomsPage() {
     color: "#111",
   };
 
+  const msgColor =
+    loadState === "auth_error" || loadState === "fetch_error"
+      ? "#b00020"
+      : loadState === "empty"
+        ? "#92400e"
+        : "#333";
+
+  const emptyTableMessage =
+    loadState === "idle"
+      ? "「読み込み」を押してください"
+      : loadState === "auth_error"
+        ? "認証エラー: 未ログインまたは認証切れです"
+        : loadState === "fetch_error"
+          ? "取得エラー: 上のメッセージを確認してください"
+          : loadState === "empty"
+            ? "表示対象ルームは0件です（API成功）"
+            : "進行中ルームがありません";
+
   return (
     <main style={pageStyle}>
       <h1 style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>
@@ -154,7 +228,7 @@ export default function AdminRoomsPage() {
       </h1>
 
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-        sessions / session_members / classes / user_profiles をもとに、進行中セッションを一覧表示します。
+        session_members に参加者がいる、終了前の session を一覧表示します（classes は補助情報）。
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
@@ -179,7 +253,22 @@ export default function AdminRoomsPage() {
             voiceへ
           </button>
 
-          {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
+          {loadState === "auth_error" ? (
+            <button
+              onClick={() => {
+                window.location.href = "/admin/login?next=/admin/rooms";
+              }}
+              style={btnGhost}
+            >
+              再ログイン
+            </button>
+          ) : null}
+
+          {msg ? (
+            <span style={{ fontSize: 12, color: msgColor, fontWeight: 700 }}>
+              {msg}
+            </span>
+          ) : null}
         </div>
       </section>
 
@@ -222,26 +311,27 @@ export default function AdminRoomsPage() {
           <table
             style={{
               width: "100%",
-              minWidth: 1400,
+              minWidth: 1600,
               borderCollapse: "collapse",
               fontSize: 12,
             }}
           >
             <thead>
               <tr style={{ borderBottom: "1px solid #eee" }}>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>sessionId</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>classId</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>world/topic</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>クラス名</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>参加者</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>world</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>topic</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>人数</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>status</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>開始</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>created</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>updated</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>経過</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>通報</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>短時間退出</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>入退室頻度</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>危険度</th>
-                <th style={{ textAlign: "left", padding: "8px 6px" }}>session_id</th>
               </tr>
             </thead>
 
@@ -254,6 +344,34 @@ export default function AdminRoomsPage() {
                     background: riskBg(room.risk_level),
                   }}
                 >
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      fontSize: 11,
+                    }}
+                    title={room.session_id}
+                  >
+                    {shortId(room.session_id)}
+                  </td>
+
+                  <td
+                    style={{
+                      padding: "8px 6px",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      fontSize: 11,
+                    }}
+                    title={room.class_id ?? undefined}
+                  >
+                    {room.class_id ? shortId(room.class_id) : "-"}
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    {room.world_key ?? "-"} / {room.topic_key ?? "-"}
+                  </td>
+
                   <td style={{ padding: "8px 6px", fontWeight: 700 }}>
                     {room.class_name}
                   </td>
@@ -299,11 +417,14 @@ export default function AdminRoomsPage() {
                     )}
                   </td>
 
-                  <td style={{ padding: "8px 6px" }}>{room.world_key ?? "-"}</td>
-                  <td style={{ padding: "8px 6px" }}>{room.topic_key ?? "-"}</td>
                   <td style={{ padding: "8px 6px" }}>{room.member_count}</td>
                   <td style={{ padding: "8px 6px" }}>{room.status}</td>
-                  <td style={{ padding: "8px 6px" }}>{fmtDateTime(room.started_at)}</td>
+                  <td style={{ padding: "8px 6px" }}>
+                    {fmtDateTime(room.created_at ?? room.started_at)}
+                  </td>
+                  <td style={{ padding: "8px 6px" }}>
+                    {fmtDateTime(room.updated_at ?? room.created_at ?? room.started_at)}
+                  </td>
                   <td style={{ padding: "8px 6px" }}>{room.elapsed_minutes}分</td>
                   <td style={{ padding: "8px 6px" }}>{room.report_count}</td>
                   <td style={{ padding: "8px 6px" }}>{room.short_leave_count}</td>
@@ -314,25 +435,13 @@ export default function AdminRoomsPage() {
                       {room.risk_level} ({room.risk_score})
                     </span>
                   </td>
-
-                  <td
-                    style={{
-                      padding: "8px 6px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                      fontSize: 11,
-                    }}
-                    title={room.session_id}
-                  >
-                    {shortId(room.session_id)}
-                  </td>
                 </tr>
               ))}
 
               {rooms.length === 0 ? (
                 <tr>
-                  <td colSpan={13} style={{ padding: 10, color: "#666" }}>
-                    進行中ルームがありません
+                  <td colSpan={14} style={{ padding: 10, color: "#666" }}>
+                    {emptyTableMessage}
                   </td>
                 </tr>
               ) : null}

@@ -12,6 +12,9 @@ import {
   type RecruitmentSessionRow,
 } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes, getRecruitmentSessionTtlSetting } from "@/lib/recruitmentSettings";
+import { fetchActiveMeetingPlansForClasses } from "@/lib/meetingPlan";
+import { fetchActiveCallRequestsForClasses } from "@/lib/callRequest";
+import { fetchUnreadCountsForClasses } from "@/lib/classMessageReads";
 
 export const dynamic = "force-dynamic";
 
@@ -235,12 +238,24 @@ export async function GET(req: Request) {
       });
     }
 
+    const meetingPlanMap =
+      (await fetchActiveMeetingPlansForClasses(classIds)) ?? new Map();
+    const callRequestMap =
+      (await fetchActiveCallRequestsForClasses(classIds, normalizedDeviceId)) ??
+      new Map();
+    const unreadCountMap =
+      (await fetchUnreadCountsForClasses(normalizedDeviceId, classIds)) ??
+      new Map();
+
     // 6) merge
     const merged = classIds.map((classId) => {
       const c = classMap.get(classId);
       const topicKey = String(c?.topic_key ?? "").trim();
       const topic = topicKey ? topicMap.get(topicKey) : null;
       const session = sessionMap.get(classId);
+      const meetingPlan = meetingPlanMap.get(classId) ?? null;
+      const callRequest = callRequestMap.get(classId) ?? null;
+      const unreadCount = unreadCountMap.get(classId) ?? 0;
 
       return {
         class_id: classId,
@@ -263,6 +278,9 @@ export async function GET(req: Request) {
         session_created_at: session?.created_at ?? null,
         status_label: session?.status_label ?? null,
         is_recruiting: Boolean(session?.is_recruiting),
+        next_meeting_plan: meetingPlan,
+        active_call_request: callRequest,
+        unread_count: unreadCount,
       };
     });
 

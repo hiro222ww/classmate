@@ -154,3 +154,25 @@ export function formatMemberDisplayName(member: {
     normalizeDisplayNameInput(member.display_name) || DISPLAY_NAME_FALLBACK
   );
 }
+
+export function formatDisplayNameWithAge(
+  name: string,
+  age?: number | null
+): string {
+  const trimmed = normalizeDisplayNameInput(name) || DISPLAY_NAME_FALLBACK;
+  if (age == null || !Number.isFinite(age) || age < 0) {
+    return trimmed;
+  }
+
+  return `${trimmed}（${Math.floor(age)}歳）`;
+}
+
+export function formatMemberDisplayNameWithAge(member: {
+  display_name?: unknown;
+  age?: number | null;
+}): string {
+  return formatDisplayNameWithAge(
+    formatMemberDisplayName(member),
+    member.age
+  );
+}

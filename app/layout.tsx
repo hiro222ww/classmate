@@ -5,6 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "classmate",
   description: "大人になっても自然と仲間ができる場所",
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({

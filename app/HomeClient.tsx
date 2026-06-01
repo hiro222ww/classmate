@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { DevPanel } from "@/components/DevPanel";
+import MemberProfileModal from "@/components/MemberProfileModal";
 import { withDev } from "@/lib/withDev";
 import { getClassStatusLabel, isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
@@ -12,6 +13,28 @@ import {
   formatMemberDisplayName,
   logMemberDisplayNamesFromApi,
 } from "@/lib/resolveDisplayName";
+import {
+  consumeJoinedClassesRefresh,
+  peekJoinedClassesRefresh,
+} from "@/lib/joinedClassesRefresh";
+import {
+  getMemberAvatarUrl,
+  LIST_MEMBER_AVATAR_PX,
+  normalizeMemberDeviceId,
+  type MemberProfileTarget,
+} from "@/lib/memberProfileView";
+import MeetingPlanSection from "@/components/MeetingPlanSection";
+import CallRequestSection from "@/components/CallRequestSection";
+import InAppToastStack, {
+  type InAppToastItem,
+} from "@/components/InAppToastStack";
+import {
+  isWebPushSupported,
+  subscribeWebPush,
+  unsubscribeWebPush,
+} from "@/lib/webPushClient";
+import type { MeetingPlanPublic } from "@/lib/meetingPlan";
+import type { CallRequestPublic } from "@/lib/callRequest";
 
 type Profile = {
   device_id: string;
@@ -40,6 +63,9 @@ type MineClass = {
   session_created_at?: string | null;
   status_label?: string | null;
   is_recruiting?: boolean;
+  next_meeting_plan?: MeetingPlanPublic | null;
+  active_call_request?: CallRequestPublic | null;
+  unread_count?: number;
 };
 
 type ClassMember = {
@@ -210,18 +236,7 @@ function getClassStatusStyle(label: string) {
   };
 }
 
-async function ensureNotificationPermission() {
-  if (typeof window === "undefined") return false;
-  if (!("Notification" in window)) return false;
-
-  if (Notification.permission === "granted") return true;
-  if (Notification.permission === "denied") return false;
-
-  const result = await Notification.requestPermission();
-  return result === "granted";
-}
-
-function pushBrowserNotification(
+async function pushBrowserNotification(
   enabled: boolean,
   title: string,
   body: string
@@ -236,6 +251,7 @@ function pushBrowserNotification(
 
 export default function HomeClient() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const dev = (searchParams.get("dev") ?? "").trim();
@@ -273,11 +289,128 @@ export default function HomeClient() {
     Record<string, Record<string, PresenceRow>>
   >({});
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
+    null
+  );
 
   const prevPresenceRef = useRef<Record<string, Record<string, PresenceRow>>>({});
   const prevMessageIdsRef = useRef<Record<string, number>>({});
+  const inviteRetryTimerRef = useRef<number | null>(null);
+  const lastNotificationSinceRef = useRef<string | null>(null);
+  const seenNotificationIdsRef = useRef<Set<string>>(new Set());
+  const toastTimersRef = useRef<Map<string, number>>(new Map());
+  const openClassRef = useRef<(target: MineClass) => Promise<void>>(async () => {});
+  const handledPushOpenClassIdRef = useRef<string | null>(null);
 
   const [mounted, setMounted] = useState(false);
+  const [inAppToasts, setInAppToasts] = useState<InAppToastItem[]>([]);
+
+  const fetchJoinedClasses = useCallback(
+    async (
+      reason: string,
+      opts?: {
+        deviceId?: string;
+        throwOnError?: boolean;
+        expectedClassId?: string | null;
+      }
+    ) => {
+      console.log("[home] fetchJoinedClasses start", { reason });
+
+      const id = String(
+        opts?.deviceId ?? deviceId ?? getDeviceId() ?? ""
+      ).trim();
+
+      if (!id) {
+        console.warn("[home] fetchJoinedClasses skip: deviceId missing", {
+          reason,
+        });
+        return;
+      }
+
+      try {
+        const classesRes = await fetch(
+          `/api/class/mine?deviceId=${encodeURIComponent(id)}`,
+          { cache: "no-store" }
+        );
+        const classesJson = await readJsonSafe(classesRes);
+
+        if (!classesRes.ok || !classesJson?.ok) {
+          console.warn("[home] fetchJoinedClasses failed", {
+            reason,
+            error: classesJson?.error,
+          });
+          if (opts?.throwOnError) {
+            throw new Error(classesJson?.error || "class_mine_failed");
+          }
+          return;
+        }
+
+        const nextClasses = Array.isArray(classesJson.classes)
+          ? classesJson.classes
+          : [];
+        const classIds = nextClasses.map((c: MineClass) =>
+          String(c.id ?? "").trim()
+        );
+
+        if (classesJson.recruitment_session_ttl_unlimited === true) {
+          setRecruitmentSessionTtlUnlimited(true);
+          setRecruitmentSessionTtlMinutes(null);
+        } else if (Number(classesJson.recruitment_session_ttl_minutes) > 0) {
+          setRecruitmentSessionTtlUnlimited(false);
+          setRecruitmentSessionTtlMinutes(
+            Number(classesJson.recruitment_session_ttl_minutes)
+          );
+        }
+
+        console.log("[home] fetchJoinedClasses success", {
+          reason,
+          count: nextClasses.length,
+          classIds,
+        });
+
+        setClasses((prev) => {
+          const forceApply =
+            reason === "invite_success" ||
+            reason === "focus" ||
+            reason === "visibility" ||
+            reason === "manual";
+
+          if (!forceApply && prev.length > 0 && nextClasses.length === 0) {
+            console.warn("[home] ignore empty classes snapshot once");
+            return prev;
+          }
+
+          return nextClasses;
+        });
+
+        const expectedClassId = String(opts?.expectedClassId ?? "").trim();
+        if (
+          expectedClassId &&
+          reason === "invite_success" &&
+          !classIds.includes(expectedClassId)
+        ) {
+          if (inviteRetryTimerRef.current) {
+            window.clearTimeout(inviteRetryTimerRef.current);
+          }
+
+          console.log("[home] fetchJoinedClasses retry scheduled", {
+            expectedClassId,
+          });
+
+          inviteRetryTimerRef.current = window.setTimeout(() => {
+            inviteRetryTimerRef.current = null;
+            void fetchJoinedClasses("invite_success", {
+              deviceId: id,
+            });
+          }, 800);
+        }
+      } catch (e) {
+        console.error("[home] fetchJoinedClasses error", { reason, e });
+        if (opts?.throwOnError) throw e;
+      }
+    },
+    [deviceId]
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -287,6 +420,15 @@ export default function HomeClient() {
       setNotificationsEnabled(saved === "true");
     }
   }, []);
+
+  useEffect(() => {
+    if (!deviceId || !notificationsEnabled) return;
+    void subscribeWebPush(deviceId).then((result) => {
+      if (!result.ok && result.error !== "permission_denied") {
+        console.warn("[home] web push resubscribe failed", result.error);
+      }
+    });
+  }, [deviceId, notificationsEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -361,14 +503,10 @@ export default function HomeClient() {
           return;
         }
 
-        const [profileRes, classesRes] = await Promise.all([
-          fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
-            cache: "no-store",
-          }),
-          fetch(`/api/class/mine?deviceId=${encodeURIComponent(id)}`, {
-            cache: "no-store",
-          }),
-        ]);
+        const profileRes = await fetch(
+          `/api/profile?device_id=${encodeURIComponent(id)}`,
+          { cache: "no-store" }
+        );
 
         if (cancelled) return;
 
@@ -386,32 +524,18 @@ export default function HomeClient() {
           setProfile(null);
         }
 
-        const classesJson = await readJsonSafe(classesRes);
+        const refreshFromQuery =
+          (searchParams.get("refreshClasses") ?? "").trim() === "1";
+        const refreshFromStorage = consumeJoinedClassesRefresh();
+        const fetchReason =
+          refreshFromQuery || refreshFromStorage.pending
+            ? "invite_success"
+            : "mount";
 
-        if (!classesRes.ok || !classesJson?.ok) {
-          throw new Error(classesJson?.error || "class_mine_failed");
-        }
-
-        const nextClasses = Array.isArray(classesJson.classes)
-          ? classesJson.classes
-          : [];
-
-        if (classesJson.recruitment_session_ttl_unlimited === true) {
-          setRecruitmentSessionTtlUnlimited(true);
-          setRecruitmentSessionTtlMinutes(null);
-        } else if (Number(classesJson.recruitment_session_ttl_minutes) > 0) {
-          setRecruitmentSessionTtlUnlimited(false);
-          setRecruitmentSessionTtlMinutes(
-            Number(classesJson.recruitment_session_ttl_minutes)
-          );
-        }
-
-        setClasses((prev) => {
-          if (prev.length > 0 && nextClasses.length === 0) {
-            console.warn("[home] ignore empty classes snapshot once");
-            return prev;
-          }
-          return nextClasses;
+        await fetchJoinedClasses(fetchReason, {
+          deviceId: id,
+          throwOnError: true,
+          expectedClassId: refreshFromStorage.classId,
         });
       } catch (e: any) {
         console.error("[home] load error", e);
@@ -428,8 +552,57 @@ export default function HomeClient() {
 
     return () => {
       cancelled = true;
+      if (inviteRetryTimerRef.current) {
+        window.clearTimeout(inviteRetryTimerRef.current);
+        inviteRetryTimerRef.current = null;
+      }
     };
-  }, [dev]);
+  }, [dev, fetchJoinedClasses, searchParams]);
+
+  useEffect(() => {
+    function runRefresh(reason: "focus" | "visibility") {
+      const pending = peekJoinedClassesRefresh();
+      if (pending.pending) {
+        const consumed = consumeJoinedClassesRefresh();
+        void fetchJoinedClasses("invite_success", {
+          expectedClassId: consumed.classId,
+        });
+        return;
+      }
+
+      void fetchJoinedClasses(reason);
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        runRefresh("visibility");
+      }
+    };
+
+    const onFocus = () => {
+      runRefresh("focus");
+    };
+
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        const pending = consumeJoinedClassesRefresh();
+        void fetchJoinedClasses(
+          pending.pending ? "invite_success" : "focus",
+          { expectedClassId: pending.classId }
+        );
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [fetchJoinedClasses]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -737,6 +910,150 @@ return () => {
 };
   }, [classes, deviceId, membersByClass, notificationsEnabled]);
 
+  const dismissInAppToast = useCallback((id: string) => {
+    setInAppToasts((prev) => prev.filter((toast) => toast.id !== id));
+    const timer = toastTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      toastTimersRef.current.delete(id);
+    }
+  }, []);
+
+  const pushInAppToast = useCallback(
+    (item: InAppToastItem) => {
+      if (seenNotificationIdsRef.current.has(item.id)) return;
+      seenNotificationIdsRef.current.add(item.id);
+
+      setInAppToasts((prev) => {
+        if (prev.some((toast) => toast.id === item.id)) return prev;
+        return [...prev, item].slice(-4);
+      });
+
+      const timer = window.setTimeout(() => {
+        dismissInAppToast(item.id);
+      }, 5000);
+      toastTimersRef.current.set(item.id, timer);
+    },
+    [dismissInAppToast]
+  );
+
+  useEffect(() => {
+    lastNotificationSinceRef.current = null;
+    seenNotificationIdsRef.current.clear();
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (!deviceId || classes.length === 0) return;
+
+    let cancelled = false;
+
+    async function pollNotificationFeed() {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState !== "visible"
+      ) {
+        return;
+      }
+
+      const bootstrapIso = new Date().toISOString();
+      if (!lastNotificationSinceRef.current) {
+        lastNotificationSinceRef.current = bootstrapIso;
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `/api/class/notifications/feed?device_id=${encodeURIComponent(
+            deviceId
+          )}&since=${encodeURIComponent(lastNotificationSinceRef.current)}`,
+          { cache: "no-store" }
+        );
+        const json = await readJsonSafe(res);
+        if (cancelled || !res.ok || !json?.ok) return;
+
+        const events = Array.isArray(json.events) ? json.events : [];
+        let hadNew = false;
+
+        for (const event of events) {
+          const id = String(event?.id ?? "").trim();
+          const classId = String(event?.class_id ?? "").trim();
+          if (!id || !classId) continue;
+
+          pushInAppToast({
+            id,
+            classId,
+            className: String(event?.class_name ?? "").trim() || "クラス",
+            message:
+              String(event?.toast_message ?? "").trim() ||
+              "新しいお知らせがあります",
+          });
+          hadNew = true;
+        }
+
+        const cursor = String(json?.cursor ?? "").trim();
+        if (cursor) {
+          lastNotificationSinceRef.current = cursor;
+        } else if (events.length === 0) {
+          lastNotificationSinceRef.current = bootstrapIso;
+        }
+
+        if (hadNew) {
+          void fetchJoinedClasses("notification_toast");
+        }
+      } catch (e) {
+        console.error("[home] notification feed polling failed", e);
+      }
+    }
+
+    void pollNotificationFeed();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void pollNotificationFeed();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    const timer = window.setInterval(pollNotificationFeed, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [deviceId, classes.length, fetchJoinedClasses, pushInAppToast]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of toastTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      toastTimersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const pushOpenClassId = String(
+      searchParams.get("pushOpenClassId") ?? ""
+    ).trim();
+    if (!pushOpenClassId || !classes.length || openingClassId) return;
+    if (handledPushOpenClassIdRef.current === pushOpenClassId) return;
+
+    const target = classes.find(
+      (row) => String(row.id ?? "").trim() === pushOpenClassId
+    );
+    if (!target) return;
+
+    handledPushOpenClassIdRef.current = pushOpenClassId;
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("pushOpenClassId");
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+
+    void openClassRef.current(target);
+  }, [searchParams, classes, openingClassId, pathname, router]);
+
   const visible = useMemo(() => {
     const byId = new Map<string, MineClass>();
 
@@ -767,21 +1084,38 @@ return () => {
   async function toggleNotifications() {
     if (typeof window === "undefined") return;
 
-    if (!("Notification" in window)) {
-      alert("このブラウザは通知に対応していません");
+    if (!isWebPushSupported()) {
+      alert(
+        "このブラウザは Web Push に対応していません。Chrome / Edge / Firefox、または iOS 16.4+ でホーム画面に追加した Safari をお試しください。"
+      );
       return;
     }
 
     if (notificationsEnabled) {
+      const id = String(getDeviceId() ?? deviceId ?? "").trim();
+      if (id) {
+        await unsubscribeWebPush(id);
+      }
       localStorage.setItem("notifications_enabled", "false");
       setNotificationsEnabled(false);
       return;
     }
 
-    const ok = await ensureNotificationPermission();
+    const id = String(getDeviceId() ?? deviceId ?? "").trim();
+    if (!id) {
+      alert("device_id_missing");
+      return;
+    }
 
-    if (!ok) {
-      alert("通知が許可されていません。ブラウザ設定を確認してください。");
+    const result = await subscribeWebPush(id);
+    if (!result.ok) {
+      if (result.error === "permission_denied") {
+        alert("通知が許可されていません。ブラウザ設定を確認してください。");
+      } else if (result.error === "vapid_not_configured") {
+        alert("Push通知は現在サーバー設定中です。しばらくしてからお試しください。");
+      } else {
+        alert("Push通知の有効化に失敗しました。");
+      }
       return;
     }
 
@@ -887,6 +1221,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       setOpeningClassId(null);
     }
   }
+  openClassRef.current = openClass;
 
   async function quickJoinFreeAndOpen() {
     if (!joinWindowOpen) {
@@ -1114,7 +1449,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             cursor: "pointer",
           }}
         >
-          {notificationsEnabled ? "通知OFF" : "通知を有効化"}
+          {notificationsEnabled ? "Push通知OFF" : "Push通知を有効化"}
         </button>
 
         {!profile ? (
@@ -1193,14 +1528,40 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                   >
                     <div
                       style={{
-                        fontWeight: 900,
-                        color: "#111",
-                        fontSize: 24,
-                        lineHeight: 1.2,
-                        letterSpacing: "0.02em",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
                       }}
                     >
-                      {classLabel}
+                      <div
+                        style={{
+                          fontWeight: 900,
+                          color: "#111",
+                          fontSize: 24,
+                          lineHeight: 1.2,
+                          letterSpacing: "0.02em",
+                        }}
+                      >
+                        {classLabel}
+                      </div>
+
+                      {Number(c.unread_count ?? 0) > 0 ? (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 900,
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            background: "#fee2e2",
+                            color: "#b91c1c",
+                            border: "1px solid #fecaca",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          未読 {Number(c.unread_count)}件
+                        </span>
+                      ) : null}
                     </div>
 
                     <span
@@ -1230,6 +1591,38 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     </div>
                   ) : null}
 
+                  <MeetingPlanSection
+                    classId={c.id}
+                    deviceId={deviceId}
+                    plan={c.next_meeting_plan ?? null}
+                    onUpdated={(plan) => {
+                      setClasses((prev) =>
+                        prev.map((row) =>
+                          row.id === c.id
+                            ? { ...row, next_meeting_plan: plan }
+                            : row
+                        )
+                      );
+                    }}
+                  />
+
+                  <CallRequestSection
+                    classId={c.id}
+                    deviceId={deviceId}
+                    request={c.active_call_request ?? null}
+                    entering={opening}
+                    onEnter={() => void openClass(c)}
+                    onUpdated={(request) => {
+                      setClasses((prev) =>
+                        prev.map((row) =>
+                          row.id === c.id
+                            ? { ...row, active_call_request: request }
+                            : row
+                        )
+                      );
+                    }}
+                  />
+
                   <div style={{ marginTop: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 900, color: "#111" }}>
                       クラスメート
@@ -1249,6 +1642,9 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                       <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                         {members.map((m) => {
                           const isMe = m.device_id === deviceId;
+                          const memberDeviceId = normalizeMemberDeviceId(
+                            m.device_id
+                          );
                           const rawPresence = presenceMap[m.device_id];
                           const presence = getEffectiveStatus(rawPresence);
                           const pill = statusStyle(presence);
@@ -1267,16 +1663,58 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                 border: "1px solid #eee",
                               }}
                             >
-                              <div
+                              <button
+                                type="button"
+                                disabled={!memberDeviceId || !deviceId}
+                                onClick={() => {
+                                  if (!memberDeviceId || !deviceId) return;
+                                  setProfileTarget({
+                                    deviceId: memberDeviceId,
+                                    viewerDeviceId: deviceId,
+                                    classId: c.id,
+                                    sessionId: String(c.session_id ?? "").trim() || undefined,
+                                    displayName: m.display_name,
+                                    photoPath: m.photo_path ?? null,
+                                  });
+                                }}
                                 style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  border: "none",
+                                  background: "transparent",
+                                  padding: 0,
+                                  margin: 0,
+                                  cursor: "pointer",
                                   fontSize: 13,
                                   fontWeight: 800,
                                   color: "#111",
+                                  textAlign: "left",
+                                  minWidth: 0,
+                                  flex: 1,
                                 }}
                               >
-                                {formatMemberDisplayName(m)}
-                                {isMe ? "（あなた）" : ""}
-                              </div>
+                                <img
+                                  src={getMemberAvatarUrl(m.photo_path)}
+                                  alt={formatMemberDisplayName(m)}
+                                  onError={(event) => {
+                                    event.currentTarget.onerror = null;
+                                    event.currentTarget.src = "/default-avatar.jpg";
+                                  }}
+                                  style={{
+                                    width: LIST_MEMBER_AVATAR_PX,
+                                    height: LIST_MEMBER_AVATAR_PX,
+                                    borderRadius: "50%",
+                                    objectFit: "cover",
+                                    border: "1px solid #e5e7eb",
+                                    flexShrink: 0,
+                                  }}
+                                />
+                                <span>
+                                  {formatMemberDisplayName(m)}
+                                  {isMe ? "（あなた）" : ""}
+                                </span>
+                              </button>
 
                               <span
                                 style={{
@@ -1347,6 +1785,24 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       </div>
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
+
+      <InAppToastStack
+        toasts={inAppToasts}
+        onDismiss={dismissInAppToast}
+        onOpen={(toast) => {
+          dismissInAppToast(toast.id);
+          const target = classes.find(
+            (row) =>
+              String(row.id ?? "").trim() === String(toast.classId).trim()
+          );
+          if (target) void openClass(target);
+        }}
+      />
+
+      <MemberProfileModal
+        target={profileTarget}
+        onClose={() => setProfileTarget(null)}
+      />
     </div>
   );
 }

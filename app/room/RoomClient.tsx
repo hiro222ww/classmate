@@ -16,6 +16,7 @@ import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
+import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
@@ -27,6 +28,16 @@ import {
 } from "@/lib/resolveDisplayName";
 import SessionMessages from "@/components/SessionMessages";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
+import MemberProfileModal from "@/components/MemberProfileModal";
+import {
+  LIST_MEMBER_AVATAR_PX,
+  normalizeMemberDeviceId,
+  type MemberProfileTarget,
+} from "@/lib/memberProfileView";
+import MeetingPlanSection from "@/components/MeetingPlanSection";
+import CallRequestSection from "@/components/CallRequestSection";
+import type { MeetingPlanPublic } from "@/lib/meetingPlan";
+import type { CallRequestPublic } from "@/lib/callRequest";
 
 type MemberRow = {
   device_id?: string;
@@ -413,8 +424,8 @@ function MemberAvatar({
         e.currentTarget.src = "/default-avatar.jpg";
       }}
       style={{
-        width: 42,
-        height: 42,
+        width: LIST_MEMBER_AVATAR_PX,
+        height: LIST_MEMBER_AVATAR_PX,
         borderRadius: "9999px",
         objectFit: "cover",
         background: "#e5e7eb",
@@ -463,6 +474,11 @@ export default function RoomClient() {
   const [devBannerLabel, setDevBannerLabel] = useState("");
 
   const statusFailCountRef = useRef(0);
+  const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
+    null
+  );
+  const [meetingPlan, setMeetingPlan] = useState<MeetingPlanPublic | null>(null);
+  const [callRequest, setCallRequest] = useState<CallRequestPublic | null>(null);
 
   const publicStorageBase =
     process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -491,6 +507,95 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const id = String(getDeviceId() ?? "").trim();
     setDeviceId(id);
   }, [dev]);
+
+  useEffect(() => {
+    if (!classId || !deviceId) return;
+
+    let cancelled = false;
+
+    async function markClassMessagesRead() {
+      try {
+        await fetch("/api/class/messages/read", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            device_id: deviceId,
+            class_id: classId,
+          }),
+        });
+      } catch {
+        if (!cancelled) {
+          // ignore; badge clears on next home refresh
+        }
+      }
+    }
+
+    void markClassMessagesRead();
+  }, [classId, deviceId]);
+
+  useEffect(() => {
+    if (!classId || !deviceId) return;
+
+    let cancelled = false;
+
+    async function loadMeetingPlan() {
+      try {
+        const res = await fetch(
+          `/api/class/meeting-plan?class_id=${encodeURIComponent(classId)}&device_id=${encodeURIComponent(deviceId)}`,
+          { cache: "no-store" }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) {
+          setMeetingPlan(null);
+          return;
+        }
+        setMeetingPlan((json.plan as MeetingPlanPublic | null) ?? null);
+      } catch {
+        if (!cancelled) setMeetingPlan(null);
+      }
+    }
+
+    void loadMeetingPlan();
+    const timer = window.setInterval(loadMeetingPlan, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classId, deviceId]);
+
+  useEffect(() => {
+    if (!classId || !deviceId) return;
+
+    let cancelled = false;
+
+    async function loadCallRequest() {
+      try {
+        const res = await fetch(
+          `/api/class/call-request?class_id=${encodeURIComponent(classId)}&device_id=${encodeURIComponent(deviceId)}`,
+          { cache: "no-store" }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) {
+          setCallRequest(null);
+          return;
+        }
+        setCallRequest((json.request as CallRequestPublic | null) ?? null);
+      } catch {
+        if (!cancelled) setCallRequest(null);
+      }
+    }
+
+    void loadCallRequest();
+    const timer = window.setInterval(loadCallRequest, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classId, deviceId]);
 
   useEffect(() => {
     const active = isDevMode();
@@ -841,6 +946,12 @@ const name = rawName === "You" ? "参加者" : rawName;
   async function join() {
   try {
     if (invite) {
+      console.log("[invite] join-by-invite start", {
+        classId,
+        sessionId,
+        deviceId,
+      });
+
       const inviteRes = await fetch("/api/class/join-by-invite", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -863,6 +974,14 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   throw new Error("招待されたクラスへの参加に失敗しました");
 }
+
+      console.log("[invite] join-by-invite success", {
+        classId,
+        sessionId,
+        deviceId,
+        alreadyJoined: inviteJson?.alreadyJoined === true,
+      });
+      markJoinedClassesStale(classId);
     }
 
     console.log("[room join] request", {
@@ -1199,6 +1318,26 @@ if (!shouldAutoStart) return;
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
+            {classId && deviceId ? (
+              <MeetingPlanSection
+                classId={classId}
+                deviceId={deviceId}
+                plan={meetingPlan}
+                onUpdated={setMeetingPlan}
+              />
+            ) : null}
+
+            {classId && deviceId ? (
+              <CallRequestSection
+                classId={classId}
+                deviceId={deviceId}
+                request={callRequest}
+                showCreateButton={false}
+                compact
+                onUpdated={setCallRequest}
+              />
+            ) : null}
+
             <div
               style={{
                 border: "1px solid #e5e7eb",
@@ -1307,102 +1446,131 @@ if (!shouldAutoStart) return;
                           background: "#fafafa",
                         }}
                       >
-                        <MemberAvatar
-                          src={
-                            m.avatar_url ||
-                            (m.photo_path && publicStorageBase
-                              ? `${publicStorageBase}/${m.photo_path}`
-                              : null)
-                          }
-                          label={label}
-                          isMe={isMe}
-                        />
+                        <button
+                          type="button"
+                          disabled={!did || !deviceId}
+                          onClick={() => {
+                            if (!did || !deviceId) return;
+                            setProfileTarget({
+                              deviceId: did,
+                              viewerDeviceId: deviceId,
+                              classId,
+                              sessionId,
+                              displayName: label,
+                              photoPath: m.photo_path ?? null,
+                            });
+                          }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 10,
+                            minWidth: 0,
+                            flex: 1,
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            margin: 0,
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                        >
+                          <MemberAvatar
+                            src={
+                              m.avatar_url ||
+                              (m.photo_path && publicStorageBase
+                                ? `${publicStorageBase}/${m.photo_path}`
+                                : null)
+                            }
+                            label={label}
+                            isMe={isMe}
+                          />
 
-                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div
+                              style={{
+                                fontWeight: 800,
+                                color: "#111827",
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              {label}
+                            </div>
+                          </div>
+                        </button>
 
-                          
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            justifyContent: "flex-end",
+                          }}
+                        >
+                          {isMe ? (
+                            <span style={{ fontSize: 12, color: "#6b7280" }}>
+                              自分
+                            </span>
+                          ) : null}
 
-                          <div
+                          <span
                             style={{
-                              fontWeight: 800,
-                              color: "#111827",
-                              lineHeight: 1.2,
+                              ...pill,
+                              fontSize: 11,
+                              fontWeight: 900,
+                              padding: "4px 8px",
+                              borderRadius: 999,
+                              whiteSpace: "nowrap",
                             }}
                           >
-                            {label}
-                          </div>
+                            {isMe
+                              ? "待機中"
+                              : getMemberStatusLabel(presenceMap[did], sessionId)}
+                          </span>
 
-                          
+                          {!isMe && did ? (
+                            <details style={{ position: "relative" }}>
+                              <summary
+                                style={{
+                                  listStyle: "none",
+                                  cursor: "pointer",
+                                  fontSize: 18,
+                                  color: "#9ca3af",
+                                  lineHeight: 1,
+                                  width: 28,
+                                  height: 28,
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  borderRadius: 999,
+                                }}
+                              >
+                                ︙
+                              </summary>
 
-                          <div
-                            style={{
-                              marginTop: 4,
-                              display: "flex",
-                              gap: 8,
-                              alignItems: "center",
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            {isMe ? (
-                              <span style={{ fontSize: 12, color: "#6b7280" }}>
-                                自分
-                              </span>
-                            ) : null}
-
-                            <span
-  style={{
-    ...pill,
-    fontSize: 11,
-    fontWeight: 900,
-    padding: "4px 8px",
-    borderRadius: 999,
-    whiteSpace: "nowrap",
-  }}
->
-  {isMe ? "待機中" : getMemberStatusLabel(presenceMap[did], sessionId)}
-</span>
-                          </div>
-                         {!isMe && did ? (
-  <details style={{ marginTop: 4, position: "relative" }}>
-    <summary
-      style={{
-        listStyle: "none",
-        cursor: "pointer",
-        fontSize: 18,
-        color: "#9ca3af",
-        lineHeight: 1,
-        width: 28,
-        height: 28,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 999,
-      }}
-    >
-      ︙
-    </summary>
-
-    <div
-      style={{
-        marginTop: 6,
-        padding: 8,
-        borderRadius: 12,
-        border: "1px solid #e5e7eb",
-        background: "#fff",
-        boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-        display: "inline-block",
-      }}
-    >
-      <MemberModerationButtons
-        myDeviceId={deviceId}
-        targetDeviceId={did}
-        targetName={label}
-        sessionId={sessionId}
-        classId={classId}
-      />
-    </div>
-  </details>
-) : null}
+                              <div
+                                style={{
+                                  position: "absolute",
+                                  right: 0,
+                                  top: 32,
+                                  zIndex: 20,
+                                  padding: 8,
+                                  borderRadius: 12,
+                                  border: "1px solid #e5e7eb",
+                                  background: "#fff",
+                                  boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
+                                }}
+                              >
+                                <MemberModerationButtons
+                                  myDeviceId={deviceId}
+                                  targetDeviceId={did}
+                                  targetName={label}
+                                  sessionId={sessionId}
+                                  classId={classId}
+                                />
+                              </div>
+                            </details>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -1421,6 +1589,11 @@ if (!shouldAutoStart) return;
           </div>
         </ChalkboardRoomShell>
       </div>
+
+      <MemberProfileModal
+        target={profileTarget}
+        onClose={() => setProfileTarget(null)}
+      />
     </>
   );
 }

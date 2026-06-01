@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
+import { emitClassMessageCreatedEvent } from "@/lib/notificationEvents";
 
 export async function POST(req: Request) {
   const { deviceId, classId, message } = await req.json();
@@ -22,5 +23,12 @@ export async function POST(req: Request) {
   });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await emitClassMessageCreatedEvent({
+    classId: String(classId),
+    actorDeviceId: String(deviceId),
+    message: trimmed,
+  });
+
   return NextResponse.json({ ok: true });
 }

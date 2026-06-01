@@ -10,10 +10,18 @@ import { withDev } from "@/lib/withDev";
 import SessionMessages from "@/components/SessionMessages";
 import YouTubeWatchParty from "./YouTubeWatchParty";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
+import MemberProfileModal from "@/components/MemberProfileModal";
 import {
   formatMemberDisplayName,
   logMemberDisplayNamesFromApi,
 } from "@/lib/resolveDisplayName";
+import {
+  LIST_MEMBER_AVATAR_PX,
+  normalizeMemberDeviceId,
+  type MemberProfileTarget,
+} from "@/lib/memberProfileView";
+import type { MeetingPlanPublic } from "@/lib/meetingPlan";
+import type { CallRequestPublic } from "@/lib/callRequest";
 
 type Member = {
   device_id: string;
@@ -99,7 +107,15 @@ export default function CallClient() {
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
+  const pendingFetchReasonRef = useRef<string | null>(null);
   const lastSpeakerIdRef = useRef<string | null>(null);
+  const membersSyncRevisionRef = useRef(0);
+  const [membersSyncRevision, setMembersSyncRevision] = useState(0);
+  const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
+    null
+  );
+  const [meetingPlan, setMeetingPlan] = useState<MeetingPlanPublic | null>(null);
+  const [callRequest, setCallRequest] = useState<CallRequestPublic | null>(null);
 
   useEffect(() => {
     setNowMs(Date.now());
@@ -110,6 +126,70 @@ export default function CallClient() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!classId || !deviceId) return;
+
+    let cancelled = false;
+
+    async function loadMeetingPlan() {
+      try {
+        const res = await fetch(
+          `/api/class/meeting-plan?class_id=${encodeURIComponent(classId)}&device_id=${encodeURIComponent(deviceId)}`,
+          { cache: "no-store" }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) {
+          setMeetingPlan(null);
+          return;
+        }
+        setMeetingPlan((json.plan as MeetingPlanPublic | null) ?? null);
+      } catch {
+        if (!cancelled) setMeetingPlan(null);
+      }
+    }
+
+    void loadMeetingPlan();
+    const timer = window.setInterval(loadMeetingPlan, 60000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classId, deviceId]);
+
+  useEffect(() => {
+    if (!classId || !deviceId) return;
+
+    let cancelled = false;
+
+    async function loadCallRequest() {
+      try {
+        const res = await fetch(
+          `/api/class/call-request?class_id=${encodeURIComponent(classId)}&device_id=${encodeURIComponent(deviceId)}`,
+          { cache: "no-store" }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) {
+          setCallRequest(null);
+          return;
+        }
+        setCallRequest((json.request as CallRequestPublic | null) ?? null);
+      } catch {
+        if (!cancelled) setCallRequest(null);
+      }
+    }
+
+    void loadCallRequest();
+    const timer = window.setInterval(loadCallRequest, 60000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [classId, deviceId]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -137,7 +217,10 @@ export default function CallClient() {
   const fetchMembers = useCallback(
     async (reason = "manual") => {
       if (!sessionId || !classId) return;
-      if (fetchingRef.current) return;
+      if (fetchingRef.current) {
+        pendingFetchReasonRef.current = reason;
+        return;
+      }
 
       fetchingRef.current = true;
 
@@ -205,8 +288,11 @@ export default function CallClient() {
 
         console.log("[call] fetchMembers success", {
           reason,
+          sessionId,
+          deviceId,
+          memberDeviceIds: nextMembers.map((m) => m.device_id),
+          membersSyncRevision: membersSyncRevisionRef.current + 1,
           count: nextMembers.length,
-          members: nextMembers.map((m) => m.device_id),
         });
 
         const stillJoined = nextMembers.some(
@@ -230,6 +316,8 @@ export default function CallClient() {
 
         setFetchErrorCount(0);
         clearRetryTimer();
+        membersSyncRevisionRef.current += 1;
+        setMembersSyncRevision(membersSyncRevisionRef.current);
 
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
@@ -251,6 +339,11 @@ export default function CallClient() {
         }, 1200);
       } finally {
         fetchingRef.current = false;
+        const pending = pendingFetchReasonRef.current;
+        pendingFetchReasonRef.current = null;
+        if (pending) {
+          void fetchMembers(pending);
+        }
       }
     },
     [sessionId, classId, deviceId, router, clearRetryTimer]
@@ -259,10 +352,32 @@ export default function CallClient() {
   useEffect(() => {
     void fetchMembers("initial");
 
+    const sync2s = window.setTimeout(() => {
+      void fetchMembers("sync_2s");
+    }, 2000);
+    const sync5s = window.setTimeout(() => {
+      void fetchMembers("sync_5s");
+    }, 5000);
+
     return () => {
       clearRetryTimer();
+      window.clearTimeout(sync2s);
+      window.clearTimeout(sync5s);
     };
   }, [fetchMembers, clearRetryTimer]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void fetchMembers("visibility_resume");
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [fetchMembers]);
 
   useEffect(() => {
     console.log("[call] members state", {
@@ -525,6 +640,7 @@ export default function CallClient() {
         sessionId={sessionId}
         deviceId={deviceId}
         members={callMembers}
+        membersSyncRevision={membersSyncRevision}
         isMuted={isMuted}
         onMicReadyChange={setMicReady}
         onMicLevelChange={(level) => {
@@ -570,6 +686,16 @@ export default function CallClient() {
           <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
             参加人数 {filled}/{capacity}
           </div>
+          {meetingPlan && !meetingPlan.is_past ? (
+            <div style={{ marginTop: 4, fontSize: 12, color: "#374151", fontWeight: 800 }}>
+              次の集合：{meetingPlan.display_label}
+            </div>
+          ) : null}
+          {callRequest?.is_active ? (
+            <div style={{ marginTop: 4, fontSize: 12, color: "#92400e", fontWeight: 800 }}>
+              {callRequest.display_label}
+            </div>
+          ) : null}
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -723,62 +849,94 @@ export default function CallClient() {
                     "transform 160ms ease, box-shadow 160ms ease, border 160ms ease",
                 }}
               >
-                <div
+                <button
+                  type="button"
+                  disabled={!isFilled || !member || !deviceId}
+                  onClick={() => {
+                    if (!member) return;
+                    const memberDeviceId = normalizeMemberDeviceId(
+                      member.device_id
+                    );
+                    if (!memberDeviceId || !deviceId) return;
+                    setProfileTarget({
+                      deviceId: memberDeviceId,
+                      viewerDeviceId: deviceId,
+                      classId,
+                      sessionId,
+                      displayName: member.display_name,
+                      photoPath: member.photo_path,
+                    });
+                  }}
                   style={{
-                    width: 46,
-                    height: 46,
-                    borderRadius: "50%",
-                    background: isFilled ? "#dbeafe" : "#e5e7eb",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 12,
-                    fontWeight: 900,
-                    overflow: "hidden",
-                    flexShrink: 0,
-                    border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
+                    gap: 10,
+                    minWidth: 0,
+                    flex: 1,
+                    border: "none",
+                    background: "transparent",
+                    padding: 0,
+                    margin: 0,
+                    cursor: isFilled && member ? "pointer" : "default",
+                    textAlign: "left",
                   }}
                 >
-                  {member ? (
-                    <img
-                      src={avatarUrl}
-                      alt={member.display_name}
-                      onError={(e) => {
-                        e.currentTarget.onerror = null;
-                        e.currentTarget.src = "/default-avatar.jpg";
-                      }}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
-                  ) : null}
-                </div>
-
-                <div style={{ minWidth: 0, flex: 1 }}>
-
-                  
                   <div
                     style={{
-                      fontSize: 14,
-                      fontWeight: 800,
-                      color: isFilled ? "#111827" : "#9ca3af",
-                      whiteSpace: "nowrap",
+                      width: LIST_MEMBER_AVATAR_PX,
+                      height: LIST_MEMBER_AVATAR_PX,
+                      borderRadius: "50%",
+                      background: isFilled ? "#dbeafe" : "#e5e7eb",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 12,
+                      fontWeight: 900,
                       overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      flexShrink: 0,
+                      border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
                     }}
                   >
-                    {isFilled
-                      ? isMe
-                        ? `${member.display_name} (You)`
-                        : member.display_name
-                      : "空席"}
+                    {member ? (
+                      <img
+                        src={avatarUrl}
+                        alt={member.display_name}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.src = "/default-avatar.jpg";
+                        }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                        }}
+                      />
+                    ) : null}
                   </div>
 
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 800,
+                        color: isFilled ? "#111827" : "#9ca3af",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {isFilled
+                        ? isMe
+                          ? `${formatMemberDisplayName(member)} (You)`
+                          : formatMemberDisplayName(member)
+                        : "空席"}
+                    </div>
+                  </div>
+                </button>
+
+                <div style={{ minWidth: 0 }}>
                   <div
                     style={{
-                      marginTop: 6,
                       display: "inline-flex",
                       alignItems: "center",
                       padding: "4px 8px",
@@ -793,46 +951,48 @@ export default function CallClient() {
                   </div>
 
                   {isFilled && !isMe && member?.device_id ? (
-  <details style={{ marginTop: 4, position: "relative" }}>
-    <summary
-      style={{
-        listStyle: "none",
-        cursor: "pointer",
-        fontSize: 18,
-        color: "#9ca3af",
-        lineHeight: 1,
-        width: 28,
-        height: 28,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 999,
-      }}
-    >
-      ︙
-    </summary>
+                    <details style={{ marginTop: 4, position: "relative" }}>
+                      <summary
+                        style={{
+                          listStyle: "none",
+                          cursor: "pointer",
+                          fontSize: 18,
+                          color: "#9ca3af",
+                          lineHeight: 1,
+                          width: 28,
+                          height: 28,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          borderRadius: 999,
+                        }}
+                      >
+                        ︙
+                      </summary>
 
-    <div
-      style={{
-        marginTop: 6,
-        padding: 8,
-        borderRadius: 12,
-        border: "1px solid #e5e7eb",
-        background: "#fff",
-        boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-        display: "inline-block",
-      }}
-    >
-      <MemberModerationButtons
-        myDeviceId={deviceId}
-        targetDeviceId={member.device_id}
-        targetName={formatMemberDisplayName(member)}
-        sessionId={sessionId}
-        classId={classId}
-      />
-    </div>
-  </details>
-) : null}
+                      <div
+                        style={{
+                          position: "absolute",
+                          right: 0,
+                          top: 32,
+                          zIndex: 20,
+                          padding: 8,
+                          borderRadius: 12,
+                          border: "1px solid #e5e7eb",
+                          background: "#fff",
+                          boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
+                        }}
+                      >
+                        <MemberModerationButtons
+                          myDeviceId={deviceId}
+                          targetDeviceId={member.device_id}
+                          targetName={formatMemberDisplayName(member)}
+                          sessionId={sessionId}
+                          classId={classId}
+                        />
+                      </div>
+                    </details>
+                  ) : null}
                 </div>
               </div>
             );
@@ -921,6 +1081,11 @@ export default function CallClient() {
           collapsible
         />
       </div>
+
+      <MemberProfileModal
+        target={profileTarget}
+        onClose={() => setProfileTarget(null)}
+      />
     </main>
   );
 }
