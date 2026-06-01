@@ -67,10 +67,30 @@ export async function POST(req: Request) {
     if (!portalRes.ok) {
       const status = portalRes.error.startsWith("subscription_not_found")
         ? 404
-        : 500;
+        : portalRes.error.startsWith("portal_configuration_missing") ||
+            portalRes.error.startsWith("portal_configuration_invalid")
+          ? 503
+          : 500;
+
+      console.error("[billing/create-portal-session] failed", {
+        deviceId,
+        kind,
+        action,
+        error: portalRes.error,
+        maintenanceConfigConfigured: Boolean(
+          String(process.env.STRIPE_PORTAL_CONFIG_MAINTENANCE ?? "").trim()
+        ),
+      });
 
       return NextResponse.json({ error: portalRes.error }, { status });
     }
+
+    console.log("[billing/create-portal-session] ok", {
+      deviceId,
+      kind,
+      action,
+      configuration: portalRes.configuration,
+    });
 
     return NextResponse.json({ url: portalRes.url });
   } catch (e: unknown) {

@@ -55,6 +55,16 @@ function BillingPageInner() {
           return;
         }
 
+        if (
+          errMsg.startsWith("portal_configuration_missing") ||
+          errMsg.startsWith("portal_configuration_invalid")
+        ) {
+          alert(
+            "お支払い管理の設定が未完了です。管理者に STRIPE_PORTAL_CONFIG_MAINTENANCE の設定を確認してください。"
+          );
+          return;
+        }
+
         setMsg(String(errMsg));
         alert(String(errMsg));
         return;

@@ -1,11 +1,33 @@
 /**
- * One-time setup helper for Stripe Customer Portal maintenance configuration.
- * Run with: npx tsx scripts/setup-stripe-portal-config.ts
+ * Setup or repair Stripe Customer Portal maintenance configuration.
  *
- * Creates a portal configuration with subscription updates disabled.
- * Set STRIPE_PORTAL_CONFIG_MAINTENANCE to the printed configuration id.
+ * Run:
+ *   STRIPE_SECRET_KEY=sk_... npx tsx scripts/setup-stripe-portal-config.ts
+ *
+ * Optional update existing:
+ *   STRIPE_PORTAL_CONFIG_MAINTENANCE=bpc_... STRIPE_SECRET_KEY=sk_... npx tsx scripts/setup-stripe-portal-config.ts
  */
 import Stripe from "stripe";
+
+const MAINTENANCE_FEATURES: Stripe.BillingPortal.ConfigurationCreateParams.Features =
+  {
+    subscription_update: {
+      enabled: false,
+    },
+    subscription_cancel: {
+      enabled: false,
+    },
+    payment_method_update: {
+      enabled: true,
+    },
+    invoice_history: {
+      enabled: true,
+    },
+    customer_update: {
+      enabled: true,
+      allowed_updates: ["email", "address", "phone"],
+    },
+  };
 
 async function main() {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -14,39 +36,49 @@ async function main() {
   }
 
   const stripe = new Stripe(key);
+  const existingId = String(
+    process.env.STRIPE_PORTAL_CONFIG_MAINTENANCE ?? ""
+  ).trim();
+
+  if (existingId) {
+    const updated = await stripe.billingPortal.configurations.update(
+      existingId,
+      {
+        features: MAINTENANCE_FEATURES,
+      }
+    );
+
+    console.log("Updated Stripe portal configuration:");
+    console.log(updated.id);
+    console.log(
+      "subscription_update.enabled =",
+      updated.features.subscription_update.enabled
+    );
+    console.log(
+      "subscription_cancel.enabled =",
+      updated.features.subscription_cancel.enabled
+    );
+    return;
+  }
 
   const config = await stripe.billingPortal.configurations.create({
     business_profile: {
-      privacy_policy_url:
-        process.env.NEXT_PUBLIC_APP_URL
-          ? `${process.env.NEXT_PUBLIC_APP_URL}/terms`
-          : undefined,
+      privacy_policy_url: process.env.NEXT_PUBLIC_APP_URL
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/terms`
+        : undefined,
     },
-    features: {
-      subscription_update: {
-        enabled: false,
-      },
-      subscription_cancel: {
-        enabled: false,
-      },
-      payment_method_update: {
-        enabled: true,
-      },
-      invoice_history: {
-        enabled: true,
-      },
-      customer_update: {
-        enabled: true,
-        allowed_updates: ["email", "address", "phone"],
-      },
-    },
+    features: MAINTENANCE_FEATURES,
   });
 
   console.log("Created Stripe portal configuration:");
   console.log(config.id);
   console.log("");
-  console.log("Add to .env.local:");
+  console.log("Add to Vercel / .env.local:");
   console.log(`STRIPE_PORTAL_CONFIG_MAINTENANCE=${config.id}`);
+  console.log("");
+  console.log(
+    "Remove deprecated vars if present: STRIPE_PORTAL_CONFIG_SLOTS, STRIPE_PORTAL_CONFIG_THEME"
+  );
 }
 
 void main();
