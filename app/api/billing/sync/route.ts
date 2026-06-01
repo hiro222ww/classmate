@@ -1,52 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { stripe } from "@/lib/stripe";
+import { computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function pickDeviceId(req: Request, body: any) {
+function pickDeviceId(req: Request, body: { deviceId?: string }) {
   return req.headers.get("x-device-id") || body?.deviceId || "";
-}
-
-function resolveTopicPlan(priceIds: string[]) {
-  const map: Record<string, number> = {
-    [process.env.STRIPE_PRICE_TOPIC_400 ?? ""]: 400,
-    [process.env.STRIPE_PRICE_TOPIC_800 ?? ""]: 800,
-    [process.env.STRIPE_PRICE_TOPIC_1200 ?? ""]: 1200,
-  };
-
-  let best = 0;
-  for (const id of priceIds) {
-    best = Math.max(best, map[id] ?? 0);
-  }
-  return best;
-}
-
-function resolveClassSlots(priceIds: string[]) {
-  const map: Record<string, number> = {
-    [process.env.STRIPE_PRICE_SLOTS_1 ?? ""]: 1,
-    [process.env.STRIPE_PRICE_SLOTS_3 ?? ""]: 3,
-    [process.env.STRIPE_PRICE_SLOTS_5 ?? ""]: 5,
-  };
-
-  let best = 0;
-  for (const id of priceIds) {
-    best = Math.max(best, map[id] ?? 0);
-  }
-
-  return best > 0 ? best : 1;
-}
-
-function resolvePlan(params: { class_slots: number; topic_plan: number }) {
-  const { class_slots, topic_plan } = params;
-
-  if (topic_plan >= 1200) return "topic_1200";
-  if (topic_plan >= 800) return "topic_800";
-  if (topic_plan >= 400) return "topic_400";
-  if (class_slots >= 5) return "slots_5";
-  if (class_slots >= 3) return "slots_3";
-  return "free";
 }
 
 async function upsertBillingCustomer(deviceId: string, customerId: string) {
@@ -180,11 +141,23 @@ export async function POST(req: Request) {
         .filter((x): x is string => !!x)
     );
 
-    const topic_plan = resolveTopicPlan(priceIds);
-    const class_slots = resolveClassSlots(priceIds);
-    const plan = resolvePlan({ class_slots, topic_plan });
-    const can_create_classes = class_slots > 1 || topic_plan > 0;
-    const theme_pass = topic_plan > 0;
+    const resolved = computeEntitlementsFromSubscriptions(activeSubs);
+    const {
+      plan,
+      class_slots,
+      topic_plan,
+      can_create_classes,
+      theme_pass,
+      unknownPriceIds,
+    } = resolved;
+
+    if (unknownPriceIds.length > 0) {
+      console.warn("[billing/sync] ignored unknown priceIds", {
+        deviceId,
+        customerId,
+        unknownPriceIds,
+      });
+    }
 
     console.log("[billing/sync] deviceId =", deviceId);
     console.log("[billing/sync] customerId =", customerId);

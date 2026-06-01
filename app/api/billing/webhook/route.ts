@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,46 +14,6 @@ function mustEnv(name: string) {
 }
 
 const WEBHOOK_SECRET = () => mustEnv("STRIPE_WEBHOOK_SECRET");
-
-const PRICE_SLOTS_3 = () => mustEnv("STRIPE_PRICE_SLOTS_3");
-const PRICE_SLOTS_5 = () => mustEnv("STRIPE_PRICE_SLOTS_5");
-const PRICE_TOPIC_400 = () => mustEnv("STRIPE_PRICE_TOPIC_400");
-const PRICE_TOPIC_800 = () => mustEnv("STRIPE_PRICE_TOPIC_800");
-const PRICE_TOPIC_1200 = () => mustEnv("STRIPE_PRICE_TOPIC_1200");
-
-function computeFromActiveSubscriptions(subs: Stripe.Subscription[]) {
-  let class_slots = 1;
-  let topic_plan = 0;
-
-  for (const sub of subs) {
-    if (sub.status !== "active" && sub.status !== "trialing") continue;
-
-    for (const item of sub.items.data) {
-      const priceId = item.price?.id;
-      if (!priceId) continue;
-
-      if (priceId === PRICE_SLOTS_3()) class_slots = Math.max(class_slots, 3);
-      if (priceId === PRICE_SLOTS_5()) class_slots = Math.max(class_slots, 5);
-
-      if (priceId === PRICE_TOPIC_400()) topic_plan = Math.max(topic_plan, 400);
-      if (priceId === PRICE_TOPIC_800()) topic_plan = Math.max(topic_plan, 800);
-      if (priceId === PRICE_TOPIC_1200()) topic_plan = Math.max(topic_plan, 1200);
-    }
-  }
-
-  return { class_slots, topic_plan };
-}
-
-function resolvePlan(params: { class_slots: number; topic_plan: number }) {
-  const { class_slots, topic_plan } = params;
-
-  if (topic_plan >= 1200) return "topic_1200";
-  if (topic_plan >= 800) return "topic_800";
-  if (topic_plan >= 400) return "topic_400";
-  if (class_slots >= 5) return "slots_5";
-  if (class_slots >= 3) return "slots_3";
-  return "free";
-}
 
 async function ensureCustomerMapping(deviceId: string, customerId: string) {
   const { error } = await supabaseAdmin
@@ -104,10 +65,23 @@ async function syncEntitlementsByCustomer(customerId: string) {
     limit: 100,
   });
 
-  const { class_slots, topic_plan } = computeFromActiveSubscriptions(subs.data);
-  const plan = resolvePlan({ class_slots, topic_plan });
-  const can_create_classes = class_slots > 1 || topic_plan > 0;
-  const theme_pass = topic_plan > 0;
+  const resolved = computeEntitlementsFromSubscriptions(subs.data);
+  const {
+    class_slots,
+    topic_plan,
+    plan,
+    can_create_classes,
+    theme_pass,
+    unknownPriceIds,
+  } = resolved;
+
+  if (unknownPriceIds.length > 0) {
+    console.warn("[webhook] ignored unknown priceIds during entitlement sync", {
+      customerId,
+      deviceId,
+      unknownPriceIds,
+    });
+  }
 
   const { error: upErr } = await supabaseAdmin
     .from("user_entitlements")

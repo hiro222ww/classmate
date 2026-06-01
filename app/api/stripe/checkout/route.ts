@@ -2,22 +2,28 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isSellablePriceId } from "@/lib/billingCatalog";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const deviceId = body?.deviceId || "";
-    const priceId = body?.priceId || "";
+    const deviceId = String(body?.deviceId ?? "").trim();
+    const priceId = String(body?.priceId ?? "").trim();
 
-    if (!deviceId) return NextResponse.json({ error: "deviceId required" }, { status: 400 });
-    if (!priceId) return NextResponse.json({ error: "priceId required" }, { status: 400 });
+    if (!deviceId) {
+      return NextResponse.json({ error: "deviceId required" }, { status: 400 });
+    }
 
-    // 既存 customer があるなら再利用
+    if (!priceId || !isSellablePriceId(priceId)) {
+      return NextResponse.json({ error: "price_not_allowed" }, { status: 400 });
+    }
+
     const { data: billing, error: bErr } = await supabaseAdmin
       .from("user_billing_customers")
       .select("device_id, stripe_customer_id")
       .eq("device_id", deviceId)
       .maybeSingle();
+
     if (bErr) throw bErr;
 
     let customerId = billing?.stripe_customer_id ?? null;
@@ -26,12 +32,14 @@ export async function POST(req: Request) {
       const customer = await stripe.customers.create({ metadata: { deviceId } });
       customerId = customer.id;
 
-      await supabaseAdmin
-        .from("user_billing_customers")
-        .upsert(
-          { device_id: deviceId, stripe_customer_id: customerId, updated_at: new Date().toISOString() },
-          { onConflict: "device_id" }
-        );
+      await supabaseAdmin.from("user_billing_customers").upsert(
+        {
+          device_id: deviceId,
+          stripe_customer_id: customerId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "device_id" }
+      );
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
@@ -49,8 +57,11 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ url: session.url, sessionId: session.id });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[stripe/checkout] error", e);
-    return NextResponse.json({ error: e?.message ?? "Unknown error" }, { status: 500 });
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Unknown error" },
+      { status: 500 }
+    );
   }
 }

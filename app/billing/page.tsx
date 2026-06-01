@@ -6,111 +6,154 @@ import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 
 type PortalKind = "slot" | "theme";
+type PortalAction = "manage" | "cancel";
 
 function BillingPageInner() {
   const searchParams = useSearchParams();
-
   const dev = (searchParams.get("dev") ?? "").trim();
+  const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
 
-  const devQuery = dev
-    ? `?dev=${encodeURIComponent(dev)}`
-    : "";
-
-  const [loadingKind, setLoadingKind] =
-    useState<PortalKind | null>(null);
-
+  const [loadingKey, setLoadingKey] = useState("");
   const [msg, setMsg] = useState("");
 
-  async function openBillingPortal(
-    kind: PortalKind
-  ) {
+  async function openBillingPortal(kind: PortalKind, action: PortalAction) {
+    const loadingToken = `${kind}:${action}`;
+
     try {
-      setLoadingKind(kind);
+      setLoadingKey(loadingToken);
       setMsg("");
 
       const deviceId = getDeviceId();
 
-      const r = await fetch(
-        "/api/billing/create-portal-session",
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            deviceId,
-            dev,
-            kind,
-          }),
-          cache: "no-store",
-        }
-      );
+      const r = await fetch("/api/billing/create-portal-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceId, dev, kind, action }),
+        cache: "no-store",
+      });
 
       const text = await r.text();
-
-      console.log(
-        "[billing portal] status:",
-        r.status,
-        "body:",
-        text
-      );
-
-      let j: any = null;
+      let j: { error?: string; url?: string } | null = null;
 
       try {
-        j = JSON.parse(text);
+        j = text ? JSON.parse(text) : null;
       } catch {
         j = null;
       }
 
       if (!r.ok) {
-        const errMsg =
-          j?.error ??
-          (r.status === 404
-            ? "api/billing/create-portal-session が見つかりません"
-            : `billing_portal_failed:${r.status}`);
+        const errMsg = j?.error ?? `billing_portal_failed:${r.status}`;
 
         if (errMsg === "customer_not_found") {
-          alert(
-            "まだ契約がありません。プランを選択してください。"
-          );
-
+          alert("まだ契約がありません。プランを選択してください。");
           window.location.href = `/premium${devQuery}`;
+          return;
+        }
 
+        if (errMsg.startsWith("subscription_not_found")) {
+          alert("この種類の契約が見つかりません。");
           return;
         }
 
         setMsg(String(errMsg));
         alert(String(errMsg));
-
         return;
       }
 
       if (j?.url) {
         window.top!.location.href = j.url;
-
         return;
       }
 
       setMsg("billing portal url missing");
-
       alert("billing portal url missing");
-    } catch (e: any) {
-      const m = String(
-        e?.message ?? "billing_portal_failed"
-      );
-
+    } catch (e: unknown) {
+      const m = e instanceof Error ? e.message : "billing_portal_failed";
       console.error(e);
-
       setMsg(m);
-
       alert(m);
     } finally {
-      setLoadingKind(null);
+      setLoadingKey("");
     }
   }
 
-  const loading = loadingKind !== null;
+  const loading = loadingKey !== "";
+
+  function renderPlanSection(params: {
+    kind: PortalKind;
+    title: string;
+    description: string;
+  }) {
+    const manageKey = `${params.kind}:manage`;
+    const cancelKey = `${params.kind}:cancel`;
+
+    return (
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 18,
+          padding: 16,
+          background: "#fff",
+          display: "grid",
+          gap: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900 }}>{params.title}</div>
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 13,
+              color: "#666",
+              lineHeight: 1.7,
+            }}
+          >
+            {params.description}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => void openBillingPortal(params.kind, "manage")}
+          style={{
+            width: "100%",
+            padding: "14px 16px",
+            borderRadius: 14,
+            border: "1px solid #111",
+            background: "#111",
+            color: "#fff",
+            fontWeight: 900,
+            cursor: loading ? "default" : "pointer",
+            opacity: loading ? 0.7 : 1,
+          }}
+        >
+          {loadingKey === manageKey
+            ? "開いています…"
+            : "支払い方法・請求履歴"}
+        </button>
+
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => void openBillingPortal(params.kind, "cancel")}
+          style={{
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: 14,
+            border: "1px solid #fecaca",
+            background: "#fff",
+            color: "#991b1b",
+            fontWeight: 900,
+            cursor: loading ? "default" : "pointer",
+            opacity: loading ? 0.7 : 1,
+          }}
+        >
+          {loadingKey === cancelKey ? "開いています…" : "このプランを解約"}
+        </button>
+      </section>
+    );
+  }
 
   return (
     <main
@@ -133,26 +176,12 @@ function BillingPageInner() {
         }}
       >
         <div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "#666",
-              fontWeight: 800,
-            }}
-          >
+          <div style={{ fontSize: 13, color: "#666", fontWeight: 800 }}>
             classmate
           </div>
-
-          <h1
-            style={{
-              margin: "6px 0 0",
-              fontSize: 28,
-              fontWeight: 900,
-            }}
-          >
+          <h1 style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 900 }}>
             お支払い管理
           </h1>
-
           <p
             style={{
               margin: "10px 0 0",
@@ -161,8 +190,8 @@ function BillingPageInner() {
               lineHeight: 1.7,
             }}
           >
-            クラススロットとテーマプランを
-            分けて管理できます。
+            クラススロットとテーマプランを分けて管理できます。プラン変更はアプリ内のプラン画面から行い、Stripe
+            Portal では支払い方法・請求履歴・解約のみ行えます。
           </p>
         </div>
 
@@ -182,108 +211,31 @@ function BillingPageInner() {
         </Link>
       </header>
 
-      <section
+      {renderPlanSection({
+        kind: "slot",
+        title: "クラススロット",
+        description:
+          "支払い方法や請求履歴の確認、クラススロット契約の解約ができます。プラン変更はプラン画面から行ってください。",
+      })}
+
+      {renderPlanSection({
+        kind: "theme",
+        title: "テーマプラン",
+        description:
+          "支払い方法や請求履歴の確認、テーマプラン契約の解約ができます。プラン変更はプラン画面から行ってください。",
+      })}
+
+      <div
         style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 20,
-          padding: 18,
-          background: "#fff",
-          display: "grid",
-          gap: 14,
+          fontSize: 12,
+          color: "#666",
+          lineHeight: 1.7,
+          padding: "0 4px",
         }}
       >
-        <div>
-          <div
-            style={{
-              fontSize: 18,
-              fontWeight: 900,
-            }}
-          >
-            管理するプラン
-          </div>
-
-          <div
-            style={{
-              marginTop: 6,
-              fontSize: 13,
-              color: "#666",
-            }}
-          >
-            それぞれStripeの安全な
-            管理画面に移動します。
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-          }}
-        >
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() =>
-              openBillingPortal("slot")
-            }
-            style={{
-              width: "100%",
-              padding: "14px 16px",
-              borderRadius: 14,
-              border: "1px solid #111",
-              background: "#111",
-              color: "#fff",
-              fontWeight: 900,
-              cursor: loading
-                ? "default"
-                : "pointer",
-              opacity: loading ? 0.7 : 1,
-            }}
-          >
-            {loadingKind === "slot"
-              ? "開いています…"
-              : "クラススロットのお支払い管理"}
-          </button>
-
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() =>
-              openBillingPortal("theme")
-            }
-            style={{
-              width: "100%",
-              padding: "14px 16px",
-              borderRadius: 14,
-              border: "1px solid #d1d5db",
-              background: "#fff",
-              color: "#111",
-              fontWeight: 900,
-              cursor: loading
-                ? "default"
-                : "pointer",
-              opacity: loading ? 0.7 : 1,
-            }}
-          >
-            {loadingKind === "theme"
-              ? "開いています…"
-              : "テーマプランのお支払い管理"}
-          </button>
-        </div>
-
-        <div
-          style={{
-            fontSize: 12,
-            color: "#666",
-            lineHeight: 1.7,
-          }}
-        >
-          ※ クラススロット管理では
-          クラススロットのみ、
-          テーマプラン管理では
-          テーマプランのみ変更できます。
-        </div>
-      </section>
+        ※ 解約は選択した種類の契約だけを対象にします。プランのアップグレードは Stripe
+        Portal では行えません。
+      </div>
 
       {msg ? (
         <div
@@ -320,11 +272,7 @@ function BillingPageInner() {
 export default function BillingPage() {
   return (
     <Suspense
-      fallback={
-        <main style={{ padding: 24 }}>
-          読み込み中...
-        </main>
-      }
+      fallback={<main style={{ padding: 24 }}>読み込み中...</main>}
     >
       <BillingPageInner />
     </Suspense>

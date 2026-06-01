@@ -201,7 +201,13 @@ export default function PremiumPage() {
         return;
       }
 
-      alert("決済ページの作成に失敗しました");
+      if (j?.updated) {
+        alert("プランを更新しました。");
+        window.location.reload();
+        return;
+      }
+
+      alert(j?.error ?? "決済ページの作成に失敗しました");
     } catch {
       alert("通信エラーが発生しました");
     } finally {
@@ -335,7 +341,7 @@ export default function PremiumPage() {
 
       <SoftCard>
         <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "#374151" }}>
-          プラン変更・解約は支払い管理ページから行えます。
+          プラン変更はプラン画面から行い、解約・支払い方法・請求履歴は支払い管理ページから行えます。
         </p>
         <Link
           href={withDev("/billing")}
