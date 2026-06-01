@@ -20,6 +20,12 @@ import {
   logMemberDisplayNamesFromApi,
 } from "@/lib/resolveDisplayName";
 import {
+  installCallPageDiagnostics,
+  logCallLifecycle,
+  logCallNavigationType,
+  voiceDebugLog,
+} from "@/app/call/voice/voiceDiagnostics";
+import {
   LIST_MEMBER_AVATAR_PX,
   normalizeMemberDeviceId,
   type MemberProfileTarget,
@@ -124,6 +130,7 @@ export default function CallClient() {
   const fetchingRef = useRef(false);
   const pendingFetchReasonRef = useRef<string | null>(null);
   const lastSpeakerIdRef = useRef<string | null>(null);
+  const everConnectedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
@@ -141,6 +148,28 @@ export default function CallClient() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!sessionId || !deviceId) return;
+
+    logCallNavigationType({ sessionId, deviceId });
+    logCallLifecycle("mount", { sessionId, deviceId });
+
+    const cleanupDiagnostics = installCallPageDiagnostics({ sessionId, deviceId });
+
+    return () => {
+      logCallLifecycle("unmount", { sessionId, deviceId });
+      cleanupDiagnostics();
+    };
+  }, [sessionId, deviceId]);
+
+  useEffect(() => {
+    for (const [id, state] of Object.entries(peerStates)) {
+      if (state === "connected") {
+        everConnectedPeersRef.current.add(id);
+      }
+    }
+  }, [peerStates]);
 
   useEffect(() => {
     if (!classId || !deviceId) return;
@@ -541,6 +570,7 @@ export default function CallClient() {
       }
 
       const state = peerStates[member.device_id] ?? "idle";
+      const wasConnected = everConnectedPeersRef.current.has(member.device_id);
 
       if (state === "connected") {
         return {
@@ -553,7 +583,7 @@ export default function CallClient() {
 
       if (state === "connecting") {
         return {
-          text: "接続処理中",
+          text: wasConnected ? "再接続中" : "接続処理中",
           color: "#92400e",
           chipBg: "#fffbeb",
           chipText: "#b45309",
@@ -562,7 +592,7 @@ export default function CallClient() {
 
       if (state === "failed") {
         return {
-          text: "再接続中",
+          text: wasConnected ? "再接続を試みています" : "再接続中",
           color: "#991b1b",
           chipBg: "#fef2f2",
           chipText: "#dc2626",
@@ -633,7 +663,7 @@ export default function CallClient() {
   }, [members]);
 
   useEffect(() => {
-    console.log("[call] callMembers before voice layer", {
+    voiceDebugLog("[call] callMembers before voice layer", {
       count: callMembers.length,
       deviceId,
       callMembers: callMembers.map((m) => ({

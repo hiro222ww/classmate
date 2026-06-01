@@ -5,6 +5,7 @@ import RemoteAudio from "./voice/RemoteAudio";
 import { useLocalMic } from "./voice/useLocalMic";
 import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
+import { voiceDebugLog } from "./voice/voiceDiagnostics";
 
 type Member = {
   device_id: string;
@@ -44,7 +45,7 @@ export default function CallVoiceLayer({
   onStatusChange,
   onPeerStatesChange,
 }: CallVoiceLayerProps) {
-  console.log("[voice-layer] render", {
+  voiceDebugLog("[voice-layer] render", {
     sessionId,
     deviceId,
     membersCount: members.length,
