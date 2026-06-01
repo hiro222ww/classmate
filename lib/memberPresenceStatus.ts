@@ -1,0 +1,238 @@
+export type UiParticipationStatus = "in_call" | "waiting" | "offline";
+
+export type CallPeerState = "idle" | "connecting" | "connected" | "failed";
+
+export const PRESENCE_FRESH_MS_HOME = 45_000;
+export const PRESENCE_FRESH_MS_ROOM = 15_000;
+export const PRESENCE_STALE_GRACE_MS = 20_000;
+
+export type ParticipationSource = {
+  is_in_call?: boolean;
+  screen?: string | null;
+  session_id?: string | null;
+  presence_session_id?: string | null;
+  last_seen_at?: string | null;
+  effective_status?: string | null;
+  status?: string | null;
+};
+
+export function parseTimestamp(value?: string | null): number | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const t = new Date(raw).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+export function isPresenceFresh(
+  lastSeenAt?: string | null,
+  maxAgeMs = PRESENCE_FRESH_MS_HOME
+): boolean {
+  const t = parseTimestamp(lastSeenAt);
+  if (t == null) return false;
+  return Date.now() - t <= maxAgeMs;
+}
+
+function normalizedEffective(source: ParticipationSource) {
+  return String(source.effective_status ?? source.status ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+export function resolveParticipationStatus(params: {
+  source: ParticipationSource;
+  currentSessionId?: string | null;
+  freshMs?: number;
+  previous?: UiParticipationStatus | null;
+  fetchFailed?: boolean;
+}): UiParticipationStatus {
+  const {
+    source,
+    currentSessionId,
+    freshMs = PRESENCE_FRESH_MS_HOME,
+    previous = null,
+    fetchFailed = false,
+  } = params;
+
+  const lastSeenAt = source.last_seen_at;
+  const fresh = isPresenceFresh(lastSeenAt, freshMs);
+  const lastTs = parseTimestamp(lastSeenAt);
+  const staleGrace =
+    lastTs != null && Date.now() - lastTs <= freshMs + PRESENCE_STALE_GRACE_MS;
+
+  if (source.is_in_call === true) {
+    return "in_call";
+  }
+
+  const screen = String(source.screen ?? "").trim();
+  const sid = String(
+    source.presence_session_id ?? source.session_id ?? ""
+  ).trim();
+  const currentSid = String(currentSessionId ?? "").trim();
+
+  if (fresh) {
+    if (screen === "call") {
+      if (!currentSid || !sid || sid === currentSid) {
+        return "in_call";
+      }
+    }
+
+    if (screen === "room" || screen === "home") {
+      return "waiting";
+    }
+
+    const effective = normalizedEffective(source);
+    if (
+      effective === "calling" ||
+      effective === "call" ||
+      effective === "active"
+    ) {
+      if (!currentSid || !sid || sid === currentSid) {
+        return "in_call";
+      }
+    }
+
+    if (effective === "waiting" || effective === "room") {
+      return "waiting";
+    }
+  }
+
+  if ((fetchFailed || staleGrace) && previous && previous !== "offline") {
+    return previous;
+  }
+
+  return "offline";
+}
+
+export function participationStatusLabel(
+  status: UiParticipationStatus,
+  context: "home" | "room"
+): string {
+  if (status === "in_call") return "通話中";
+  if (status === "waiting") return "待機中";
+  return context === "home" ? "オフライン" : "オフライン";
+}
+
+export function participationStatusStyle(status: UiParticipationStatus) {
+  if (status === "in_call") {
+    return {
+      background: "#dcfce7",
+      color: "#166534",
+      border: "1px solid #86efac",
+    };
+  }
+
+  if (status === "waiting") {
+    return {
+      background: "#fef3c7",
+      color: "#92400e",
+      border: "1px solid #fcd34d",
+    };
+  }
+
+  return {
+    background: "#f3f4f6",
+    color: "#6b7280",
+    border: "1px solid #d1d5db",
+  };
+}
+
+export function resolveCallMemberStatus(params: {
+  isMe: boolean;
+  isMuted: boolean;
+  isInCall: boolean;
+  peerState: CallPeerState;
+  wasPeerConnected: boolean;
+}) {
+  if (params.isMe) {
+    return {
+      text: params.isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+      color: "#6b7280",
+      chipBg: params.isMuted ? "#fef2f2" : "#eff6ff",
+      chipText: params.isMuted ? "#991b1b" : "#1d4ed8",
+    };
+  }
+
+  if (!params.isInCall) {
+    return {
+      text: "待機中",
+      color: "#6b7280",
+      chipBg: "#f3f4f6",
+      chipText: "#6b7280",
+    };
+  }
+
+  if (params.peerState === "connected") {
+    return {
+      text: "接続中",
+      color: "#065f46",
+      chipBg: "#ecfdf5",
+      chipText: "#047857",
+    };
+  }
+
+  if (params.peerState === "connecting") {
+    return {
+      text: params.wasPeerConnected ? "再接続中" : "接続処理中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+    };
+  }
+
+  if (params.peerState === "failed") {
+    return {
+      text: params.wasPeerConnected ? "再接続を試みています" : "再接続中",
+      color: "#991b1b",
+      chipBg: "#fef2f2",
+      chipText: "#dc2626",
+    };
+  }
+
+  return {
+    text: "接続待ち",
+    color: "#6b7280",
+    chipBg: "#f3f4f6",
+    chipText: "#6b7280",
+  };
+}
+
+export function logParticipationStatusDecision(params: {
+  context: "home" | "room" | "call";
+  deviceId: string;
+  label: string;
+  status: string;
+  used: string;
+  sources: Record<string, unknown>;
+}) {
+  console.log(`[${params.context}-status]`, {
+    deviceId: params.deviceId,
+    label: params.label,
+    status: params.status,
+    used: params.used,
+    ...params.sources,
+    timestamp: Date.now(),
+  });
+}
+
+export function mapPresenceApiRow(
+  raw: Record<string, unknown>,
+  currentSessionId?: string
+): (ParticipationSource & { device_id: string }) | null {
+  const deviceId = String(raw.device_id ?? "").trim();
+  if (!deviceId) return null;
+
+  const lastSeenAt =
+    String(raw.last_seen_at ?? raw.updated_at ?? "").trim() || null;
+
+  return {
+    device_id: deviceId,
+    screen: String(raw.screen ?? "").trim() || null,
+    session_id: String(raw.session_id ?? "").trim() || null,
+    presence_session_id: String(raw.session_id ?? "").trim() || null,
+    last_seen_at: lastSeenAt,
+    effective_status:
+      String(raw.effective_status ?? raw.status ?? "").trim() || null,
+    status: String(raw.status ?? "").trim() || null,
+    ...(currentSessionId ? {} : {}),
+  };
+}

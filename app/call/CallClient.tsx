@@ -32,6 +32,10 @@ import {
 } from "@/lib/memberProfileView";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
+import {
+  logParticipationStatusDecision,
+  resolveCallMemberStatus,
+} from "@/lib/memberPresenceStatus";
 
 type Member = {
   device_id: string;
@@ -131,6 +135,7 @@ export default function CallClient() {
   const pendingFetchReasonRef = useRef<string | null>(null);
   const lastSpeakerIdRef = useRef<string | null>(null);
   const everConnectedPeersRef = useRef<Set<string>>(new Set());
+  const prevCallStatusRef = useRef<Record<string, string>>({});
   const membersSyncRevisionRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
@@ -559,52 +564,47 @@ export default function CallClient() {
       }
 
       const isMe = member.device_id === deviceId;
+      const peerState = peerStates[member.device_id] ?? "idle";
+      const wasPeerConnected = everConnectedPeersRef.current.has(
+        member.device_id
+      );
+      const isInCall = member.is_in_call === true;
 
-      if (isMe) {
-        return {
-          text: isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
-          color: "#6b7280",
-          chipBg: isMuted ? "#fef2f2" : "#eff6ff",
-          chipText: isMuted ? "#991b1b" : "#1d4ed8",
-        };
+      const status = resolveCallMemberStatus({
+        isMe,
+        isMuted,
+        isInCall,
+        peerState,
+        wasPeerConnected,
+      });
+
+      const used = isMe
+        ? "self"
+        : !isInCall
+          ? "not_in_call"
+          : peerState === "idle"
+            ? "peer_idle"
+            : `peer_${peerState}`;
+
+      const prevText = prevCallStatusRef.current[member.device_id];
+      if (prevText !== status.text) {
+        logParticipationStatusDecision({
+          context: "call",
+          deviceId: member.device_id,
+          label: status.text,
+          status: isInCall ? "in_call" : "waiting",
+          used,
+          sources: {
+            is_in_call: member.is_in_call ?? null,
+            peerState,
+            wasPeerConnected,
+            isMe,
+          },
+        });
+        prevCallStatusRef.current[member.device_id] = status.text;
       }
 
-      const state = peerStates[member.device_id] ?? "idle";
-      const wasConnected = everConnectedPeersRef.current.has(member.device_id);
-
-      if (state === "connected") {
-        return {
-          text: "接続中",
-          color: "#065f46",
-          chipBg: "#ecfdf5",
-          chipText: "#047857",
-        };
-      }
-
-      if (state === "connecting") {
-        return {
-          text: wasConnected ? "再接続中" : "接続処理中",
-          color: "#92400e",
-          chipBg: "#fffbeb",
-          chipText: "#b45309",
-        };
-      }
-
-      if (state === "failed") {
-        return {
-          text: wasConnected ? "再接続を試みています" : "再接続中",
-          color: "#991b1b",
-          chipBg: "#fef2f2",
-          chipText: "#dc2626",
-        };
-      }
-
-      return {
-        text: "接続待ち",
-        color: "#6b7280",
-        chipBg: "#f3f4f6",
-        chipText: "#6b7280",
-      };
+      return status;
     },
     [deviceId, isMuted, peerStates]
   );

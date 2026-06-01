@@ -42,6 +42,16 @@ import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
+import {
+  logParticipationStatusDecision,
+  mapPresenceApiRow,
+  participationStatusLabel,
+  participationStatusStyle,
+  PRESENCE_FRESH_MS_ROOM,
+  resolveParticipationStatus,
+  type ParticipationSource,
+  type UiParticipationStatus,
+} from "@/lib/memberPresenceStatus";
 
 type MemberRow = {
   device_id?: string;
@@ -50,18 +60,14 @@ type MemberRow = {
   photo_path?: string | null;
   avatar_url?: string | null;
   joined_at?: string;
+  is_in_call?: boolean;
+  screen?: string | null;
+  last_seen_at?: string | null;
+  presence_session_id?: string | null;
 };
 
-type PresenceStatus = "offline" | "waiting" | "active";
-
-type PresenceScreen = "home" | "room" | "call" | "unknown";
-
-type PresenceRow = {
+type PresenceRow = ParticipationSource & {
   device_id: string;
-  status: PresenceStatus;
-  screen?: PresenceScreen | null;
-  session_id?: string | null;
-  updated_at?: string | null;
 };
 
 
@@ -282,62 +288,73 @@ async function rematchRoomSession(params: {
   return { rematchRes, rematchJson };
 }
 
-function getFreshPresenceStatus(p?: PresenceRow): PresenceStatus {
-  if (!p?.updated_at) return "offline";
-
-  const t = new Date(p.updated_at).getTime();
-  if (!Number.isFinite(t)) return "offline";
-
-  if (Date.now() - t > 15_000) return "offline";
-
-  if (p.status === "active") return "active";
-  if (p.status === "waiting") return "waiting";
-  return "offline";
+function mergeRoomMemberPresenceSource(
+  member: MemberRow,
+  presence?: PresenceRow
+): ParticipationSource {
+  return {
+    is_in_call: member.is_in_call === true ? true : presence?.is_in_call,
+    screen: member.screen ?? presence?.screen ?? null,
+    session_id: presence?.session_id ?? member.presence_session_id ?? null,
+    presence_session_id:
+      member.presence_session_id ??
+      presence?.presence_session_id ??
+      presence?.session_id ??
+      null,
+    last_seen_at: member.last_seen_at ?? presence?.last_seen_at ?? null,
+    effective_status: presence?.effective_status ?? presence?.status ?? null,
+    status: presence?.status ?? null,
+  };
 }
 
-function statusLabel(status: PresenceStatus) {
-  if (status === "active") return "オンライン";
-  if (status === "waiting") return "オンライン";
-  return "オフライン";
+function resolveRoomMemberParticipation(
+  member: MemberRow,
+  presence: PresenceRow | undefined,
+  sessionId: string,
+  previous: UiParticipationStatus | null,
+  fetchFailed = false
+): UiParticipationStatus {
+  return resolveParticipationStatus({
+    source: mergeRoomMemberPresenceSource(member, presence),
+    currentSessionId: sessionId,
+    freshMs: PRESENCE_FRESH_MS_ROOM,
+    previous,
+    fetchFailed,
+  });
 }
 
-function getMemberStatusLabel(
-  p: PresenceRow | undefined,
-  currentSessionId: string
+function resolveRoomMemberDisplay(
+  member: MemberRow,
+  presence: PresenceRow | undefined,
+  sessionId: string,
+  previous: UiParticipationStatus | null,
+  isMe: boolean
 ) {
-  const fresh = getFreshPresenceStatus(p);
-  if (fresh === "offline") return "オフライン";
-
-  const screen = String(p?.screen ?? "").trim();
-  const sid = String(p?.session_id ?? "").trim();
-
-  if (screen === "call" && sid === currentSessionId) return "通話中";
-  if (screen === "room") return "待機中";
-
-  return "オンライン";
-}
-
-function statusStyle(status: PresenceStatus) {
-  if (status === "active") {
+  if (isMe) {
     return {
-      background: "#dcfce7",
-      color: "#166534",
-      border: "1px solid #86efac",
+      status: "waiting" as const,
+      label: "待機中",
+      used: "self_in_room",
     };
   }
 
-  if (status === "waiting") {
-    return {
-      background: "#fef3c7",
-      color: "#92400e",
-      border: "1px solid #fcd34d",
-    };
-  }
+  const status = resolveRoomMemberParticipation(
+    member,
+    presence,
+    sessionId,
+    previous
+  );
+
+  const used = member.is_in_call
+    ? "is_in_call"
+    : presence
+      ? "presence"
+      : "member_fields";
 
   return {
-    background: "#f3f4f6",
-    color: "#6b7280",
-    border: "1px solid #d1d5db",
+    status,
+    label: participationStatusLabel(status, "room"),
+    used,
   };
 }
 
@@ -488,6 +505,7 @@ export default function RoomClient() {
   const [devBannerLabel, setDevBannerLabel] = useState("");
 
   const statusFailCountRef = useRef(0);
+  const prevMemberStatusRef = useRef<Record<string, UiParticipationStatus>>({});
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -721,6 +739,53 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const nextStatuses: Record<string, UiParticipationStatus> = {};
+
+    for (const member of visibleMembers) {
+      const did = String(member.device_id ?? "").trim();
+      if (!did) continue;
+
+      const isMe = did === String(deviceId ?? "").trim();
+      const display = resolveRoomMemberDisplay(
+        member,
+        presenceMap[did],
+        sessionId,
+        prevMemberStatusRef.current[did] ?? null,
+        isMe
+      );
+
+      nextStatuses[did] = display.status;
+
+      const prevStatus = prevMemberStatusRef.current[did] ?? null;
+      if (prevStatus !== display.status) {
+        logParticipationStatusDecision({
+          context: "room",
+          deviceId: did,
+          label: display.label,
+          status: display.status,
+          used: display.used,
+          sources: {
+            is_in_call: member.is_in_call ?? null,
+            screen: member.screen ?? presenceMap[did]?.screen ?? null,
+            last_seen_at:
+              member.last_seen_at ?? presenceMap[did]?.last_seen_at ?? null,
+            presence_session_id:
+              member.presence_session_id ??
+              presenceMap[did]?.presence_session_id ??
+              null,
+            sessionId,
+            isMe,
+          },
+        });
+      }
+    }
+
+    prevMemberStatusRef.current = nextStatuses;
+  }, [visibleMembers, presenceMap, sessionId, deviceId]);
+
   const fetchStatus = useCallback(
     async (opts?: { force?: boolean }) => {
       if (!sessionId || !classId) return;
@@ -807,7 +872,7 @@ setMembers((prev) => {
           classId,
           deviceId,
           screen: "room",
-          sessionId: null,
+          sessionId,
         }),
         cache: "no-store",
       }).catch((e) => {
@@ -862,9 +927,12 @@ setMembers((prev) => {
         const nextMap: Record<string, PresenceRow> = {};
 
         for (const row of list) {
-          const did = String(row?.device_id ?? "").trim();
-          if (!did) continue;
-          nextMap[did] = row;
+          const mapped = mapPresenceApiRow(
+            row as Record<string, unknown>,
+            sessionId
+          );
+          if (!mapped) continue;
+          nextMap[mapped.device_id] = mapped;
         }
 
         setPresenceMap((prev) => {
@@ -900,7 +968,7 @@ setMembers((prev) => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [classId, pathname]);
+  }, [classId, sessionId, pathname]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1460,11 +1528,15 @@ if (!shouldAutoStart) return;
                         }).displayName
                       : formatMemberDisplayName(m);
 
-                    const memberStatus = isMe
-                      ? "waiting"
-                      : getFreshPresenceStatus(presenceMap[did]);
-
-                    const pill = statusStyle(memberStatus);
+                    const prevStatuses = prevMemberStatusRef.current;
+                    const memberDisplay = resolveRoomMemberDisplay(
+                      m,
+                      presenceMap[did],
+                      sessionId,
+                      prevStatuses[did] ?? null,
+                      isMe
+                    );
+                    const pill = participationStatusStyle(memberDisplay.status);
 
                     return (
                       <div
@@ -1556,9 +1628,7 @@ if (!shouldAutoStart) return;
                               whiteSpace: "nowrap",
                             }}
                           >
-                            {isMe
-                              ? "待機中"
-                              : getMemberStatusLabel(presenceMap[did], sessionId)}
+                            {memberDisplay.label}
                           </span>
 
                           {!isMe && did ? (
