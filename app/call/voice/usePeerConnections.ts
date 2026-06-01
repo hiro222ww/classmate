@@ -27,6 +27,7 @@ type OsType = "windows" | "mac" | "ios" | "android" | "unknown";
 type RemoteAudioState = {
   stream: MediaStream;
   member?: Member;
+  attachSeq: number;
 };
 
 type UsePeerConnectionsArgs = {
@@ -55,6 +56,10 @@ const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
 
 const TRACK_ENDED_RECONNECT_MS = 300;
 const HEAL_PEER_COOLDOWN_MS = 800;
+const CLOSE_FOR_RECONNECT = {
+  clearConnectionId: false,
+  preserveRemoteAudio: true,
+} as const;
 
 function makeConnectionId(localId: string, remoteId: string) {
   return `${localId}__${remoteId}__${Date.now()}__${Math.random()
@@ -200,6 +205,14 @@ export function usePeerConnections({
       hasRemoteStream: !!remoteStream,
       remoteTracksCount: remoteStream?.getAudioTracks().length ?? 0,
     };
+  }, []);
+
+  const hasLiveRemoteStream = useCallback((remoteId: string) => {
+    const stream = remoteStreamsRef.current.get(remoteId);
+    return (
+      !!stream &&
+      stream.getAudioTracks().some((track) => track.readyState === "live")
+    );
   }, []);
 
   const clearPeerWatchdogTimers = useCallback((remoteId: string) => {
@@ -482,7 +495,11 @@ export function usePeerConnections({
   );
 
   const upsertRemoteAudio = useCallback(
-    (remoteId: string, stream: MediaStream) => {
+    (
+      remoteId: string,
+      stream: MediaStream,
+      opts?: { reason?: string; force?: boolean }
+    ) => {
       remoteStreamsRef.current.set(remoteId, stream);
 
       for (const track of stream.getAudioTracks()) {
@@ -492,8 +509,14 @@ export function usePeerConnections({
       setRemoteAudios((prev) => {
         const prevState = prev[remoteId];
         const member = members.find((m) => m.device_id === remoteId);
+        const prevTrackId = prevState?.stream.getAudioTracks()[0]?.id ?? null;
+        const nextTrackId = stream.getAudioTracks()[0]?.id ?? null;
 
-        if (prevState?.stream === stream) {
+        if (
+          !opts?.force &&
+          prevState?.stream === stream &&
+          prevTrackId === nextTrackId
+        ) {
           return {
             ...prev,
             [remoteId]: {
@@ -503,11 +526,20 @@ export function usePeerConnections({
           };
         }
 
+        voiceDebugLog("[voice-peer] upsertRemoteAudio", {
+          remoteId,
+          reason: opts?.reason ?? "ontrack",
+          trackId: nextTrackId,
+          trackReadyState: stream.getAudioTracks()[0]?.readyState ?? null,
+          attachSeq: Date.now(),
+        });
+
         return {
           ...prev,
           [remoteId]: {
             stream,
             member,
+            attachSeq: Date.now(),
           },
         };
       });
@@ -518,6 +550,46 @@ export function usePeerConnections({
       }
     },
     [members, syncPeerObservedStates]
+  );
+
+  const syncRemoteAudioFromPc = useCallback(
+    (remoteId: string, pc: RTCPeerConnection, reason: string) => {
+      const liveTrack = pc
+        .getReceivers()
+        .map((receiver) => receiver.track)
+        .find(
+          (track): track is MediaStreamTrack =>
+            !!track &&
+            track.kind === "audio" &&
+            track.readyState === "live"
+        );
+
+      if (!liveTrack) {
+        voiceDebugLog("[voice-peer] syncRemoteAudio skip", {
+          remoteId,
+          reason,
+          receiverCount: pc.getReceivers().length,
+        });
+        return false;
+      }
+
+      const prevStream = remoteStreamsRef.current.get(remoteId);
+      const prevTrack = prevStream?.getAudioTracks()[0];
+      if (
+        prevTrack?.id === liveTrack.id &&
+        prevTrack.readyState === "live" &&
+        !prevTrack.muted
+      ) {
+        return false;
+      }
+
+      upsertRemoteAudio(remoteId, new MediaStream([liveTrack]), {
+        reason: `sync:${reason}`,
+        force: true,
+      });
+      return true;
+    },
+    [upsertRemoteAudio]
   );
 
   useEffect(() => {
@@ -538,8 +610,12 @@ export function usePeerConnections({
   }, [remoteAudios, onRemoteCountChange]);
 
   const closePeer = useCallback(
-    (remoteId: string, opts?: { clearConnectionId?: boolean }) => {
+    (
+      remoteId: string,
+      opts?: { clearConnectionId?: boolean; preserveRemoteAudio?: boolean }
+    ) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
+      const preserveRemoteAudio = opts?.preserveRemoteAudio === true;
       const pc = pcsRef.current.get(remoteId);
 
       if (pc) {
@@ -557,7 +633,9 @@ export function usePeerConnections({
       pcsRef.current.delete(remoteId);
       offeredPeersRef.current.delete(remoteId);
       startedPeersRef.current.delete(remoteId);
-      remoteStreamsRef.current.delete(remoteId);
+      if (!preserveRemoteAudio) {
+        remoteStreamsRef.current.delete(remoteId);
+      }
       pendingIceRef.current.delete(remoteId);
       clearReconnectTimer(remoteId);
       clearPeerWatchdogTimers(remoteId);
@@ -576,11 +654,13 @@ export function usePeerConnections({
         clearCurrentConnectionId(remoteId);
       }
 
-      setRemoteAudios((prev) => {
-        const next = { ...prev };
-        delete next[remoteId];
-        return next;
-      });
+      if (!preserveRemoteAudio) {
+        setRemoteAudios((prev) => {
+          const next = { ...prev };
+          delete next[remoteId];
+          return next;
+        });
+      }
     },
     [clearPeerWatchdogTimers, clearReconnectTimer, clearCurrentConnectionId, emitPeerStates]
   );
@@ -647,7 +727,10 @@ export function usePeerConnections({
         reconnectPendingRef.current.delete(remoteId);
 
         const nextConnectionId = makeConnectionId(deviceId, remoteId);
-        closePeer(remoteId, { clearConnectionId: false });
+        closePeer(remoteId, {
+          clearConnectionId: false,
+          preserveRemoteAudio: true,
+        });
         setCurrentConnectionId(remoteId, nextConnectionId);
         connectStartedAtRef.current.set(remoteId, Date.now());
 
@@ -731,32 +814,25 @@ export function usePeerConnections({
           endedAt != null ? Date.now() - endedAt : undefined;
         emitTrackEvent("unmute", { elapsedMsSinceTrackEnded });
         maybeLogTrackRecovery("unmute", elapsedMsSinceTrackEnded);
+
+        const pc = pcsRef.current.get(remoteId);
+        if (pc) {
+          syncRemoteAudioFromPc(remoteId, pc, "track_unmute");
+        }
       };
 
       track.onended = () => {
         trackEndedAtRef.current.set(remoteId, Date.now());
         markRecoveryStart(remoteId);
 
-        const stream = remoteStreamsRef.current.get(remoteId);
-        const liveAudio =
-          stream?.getAudioTracks().filter((t) => t.readyState !== "ended") ??
-          [];
-
-        if (liveAudio.length === 0) {
-          remoteStreamsRef.current.delete(remoteId);
-          attachedTrackIdsRef.current.delete(remoteId);
-
-          setRemoteAudios((prev) => {
-            const next = { ...prev };
-            delete next[remoteId];
-            return next;
-          });
-
-          const pc = pcsRef.current.get(remoteId);
-          if (pc) {
-            observePeerField(remoteId, "remoteTracksCount", 0, pc);
-            observePeerField(remoteId, "hasRemoteStream", false, pc);
-          }
+        const pc = pcsRef.current.get(remoteId);
+        if (pc) {
+          observePeerField(
+            remoteId,
+            "remoteTracksCount",
+            pc.getReceivers().filter((r) => r.track?.readyState === "live").length,
+            pc
+          );
         }
 
         if (peerEverConnectedRef.current.has(remoteId)) {
@@ -775,7 +851,7 @@ export function usePeerConnections({
         });
       };
     },
-    [deviceId, finalizeRecovery, markRecoveryStart, observePeerField, sessionId]
+    [deviceId, finalizeRecovery, markRecoveryStart, observePeerField, sessionId, syncRemoteAudioFromPc]
   );
 
   useEffect(() => {
@@ -909,7 +985,7 @@ export function usePeerConnections({
       }
 
       if (existing && currentId !== connectionId) {
-        closePeer(remoteId, { clearConnectionId: false });
+        closePeer(remoteId, CLOSE_FOR_RECONNECT);
       }
 
       setCurrentConnectionId(remoteId, connectionId);
@@ -961,9 +1037,10 @@ export function usePeerConnections({
         const stream = event.streams?.[0];
         if (!stream) return;
 
-        upsertRemoteAudio(remoteId, stream);
+        upsertRemoteAudio(remoteId, stream, { reason: "pc_ontrack", force: true });
 
         window.setTimeout(() => {
+          syncRemoteAudioFromPc(remoteId, pc, "ontrack_delayed");
           const audioEl = document.querySelector(
             `audio[data-remote="${remoteId}"]`
           ) as HTMLAudioElement | null;
@@ -1044,7 +1121,7 @@ export function usePeerConnections({
               }
 
               const nextConnectionId = makeConnectionId(deviceId, remoteId);
-              closePeer(remoteId, { clearConnectionId: false });
+              closePeer(remoteId, CLOSE_FOR_RECONNECT);
               setCurrentConnectionId(remoteId, nextConnectionId);
               connectStartedAtRef.current.set(remoteId, Date.now());
               scheduleReconnect(remoteId, 300);
@@ -1088,7 +1165,7 @@ export function usePeerConnections({
                 if (!ok) return;
 
                 const nextConnectionId = makeConnectionId(deviceId, remoteId);
-                closePeer(remoteId, { clearConnectionId: false });
+                closePeer(remoteId, CLOSE_FOR_RECONNECT);
                 setCurrentConnectionId(remoteId, nextConnectionId);
                 connectStartedAtRef.current.set(remoteId, Date.now());
                 scheduleReconnect(remoteId, 300);
@@ -1109,6 +1186,7 @@ export function usePeerConnections({
           clearReconnectTimer(remoteId);
           clearPeerWatchdogTimers(remoteId);
           maybeLogRecoverySuccess(remoteId, pc);
+          syncRemoteAudioFromPc(remoteId, pc, "pc_connected");
 
           const sender = pc
             .getSenders()
@@ -1156,13 +1234,13 @@ export function usePeerConnections({
           ) {
             void enableTurnFallback().then((ok) => {
               if (!ok) {
-                closePeer(remoteId, { clearConnectionId: false });
+                closePeer(remoteId, CLOSE_FOR_RECONNECT);
                 scheduleReconnect(remoteId, 1200);
                 return;
               }
 
               const nextConnectionId = makeConnectionId(deviceId, remoteId);
-              closePeer(remoteId, { clearConnectionId: false });
+              closePeer(remoteId, CLOSE_FOR_RECONNECT);
               setCurrentConnectionId(remoteId, nextConnectionId);
               connectStartedAtRef.current.set(remoteId, Date.now());
               scheduleReconnect(remoteId, 300);
@@ -1171,7 +1249,7 @@ export function usePeerConnections({
             return;
           }
 
-          closePeer(remoteId, { clearConnectionId: false });
+          closePeer(remoteId, CLOSE_FOR_RECONNECT);
           scheduleReconnect(remoteId, 1200);
         }
 
@@ -1215,6 +1293,7 @@ export function usePeerConnections({
       setCurrentConnectionId,
       setPeerState,
       syncPeerObservedStates,
+      syncRemoteAudioFromPc,
       upsertRemoteAudio,
     ]
   );
@@ -1226,7 +1305,7 @@ export function usePeerConnections({
 
       if (!localAudioTrackRef.current && !localStreamRef.current) return;
 
-      const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
+      const hasRemoteStream = hasLiveRemoteStream(remoteId);
       const existingPc = pcsRef.current.get(remoteId);
 
       if (hasRemoteStream) return;
@@ -1290,6 +1369,7 @@ export function usePeerConnections({
       createPeerConnection,
       deviceId,
       getCurrentConnectionId,
+      hasLiveRemoteStream,
       localAudioTrackRef,
       localStreamRef,
       markConnectStart,
@@ -1408,7 +1488,7 @@ export function usePeerConnections({
 
     for (const remoteId of remoteIds) {
       const pc = pcsRef.current.get(remoteId);
-      const hasStream = remoteStreamsRef.current.has(remoteId);
+      const hasStream = hasLiveRemoteStream(remoteId);
       const connected = pc?.connectionState === "connected";
       const blockReason = getReconnectBlockReason(remoteId);
 
@@ -1602,6 +1682,7 @@ export function usePeerConnections({
     getCurrentConnectionId,
     getReconnectBlockReason,
     getRemoteIds,
+    hasLiveRemoteStream,
     logHealPeerAction,
     markConnectStart,
     maybeStartOffer,
@@ -1637,7 +1718,7 @@ export function usePeerConnections({
 
       if (row.signal_type === "offer") {
         if (currentConnectionId !== incomingConnectionId) {
-          closePeer(remoteId, { clearConnectionId: false });
+          closePeer(remoteId, CLOSE_FOR_RECONNECT);
           setCurrentConnectionId(remoteId, incomingConnectionId);
           connectStartedAtRef.current.set(remoteId, Date.now());
           currentConnectionId = incomingConnectionId;
@@ -1706,7 +1787,7 @@ export function usePeerConnections({
         console.error("[call] signal handle error", row.signal_type, remoteId, e);
 
         if (row.signal_type === "offer" || row.signal_type === "answer") {
-          closePeer(remoteId, { clearConnectionId: false });
+          closePeer(remoteId, CLOSE_FOR_RECONNECT);
           scheduleReconnect(remoteId, 1200);
         }
       }

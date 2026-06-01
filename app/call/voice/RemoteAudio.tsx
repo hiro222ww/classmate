@@ -2,12 +2,42 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-function callWarn(...args: any[]) {
+function callWarn(...args: unknown[]) {
   console.warn(...args);
 }
 
-function callError(...args: any[]) {
+function callError(...args: unknown[]) {
   console.error(...args);
+}
+
+function isWindowsClient() {
+  if (typeof navigator === "undefined") return false;
+  return /windows/i.test(navigator.userAgent);
+}
+
+function logRemoteAudioState(
+  remoteId: string,
+  el: HTMLAudioElement,
+  stream: MediaStream,
+  tag: string
+) {
+  const tracks = stream.getAudioTracks();
+  console.log("[remote-audio] state", {
+    remoteId,
+    tag,
+    srcObjectSet: el.srcObject === stream,
+    audioTracks: tracks.length,
+    tracks: tracks.map((track) => ({
+      id: track.id,
+      readyState: track.readyState,
+      muted: track.muted,
+      enabled: track.enabled,
+    })),
+    paused: el.paused,
+    muted: el.muted,
+    volume: el.volume,
+    timestamp: Date.now(),
+  });
 }
 
 export default function RemoteAudio({
@@ -20,7 +50,7 @@ export default function RemoteAudio({
   onSpeaking?: (remoteId: string, level: number) => void;
 }) {
   const ref = useRef<HTMLAudioElement | null>(null);
-  const lastStreamRef = useRef<MediaStream | null>(null);
+  const lastTrackIdRef = useRef<string | null>(null);
   const [blocked, setBlocked] = useState(false);
 
   const applyOutputDevice = useCallback(async () => {
@@ -32,7 +62,9 @@ export default function RemoteAudio({
 
     if ("setSinkId" in el) {
       try {
-        await (el as any).setSinkId(sinkId);
+        await (el as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId?.(
+          sinkId
+        );
         console.log("[call] output device applied", { remoteId, sinkId });
       } catch (e) {
         callWarn("[call] setSinkId failed", { remoteId, sinkId, e });
@@ -42,7 +74,7 @@ export default function RemoteAudio({
 
   const playAudio = useCallback(async () => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || !stream) return;
 
     try {
       el.muted = false;
@@ -53,30 +85,47 @@ export default function RemoteAudio({
       await el.play();
 
       setBlocked(false);
-    } catch (e: any) {
-      if (e?.name === "NotAllowedError") {
+      logRemoteAudioState(remoteId, el, stream, "play-success");
+    } catch (e: unknown) {
+      const err = e as { name?: string };
+      logRemoteAudioState(remoteId, el, stream, "play-failed");
+
+      if (err?.name === "NotAllowedError") {
         setBlocked(true);
         callWarn("[call] autoplay blocked", remoteId);
         return;
       }
 
-      if (e?.name === "AbortError") {
+      if (err?.name === "AbortError") {
         callWarn("[call] remote audio play aborted", remoteId);
         return;
       }
 
       callError("[call] remote audio play error", remoteId, e);
     }
-  }, [remoteId, applyOutputDevice]);
+  }, [remoteId, applyOutputDevice, stream]);
 
-  useEffect(() => {
+  const attachStream = useCallback(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || !stream) return;
 
-    if (lastStreamRef.current !== stream || el.srcObject !== stream) {
-      el.srcObject = stream;
-      lastStreamRef.current = stream;
+    const track = stream.getAudioTracks()[0] ?? null;
+    const trackId = track?.id ?? null;
+    const trackChanged = trackId !== lastTrackIdRef.current;
+    const needsAttach =
+      trackChanged || el.srcObject !== stream || track?.readyState === "live";
+
+    if (!needsAttach && el.srcObject === stream) {
+      void playAudio();
+      return;
     }
+
+    if (isWindowsClient() && el.srcObject) {
+      el.srcObject = null;
+    }
+
+    el.srcObject = stream;
+    lastTrackIdRef.current = trackId;
 
     el.autoplay = true;
     el.setAttribute("playsinline", "true");
@@ -84,27 +133,53 @@ export default function RemoteAudio({
     el.muted = false;
     el.defaultMuted = false;
 
-    const tryPlay = () => {
+    logRemoteAudioState(remoteId, el, stream, trackChanged ? "attach-track-changed" : "attach");
+
+    void playAudio();
+  }, [playAudio, remoteId, stream]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    attachStream();
+
+    const onCanPlay = () => {
       void playAudio();
     };
 
-    el.addEventListener("canplay", tryPlay);
-    el.addEventListener("loadedmetadata", tryPlay);
+    el.addEventListener("canplay", onCanPlay);
+    el.addEventListener("loadedmetadata", onCanPlay);
 
-    void playAudio();
+    const onAddTrack = () => {
+      attachStream();
+    };
+
+    stream.addEventListener("addtrack", onAddTrack);
+
+    for (const track of stream.getAudioTracks()) {
+      track.onunmute = () => {
+        attachStream();
+      };
+    }
 
     const retryTimer = window.setTimeout(() => {
-      void playAudio();
+      attachStream();
     }, 300);
 
     return () => {
       window.clearTimeout(retryTimer);
-      el.removeEventListener("canplay", tryPlay);
-      el.removeEventListener("loadedmetadata", tryPlay);
+      el.removeEventListener("canplay", onCanPlay);
+      el.removeEventListener("loadedmetadata", onCanPlay);
+      stream.removeEventListener("addtrack", onAddTrack);
     };
-  }, [stream, playAudio]);
+  }, [attachStream, playAudio, stream]);
 
   useEffect(() => {
+    if (isWindowsClient()) {
+      return;
+    }
+
     let raf = 0;
     let closed = false;
     let ctx: AudioContext | null = null;

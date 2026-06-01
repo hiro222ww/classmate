@@ -121,7 +121,7 @@ export default function CallVoiceLayer({
 
       {Object.entries(peer.remoteAudios).map(([remoteId, state]) => (
         <RemoteAudio
-          key={remoteId}
+          key={`${remoteId}-${state.attachSeq}`}
           stream={state.stream}
           remoteId={remoteId}
           onSpeaking={onRemoteSpeakingChange}
