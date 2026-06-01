@@ -116,12 +116,24 @@ export function logRemoteTrackEvent(params: {
   event: "ontrack" | "mute" | "unmute" | "ended";
   trackKind: string;
   trackId: string;
+  elapsedMsSinceTrackEnded?: number;
+  scheduledReconnectInMs?: number;
+  reconnectScheduled?: boolean;
 }) {
   console.log("[voice-peer] remote-track", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     event: params.event,
     trackKind: params.trackKind,
     trackId: params.trackId,
+    ...(params.elapsedMsSinceTrackEnded != null
+      ? { elapsedMsSinceTrackEnded: params.elapsedMsSinceTrackEnded }
+      : {}),
+    ...(params.scheduledReconnectInMs != null
+      ? { scheduledReconnectInMs: params.scheduledReconnectInMs }
+      : {}),
+    ...(params.reconnectScheduled != null
+      ? { reconnectScheduled: params.reconnectScheduled }
+      : {}),
   });
 }
 
@@ -168,6 +180,8 @@ export function logHealRecoverySuccess(params: {
   iceConnectionState: RTCIceConnectionState;
   remoteTracksCount: number;
   elapsedMs: number;
+  recoveryVia?: "connected" | "ontrack" | "unmute";
+  elapsedMsSinceTrackEnded?: number;
 }) {
   console.log("[voice-peer] heal-recovered", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
@@ -176,6 +190,10 @@ export function logHealRecoverySuccess(params: {
     iceConnectionState: params.iceConnectionState,
     remoteTracksCount: params.remoteTracksCount,
     elapsedMs: params.elapsedMs,
+    ...(params.recoveryVia ? { recoveryVia: params.recoveryVia } : {}),
+    ...(params.elapsedMsSinceTrackEnded != null
+      ? { elapsedMsSinceTrackEnded: params.elapsedMsSinceTrackEnded }
+      : {}),
   });
 }
 
