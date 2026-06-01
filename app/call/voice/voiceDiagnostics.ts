@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  isLikelyChunkLoadError,
+  recordCallReloadContext,
+  saveCallReloadSnapshot,
+} from "@/lib/callReloadDiagnostics";
+
 type PeerMediaSnapshot = {
   remoteTracksCount: number;
   hasRemoteStream: boolean;
@@ -101,7 +107,11 @@ export function logPeerStateWarning(params: {
   media: PeerMediaSnapshot;
 }) {
   const snap = snapshotPeerConnection(params.pc, params.media);
+  const compact = `[voice-peer] warn remote=${compactDeviceId(params.remoteDeviceId)} reason=${params.reason} conn=${snap.connectionState ?? "-"} ice=${snap.iceConnectionState ?? "-"}`;
 
+  recordCallReloadContext({ lastPeerWarning: compact });
+
+  console.warn(compact);
   console.warn("[voice-peer] state-warning", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     reason: params.reason,
@@ -120,6 +130,13 @@ export function logRemoteTrackEvent(params: {
   scheduledReconnectInMs?: number;
   reconnectScheduled?: boolean;
 }) {
+  const compact =
+    `[voice-peer] track remote=${compactDeviceId(params.remoteDeviceId)} ` +
+    `event=${params.event} kind=${params.trackKind} id=${params.trackId.slice(-6)}`;
+
+  recordCallReloadContext({ lastRemoteTrackEvent: compact });
+
+  console.log(compact);
   console.log("[voice-peer] remote-track", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     event: params.event,
@@ -165,9 +182,17 @@ export function logHealPeerAction(params: {
       : {}),
   };
 
+  const compact =
+    `[voice-peer] heal remote=${compactDeviceId(params.remoteDeviceId)} ` +
+    `action=${params.action} reason=${params.reason}`;
+
+  recordCallReloadContext({ lastHealAction: compact });
+
   if (params.repeatWarning) {
+    console.warn(compact);
     console.warn("[voice-peer] healRun", payload);
   } else {
+    console.log(compact);
     console.log("[voice-peer] healRun", payload);
   }
 }
@@ -207,6 +232,17 @@ export function logCallLifecycle(
     extra?: Record<string, unknown>;
   }
 ) {
+  const visibilityState =
+    params.visibilityState ??
+    (typeof document !== "undefined" ? document.visibilityState : undefined);
+
+  console.log(
+    `[call-lifecycle] event=${event} vis=${visibilityState ?? "-"} ` +
+      `session=${compactSessionId(params.sessionId)} ` +
+      `device=${compactDeviceId(params.deviceId)}` +
+      (params.persisted != null ? ` persisted=${params.persisted}` : "")
+  );
+
   console.log("[call-lifecycle]", {
     event,
     sessionId: params.sessionId,
@@ -238,6 +274,12 @@ export function logCallNavigationType(params: {
     deviceId: params.deviceId,
     timestamp: Date.now(),
   });
+
+  console.log(
+    `[call-lifecycle] navigation type=${entry?.type ?? "unknown"} ` +
+      `session=${compactSessionId(params.sessionId)} ` +
+      `device=${compactDeviceId(params.deviceId)}`
+  );
 }
 
 function getNavigationTypeForDiagnostics(): string {
@@ -383,7 +425,10 @@ export type VoiceMeshPeerSummaryParams = {
 };
 
 export function logVoiceMeshPeerSummary(params: VoiceMeshPeerSummaryParams) {
-  console.log(formatVoiceMeshSummaryHeader(params));
+  const header = formatVoiceMeshSummaryHeader(params);
+  recordCallReloadContext({ lastMeshSummary: header });
+
+  console.log(header);
   for (const peer of params.peers) {
     console.log(formatVoiceMeshPeerLine(peer));
   }
@@ -586,8 +631,18 @@ export function installCallPageDiagnostics(params: {
   const { sessionId, deviceId } = params;
 
   const onError = (event: ErrorEvent) => {
+    const message = event.message ?? "";
+    const chunkError = isLikelyChunkLoadError(message);
+    const compact = `[call-lifecycle] window-error chunk=${chunkError} msg=${message.slice(0, 120)}`;
+
+    recordCallReloadContext({ lastError: compact });
+
+    console.error(compact);
     console.error("[call-lifecycle] window-error", {
       message: event.message,
+      chunkError,
+      filename: event.filename ?? null,
+      lineno: event.lineno ?? null,
       stack: event.error?.stack ?? null,
       timestamp: Date.now(),
       sessionId,
@@ -597,8 +652,18 @@ export function installCallPageDiagnostics(params: {
 
   const onRejection = (event: PromiseRejectionEvent) => {
     const reason = event.reason;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const chunkError = isLikelyChunkLoadError(message);
+    const compact =
+      `[call-lifecycle] unhandled-rejection chunk=${chunkError} ` +
+      `name=${reason instanceof Error ? reason.name : typeof reason} msg=${message.slice(0, 120)}`;
+
+    recordCallReloadContext({ lastRejection: compact });
+
+    console.error(compact);
     console.error("[call-lifecycle] unhandled-rejection", {
-      message: reason instanceof Error ? reason.message : String(reason),
+      message,
+      chunkError,
       stack: reason instanceof Error ? reason.stack : null,
       reason: reason instanceof Error ? reason.name : typeof reason,
       timestamp: Date.now(),
@@ -609,6 +674,12 @@ export function installCallPageDiagnostics(params: {
 
   const onPageHide = (event: PageTransitionEvent) => {
     logCallLifecycle("pagehide", {
+      sessionId,
+      deviceId,
+      persisted: event.persisted,
+    });
+    saveCallReloadSnapshot({
+      trigger: "pagehide",
       sessionId,
       deviceId,
       persisted: event.persisted,
@@ -626,10 +697,22 @@ export function installCallPageDiagnostics(params: {
 
   const onVisibilityChange = () => {
     logCallLifecycle("visibilitychange", { sessionId, deviceId });
+    if (document.visibilityState === "hidden") {
+      saveCallReloadSnapshot({
+        trigger: "visibility_hidden",
+        sessionId,
+        deviceId,
+      });
+    }
   };
 
   const onBeforeUnload = () => {
     logCallLifecycle("beforeunload", { sessionId, deviceId });
+    saveCallReloadSnapshot({
+      trigger: "beforeunload",
+      sessionId,
+      deviceId,
+    });
   };
 
   window.addEventListener("error", onError);

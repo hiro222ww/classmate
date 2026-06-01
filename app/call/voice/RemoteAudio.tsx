@@ -1,13 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribeRemoteAudioUnlock } from "@/lib/remoteAudioUnlock";
 
 function callWarn(...args: unknown[]) {
   console.warn(...args);
-}
-
-function callError(...args: unknown[]) {
-  console.error(...args);
 }
 
 function isWindowsClient() {
@@ -15,27 +12,51 @@ function isWindowsClient() {
   return /windows/i.test(navigator.userAgent);
 }
 
+function compactRemoteId(remoteId: string): string {
+  const value = String(remoteId ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 4) return value;
+  return value.slice(-3);
+}
+
 function logRemoteAudioState(
   remoteId: string,
   el: HTMLAudioElement,
   stream: MediaStream,
-  tag: string
+  tag: string,
+  error?: { name?: string; message?: string }
 ) {
   const tracks = stream.getAudioTracks();
+  const track = tracks[0];
+  const compact =
+    `[remote-audio] ${tag} remote=${compactRemoteId(remoteId)} ` +
+    `srcObject=${el.srcObject === stream} tracks=${tracks.length} ` +
+    `ready=${track?.readyState ?? "-"} muted=${track?.muted ?? "-"} ` +
+    `paused=${el.paused} vol=${el.volume}` +
+    (error?.name ? ` err=${error.name}` : "") +
+    (error?.message ? ` msg=${error.message.slice(0, 80)}` : "");
+
+  console.log(compact);
   console.log("[remote-audio] state", {
     remoteId,
     tag,
     srcObjectSet: el.srcObject === stream,
     audioTracks: tracks.length,
-    tracks: tracks.map((track) => ({
-      id: track.id,
-      readyState: track.readyState,
-      muted: track.muted,
-      enabled: track.enabled,
+    tracks: tracks.map((t) => ({
+      id: t.id,
+      readyState: t.readyState,
+      muted: t.muted,
+      enabled: t.enabled,
     })),
     paused: el.paused,
     muted: el.muted,
     volume: el.volume,
+    ...(error
+      ? {
+          errorName: error.name ?? null,
+          errorMessage: error.message ?? null,
+        }
+      : {}),
     timestamp: Date.now(),
   });
 }
@@ -87,8 +108,8 @@ export default function RemoteAudio({
       setBlocked(false);
       logRemoteAudioState(remoteId, el, stream, "play-success");
     } catch (e: unknown) {
-      const err = e as { name?: string };
-      logRemoteAudioState(remoteId, el, stream, "play-failed");
+      const err = e as { name?: string; message?: string };
+      logRemoteAudioState(remoteId, el, stream, "play-failed", err);
 
       if (err?.name === "NotAllowedError") {
         setBlocked(true);
@@ -101,7 +122,7 @@ export default function RemoteAudio({
         return;
       }
 
-      callError("[call] remote audio play error", remoteId, e);
+      callWarn("[call] remote audio play error", remoteId, err?.name, err?.message);
     }
   }, [remoteId, applyOutputDevice, stream]);
 
@@ -174,6 +195,25 @@ export default function RemoteAudio({
       stream.removeEventListener("addtrack", onAddTrack);
     };
   }, [attachStream, playAudio, stream]);
+
+  useEffect(() => {
+    return subscribeRemoteAudioUnlock(() => {
+      void playAudio();
+    });
+  }, [playAudio]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void playAudio();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [playAudio]);
 
   useEffect(() => {
     if (isWindowsClient()) {

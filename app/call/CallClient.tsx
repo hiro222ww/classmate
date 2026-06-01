@@ -26,6 +26,8 @@ import {
   logCallNavigationType,
   voiceDebugLog,
 } from "@/app/call/voice/voiceDiagnostics";
+import { consumeCallReloadSnapshot } from "@/lib/callReloadDiagnostics";
+import { requestRemoteAudioUnlock } from "@/lib/remoteAudioUnlock";
 import {
   LIST_MEMBER_AVATAR_PX,
   normalizeMemberDeviceId,
@@ -176,6 +178,7 @@ export default function CallClient() {
     if (!sessionId || !deviceId) return;
 
     logCallNavigationType({ sessionId, deviceId });
+    consumeCallReloadSnapshot({ sessionId, deviceId });
     logCallLifecycle("mount", {
       sessionId,
       deviceId,
@@ -1241,6 +1244,7 @@ export default function CallClient() {
               opacity: micReady ? 1 : 0.6,
             }}
             onClick={() => {
+              requestRemoteAudioUnlock();
               setIsMuted((prev) => !prev);
             }}
           >
