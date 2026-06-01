@@ -152,6 +152,36 @@ function isUsablePeerConnection(pc: RTCPeerConnection | null | undefined): boole
   return pc.connectionState !== "closed" && pc.connectionState !== "failed";
 }
 
+function isPeerTransportHealthy(
+  pc: RTCPeerConnection | null | undefined
+): boolean {
+  if (!pc) return false;
+  return (
+    pc.connectionState === "connected" &&
+    (pc.iceConnectionState === "connected" ||
+      pc.iceConnectionState === "completed")
+  );
+}
+
+function buildPeerScopeSnapshot(
+  pcs: Map<string, RTCPeerConnection>,
+  getMedia: (remoteId: string) => { remoteTracksCount: number },
+  highlightRemoteId?: string
+): string {
+  const parts: string[] = [];
+
+  for (const [remoteId, pc] of pcs.entries()) {
+    const media = getMedia(remoteId);
+    const prefix = remoteId === highlightRemoteId ? "*" : "";
+    parts.push(
+      `${prefix}${compactDeviceId(remoteId)}:conn=${pc.connectionState}/` +
+        `ice=${pc.iceConnectionState}/sig=${pc.signalingState}/tracks=${media.remoteTracksCount}`
+    );
+  }
+
+  return parts.join("|") || "-";
+}
+
 export function usePeerConnections({
   sessionId,
   deviceId,
@@ -907,6 +937,7 @@ export function usePeerConnections({
       const reason = opts?.reason ?? "unspecified";
       const pc = pcsRef.current.get(remoteId);
       const hadPc = !!pc;
+      const prevPeerState = peerStatesRef.current.get(remoteId);
 
       if (pc) {
         try {
@@ -939,12 +970,17 @@ export function usePeerConnections({
       peerSignalTimestampsRef.current.delete(remoteId);
       peerMetaRef.current.delete(remoteId);
 
-      peerStatesRef.current.delete(remoteId);
+      if (preserveRemoteAudio && prevPeerState === "connected") {
+        peerStatesRef.current.set(remoteId, "connected");
+      } else {
+        peerStatesRef.current.delete(remoteId);
+      }
       emitPeerStates();
 
       const compact =
         `[voice-peer] close remote=${compactDeviceId(remoteId)} reason=${reason} ` +
-        `hadPc=${hadPc} preserveAudio=${preserveRemoteAudio} clearConnId=${shouldClearConnectionId}`;
+        `hadPc=${hadPc} preserveAudio=${preserveRemoteAudio} clearConnId=${shouldClearConnectionId} ` +
+        `${formatVoiceModeSuffix()}`;
 
       console.log(compact);
       recordCallReloadContext({ lastClosePeer: compact });
@@ -1030,7 +1066,8 @@ export function usePeerConnections({
       });
 
       console.log(
-        `[voice-peer] reconnect-scheduled remote=${compactDeviceId(remoteId)} reason=${reason} delayMs=${delay} owner=${deviceId < remoteId} ${formatVoiceModeSuffix()}`
+        `[voice-peer] reconnect-scheduled target=${compactDeviceId(remoteId)} reason=${reason} delayMs=${delay} owner=${deviceId < remoteId} ` +
+          `otherPeers=${buildPeerScopeSnapshot(pcsRef.current, getPeerMedia, remoteId)} ${formatVoiceModeSuffix()}`
       );
 
       const timer = window.setTimeout(() => {
@@ -1075,6 +1112,7 @@ export function usePeerConnections({
       localStreamRef,
       markRecoveryStart,
       setCurrentConnectionId,
+      getPeerMedia,
     ]
   );
 
@@ -1099,8 +1137,10 @@ export function usePeerConnections({
           elapsedMsSinceTrackEnded?: number;
           scheduledReconnectInMs?: number;
           reconnectScheduled?: boolean;
+          pc?: RTCPeerConnection | null;
         }
       ) => {
+        const pcForEvent = extra?.pc ?? pcsRef.current.get(remoteId) ?? null;
         logRemoteTrackEvent({
           sessionId,
           localDeviceId: deviceId,
@@ -1108,6 +1148,19 @@ export function usePeerConnections({
           event,
           trackKind: track.kind,
           trackId: track.id,
+          trackReadyState: track.readyState,
+          trackMuted: track.muted,
+          connectionState: pcForEvent?.connectionState ?? null,
+          iceConnectionState: pcForEvent?.iceConnectionState ?? null,
+          signalingState: pcForEvent?.signalingState ?? null,
+          otherPeersSnapshot:
+            event === "ended"
+              ? buildPeerScopeSnapshot(
+                  pcsRef.current,
+                  getPeerMedia,
+                  remoteId
+                )
+              : null,
           ...extra,
         });
       };
@@ -1178,9 +1231,15 @@ export function usePeerConnections({
 
         if (
           peerEverConnectedRef.current.has(remoteId) &&
-          voicePolicy.trackEndedSetConnecting
+          voicePolicy.trackEndedSetConnecting &&
+          !isPeerTransportHealthy(pcBefore)
         ) {
           setPeerStateRef.current(remoteId, "connecting");
+        } else if (isPeerTransportHealthy(pcBefore)) {
+          console.log(
+            `[voice-peer] track-ended-ui-hold target=${compactDeviceId(remoteId)} ` +
+              `reason=pc_still_connected ${formatVoiceModeSuffix()}`
+          );
         }
 
         const reconnectScheduled = Boolean(
@@ -1224,10 +1283,11 @@ export function usePeerConnections({
         emitTrackEvent("ended", {
           scheduledReconnectInMs: voicePolicy.trackEndedReconnectMs,
           reconnectScheduled,
+          pc: pcBefore,
         });
       };
     },
-    [deviceId, emitMeshSummary, finalizeRecovery, markRecoveryStart, observePeerField, sessionId, syncRemoteAudioFromPc, touchPeerSignal]
+    [deviceId, emitMeshSummary, finalizeRecovery, getPeerMedia, markRecoveryStart, observePeerField, sessionId, syncRemoteAudioFromPc, touchPeerSignal]
   );
 
   useEffect(() => {
@@ -1790,6 +1850,10 @@ export function usePeerConnections({
       const force = opts?.force === true;
       const mode = isOfferOwner ? "offer" : "passive_wait_offer";
 
+      console.log(
+        `[voice-peer] ensure-start target=${compact} reason=${reason} force=${force} ${formatVoiceModeSuffix()}`
+      );
+
       if (!micReady) {
         logEnsureSkipped(remoteId, reason, "mic_not_ready");
         return false;
@@ -1907,7 +1971,9 @@ export function usePeerConnections({
 
       console.log(
         `[voice-peer] recoverMissingPcsFromMesh start trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
-          `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState}`
+          `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState} ` +
+          `missingRemotes=${missing.map((peer) => compactDeviceId(peer.remoteDeviceId)).join(",") || "-"} ` +
+          `${formatVoiceModeSuffix()}`
       );
 
       if (missing.length === 0) {
@@ -2075,6 +2141,18 @@ export function usePeerConnections({
       }
     }
 
+    const logHealSkipHealthy = (
+      remoteId: string,
+      reason: string,
+      pc: RTCPeerConnection | null | undefined
+    ) => {
+      console.log(
+        `[voice-peer] heal-skip-healthy target=${compactDeviceId(remoteId)} reason=${reason} ` +
+          `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"} ` +
+          `sig=${pc?.signalingState ?? "-"} ${formatVoiceModeSuffix()}`
+      );
+    };
+
     for (const remoteId of remoteIds) {
       const pc = pcsRef.current.get(remoteId);
       const hasStream = hasLiveRemoteStream(remoteId);
@@ -2082,9 +2160,15 @@ export function usePeerConnections({
       const blockReason = getReconnectBlockReason(remoteId);
       const inCall = isRemoteInCall(remoteId);
       const needsPc = peerNeedsPc(remoteId);
+      const transportHealthy = isPeerTransportHealthy(pc);
 
       if (hasStream && connected) {
         setPeerState(remoteId, "connected");
+        continue;
+      }
+
+      if (transportHealthy && !hasStream) {
+        logHealSkipHealthy(remoteId, "connected_pc_waiting_stream", pc);
         continue;
       }
 
@@ -2115,6 +2199,11 @@ export function usePeerConnections({
       }
 
       if (trackEndedAtRef.current.has(remoteId) && !hasStream) {
+        if (transportHealthy) {
+          logHealSkipHealthy(remoteId, "track_ended_pc_still_connected", pc);
+          continue;
+        }
+
         planned.push({
           remoteId,
           action: "reconnect",
@@ -2138,6 +2227,11 @@ export function usePeerConnections({
           pc.iceConnectionState === "failed" ||
           pc.connectionState === "connecting")
       ) {
+        if (transportHealthy) {
+          logHealSkipHealthy(remoteId, "stream_without_connected_pc_but_healthy", pc);
+          continue;
+        }
+
         planned.push({
           remoteId,
           action: "reconnect",
@@ -2161,6 +2255,11 @@ export function usePeerConnections({
         pc.iceConnectionState === "disconnected";
 
       if (failed) {
+        if (transportHealthy) {
+          logHealSkipHealthy(remoteId, "failed_check_but_transport_healthy", pc);
+          continue;
+        }
+
         planned.push({
           remoteId,
           action: "reconnect",
@@ -2201,6 +2300,11 @@ export function usePeerConnections({
       }
 
       if (!hasStream && !offeredPeersRef.current.has(remoteId)) {
+        if (transportHealthy) {
+          logHealSkipHealthy(remoteId, "no_stream_no_offer_pc_connected", pc);
+          continue;
+        }
+
         planned.push({
           remoteId,
           action: pc ? "retry-offer" : "create",
@@ -2221,6 +2325,13 @@ export function usePeerConnections({
     }
 
     const actionable = planned.filter((item) => item.action !== "deduped");
+
+    console.log(
+      `[voice-peer] heal-plan ${formatVoiceModeSuffix()} ` +
+        `actionable=${actionable.map((item) => `${compactDeviceId(item.remoteId)}:${item.action}:${item.reason}`).join("|") || "none"} ` +
+        `deduped=${planned.filter((item) => item.action === "deduped").map((item) => `${compactDeviceId(item.remoteId)}:${item.reason}`).join("|") || "none"} ` +
+        `scope=${buildPeerScopeSnapshot(pcsRef.current, getPeerMedia)}`
+    );
 
     const runMissingPcSafetyNet = () => {
       for (const remoteId of remoteIds) {

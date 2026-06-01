@@ -128,14 +128,27 @@ export function logRemoteTrackEvent(params: {
   event: "ontrack" | "mute" | "unmute" | "ended";
   trackKind: string;
   trackId: string;
+  trackReadyState?: string | null;
+  trackMuted?: boolean | null;
+  connectionState?: RTCPeerConnectionState | null;
+  iceConnectionState?: RTCIceConnectionState | null;
+  signalingState?: RTCSignalingState | null;
+  otherPeersSnapshot?: string | null;
   elapsedMsSinceTrackEnded?: number;
   scheduledReconnectInMs?: number;
   reconnectScheduled?: boolean;
 }) {
+  const remote = compactDeviceId(params.remoteDeviceId);
+
   const compact =
-    `[voice-peer] track remote=${compactDeviceId(params.remoteDeviceId)} ` +
-    `event=${params.event} kind=${params.trackKind} id=${params.trackId.slice(-6)} ` +
-    formatVoiceModeSuffix();
+    params.event === "ended"
+      ? `[voice-peer] remote-track event=ended remote=${remote} ${formatVoiceModeSuffix()} ` +
+        `trackReady=${params.trackReadyState ?? "-"} trackMuted=${params.trackMuted ?? "-"} ` +
+        `conn=${params.connectionState ?? "-"} ice=${params.iceConnectionState ?? "-"} ` +
+        `sig=${params.signalingState ?? "-"} otherPeers=${params.otherPeersSnapshot ?? "-"}`
+      : `[voice-peer] track remote=${remote} ` +
+        `event=${params.event} kind=${params.trackKind} id=${params.trackId.slice(-6)} ` +
+        formatVoiceModeSuffix();
 
   recordCallReloadContext({ lastRemoteTrackEvent: compact });
 
@@ -145,6 +158,22 @@ export function logRemoteTrackEvent(params: {
     event: params.event,
     trackKind: params.trackKind,
     trackId: params.trackId,
+    ...(params.trackReadyState != null
+      ? { trackReadyState: params.trackReadyState }
+      : {}),
+    ...(params.trackMuted != null ? { trackMuted: params.trackMuted } : {}),
+    ...(params.connectionState != null
+      ? { connectionState: params.connectionState }
+      : {}),
+    ...(params.iceConnectionState != null
+      ? { iceConnectionState: params.iceConnectionState }
+      : {}),
+    ...(params.signalingState != null
+      ? { signalingState: params.signalingState }
+      : {}),
+    ...(params.otherPeersSnapshot != null
+      ? { otherPeersSnapshot: params.otherPeersSnapshot }
+      : {}),
     ...(params.elapsedMsSinceTrackEnded != null
       ? { elapsedMsSinceTrackEnded: params.elapsedMsSinceTrackEnded }
       : {}),
