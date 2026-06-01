@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   fetchMemberProfile,
   getMemberAvatarUrl,
@@ -16,26 +16,43 @@ import {
   PROFILE_UNSET_LABEL,
 } from "@/lib/profileClient";
 import { withDev } from "@/lib/withDev";
+import {
+  buildCurrentPathReturnTo,
+  buildProfileEditPath,
+  sanitizeReturnTo,
+} from "@/lib/profileNavigation";
 
 type MemberProfileModalProps = {
   target: MemberProfileTarget | null;
   onClose: () => void;
+  returnTo?: string;
 };
 
 export default function MemberProfileModal({
   target,
   onClose,
+  returnTo,
 }: MemberProfileModalProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [photoPath, setPhotoPath] = useState<string | null>(null);
   const [age, setAge] = useState<number | null>(null);
+  const [showAgeSetting, setShowAgeSetting] = useState(true);
   const [gender, setGender] = useState<string | null>(null);
   const [hobbies, setHobbies] = useState<string | null>(null);
   const [bio, setBio] = useState<string | null>(null);
   const [profileComplete, setProfileComplete] = useState(false);
+
+  const profileEditHref = useMemo(() => {
+    const safeReturnTo = sanitizeReturnTo(
+      returnTo ?? buildCurrentPathReturnTo(pathname, searchParams.toString())
+    );
+    return withDev(buildProfileEditPath(safeReturnTo));
+  }, [pathname, returnTo, searchParams]);
 
   useEffect(() => {
     if (!target || !isValidMemberProfileTarget(target)) return;
@@ -63,6 +80,7 @@ export default function MemberProfileModal({
       setDisplayName("");
       setPhotoPath(null);
       setAge(null);
+      setShowAgeSetting(true);
       setGender(null);
       setHobbies(null);
       setBio(null);
@@ -79,6 +97,7 @@ export default function MemberProfileModal({
     );
     setPhotoPath(target.photoPath ?? null);
     setAge(null);
+    setShowAgeSetting(true);
     setGender(null);
     setHobbies(null);
     setBio(null);
@@ -101,6 +120,7 @@ export default function MemberProfileModal({
         );
         setPhotoPath(profile.photo_path);
         setAge(profile.age);
+        setShowAgeSetting(profile.show_age !== false);
         setGender(profile.gender);
         setHobbies(profile.hobbies);
         setBio(profile.bio);
@@ -132,6 +152,12 @@ export default function MemberProfileModal({
   const genderLabel = formatProfileGenderLabel(gender, profileComplete);
   const hobbiesLabel = formatOptionalProfileText(hobbies);
   const bioLabel = formatOptionalProfileText(bio);
+  const showAgeRow = isSelf ? showAgeSetting : age != null;
+  const showGenderRow = isSelf || genderLabel !== PROFILE_UNSET_LABEL;
+  const showHobbiesRow =
+    isSelf || (hobbiesLabel !== PROFILE_UNSET_LABEL && Boolean(hobbies?.trim()));
+  const showBioRow =
+    isSelf || (bioLabel !== PROFILE_UNSET_LABEL && Boolean(bio?.trim()));
   const unsetStyle = { color: "#6b7280" as const };
   const setStyle = { color: "#111827" as const };
 
@@ -265,86 +291,83 @@ export default function MemberProfileModal({
               gap: 12,
             }}
           >
-            <div>
-              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-                年齢
-              </dt>
-              <dd
-                style={{
-                  margin: "4px 0 0",
-                  fontSize: 15,
-                  fontWeight: 800,
-                  ...(ageLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
-                }}
-              >
-                {ageLabel}
-              </dd>
-              <dd
-                style={{
-                  margin: "6px 0 0",
-                  fontSize: 11,
-                  color: "#9ca3af",
-                  fontWeight: 600,
-                  lineHeight: 1.5,
-                }}
-              >
-                年齢はプロフィール登録情報に基づきます
-              </dd>
-            </div>
+            {showAgeRow ? (
+              <div>
+                <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                  年齢
+                </dt>
+                <dd
+                  style={{
+                    margin: "4px 0 0",
+                    fontSize: 15,
+                    fontWeight: 800,
+                    ...(ageLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                  }}
+                >
+                  {ageLabel}
+                </dd>
+              </div>
+            ) : null}
 
-            <div>
-              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-                性別
-              </dt>
-              <dd
-                style={{
-                  margin: "4px 0 0",
-                  fontSize: 15,
-                  fontWeight: 800,
-                  ...(genderLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
-                }}
-              >
-                {genderLabel}
-              </dd>
-            </div>
+            {showGenderRow ? (
+              <div>
+                <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                  性別
+                </dt>
+                <dd
+                  style={{
+                    margin: "4px 0 0",
+                    fontSize: 15,
+                    fontWeight: 800,
+                    ...(genderLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                  }}
+                >
+                  {genderLabel}
+                </dd>
+              </div>
+            ) : null}
 
-            <div>
-              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-                趣味
-              </dt>
-              <dd
-                style={{
-                  margin: "4px 0 0",
-                  fontSize: 14,
-                  fontWeight: 700,
-                  lineHeight: 1.6,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  ...(hobbiesLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
-                }}
-              >
-                {hobbiesLabel}
-              </dd>
-            </div>
+            {showHobbiesRow ? (
+              <div>
+                <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                  趣味
+                </dt>
+                <dd
+                  style={{
+                    margin: "4px 0 0",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    lineHeight: 1.6,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    ...(hobbiesLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                  }}
+                >
+                  {hobbiesLabel}
+                </dd>
+              </div>
+            ) : null}
 
-            <div>
-              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-                ひとこと
-              </dt>
-              <dd
-                style={{
-                  margin: "4px 0 0",
-                  fontSize: 14,
-                  fontWeight: 700,
-                  lineHeight: 1.6,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  ...(bioLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
-                }}
-              >
-                {bioLabel}
-              </dd>
-            </div>
+            {showBioRow ? (
+              <div>
+                <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                  ひとこと
+                </dt>
+                <dd
+                  style={{
+                    margin: "4px 0 0",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    lineHeight: 1.6,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    ...(bioLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                  }}
+                >
+                  {bioLabel}
+                </dd>
+              </div>
+            ) : null}
           </dl>
         ) : null}
 
@@ -354,7 +377,7 @@ export default function MemberProfileModal({
               type="button"
               onClick={() => {
                 onClose();
-                router.push(withDev("/profile"));
+                router.push(profileEditHref);
               }}
               style={{
                 width: "100%",

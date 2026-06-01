@@ -10,6 +10,10 @@ import {
   isUserProfileComplete,
   isValidProfileGender,
 } from "@/lib/profileClient";
+import {
+  buildProfileEditPath,
+  sanitizeReturnTo,
+} from "@/lib/profileNavigation";
 
 type Gender = "male" | "female" | "";
 
@@ -21,6 +25,7 @@ type Profile = {
   photo_path: string | null;
   hobbies?: string | null;
   bio?: string | null;
+  show_age?: boolean | null;
 };
 
 type ProfileResponse = {
@@ -198,6 +203,11 @@ export default function ProfileClient() {
     return `${path}${path.includes("?") ? "&" : "?"}${devQuery}`;
   };
 
+  const returnTo = useMemo(
+    () => sanitizeReturnTo(searchParams.get("returnTo")),
+    [searchParams]
+  );
+
   const [deviceId, setDeviceId] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -206,6 +216,7 @@ export default function ProfileClient() {
   const [gender, setGender] = useState<Gender>("");
   const [hobbies, setHobbies] = useState("");
   const [bio, setBio] = useState("");
+  const [showAge, setShowAge] = useState(true);
   const [guardianConsent, setGuardianConsent] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
 
@@ -252,6 +263,7 @@ export default function ProfileClient() {
       setGender("");
       setHobbies("");
       setBio("");
+      setShowAge(true);
       setHasExistingProfile(false);
       setGuardianConsent(false);
       setTermsAgreed(false);
@@ -299,6 +311,7 @@ export default function ProfileClient() {
         );
         setHobbies(String(profile.hobbies ?? "").trim());
         setBio(String(profile.bio ?? "").trim());
+        setShowAge(profile.show_age !== false);
         setPhotoPath(profile.photo_path ?? null);
 
         console.log("[profile] loaded profile", {
@@ -420,6 +433,7 @@ export default function ProfileClient() {
       fd.append("gender", gender);
       fd.append("hobbies", hobbies.trim());
       fd.append("bio", bio.trim());
+      fd.append("show_age", showAge ? "true" : "false");
       fd.append("terms_agreed", termsAgreed ? "true" : "false");
       fd.append("guardian_consent", isMinor && guardianConsent ? "true" : "false");
 
@@ -482,7 +496,7 @@ export default function ProfileClient() {
       writeStoredDisplayName(deviceId, displayName.trim());
 
       alert("プロフィールを保存しました");
-      router.push(withDev("/class/select"));
+      router.push(withDev(returnTo));
     } catch (e: any) {
       console.error("[profile] submit failed", e);
       setErrorMsg(e?.message ?? "保存に失敗しました。");
@@ -577,7 +591,7 @@ export default function ProfileClient() {
 
         {age !== null && <p style={{ margin: 0, color: "#555" }}>年齢：{age}歳</p>}
         <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
-          生年月日は年齢表示と18歳以上確認のために使用されます。プロフィールには実年齢が表示されます。
+          プロフィールには生年月日ではなく、年齢のみ表示されます。
         </p>
 
         {isMinor && minorsEnabled !== true && (
@@ -629,6 +643,46 @@ export default function ProfileClient() {
             </label>
           </div>
         )}
+      </div>
+
+      <div
+        style={{
+          padding: 12,
+          border: "1px solid #e5e7eb",
+          borderRadius: 10,
+          background: "#fafafa",
+        }}
+      >
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            lineHeight: 1.6,
+            fontWeight: 700,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={showAge}
+            onChange={(e) => setShowAge(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            プロフィールに年齢を表示する
+            <span
+              style={{
+                display: "block",
+                marginTop: 4,
+                fontSize: 12,
+                color: "#6b7280",
+                fontWeight: 600,
+              }}
+            >
+              OFFにすると、プロフィール詳細では年齢が表示されません。
+            </span>
+          </span>
+        </label>
       </div>
 
       <div style={{ display: "grid", gap: 6 }}>
@@ -784,7 +838,7 @@ export default function ProfileClient() {
 
         <button
           type="button"
-          onClick={() => router.push(withDev("/class/select"))}
+          onClick={() => router.push(withDev(returnTo))}
           style={{
             padding: "10px 14px",
             border: "1px solid #ccc",

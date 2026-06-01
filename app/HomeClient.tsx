@@ -36,6 +36,7 @@ import {
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { isUserProfileComplete } from "@/lib/profileClient";
+import { buildProfileEditPath } from "@/lib/profileNavigation";
 
 type Profile = {
   device_id: string;
@@ -1097,6 +1098,22 @@ return () => {
 
   const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
   const profileComplete = isUserProfileComplete(profile);
+  const hasJoinedClasses = visible.length > 0;
+
+  function countActiveMembers(
+    members: ClassMember[],
+    presenceMap: Record<string, PresenceRow>
+  ) {
+    return members.filter((m) => {
+      const status = getEffectiveStatus(presenceMap[m.device_id]);
+      return status === "waiting" || status === "active";
+    }).length;
+  }
+
+  function joinedClassEnterLabel(opening: boolean) {
+    if (opening) return "入っています…";
+    return "今のクラスに入る";
+  }
 
   async function toggleNotifications() {
     if (typeof window === "undefined") return;
@@ -1403,120 +1420,71 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   }
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div style={{ display: "grid", gap: 20 }}>
       <p style={{ margin: 0 }}>
         ようこそ、<b>{welcomeName}</b> さん
       </p>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button
-          onClick={() => router.push(withDev("/class/select"))}
-          style={{
-            padding: "12px 16px",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            background: "#111",
-            color: "#fff",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          はじめる（入る場所を選ぶ）
-        </button>
-
-        <button
-          onClick={quickJoinFreeAndOpen}
-          disabled={quickBusy || !joinWindowOpen}
-          style={{
-            padding: "12px 16px",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            background: !joinWindowOpen ? "#e5e5e5" : "#fff",
-            color: !joinWindowOpen ? "#666" : "#111",
-            fontWeight: 900,
-            cursor: quickBusy || !joinWindowOpen ? "default" : "pointer",
-            opacity: quickBusy || !joinWindowOpen ? 0.7 : 1,
-          }}
-        >
-          {quickBusy
-            ? "参加中…"
-            : !joinWindowOpen
-              ? "入校受付時間外"
-              : "今すぐ入る"}
-        </button>
-
-        <button
-          onClick={() => void toggleNotifications()}
-          style={{
-            padding: "12px 16px",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            background: notificationsEnabled ? "#dcfce7" : "#fff",
-            color: "#111",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          {notificationsEnabled ? "Push通知OFF" : "Push通知を有効化"}
-        </button>
-
-        <button
-          onClick={() => router.push(withDev("/profile"))}
-          style={{
-            padding: "12px 16px",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            background: "#fff",
-            color: "#111",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          {profileComplete ? "プロフィール編集" : "プロフィール登録"}
-        </button>
-      </div>
-
-      {joinWindowText ? (
-        <div style={{ fontSize: 12, color: "#6b7280", fontWeight: 700 }}>
-          {joinWindowOpen ? joinWindowText : `${joinWindowText}（時間外）`}
-        </div>
+      {error ? (
+        <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>{error}</div>
       ) : null}
 
-      <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 12 }}>
-        <div style={{ fontWeight: 900, marginBottom: 8 }}>
-          {!joinWindowOpen && visible.length > 0
-            ? "今のクラスに入ろう"
-            : "自分のクラス"}
-        </div>
+      {hasJoinedClasses ? (
+        <section
+          style={{
+            padding: "18px 16px",
+            borderRadius: 18,
+            border: "2px solid #111827",
+            background: "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
+            boxShadow: "0 12px 32px rgba(15, 23, 42, 0.08)",
+          }}
+        >
+          <div style={{ marginBottom: 12 }}>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 22,
+                fontWeight: 900,
+                color: "#111827",
+                lineHeight: 1.3,
+              }}
+            >
+              今のクラスに戻る
+            </h2>
+            <p
+              style={{
+                margin: "8px 0 0",
+                fontSize: 13,
+                color: "#475569",
+                fontWeight: 700,
+                lineHeight: 1.6,
+              }}
+            >
+              {!joinWindowOpen
+                ? "現在は入校受付時間外ですが、所属中のクラスには入れます。"
+                : "所属中のクラスがあります。続きから話せます。"}
+            </p>
+          </div>
 
-        {!joinWindowOpen && visible.length > 0 ? (
-          <div
-            style={{
-              marginBottom: 10,
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #bfdbfe",
-              background: "#eff6ff",
-              color: "#1e40af",
-              fontSize: 12,
-              fontWeight: 700,
-              lineHeight: 1.6,
-            }}
-          >
-            所属中のクラスがあります。入校受付時間外でも、所属中のクラスには入れます。
-          </div>
-        ) : null}
+          {!joinWindowOpen ? (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid #bfdbfe",
+                background: "#eff6ff",
+                color: "#1e40af",
+                fontSize: 13,
+                fontWeight: 800,
+                lineHeight: 1.6,
+              }}
+            >
+              今のクラスにはいつでも戻れます。新規の入校は受付時間内にお試しください。
+            </div>
+          ) : null}
 
-        {error ? (
-          <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>
-            {error}
-          </div>
-        ) : visible.length === 0 ? (
-          <div style={{ color: "#6b7280", fontWeight: 800, fontSize: 13 }}>
-            まだありません。
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             {visible.map((c) => {
               const leaving = leavingClassId === c.id;
               const opening = openingClassId === c.id;
@@ -1533,47 +1501,63 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                   recruitmentSessionTtlMinutes,
                 });
               const classStatusPill = getClassStatusStyle(classStatusLabel);
+              const activeCount = countActiveMembers(members, presenceMap);
+              const avatarPreview = members.slice(0, 5);
 
               return (
                 <div
-                  key={`${c.id}`}
+                  key={c.id}
                   style={{
                     textAlign: "left",
-                    padding: "14px 14px",
-                    borderRadius: 14,
-                    border: "1px solid #ddd",
+                    padding: "16px",
+                    borderRadius: 16,
+                    border: "1px solid #cbd5e1",
                     background: "#fff",
+                    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.06)",
                   }}
                 >
                   <div
                     style={{
                       display: "flex",
-                      alignItems: "center",
+                      alignItems: "flex-start",
                       justifyContent: "space-between",
                       gap: 10,
                       flexWrap: "wrap",
                     }}
                   >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        flexWrap: "wrap",
-                      }}
-                    >
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div
                         style={{
                           fontWeight: 900,
                           color: "#111",
-                          fontSize: 24,
+                          fontSize: 26,
                           lineHeight: 1.2,
                           letterSpacing: "0.02em",
                         }}
                       >
                         {classLabel}
                       </div>
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontSize: 13,
+                          color: "#64748b",
+                          fontWeight: 800,
+                        }}
+                      >
+                        参加者 {members.length}人
+                        {activeCount > 0 ? ` · ${activeCount}人がオンライン` : ""}
+                      </div>
+                    </div>
 
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        flexWrap: "wrap",
+                        justifyContent: "flex-end",
+                      }}
+                    >
                       {Number(c.unread_count ?? 0) > 0 ? (
                         <span
                           style={{
@@ -1590,21 +1574,63 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                           未読 {Number(c.unread_count)}件
                         </span>
                       ) : null}
+                      <span
+                        style={{
+                          ...classStatusPill,
+                          fontSize: 12,
+                          fontWeight: 900,
+                          padding: "6px 10px",
+                          borderRadius: 999,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {classStatusLabel}
+                      </span>
                     </div>
+                  </div>
 
-                    <span
+                  {avatarPreview.length > 0 ? (
+                    <div
                       style={{
-                        ...classStatusPill,
-                        fontSize: 12,
-                        fontWeight: 900,
-                        padding: "6px 10px",
-                        borderRadius: 999,
-                        whiteSpace: "nowrap",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginTop: 12,
+                        flexWrap: "wrap",
                       }}
                     >
-                      {classStatusLabel}
-                    </span>
-                  </div>
+                      {avatarPreview.map((m) => (
+                        <img
+                          key={`${c.id}-avatar-${m.device_id}`}
+                          src={getMemberAvatarUrl(m.photo_path)}
+                          alt={formatMemberDisplayName(m)}
+                          onError={(event) => {
+                            event.currentTarget.onerror = null;
+                            event.currentTarget.src = "/default-avatar.jpg";
+                          }}
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: "50%",
+                            objectFit: "cover",
+                            border: "2px solid #fff",
+                            boxShadow: "0 0 0 1px #e2e8f0",
+                          }}
+                        />
+                      ))}
+                      {members.length > avatarPreview.length ? (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: "#64748b",
+                            fontWeight: 800,
+                          }}
+                        >
+                          +{members.length - avatarPreview.length}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {c.description ? (
                     <div
@@ -1612,7 +1638,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                         fontSize: 12,
                         color: "#6b7280",
                         fontWeight: 700,
-                        marginTop: 8,
+                        marginTop: 10,
                       }}
                     >
                       {c.description}
@@ -1626,9 +1652,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     onUpdated={(plan) => {
                       setClasses((prev) =>
                         prev.map((row) =>
-                          row.id === c.id
-                            ? { ...row, next_meeting_plan: plan }
-                            : row
+                          row.id === c.id ? { ...row, next_meeting_plan: plan } : row
                         )
                       );
                     }}
@@ -1651,17 +1675,47 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     }}
                   />
 
-                  <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 12, fontWeight: 900, color: "#111" }}>
-                      クラスメート
-                    </div>
+                  <button
+                    type="button"
+                    onClick={() => void openClass(c)}
+                    disabled={opening}
+                    style={{
+                      width: "100%",
+                      marginTop: 14,
+                      padding: "14px 16px",
+                      borderRadius: 12,
+                      border: "none",
+                      background: "#111827",
+                      color: "#fff",
+                      fontWeight: 900,
+                      fontSize: 15,
+                      cursor: opening ? "default" : "pointer",
+                      opacity: opening ? 0.75 : 1,
+                      boxShadow: "0 4px 14px rgba(15, 23, 42, 0.18)",
+                    }}
+                  >
+                    {joinedClassEnterLabel(opening)}
+                  </button>
+
+                  <details style={{ marginTop: 12 }}>
+                    <summary
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 900,
+                        color: "#475569",
+                        cursor: "pointer",
+                        userSelect: "none",
+                      }}
+                    >
+                      クラスメートを見る（{members.length}人）
+                    </summary>
 
                     {members.length === 0 ? (
                       <div
                         style={{
                           fontSize: 12,
                           color: "#6b7280",
-                          marginTop: 6,
+                          marginTop: 8,
                         }}
                       >
                         まだ表示できるクラスメートがいません
@@ -1670,9 +1724,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                       <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                         {members.map((m) => {
                           const isMe = m.device_id === deviceId;
-                          const memberDeviceId = normalizeMemberDeviceId(
-                            m.device_id
-                          );
+                          const memberDeviceId = normalizeMemberDeviceId(m.device_id);
                           const rawPresence = presenceMap[m.device_id];
                           const presence = getEffectiveStatus(rawPresence);
                           const pill = statusStyle(presence);
@@ -1700,7 +1752,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                     deviceId: memberDeviceId,
                                     viewerDeviceId: deviceId,
                                     classId: c.id,
-                                    sessionId: String(c.session_id ?? "").trim() || undefined,
+                                    sessionId:
+                                      String(c.session_id ?? "").trim() || undefined,
                                     displayName: m.display_name,
                                     photoPath: m.photo_path ?? null,
                                   });
@@ -1761,59 +1814,151 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                         })}
                       </div>
                     )}
-                  </div>
+                  </details>
 
-                  <div
+                  <button
+                    type="button"
+                    onClick={() => void leaveClass(c)}
+                    disabled={leaving}
                     style={{
-                      display: "flex",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      marginTop: 12,
+                      marginTop: 10,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #fecaca",
+                      background: "#fff",
+                      color: "#b91c1c",
+                      fontWeight: 800,
+                      fontSize: 12,
+                      cursor: leaving ? "default" : "pointer",
+                      opacity: leaving ? 0.7 : 1,
                     }}
                   >
-                    <button
-                      onClick={() => void openClass(c)}
-                      disabled={opening}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        border: "1px solid #ddd",
-                        background: "#111",
-                        color: "#fff",
-                        fontWeight: 900,
-                        cursor: opening ? "default" : "pointer",
-                        opacity: opening ? 0.7 : 1,
-                      }}
-                    >
-                      {opening
-                        ? "入っています…"
-                        : !joinWindowOpen
-                          ? "今のクラスに入る"
-                          : "入る"}
-                    </button>
-
-                    <button
-                      onClick={() => void leaveClass(c)}
-                      disabled={leaving}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 10,
-                        border: "1px solid #fca5a5",
-                        background: "#fff",
-                        color: "#b91c1c",
-                        fontWeight: 900,
-                        cursor: leaving ? "default" : "pointer",
-                        opacity: leaving ? 0.7 : 1,
-                      }}
-                    >
-                      {leaving ? "抜けています…" : "抜ける"}
-                    </button>
-                  </div>
+                    {leaving ? "抜けています…" : "クラスから抜ける"}
+                  </button>
                 </div>
               );
             })}
           </div>
-        )}
+        </section>
+      ) : null}
+
+      <section
+        style={{
+          padding: "16px",
+          borderRadius: 16,
+          border: "1px solid #e5e7eb",
+          background: "#fafafa",
+        }}
+      >
+        <h2
+          style={{
+            margin: "0 0 8px",
+            fontSize: 16,
+            fontWeight: 900,
+            color: "#374151",
+          }}
+        >
+          新しく参加する
+        </h2>
+        <p
+          style={{
+            margin: "0 0 14px",
+            fontSize: 12,
+            color: "#6b7280",
+            fontWeight: 700,
+            lineHeight: 1.6,
+          }}
+        >
+          初めて入る・別のクラスを探す場合はこちらです。
+          {!joinWindowOpen ? " 現在は入校受付時間外のため、新規参加はできません。" : ""}
+        </p>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={quickJoinFreeAndOpen}
+            disabled={quickBusy || !joinWindowOpen}
+            style={{
+              padding: "12px 16px",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: !joinWindowOpen ? "#e5e5e5" : "#111",
+              color: !joinWindowOpen ? "#666" : "#fff",
+              fontWeight: 900,
+              cursor: quickBusy || !joinWindowOpen ? "default" : "pointer",
+              opacity: quickBusy || !joinWindowOpen ? 0.75 : 1,
+            }}
+          >
+            {quickBusy
+              ? "参加中…"
+              : !joinWindowOpen
+                ? "入校受付時間外"
+                : "今すぐ入る"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => router.push(withDev("/class/select"))}
+            style={{
+              padding: "12px 16px",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: "#fff",
+              color: "#111",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            入る場所を選ぶ
+          </button>
+        </div>
+
+        {joinWindowText ? (
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 12,
+              color: "#6b7280",
+              fontWeight: 700,
+            }}
+          >
+            {joinWindowOpen ? joinWindowText : `${joinWindowText}（時間外）`}
+          </div>
+        ) : null}
+      </section>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={() => void toggleNotifications()}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: notificationsEnabled ? "#dcfce7" : "#fff",
+            color: "#111",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          {notificationsEnabled ? "Push通知OFF" : "Push通知を有効化"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => router.push(withDev(buildProfileEditPath("/")))}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: "#fff",
+            color: "#111",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          {profileComplete ? "プロフィール編集" : "プロフィール登録"}
+        </button>
       </div>
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
-import { getAge } from "@/lib/age";
+import { getAgeFromBirthDate } from "@/lib/age";
 import { canViewMemberProfile } from "@/lib/memberProfileAccess";
 import { getMinorsEnabled } from "@/lib/minorsSettings";
 import {
   isUserProfileComplete,
-  resolveProfileDisplayAge,
+  normalizeProfileAge,
 } from "@/lib/profileClient";
 
 type ProfileRow = {
@@ -16,6 +16,7 @@ type ProfileRow = {
   photo_path: string | null;
   hobbies: string | null;
   bio: string | null;
+  show_age: boolean;
 };
 
 const MAX_OPTIONAL_TEXT_LENGTH = 500;
@@ -52,6 +53,16 @@ function normalizePhotoPath(photoPath: unknown) {
   return normalized || null;
 }
 
+function normalizeShowAge(value: unknown, fallback = true): boolean {
+  if (value === false || value === "false" || value === 0 || value === "0") {
+    return false;
+  }
+  if (value === true || value === "true" || value === 1 || value === "1") {
+    return true;
+  }
+  return fallback;
+}
+
 function toProfileResponse(row: Partial<ProfileRow> | null) {
   if (!row) return null;
 
@@ -63,12 +74,19 @@ function toProfileResponse(row: Partial<ProfileRow> | null) {
     photo_path: normalizePhotoPath(row.photo_path),
     hobbies: normalizeOptionalText(row.hobbies),
     bio: normalizeOptionalText(row.bio),
+    show_age: normalizeShowAge(row.show_age),
   };
 }
 
 function calcAge(birthDateISO: string): number | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDateISO)) return null;
-  return getAge(birthDateISO);
+  return getAgeFromBirthDate(birthDateISO);
+}
+
+function calcAgeFromProfile(
+  profile: ReturnType<typeof toProfileResponse>
+): number | null {
+  if (!profile?.birth_date) return null;
+  return normalizeProfileAge(calcAge(profile.birth_date));
 }
 
 function toPublicProfileResponse(
@@ -83,7 +101,7 @@ function toPublicProfileResponse(
     display_name: normalizeString(row.display_name) || null,
     photo_path: normalizePhotoPath(row.photo_path),
     gender: profileComplete ? normalizeString(row.gender) || null : null,
-    age: profileComplete ? age : null,
+    age,
     hobbies: normalizeOptionalText(row.hobbies),
     bio: normalizeOptionalText(row.bio),
     profile_complete: profileComplete,
@@ -121,7 +139,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio"
+      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age"
     )
     .eq("device_id", device_id)
     .maybeSingle();
@@ -177,9 +195,13 @@ export async function GET(req: Request) {
       );
     }
 
-    const rawAge = profile?.birth_date ? calcAge(profile.birth_date) : null;
-    const publicAge = resolveProfileDisplayAge(profile, rawAge);
-    const publicProfile = toPublicProfileResponse(data, publicAge, profileComplete);
+    const showAge = normalizeShowAge(data?.show_age);
+    const publicAge = showAge ? calcAgeFromProfile(profile) : null;
+    const publicProfile = toPublicProfileResponse(
+      data,
+      publicAge,
+      profileComplete
+    );
 
     console.log("[profile][GET] public result", {
       viewer_device_id,
@@ -210,7 +232,7 @@ export async function GET(req: Request) {
     profile_complete: profileComplete,
   });
 
-  const rawAge = profile?.birth_date ? calcAge(profile.birth_date) : null;
+  const selfAge = calcAgeFromProfile(profile);
 
   return NextResponse.json(
     {
@@ -218,7 +240,7 @@ export async function GET(req: Request) {
       profile: profile
         ? {
             ...profile,
-            age: profileComplete ? resolveProfileDisplayAge(profile, rawAge) : null,
+            age: selfAge,
             profile_complete: profileComplete,
           }
         : null,
@@ -244,6 +266,7 @@ export async function POST(req: Request) {
   const gender = normalizeString(form.get("gender"));
   const hobbies = normalizeOptionalText(form.get("hobbies"));
   const bio = normalizeOptionalText(form.get("bio"));
+  const show_age_input = form.get("show_age");
 
   const guardian_consent =
     normalizeString(form.get("guardian_consent")) === "true";
@@ -345,7 +368,7 @@ export async function POST(req: Request) {
 
   const { data: existingProfile, error: existingError } = await supabaseAdmin
     .from("user_profiles")
-    .select("photo_path")
+    .select("photo_path, show_age")
     .eq("device_id", device_id)
     .maybeSingle();
 
@@ -417,6 +440,11 @@ export async function POST(req: Request) {
     photo_path = objectPath;
   }
 
+  const show_age =
+    show_age_input === null || show_age_input === undefined || show_age_input === ""
+      ? normalizeShowAge(existingProfile?.show_age)
+      : normalizeShowAge(show_age_input);
+
   const payload: ProfileRow = {
     device_id,
     display_name,
@@ -425,6 +453,7 @@ export async function POST(req: Request) {
     photo_path,
     hobbies,
     bio,
+    show_age,
   };
 
   const { error: upsertError } = await supabaseAdmin
@@ -459,7 +488,7 @@ export async function POST(req: Request) {
   const { data: confirmData, error: confirmError } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio"
+      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age"
     )
     .eq("device_id", device_id)
     .maybeSingle();

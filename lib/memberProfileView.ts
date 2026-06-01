@@ -3,7 +3,8 @@ import { DISPLAY_NAME_FALLBACK } from "@/lib/resolveDisplayName";
 import {
   formatGenderLabel,
   isUserProfileComplete,
-  resolvePublicProfileAge,
+  normalizeProfileAge,
+  resolveProfileDisplayAge,
 } from "@/lib/profileClient";
 
 export { formatGenderLabel };
@@ -14,6 +15,7 @@ export type MemberProfileDetail = {
   photo_path: string | null;
   gender: string | null;
   age: number | null;
+  show_age: boolean;
   hobbies: string | null;
   bio: string | null;
   profile_complete: boolean;
@@ -111,6 +113,7 @@ export async function fetchMemberProfile(
     age?: number | null;
     hobbies?: string | null;
     bio?: string | null;
+    show_age?: boolean | null;
     profile_complete?: boolean;
   };
 
@@ -118,8 +121,13 @@ export async function fetchMemberProfile(
     json.profile_complete === true || profile.profile_complete === true;
 
   const displayName = String(profile.display_name ?? "").trim();
-  const age = resolvePublicProfileAge(profile, profile.age);
+  const showAgeSetting = profile.show_age !== false;
+  const age = showAgeSetting
+    ? normalizeProfileAge(resolveProfileDisplayAge(profile, profile.age))
+    : null;
   const gender = profileComplete ? profile.gender ?? null : null;
+  const hobbies = String(profile.hobbies ?? "").trim() || null;
+  const bio = String(profile.bio ?? "").trim() || null;
 
   return {
     device_id: normalizeMemberDeviceId(profile.device_id) || deviceId,
@@ -127,8 +135,9 @@ export async function fetchMemberProfile(
     photo_path: profile.photo_path ?? null,
     gender,
     age,
-    hobbies: String(profile.hobbies ?? "").trim() || null,
-    bio: String(profile.bio ?? "").trim() || null,
+    show_age: showAgeSetting,
+    hobbies,
+    bio,
     profile_complete: profileComplete,
   };
 }

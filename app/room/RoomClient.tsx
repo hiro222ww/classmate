@@ -19,6 +19,10 @@ import { pushRecentClass } from "@/lib/recentClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
+import {
+  buildCurrentPathReturnTo,
+  buildProfileEditPath,
+} from "@/lib/profileNavigation";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import {
   formatMemberDisplayName,
@@ -454,6 +458,16 @@ export default function RoomClient() {
   
   const invite = (searchParams.get("invite") ?? "").trim() === "1";
   const inviter = normalizeName(searchParams.get("inviter"));
+
+  const profileEditHref = useMemo(
+    () =>
+      withDev(
+        buildProfileEditPath(
+          buildCurrentPathReturnTo(pathname, searchParams.toString())
+        )
+      ),
+    [pathname, searchParams]
+  );
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -1321,7 +1335,7 @@ if (!shouldAutoStart) return;
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
-                onClick={() => router.push(withDev("/profile"))}
+                onClick={() => router.push(profileEditHref)}
                 style={{
                   padding: "8px 12px",
                   borderRadius: 10,
@@ -1612,6 +1626,7 @@ if (!shouldAutoStart) return;
       <MemberProfileModal
         target={profileTarget}
         onClose={() => setProfileTarget(null)}
+        returnTo={buildCurrentPathReturnTo(pathname, searchParams.toString())}
       />
     </>
   );

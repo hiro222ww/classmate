@@ -8,6 +8,7 @@ export type UserProfileFields = {
   photo_path?: string | null;
   hobbies?: string | null;
   bio?: string | null;
+  show_age?: boolean | null;
 };
 
 export const PROFILE_UNSET_LABEL = "未設定";
@@ -43,26 +44,31 @@ export function computeProfileAge(
   return getAgeFromBirthDate(birthDate);
 }
 
+export function normalizeProfileAge(age: unknown): number | null {
+  if (typeof age !== "number" || !Number.isFinite(age) || age < 0) {
+    return null;
+  }
+  return Math.floor(age);
+}
+
 export function resolveProfileDisplayAge(
   profile: UserProfileFields | null | undefined,
   explicitAge?: number | null
 ): number | null {
-  if (!isUserProfileComplete(profile)) return null;
+  const fromApi = normalizeProfileAge(explicitAge);
+  if (fromApi != null) return fromApi;
 
-  const rawAge =
-    typeof explicitAge === "number" && Number.isFinite(explicitAge)
-      ? explicitAge
-      : computeProfileAge(profile?.birth_date);
-
-  if (rawAge == null || !Number.isFinite(rawAge) || rawAge < 0) return null;
-  return Math.floor(rawAge);
+  const fromBirthDate = computeProfileAge(profile?.birth_date);
+  return normalizeProfileAge(fromBirthDate);
 }
 
 export const resolvePublicProfileAge = resolveProfileDisplayAge;
 
 export function formatProfileAgeLabel(age: number | null | undefined): string {
-  if (age == null || !Number.isFinite(age)) return PROFILE_UNSET_LABEL;
-  return `${Math.floor(age)}歳`;
+  if (age != null && Number.isFinite(age)) {
+    return `${Math.floor(age)}歳`;
+  }
+  return PROFILE_UNSET_LABEL;
 }
 
 export function formatGenderLabel(gender?: string | null) {

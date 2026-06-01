@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
+import {
+  buildCurrentPathReturnTo,
+  buildProfileEditPath,
+} from "@/lib/profileNavigation";
 import SessionMessages from "@/components/SessionMessages";
 import YouTubeWatchParty from "./YouTubeWatchParty";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
@@ -84,12 +88,23 @@ function getAvatarUrl(photoPath?: string | null) {
 
 export default function CallClient() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const sessionId = searchParams.get("sessionId") || "";
   const classId = searchParams.get("classId") || "";
 
   const [deviceId] = useState(() => getDeviceId());
+
+  const profileEditHref = useMemo(
+    () =>
+      withDev(
+        buildProfileEditPath(
+          buildCurrentPathReturnTo(pathname, searchParams.toString())
+        )
+      ),
+    [pathname, searchParams]
+  );
 
   const returnTo = useMemo(() => {
     return withDev("/class/select");
@@ -701,7 +716,7 @@ export default function CallClient() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={() => router.push(withDev("/profile"))}
+            onClick={() => router.push(profileEditHref)}
             style={{
               padding: "10px 14px",
               borderRadius: 12,
@@ -1102,6 +1117,7 @@ export default function CallClient() {
       <MemberProfileModal
         target={profileTarget}
         onClose={() => setProfileTarget(null)}
+        returnTo={buildCurrentPathReturnTo(pathname, searchParams.toString())}
       />
     </main>
   );

@@ -11,6 +11,7 @@ import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
 import { isUserProfileComplete } from "@/lib/profileClient";
+import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { tierName } from "@/lib/planTiers";
 
 type World = {
@@ -132,6 +133,57 @@ function Pill({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </span>
+  );
+}
+
+const AGE_PREF_HELP_TEXT =
+  "この範囲の相手だけが同じクラスの候補になります。";
+
+function AgePrefHelpButton() {
+  const [pinned, setPinned] = useState(false);
+  const [hover, setHover] = useState(false);
+  const visible = pinned || hover;
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <button
+        type="button"
+        aria-label="話したい相手の年齢について"
+        aria-expanded={visible}
+        onClick={() => setPinned((value) => !value)}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 999,
+          border: "1px solid #cbd5e1",
+          background: visible ? "#eff6ff" : "#fff",
+          color: "#2563eb",
+          fontWeight: 900,
+          fontSize: 12,
+          lineHeight: 1,
+          cursor: "pointer",
+          padding: 0,
+        }}
+      >
+        ⓘ
+      </button>
+      {visible ? (
+        <span
+          role="tooltip"
+          style={{
+            fontSize: 12,
+            color: "#475569",
+            fontWeight: 700,
+            lineHeight: 1.5,
+            maxWidth: 280,
+          }}
+        >
+          {AGE_PREF_HELP_TEXT}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -684,7 +736,7 @@ export default function SelectClient() {
     );
 
     if (ok) {
-      window.location.href = withDev("/profile");
+      window.location.href = withDev(buildProfileEditPath("/class/select"));
     }
 
     return true;
@@ -1002,7 +1054,7 @@ return;
           }}
         >
           <Link
-            href={withDev("/profile")}
+            href={withDev(buildProfileEditPath("/class/select"))}
             style={{
               padding: "8px 10px",
               borderRadius: 12,
@@ -1107,7 +1159,7 @@ return;
           クラスに参加するにはプロフィール登録が必要です。
           <div style={{ marginTop: 10 }}>
             <Link
-              href={withDev("/profile")}
+              href={withDev(buildProfileEditPath("/class/select"))}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -1145,10 +1197,87 @@ return;
             </>
           ) : null}
           <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700 }}>
-            テーマの確認や設定はできます。新規入校は受付時間内に「入る」を押してください。所属中のクラスへの再入室は Home から可能です。
+            テーマの確認や設定はできます。新規入校は受付時間内にお試しください。所属中のクラスへの再入室は、下の「今のクラスに戻る」から可能です。
           </div>
         </div>
       ) : null}
+
+      <section
+        style={{
+          marginTop: 12,
+          padding: "18px 16px",
+          borderRadius: 18,
+          border: !joinWindowOpen ? "2px solid #111827" : "1px solid #cbd5e1",
+          background: !joinWindowOpen
+            ? "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)"
+            : "#fff",
+          boxShadow: !joinWindowOpen
+            ? "0 12px 32px rgba(15, 23, 42, 0.08)"
+            : "0 4px 14px rgba(15, 23, 42, 0.05)",
+        }}
+      >
+        <h2
+          style={{
+            margin: 0,
+            fontSize: 20,
+            fontWeight: 900,
+            color: "#111827",
+            lineHeight: 1.3,
+          }}
+        >
+          今のクラスに戻る
+        </h2>
+        <p
+          style={{
+            margin: "8px 0 14px",
+            fontSize: 13,
+            color: "#475569",
+            fontWeight: 700,
+            lineHeight: 1.6,
+          }}
+        >
+          {!joinWindowOpen
+            ? "所属中のクラスには、入校受付時間外でも入れます。"
+            : "所属中のクラスがあれば、続きから話せます。"}
+        </p>
+        {!joinWindowOpen ? (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #bfdbfe",
+              background: "#eff6ff",
+              color: "#1e40af",
+              fontSize: 12,
+              fontWeight: 800,
+              lineHeight: 1.6,
+            }}
+          >
+            今のクラスにはいつでも戻れます。
+          </div>
+        ) : null}
+        <Link
+          href={withDev("/")}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "100%",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: "none",
+            background: "#111827",
+            color: "#fff",
+            textDecoration: "none",
+            fontWeight: 900,
+            fontSize: 15,
+            boxShadow: "0 4px 14px rgba(15, 23, 42, 0.18)",
+          }}
+        >
+          今所属しているクラスを見る
+        </Link>
+      </section>
 
       {joinLimitMessage ? (
         <div
@@ -1250,7 +1379,10 @@ return;
             flexWrap: "wrap",
           }}
         >
-          <strong>年齢</strong>
+          <strong style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            話したい相手の年齢
+            <AgePrefHelpButton />
+          </strong>
           <span style={{ fontSize: 12, color: "#666" }}>
             {Math.min(prefs.min_age, prefs.max_age)}〜{Math.max(prefs.min_age, prefs.max_age)}歳
           </span>
@@ -1300,36 +1432,12 @@ return;
       <section
         style={{
           marginTop: 14,
-          border: "1px solid #ddd",
+          border: "1px solid #e5e7eb",
           borderRadius: 18,
           padding: 16,
-          background: "#fff",
+          background: "#fafafa",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            marginBottom: 12,
-          }}
-        >
-          <Link
-            href={withDev("/")}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#f8f8f8",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            今所属しているクラスを見る
-          </Link>
-        </div>
-
         <div
           style={{
             display: "flex",
@@ -1340,7 +1448,18 @@ return;
           }}
         >
           <div>
-            <strong style={{ fontSize: 16 }}>今すぐ入る</strong>
+            <strong style={{ fontSize: 16 }}>新しく参加する</strong>
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 12,
+                color: "#6b7280",
+                fontWeight: 700,
+                lineHeight: 1.6,
+              }}
+            >
+              初めて入る・別のクラスを探す場合はこちらです。
+            </div>
           </div>
 
           <button
@@ -1366,7 +1485,7 @@ return;
               ? "プロフィール登録が必要"
               : !joinWindowOpen
                 ? "入校受付時間外"
-                : "入る"}
+                : "今すぐ入る"}
           </button>
         </div>
 

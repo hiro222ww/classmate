@@ -1,4 +1,32 @@
 export function getAge(birthDate: string, now = new Date()) {
+  const match = String(birthDate ?? "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (
+      !Number.isFinite(year) ||
+      !Number.isFinite(month) ||
+      !Number.isFinite(day) ||
+      month < 1 ||
+      month > 12 ||
+      day < 1 ||
+      day > 31
+    ) {
+      return null;
+    }
+
+    let age = now.getFullYear() - year;
+    const monthDiff = now.getMonth() + 1 - month;
+    const dayDiff = now.getDate() - day;
+
+    if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+      age -= 1;
+    }
+
+    return age;
+  }
+
   const d = new Date(birthDate);
   if (Number.isNaN(d.getTime())) return null;
 
