@@ -700,6 +700,23 @@ export default function CallClient() {
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
+            type="button"
+            onClick={() => router.push(withDev("/profile"))}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: "#fff",
+              color: "#374151",
+              fontWeight: 900,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            プロフィール編集
+          </button>
+
+          <button
             onClick={async () => {
               if (!sessionId || !classId) {
                 alert("まだ招待リンクを作れません。");

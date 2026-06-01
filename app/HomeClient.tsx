@@ -35,10 +35,13 @@ import {
 } from "@/lib/webPushClient";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
+import { isUserProfileComplete } from "@/lib/profileClient";
 
 type Profile = {
   device_id: string;
   display_name: string;
+  birth_date?: string | null;
+  gender?: string | null;
 };
 
 type MineClass = {
@@ -1093,6 +1096,7 @@ return () => {
   }, [classes]);
 
   const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
+  const profileComplete = isUserProfileComplete(profile);
 
   async function toggleNotifications() {
     if (typeof window === "undefined") return;
@@ -1237,15 +1241,6 @@ console.log("[home] resolved ids", { classId, sessionId, json });
   openClassRef.current = openClass;
 
   async function quickJoinFreeAndOpen() {
-    if (!joinWindowOpen) {
-      alert(
-        joinWindowText
-          ? `現在入校受付時間外です。${joinWindowText}`
-          : "現在入校受付時間外です。"
-      );
-      return;
-    }
-
     try {
       setQuickBusy(true);
 
@@ -1415,23 +1410,22 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button
           onClick={() => router.push(withDev("/class/select"))}
-          disabled={!joinWindowOpen}
           style={{
             padding: "12px 16px",
             borderRadius: 12,
             border: "1px solid #ddd",
-            background: !joinWindowOpen ? "#d4d4d4" : "#111",
-            color: !joinWindowOpen ? "#666" : "#fff",
+            background: "#111",
+            color: "#fff",
             fontWeight: 900,
-            cursor: !joinWindowOpen ? "default" : "pointer",
+            cursor: "pointer",
           }}
         >
-          {!joinWindowOpen ? "入校受付時間外" : "はじめる（入る場所を選ぶ）"}
+          はじめる（入る場所を選ぶ）
         </button>
 
         <button
           onClick={quickJoinFreeAndOpen}
-          disabled={quickBusy || !joinWindowOpen}
+          disabled={quickBusy}
           style={{
             padding: "12px 16px",
             borderRadius: 12,
@@ -1439,15 +1433,11 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             background: "#fff",
             color: "#111",
             fontWeight: 900,
-            cursor: quickBusy || !joinWindowOpen ? "default" : "pointer",
-            opacity: quickBusy || !joinWindowOpen ? 0.7 : 1,
+            cursor: quickBusy ? "default" : "pointer",
+            opacity: quickBusy ? 0.7 : 1,
           }}
         >
-          {quickBusy
-            ? "参加中…"
-            : !joinWindowOpen
-              ? "入校受付時間外"
-              : "フリーですぐ入る"}
+          {quickBusy ? "参加中…" : "今すぐ入る"}
         </button>
 
         <button
@@ -1465,22 +1455,20 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           {notificationsEnabled ? "Push通知OFF" : "Push通知を有効化"}
         </button>
 
-        {!profile ? (
-          <button
-            onClick={() => router.push(withDev("/profile"))}
-            style={{
-              padding: "12px 16px",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            プロフィール登録
-          </button>
-        ) : null}
+        <button
+          onClick={() => router.push(withDev("/profile"))}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 12,
+            border: "1px solid #ddd",
+            background: "#fff",
+            color: "#111",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          {profileComplete ? "プロフィール編集" : "プロフィール登録"}
+        </button>
       </div>
 
       {joinWindowText ? (

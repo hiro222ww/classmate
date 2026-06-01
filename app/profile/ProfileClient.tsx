@@ -6,8 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  isUserProfileComplete,
+  isValidProfileGender,
+} from "@/lib/profileClient";
 
-type Gender = "male" | "female";
+type Gender = "male" | "female" | "";
 
 type Profile = {
   device_id: string;
@@ -15,6 +19,8 @@ type Profile = {
   birth_date: string;
   gender: Gender;
   photo_path: string | null;
+  hobbies?: string | null;
+  bio?: string | null;
 };
 
 type ProfileResponse = {
@@ -197,7 +203,9 @@ export default function ProfileClient() {
 
   const [displayName, setDisplayName] = useState("");
   const [birthDate, setBirthDate] = useState("");
-  const [gender, setGender] = useState<Gender>("male");
+  const [gender, setGender] = useState<Gender>("");
+  const [hobbies, setHobbies] = useState("");
+  const [bio, setBio] = useState("");
   const [guardianConsent, setGuardianConsent] = useState(false);
   const [termsAgreed, setTermsAgreed] = useState(false);
 
@@ -209,6 +217,7 @@ export default function ProfileClient() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [minorsEnabled, setMinorsEnabled] = useState(false);
+  const [hasExistingProfile, setHasExistingProfile] = useState(false);
 
   const age = useMemo(() => calcAge(birthDate), [birthDate]);
   const isMinor = age !== null && age < 18;
@@ -240,7 +249,10 @@ export default function ProfileClient() {
       setErrorMsg("");
       setDisplayName("");
       setBirthDate("");
-      setGender("male");
+      setGender("");
+      setHobbies("");
+      setBio("");
+      setHasExistingProfile(false);
       setGuardianConsent(false);
       setTermsAgreed(false);
       setPhotoFile(null);
@@ -277,11 +289,16 @@ export default function ProfileClient() {
 
         if (cancelled || !profile) return;
 
+        setHasExistingProfile(isUserProfileComplete(profile));
         setDisplayName(profile.display_name ?? "");
         setBirthDate(
           isValidISODateString(profile.birth_date) ? profile.birth_date : ""
         );
-        setGender((profile.gender as Gender) ?? "male");
+        setGender(
+          isValidProfileGender(profile.gender) ? profile.gender : ""
+        );
+        setHobbies(String(profile.hobbies ?? "").trim());
+        setBio(String(profile.bio ?? "").trim());
         setPhotoPath(profile.photo_path ?? null);
 
         console.log("[profile] loaded profile", {
@@ -401,6 +418,8 @@ export default function ProfileClient() {
       fd.append("display_name", displayName.trim());
       fd.append("birth_date", birthDate);
       fd.append("gender", gender);
+      fd.append("hobbies", hobbies.trim());
+      fd.append("bio", bio.trim());
       fd.append("terms_agreed", termsAgreed ? "true" : "false");
       fd.append("guardian_consent", isMinor && guardianConsent ? "true" : "false");
 
@@ -478,6 +497,12 @@ export default function ProfileClient() {
 
   return (
     <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
+      <p style={{ margin: 0, opacity: 0.7, fontSize: 13, lineHeight: 1.6 }}>
+        {hasExistingProfile
+          ? "登録済みのプロフィールを更新できます。"
+          : "ニックネーム・生年月日・性別を登録してください。"}
+      </p>
+
       {isDevFeatureEnabled() && (
         <div
           style={{
@@ -551,6 +576,9 @@ export default function ProfileClient() {
         />
 
         {age !== null && <p style={{ margin: 0, color: "#555" }}>年齢：{age}歳</p>}
+        <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
+          生年月日は年齢表示と18歳以上確認のために使用されます。プロフィールには実年齢が表示されます。
+        </p>
 
         {isMinor && minorsEnabled !== true && (
           <div
@@ -604,6 +632,42 @@ export default function ProfileClient() {
       </div>
 
       <div style={{ display: "grid", gap: 6 }}>
+        <label style={{ fontWeight: 700 }}>趣味（任意）</label>
+        <textarea
+          value={hobbies}
+          onChange={(e) => setHobbies(e.target.value)}
+          placeholder="例：読書、散歩、ゲーム"
+          rows={3}
+          maxLength={500}
+          style={{
+            padding: 10,
+            border: "1px solid #ccc",
+            borderRadius: 8,
+            resize: "vertical",
+            fontFamily: "inherit",
+          }}
+        />
+      </div>
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <label style={{ fontWeight: 700 }}>ひとこと / 自己紹介（任意）</label>
+        <textarea
+          value={bio}
+          onChange={(e) => setBio(e.target.value)}
+          placeholder="例：はじめまして。よろしくお願いします。"
+          rows={4}
+          maxLength={500}
+          style={{
+            padding: 10,
+            border: "1px solid #ccc",
+            borderRadius: 8,
+            resize: "vertical",
+            fontFamily: "inherit",
+          }}
+        />
+      </div>
+
+      <div style={{ display: "grid", gap: 6 }}>
         <label style={{ fontWeight: 700 }}>性別（必須）</label>
         <select
           value={gender}
@@ -611,6 +675,7 @@ export default function ProfileClient() {
           style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
           required
         >
+          <option value="">選択してください</option>
           <option value="male">男性</option>
           <option value="female">女性</option>
         </select>
@@ -714,7 +779,7 @@ export default function ProfileClient() {
             cursor: canSubmit ? "pointer" : "not-allowed",
           }}
         >
-          {compressing ? "画像処理中..." : submitting ? "保存中..." : "保存する"}
+          {compressing ? "画像処理中..." : submitting ? "保存中..." : hasExistingProfile ? "更新する" : "保存する"}
         </button>
 
         <button

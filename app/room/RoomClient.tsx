@@ -1318,6 +1318,25 @@ if (!shouldAutoStart) return;
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => router.push(withDev("/profile"))}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #d1d5db",
+                  background: "#fff",
+                  color: "#374151",
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                プロフィール編集
+              </button>
+            </div>
+
             {classId && deviceId ? (
               <MeetingPlanSection
                 classId={classId}

@@ -1,5 +1,12 @@
 import { supabase } from "@/lib/supabaseClient";
 import { DISPLAY_NAME_FALLBACK } from "@/lib/resolveDisplayName";
+import {
+  formatGenderLabel,
+  isUserProfileComplete,
+  resolvePublicProfileAge,
+} from "@/lib/profileClient";
+
+export { formatGenderLabel };
 
 export type MemberProfileDetail = {
   device_id: string;
@@ -7,6 +14,9 @@ export type MemberProfileDetail = {
   photo_path: string | null;
   gender: string | null;
   age: number | null;
+  hobbies: string | null;
+  bio: string | null;
+  profile_complete: boolean;
 };
 
 export type MemberProfileTarget = {
@@ -63,13 +73,6 @@ export function getMemberAvatarUrl(photoPath?: string | null) {
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }
 
-export function formatGenderLabel(gender?: string | null) {
-  const value = String(gender ?? "").trim().toLowerCase();
-  if (value === "male") return "男性";
-  if (value === "female") return "女性";
-  return null;
-}
-
 export async function fetchMemberProfile(
   target: MemberProfileTarget
 ): Promise<MemberProfileDetail | null> {
@@ -104,21 +107,28 @@ export async function fetchMemberProfile(
     display_name?: string | null;
     gender?: string | null;
     photo_path?: string | null;
+    birth_date?: string | null;
     age?: number | null;
+    hobbies?: string | null;
+    bio?: string | null;
+    profile_complete?: boolean;
   };
 
-  const displayName =
-    String(profile.display_name ?? "").trim() || DISPLAY_NAME_FALLBACK;
-  const age =
-    typeof profile.age === "number" && Number.isFinite(profile.age)
-      ? profile.age
-      : null;
+  const profileComplete =
+    json.profile_complete === true || profile.profile_complete === true;
+
+  const displayName = String(profile.display_name ?? "").trim();
+  const age = resolvePublicProfileAge(profile, profile.age);
+  const gender = profileComplete ? profile.gender ?? null : null;
 
   return {
     device_id: normalizeMemberDeviceId(profile.device_id) || deviceId,
-    display_name: displayName,
+    display_name: displayName || DISPLAY_NAME_FALLBACK,
     photo_path: profile.photo_path ?? null,
-    gender: profile.gender ?? null,
+    gender,
     age,
+    hobbies: String(profile.hobbies ?? "").trim() || null,
+    bio: String(profile.bio ?? "").trim() || null,
+    profile_complete: profileComplete,
   };
 }

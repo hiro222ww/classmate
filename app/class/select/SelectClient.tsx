@@ -10,6 +10,7 @@ import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
+import { isUserProfileComplete } from "@/lib/profileClient";
 import { tierName } from "@/lib/planTiers";
 
 type World = {
@@ -311,11 +312,7 @@ export default function SelectClient() {
 
       const nextProfile: Profile | null = raw?.profile ?? null;
 
-      const exists =
-        !!safeTrim(nextProfile?.device_id) &&
-        !!safeTrim(nextProfile?.display_name) &&
-        !!safeTrim(nextProfile?.birth_date) &&
-        !!safeTrim(nextProfile?.gender);
+      const exists = isUserProfileComplete(nextProfile);
 
       setHasProfile(exists);
       setProfile(nextProfile);
@@ -701,15 +698,6 @@ export default function SelectClient() {
       return;
     }
 
-    if (!joinWindowOpen && !forcedClassId) {
-  alert(
-    joinWindowText
-      ? `現在は入校受付時間外です。受付時間になったら、もう一度お試しください。\n受付時間：${joinWindowText}`
-      : "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
-  );
-  return;
-}
-
     if (hasProfile === false) {
       goProfileIfNeeded();
       return;
@@ -940,39 +928,25 @@ return;
 
         <button
           onClick={() => void joinMatchedBoard(b)}
-          disabled={busy || !deviceId || profileMissing || !joinWindowOpen}
+          disabled={busy || !deviceId || profileMissing}
           style={{
             marginTop: 14,
             width: "100%",
             padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid #ccc",
-            background:
-              profileMissing || !joinWindowOpen
-                ? "#e5e5e5"
-                : locked
-                  ? "#f3f3f3"
-                  : "#111",
-            color:
-              profileMissing || !joinWindowOpen
-                ? "#666"
-                : locked
-                  ? "#111"
-                  : "#fff",
+            background: profileMissing ? "#e5e5e5" : locked ? "#f3f3f3" : "#111",
+            color: profileMissing ? "#666" : locked ? "#111" : "#fff",
             fontWeight: 900,
             cursor:
-              busy || !deviceId || profileMissing || !joinWindowOpen
-                ? "not-allowed"
-                : "pointer",
+              busy || !deviceId || profileMissing ? "not-allowed" : "pointer",
           }}
         >
           {profileMissing
-  ? "プロフィール登録が必要"
-  : !joinWindowOpen
-    ? "現在入校受付時間外"
-    : locked
-      ? `参加（要：${tierName(b.monthly_price)}以上）`
-      : "入る"}
+            ? "プロフィール登録が必要"
+            : locked
+              ? `参加（要：${tierName(b.monthly_price)}以上）`
+              : "入る"}
         </button>
       </div>
     );
@@ -1026,7 +1000,7 @@ return;
               textDecoration: "none",
             }}
           >
-            プロフィール登録
+            {hasProfile ? "プロフィール編集" : "プロフィール登録"}
           </Link>
 
           <Link
@@ -1136,6 +1110,32 @@ return;
           </div>
         </div>
       )}
+
+      {!joinWindowOpen ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 12,
+            borderRadius: 12,
+            border: "1px solid #fde68a",
+            background: "#fffbeb",
+            color: "#92400e",
+            fontWeight: 800,
+            lineHeight: 1.6,
+          }}
+        >
+          現在入校受付時間外です
+          {joinWindowText ? (
+            <>
+              <br />
+              受付時間：{joinWindowText}
+            </>
+          ) : null}
+          <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700 }}>
+            テーマの確認や設定はできます。入室は受付時間内に「入る」を押してください。
+          </div>
+        </div>
+      ) : null}
 
       {joinLimitMessage ? (
         <div
@@ -1332,28 +1332,23 @@ return;
 
           <button
             onClick={() => void enterQuickFreeTheme()}
-            disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen}
+            disabled={busy || !deviceId || hasProfile === false}
             style={{
               padding: "12px 14px",
               borderRadius: 14,
               border: "none",
-              background:
-                hasProfile === false || !joinWindowOpen ? "#d4d4d4" : "#111",
-              color: hasProfile === false || !joinWindowOpen ? "#666" : "#fff",
+              background: hasProfile === false ? "#d4d4d4" : "#111",
+              color: hasProfile === false ? "#666" : "#fff",
               fontWeight: 900,
               cursor:
-                busy || !deviceId || hasProfile === false || !joinWindowOpen
+                busy || !deviceId || hasProfile === false
                   ? "not-allowed"
                   : "pointer",
               whiteSpace: "nowrap",
               opacity: busy || !deviceId ? 0.6 : 1,
             }}
           >
-            {hasProfile === false
-  ? "プロフィール登録が必要"
-  : !joinWindowOpen
-    ? "現在入校受付時間外"
-    : "入る"}
+            {hasProfile === false ? "プロフィール登録が必要" : "入る"}
           </button>
         </div>
 

@@ -1,15 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   fetchMemberProfile,
-  formatGenderLabel,
   getMemberAvatarUrl,
   isValidMemberProfileTarget,
   normalizeMemberDeviceId,
   type MemberProfileTarget,
 } from "@/lib/memberProfileView";
-import { formatMemberDisplayName } from "@/lib/resolveDisplayName";
+import {
+  formatOptionalProfileText,
+  formatProfileAgeLabel,
+  formatProfileGenderLabel,
+  PROFILE_UNSET_LABEL,
+} from "@/lib/profileClient";
+import { withDev } from "@/lib/withDev";
 
 type MemberProfileModalProps = {
   target: MemberProfileTarget | null;
@@ -20,12 +26,16 @@ export default function MemberProfileModal({
   target,
   onClose,
 }: MemberProfileModalProps) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [photoPath, setPhotoPath] = useState<string | null>(null);
   const [age, setAge] = useState<number | null>(null);
   const [gender, setGender] = useState<string | null>(null);
+  const [hobbies, setHobbies] = useState<string | null>(null);
+  const [bio, setBio] = useState<string | null>(null);
+  const [profileComplete, setProfileComplete] = useState(false);
 
   useEffect(() => {
     if (!target || !isValidMemberProfileTarget(target)) return;
@@ -54,6 +64,9 @@ export default function MemberProfileModal({
       setPhotoPath(null);
       setAge(null);
       setGender(null);
+      setHobbies(null);
+      setBio(null);
+      setProfileComplete(false);
       return;
     }
 
@@ -62,11 +75,14 @@ export default function MemberProfileModal({
     setLoading(true);
     setError("");
     setDisplayName(
-      formatMemberDisplayName({ display_name: target.displayName })
+      String(target.displayName ?? "").trim() || PROFILE_UNSET_LABEL
     );
     setPhotoPath(target.photoPath ?? null);
     setAge(null);
     setGender(null);
+    setHobbies(null);
+    setBio(null);
+    setProfileComplete(false);
 
     void fetchMemberProfile(target)
       .then((profile) => {
@@ -74,17 +90,25 @@ export default function MemberProfileModal({
 
         if (!profile) {
           setError("プロフィールを取得できませんでした");
+          setDisplayName(PROFILE_UNSET_LABEL);
           return;
         }
 
-        setDisplayName(profile.display_name);
+        const complete = profile.profile_complete;
+        setProfileComplete(complete);
+        setDisplayName(
+          String(profile.display_name ?? "").trim() || PROFILE_UNSET_LABEL
+        );
         setPhotoPath(profile.photo_path);
         setAge(profile.age);
-        setGender(formatGenderLabel(profile.gender));
+        setGender(profile.gender);
+        setHobbies(profile.hobbies);
+        setBio(profile.bio);
       })
       .catch(() => {
         if (!cancelled) {
           setError("プロフィールを取得できませんでした");
+          setDisplayName(PROFILE_UNSET_LABEL);
         }
       })
       .finally(() => {
@@ -104,6 +128,12 @@ export default function MemberProfileModal({
     normalizeMemberDeviceId(target.deviceId) ===
     normalizeMemberDeviceId(target.viewerDeviceId);
   const avatarUrl = getMemberAvatarUrl(photoPath);
+  const ageLabel = formatProfileAgeLabel(age);
+  const genderLabel = formatProfileGenderLabel(gender, profileComplete);
+  const hobbiesLabel = formatOptionalProfileText(hobbies);
+  const bioLabel = formatOptionalProfileText(bio);
+  const unsetStyle = { color: "#6b7280" as const };
+  const setStyle = { color: "#111827" as const };
 
   return (
     <div
@@ -227,7 +257,7 @@ export default function MemberProfileModal({
           </p>
         ) : null}
 
-        {!loading && !error ? (
+        {!loading ? (
           <dl
             style={{
               marginTop: 18,
@@ -235,42 +265,112 @@ export default function MemberProfileModal({
               gap: 12,
             }}
           >
-            {age != null ? (
-              <div>
-                <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-                  年齢
-                </dt>
-                <dd
-                  style={{
-                    margin: "4px 0 0",
-                    fontSize: 15,
-                    fontWeight: 800,
-                    color: "#111827",
-                  }}
-                >
-                  {age}歳
-                </dd>
-              </div>
-            ) : null}
+            <div>
+              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                年齢
+              </dt>
+              <dd
+                style={{
+                  margin: "4px 0 0",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  ...(ageLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                }}
+              >
+                {ageLabel}
+              </dd>
+              <dd
+                style={{
+                  margin: "6px 0 0",
+                  fontSize: 11,
+                  color: "#9ca3af",
+                  fontWeight: 600,
+                  lineHeight: 1.5,
+                }}
+              >
+                年齢はプロフィール登録情報に基づきます
+              </dd>
+            </div>
 
-            {gender ? (
-              <div>
-                <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-                  性別
-                </dt>
-                <dd
-                  style={{
-                    margin: "4px 0 0",
-                    fontSize: 15,
-                    fontWeight: 800,
-                    color: "#111827",
-                  }}
-                >
-                  {gender}
-                </dd>
-              </div>
-            ) : null}
+            <div>
+              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                性別
+              </dt>
+              <dd
+                style={{
+                  margin: "4px 0 0",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  ...(genderLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                }}
+              >
+                {genderLabel}
+              </dd>
+            </div>
+
+            <div>
+              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                趣味
+              </dt>
+              <dd
+                style={{
+                  margin: "4px 0 0",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  ...(hobbiesLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                }}
+              >
+                {hobbiesLabel}
+              </dd>
+            </div>
+
+            <div>
+              <dt style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+                ひとこと
+              </dt>
+              <dd
+                style={{
+                  margin: "4px 0 0",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  ...(bioLabel === PROFILE_UNSET_LABEL ? unsetStyle : setStyle),
+                }}
+              >
+                {bioLabel}
+              </dd>
+            </div>
           </dl>
+        ) : null}
+
+        {isSelf && !loading ? (
+          <div style={{ marginTop: 18 }}>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                router.push(withDev("/profile"));
+              }}
+              style={{
+                width: "100%",
+                padding: "12px 14px",
+                borderRadius: 12,
+                border: "1px solid #111827",
+                background: "#111827",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              {profileComplete ? "プロフィールを編集" : "プロフィールを登録"}
+            </button>
+          </div>
         ) : null}
       </div>
     </div>
