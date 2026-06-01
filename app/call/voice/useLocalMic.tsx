@@ -78,14 +78,26 @@ function logGetUserMediaAttempt(params: {
   previousCachedSessionId: string | null;
   deviceId: string;
   selectedMicId?: string;
+  userPickedMic: boolean;
   hasExistingStream: boolean;
   existingAudioTrackReadyState: MediaStreamTrackState | null;
   cacheHit: boolean;
   cacheMissReason: string | null;
+  willCallGetUserMedia: boolean;
 }) {
   console.log("[local-mic] getUserMedia attempt", {
-    ...params,
+    reason: params.reason,
+    cacheHit: params.cacheHit,
+    cacheMissReason: params.cacheMissReason,
     navigationType: getNavigationType(),
+    sessionId: params.sessionId,
+    previousCachedSessionId: params.previousCachedSessionId,
+    selectedMicId: params.selectedMicId ?? "",
+    userPickedMic: params.userPickedMic,
+    deviceId: params.deviceId,
+    hasExistingStream: params.hasExistingStream,
+    existingAudioTrackReadyState: params.existingAudioTrackReadyState,
+    willCallGetUserMedia: params.willCallGetUserMedia,
     currentPath: getCurrentPath(),
     timestamp: Date.now(),
   });
@@ -244,6 +256,7 @@ async function ensureLocalMicStream(params: {
   sessionId: string;
   deviceId: string;
   selectedMicId?: string;
+  userPickedMic?: boolean;
   onMicReadyChange?: (ready: boolean) => void;
   onStatusChange?: (text: string) => void;
   streamRef: React.MutableRefObject<MediaStream | null>;
@@ -270,6 +283,7 @@ async function ensureLocalMicStream(params: {
       streamRef,
       trackRef,
       showInitialPermissionHint = false,
+      userPickedMic = false,
     } = params;
 
     const previousCachedSessionId = activeMicCache?.sessionId ?? null;
@@ -287,10 +301,12 @@ async function ensureLocalMicStream(params: {
         previousCachedSessionId,
         deviceId,
         selectedMicId,
+        userPickedMic,
         hasExistingStream: true,
         existingAudioTrackReadyState: cached.track.readyState,
         cacheHit: true,
         cacheMissReason: null,
+        willCallGetUserMedia: false,
       });
       logGetUserMediaResult({
         ok: true,
@@ -321,10 +337,12 @@ async function ensureLocalMicStream(params: {
         previousCachedSessionId,
         deviceId,
         selectedMicId,
+        userPickedMic,
         hasExistingStream: true,
         existingAudioTrackReadyState: existingTrack!.readyState,
         cacheHit: false,
         cacheMissReason: missReason ?? "ref_reuse",
+        willCallGetUserMedia: false,
       });
       logGetUserMediaResult({
         ok: true,
@@ -344,10 +362,12 @@ async function ensureLocalMicStream(params: {
       previousCachedSessionId,
       deviceId,
       selectedMicId,
+      userPickedMic,
       hasExistingStream: !!existingStream,
       existingAudioTrackReadyState: existingTrack?.readyState ?? null,
       cacheHit: false,
       cacheMissReason: missReason,
+      willCallGetUserMedia: true,
     });
 
     if (showInitialPermissionHint) {
@@ -529,6 +549,7 @@ export function useLocalMic({
         reason: "session_mount",
         sessionId,
         deviceId,
+        userPickedMic: false,
         selectedMicId: selectedMicIdRef.current || undefined,
         onMicReadyChange: (ready) => {
           if (!mounted) return;
@@ -601,6 +622,7 @@ export function useLocalMic({
       reason: "mic_device_selected",
       sessionId,
       deviceId,
+      userPickedMic: true,
       selectedMicId,
       onMicReadyChange: bindReadyState,
       onStatusChange: (text) => onStatusChangeRef.current?.(text),

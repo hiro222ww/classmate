@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SignalPayload, SignalRow, SignalType } from "./useCallSignaling";
 import {
+  checkVoiceMeshExpectations,
   logHealPeerAction as emitHealPeerAction,
   logHealRecoverySuccess,
   logPeerStateChange,
   logPeerStateWarning,
   logRemoteTrackEvent,
+  logVoiceMeshPeerSummary,
   voiceDebugLog,
+  type VoiceMeshPeerSummaryEntry,
 } from "./voiceDiagnostics";
 
 type Member = {
@@ -56,6 +59,7 @@ const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
 
 const TRACK_ENDED_RECONNECT_MS = 300;
 const HEAL_PEER_COOLDOWN_MS = 800;
+const MESH_SUMMARY_DEBOUNCE_MS = 150;
 const CLOSE_FOR_RECONNECT = {
   clearConnectionId: false,
   preserveRemoteAudio: true,
@@ -79,6 +83,29 @@ function detectOs(): OsType {
   if (ua.includes("mac")) return "mac";
 
   return "unknown";
+}
+
+type PeerSignalTimestamps = {
+  lastOfferAt: number | null;
+  lastAnswerAt: number | null;
+  lastIceCandidateAt: number | null;
+  lastOnTrackAt: number | null;
+  lastUnmuteAt: number | null;
+};
+
+type PeerMeta = {
+  lastWarning: string | null;
+  lastHealAction: string | null;
+};
+
+function emptyPeerSignalTimestamps(): PeerSignalTimestamps {
+  return {
+    lastOfferAt: null,
+    lastAnswerAt: null,
+    lastIceCandidateAt: null,
+    lastOnTrackAt: null,
+    lastUnmuteAt: null,
+  };
 }
 
 async function detectConnectionType(pc: RTCPeerConnection) {
@@ -185,6 +212,12 @@ export function usePeerConnections({
     Map<string, { reason: string; scheduledInMs: number; scheduledAt: number }>
   >(new Map());
   const lastHealActionAtRef = useRef<Map<string, number>>(new Map());
+  const peerSignalTimestampsRef = useRef<Map<string, PeerSignalTimestamps>>(
+    new Map()
+  );
+  const peerMetaRef = useRef<Map<string, PeerMeta>>(new Map());
+  const meshSummaryTimerRef = useRef<number | null>(null);
+  const meshNotConnectedTimerRef = useRef<number | null>(null);
 
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
@@ -397,6 +430,169 @@ export function usePeerConnections({
       .filter((id) => id && id !== selfId);
   }, [activeMembers, deviceId]);
 
+  const touchPeerSignal = useCallback(
+    (
+      remoteId: string,
+      event:
+        | "offer_sent"
+        | "offer_received"
+        | "answer_sent"
+        | "answer_received"
+        | "ice_sent"
+        | "ice_received"
+        | "ontrack"
+        | "unmute"
+    ) => {
+      const prev =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      const now = Date.now();
+
+      const next: PeerSignalTimestamps = { ...prev };
+
+      if (event === "offer_sent" || event === "offer_received") {
+        next.lastOfferAt = now;
+      }
+      if (event === "answer_sent" || event === "answer_received") {
+        next.lastAnswerAt = now;
+      }
+      if (event === "ice_sent" || event === "ice_received") {
+        next.lastIceCandidateAt = now;
+      }
+      if (event === "ontrack") {
+        next.lastOnTrackAt = now;
+      }
+      if (event === "unmute") {
+        next.lastUnmuteAt = now;
+      }
+
+      peerSignalTimestampsRef.current.set(remoteId, next);
+    },
+    []
+  );
+
+  const setPeerMeta = useCallback(
+    (
+      remoteId: string,
+      patch: Partial<Pick<PeerMeta, "lastWarning" | "lastHealAction">>
+    ) => {
+      const prev = peerMetaRef.current.get(remoteId) ?? {
+        lastWarning: null,
+        lastHealAction: null,
+      };
+      peerMetaRef.current.set(remoteId, { ...prev, ...patch });
+    },
+    []
+  );
+
+  const buildMeshPeerSummary = useCallback(
+    (remoteId: string): VoiceMeshPeerSummaryEntry => {
+      const member = members.find((m) => m.device_id === remoteId);
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const media = getPeerMedia(remoteId);
+      const stream = remoteStreamsRef.current.get(remoteId);
+      const audioTrack = stream?.getAudioTracks()[0] ?? null;
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      const meta = peerMetaRef.current.get(remoteId) ?? {
+        lastWarning: null,
+        lastHealAction: null,
+      };
+      const connectStartedAt = connectStartedAtRef.current.get(remoteId) ?? null;
+      const msSinceConnectStart =
+        connectStartedAt != null ? Date.now() - connectStartedAt : null;
+      const hasLocalTrack = pc
+        ? pc
+            .getSenders()
+            .some((sender) => sender.track?.kind === "audio" && !!sender.track)
+        : false;
+
+      return {
+        remoteDeviceId: remoteId,
+        memberExists: !!member,
+        isInCall: member ? member.is_in_call === true : null,
+        isOfferOwner: deviceId < remoteId,
+        pcExists: !!pc,
+        signalingState: pc?.signalingState ?? null,
+        connectionState: pc?.connectionState ?? null,
+        iceConnectionState: pc?.iceConnectionState ?? null,
+        iceGatheringState: pc?.iceGatheringState ?? null,
+        hasLocalTrack,
+        hasRemoteStream: media.hasRemoteStream,
+        remoteTracksCount: media.remoteTracksCount,
+        remoteAudioTrackReadyState: audioTrack?.readyState ?? null,
+        remoteAudioTrackMuted: audioTrack?.muted ?? null,
+        weOffered: offeredPeersRef.current.has(remoteId),
+        reconnectPending:
+          reconnectPendingRef.current.has(remoteId) ||
+          reconnectTimersRef.current.has(remoteId),
+        reconnectBlockReason: getReconnectBlockReason(remoteId),
+        pendingIceCount: pendingIceRef.current.get(remoteId)?.length ?? 0,
+        connectStartedAt,
+        msSinceConnectStart,
+        lastOfferAt: timestamps.lastOfferAt,
+        lastAnswerAt: timestamps.lastAnswerAt,
+        lastIceCandidateAt: timestamps.lastIceCandidateAt,
+        lastOnTrackAt: timestamps.lastOnTrackAt,
+        lastUnmuteAt: timestamps.lastUnmuteAt,
+        lastWarning: meta.lastWarning,
+        lastHealAction: meta.lastHealAction,
+      };
+    },
+    [deviceId, getPeerMedia, getReconnectBlockReason, members]
+  );
+
+  const emitMeshSummary = useCallback(
+    (trigger: string, opts?: { immediate?: boolean }) => {
+      const run = () => {
+        const memberDeviceIds = members
+          .map((m) => String(m.device_id ?? "").trim())
+          .filter(Boolean);
+        const inCallMemberDeviceIds = members
+          .filter((m) => m.is_in_call === true)
+          .map((m) => String(m.device_id ?? "").trim())
+          .filter(Boolean);
+        const remoteIds = getRemoteIds();
+        const peerIds = Array.from(
+          new Set([...remoteIds, ...Array.from(pcsRef.current.keys())])
+        );
+
+        const peers = peerIds.map((remoteId) => buildMeshPeerSummary(remoteId));
+        const summary = {
+          trigger,
+          sessionId,
+          localDeviceId: deviceId,
+          memberDeviceIds,
+          inCallMemberDeviceIds,
+          peers,
+        };
+
+        logVoiceMeshPeerSummary(summary);
+        checkVoiceMeshExpectations(summary);
+      };
+
+      if (opts?.immediate) {
+        if (meshSummaryTimerRef.current) {
+          window.clearTimeout(meshSummaryTimerRef.current);
+          meshSummaryTimerRef.current = null;
+        }
+        run();
+        return;
+      }
+
+      if (meshSummaryTimerRef.current) {
+        window.clearTimeout(meshSummaryTimerRef.current);
+      }
+
+      meshSummaryTimerRef.current = window.setTimeout(() => {
+        meshSummaryTimerRef.current = null;
+        run();
+      }, MESH_SUMMARY_DEBOUNCE_MS);
+    },
+    [buildMeshPeerSummary, deviceId, getRemoteIds, members, sessionId]
+  );
+
   const emitPeerStates = useCallback(() => {
     onPeerStatesChange?.(Object.fromEntries(peerStatesRef.current.entries()));
   }, [onPeerStatesChange]);
@@ -544,12 +740,15 @@ export function usePeerConnections({
         };
       });
 
+      touchPeerSignal(remoteId, "ontrack");
+      emitMeshSummary("ontrack", { immediate: true });
+
       const pc = pcsRef.current.get(remoteId);
       if (pc) {
         syncPeerObservedStates(remoteId, pc);
       }
     },
-    [members, syncPeerObservedStates]
+    [members, syncPeerObservedStates, touchPeerSignal, emitMeshSummary]
   );
 
   const syncRemoteAudioFromPc = useCallback(
@@ -646,6 +845,8 @@ export function usePeerConnections({
       trackEndedAtRef.current.delete(remoteId);
       reconnectPendingRef.current.delete(remoteId);
       lastHealActionAtRef.current.delete(remoteId);
+      peerSignalTimestampsRef.current.delete(remoteId);
+      peerMetaRef.current.delete(remoteId);
 
       peerStatesRef.current.delete(remoteId);
       emitPeerStates();
@@ -813,6 +1014,8 @@ export function usePeerConnections({
         const elapsedMsSinceTrackEnded =
           endedAt != null ? Date.now() - endedAt : undefined;
         emitTrackEvent("unmute", { elapsedMsSinceTrackEnded });
+        touchPeerSignal(remoteId, "unmute");
+        emitMeshSummary("unmute", { immediate: true });
         maybeLogTrackRecovery("unmute", elapsedMsSinceTrackEnded);
 
         const pc = pcsRef.current.get(remoteId);
@@ -851,7 +1054,7 @@ export function usePeerConnections({
         });
       };
     },
-    [deviceId, finalizeRecovery, markRecoveryStart, observePeerField, sessionId, syncRemoteAudioFromPc]
+    [deviceId, emitMeshSummary, finalizeRecovery, markRecoveryStart, observePeerField, sessionId, syncRemoteAudioFromPc, touchPeerSignal]
   );
 
   useEffect(() => {
@@ -882,6 +1085,8 @@ export function usePeerConnections({
           pc: currentPc,
           media: getPeerMedia(remoteId),
         });
+        setPeerMeta(remoteId, { lastWarning: "checking_timeout" });
+        emitMeshSummary("checking_timeout", { immediate: true });
 
         markRecoveryStart(remoteId);
         scheduleReconnectRef.current?.(remoteId, 1200);
@@ -889,7 +1094,7 @@ export function usePeerConnections({
 
       iceCheckingTimersRef.current.set(remoteId, timer);
     },
-    [deviceId, getCurrentConnectionId, getPeerMedia, markRecoveryStart, sessionId]
+    [deviceId, emitMeshSummary, getCurrentConnectionId, getPeerMedia, markRecoveryStart, sessionId, setPeerMeta]
   );
 
   const scheduleConnectingTimeout = useCallback(
@@ -916,6 +1121,8 @@ export function usePeerConnections({
           pc: currentPc,
           media: getPeerMedia(remoteId),
         });
+        setPeerMeta(remoteId, { lastWarning: "connecting_timeout" });
+        emitMeshSummary("connecting_timeout", { immediate: true });
 
         markRecoveryStart(remoteId);
         scheduleReconnectRef.current?.(remoteId, 1200);
@@ -923,7 +1130,7 @@ export function usePeerConnections({
 
       connectingTimersRef.current.set(remoteId, timer);
     },
-    [deviceId, getCurrentConnectionId, getPeerMedia, markRecoveryStart, sessionId]
+    [deviceId, getCurrentConnectionId, getPeerMedia, markRecoveryStart, sessionId, setPeerMeta, emitMeshSummary]
   );
 
   useEffect(() => {
@@ -1028,6 +1235,8 @@ export function usePeerConnections({
             ? event.candidate.toJSON()
             : event.candidate,
         });
+        touchPeerSignal(remoteId, "ice_sent");
+        emitMeshSummary("ice_sent");
       };
 
       pc.ontrack = (event) => {
@@ -1038,6 +1247,8 @@ export function usePeerConnections({
         if (!stream) return;
 
         upsertRemoteAudio(remoteId, stream, { reason: "pc_ontrack", force: true });
+        touchPeerSignal(remoteId, "ontrack");
+        emitMeshSummary("pc_ontrack", { immediate: true });
 
         window.setTimeout(() => {
           syncRemoteAudioFromPc(remoteId, pc, "ontrack_delayed");
@@ -1294,6 +1505,8 @@ export function usePeerConnections({
       setPeerState,
       syncPeerObservedStates,
       syncRemoteAudioFromPc,
+      touchPeerSignal,
+      emitMeshSummary,
       upsertRemoteAudio,
     ]
   );
@@ -1359,6 +1572,8 @@ export function usePeerConnections({
           connectionId,
           sdp: pc.localDescription,
         });
+        touchPeerSignal(remoteId, "offer_sent");
+        emitMeshSummary("offer_sent", { immediate: true });
       } catch (e) {
         offeredPeersRef.current.delete(remoteId);
         console.error("[call] create offer error", remoteId, connectionId, e);
@@ -1368,6 +1583,7 @@ export function usePeerConnections({
       clearReconnectTimer,
       createPeerConnection,
       deviceId,
+      emitMeshSummary,
       getCurrentConnectionId,
       hasLiveRemoteStream,
       localAudioTrackRef,
@@ -1376,6 +1592,7 @@ export function usePeerConnections({
       sendSignal,
       setCurrentConnectionId,
       setPeerState,
+      touchPeerSignal,
     ]
   );
 
@@ -1416,6 +1633,13 @@ export function usePeerConnections({
         return;
       }
 
+      setPeerMeta(remoteId, {
+        lastHealAction:
+          action === "deduped"
+            ? `deduped:${reason}`
+            : `${action}:${reason}`,
+      });
+
       const prev = peerHealActionRef.current.get(remoteId);
       const consecutive =
         prev?.lastAction === action ? prev.consecutive + 1 : 1;
@@ -1452,7 +1676,7 @@ export function usePeerConnections({
           (action === "reconnect" || action === "retry-offer"),
       });
     },
-    [deviceId, sessionId]
+    [deviceId, sessionId, setPeerMeta]
   );
 
   const healPeerConnections = useCallback(() => {
@@ -1675,9 +1899,12 @@ export function usePeerConnections({
       peerConnectionCount: pcsRef.current.size,
       actionCount: actionable.length,
     });
+
+    emitMeshSummary("healRun", { immediate: true });
   }, [
     closePeer,
     deviceId,
+    emitMeshSummary,
     emitPeerStates,
     getCurrentConnectionId,
     getReconnectBlockReason,
@@ -1742,6 +1969,7 @@ export function usePeerConnections({
 
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
+          touchPeerSignal(remoteId, "offer_received");
 
           setPeerState(remoteId, "connecting");
 
@@ -1752,6 +1980,8 @@ export function usePeerConnections({
             connectionId: incomingConnectionId,
             sdp: pc.localDescription,
           });
+          touchPeerSignal(remoteId, "answer_sent");
+          emitMeshSummary("answer_sent", { immediate: true });
 
           return;
         }
@@ -1763,6 +1993,8 @@ export function usePeerConnections({
 
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
+          touchPeerSignal(remoteId, "answer_received");
+          emitMeshSummary("answer_received", { immediate: true });
           return;
         }
 
@@ -1774,11 +2006,15 @@ export function usePeerConnections({
             const queued = pendingIceRef.current.get(remoteId) ?? [];
             queued.push(candidate);
             pendingIceRef.current.set(remoteId, queued);
+            touchPeerSignal(remoteId, "ice_received");
+            emitMeshSummary("ice_received");
             return;
           }
 
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            touchPeerSignal(remoteId, "ice_received");
+            emitMeshSummary("ice_received");
           } catch (e) {
             console.warn("[call] addIceCandidate ignored", remoteId, e);
           }
@@ -1796,6 +2032,7 @@ export function usePeerConnections({
       closePeer,
       createPeerConnection,
       deviceId,
+      emitMeshSummary,
       flushPendingIce,
       getCurrentConnectionId,
       scheduleReconnect,
@@ -1803,6 +2040,7 @@ export function usePeerConnections({
       sessionId,
       setCurrentConnectionId,
       setPeerState,
+      touchPeerSignal,
     ]
   );
 
@@ -1910,12 +2148,14 @@ export function usePeerConnections({
     }
 
     healPeerConnections();
+    emitMeshSummary("after_join", { immediate: true });
   }, [
     members,
     micReady,
     signalReady,
     deviceId,
     closePeer,
+    emitMeshSummary,
     emitPeerStates,
     getCurrentConnectionId,
     getRemoteIds,
@@ -1940,7 +2180,51 @@ export function usePeerConnections({
   useEffect(() => {
     if (membersSyncRevision <= 0) return;
     healPeerConnections();
-  }, [membersSyncRevision, healPeerConnections]);
+    emitMeshSummary("members_updated", { immediate: true });
+  }, [membersSyncRevision, emitMeshSummary, healPeerConnections]);
+
+  useEffect(() => {
+    if (!micReady || !signalReady) return;
+
+    const timer = window.setInterval(() => {
+      const remoteIds = getRemoteIds();
+      let hasStuckPeer = false;
+
+      for (const remoteId of remoteIds) {
+        const pc = pcsRef.current.get(remoteId);
+        if (!pc) continue;
+        if (pc.connectionState === "connected") continue;
+
+        const startedAt = connectStartedAtRef.current.get(remoteId);
+        if (startedAt != null && Date.now() - startedAt >= 10000) {
+          hasStuckPeer = true;
+          break;
+        }
+      }
+
+      if (hasStuckPeer) {
+        emitMeshSummary("not_connected_10s", { immediate: true });
+      }
+    }, 10000);
+
+    meshNotConnectedTimerRef.current = timer;
+
+    return () => {
+      window.clearInterval(timer);
+      meshNotConnectedTimerRef.current = null;
+    };
+  }, [emitMeshSummary, getRemoteIds, micReady, signalReady]);
+
+  useEffect(() => {
+    return () => {
+      if (meshSummaryTimerRef.current) {
+        window.clearTimeout(meshSummaryTimerRef.current);
+      }
+      if (meshNotConnectedTimerRef.current) {
+        window.clearInterval(meshNotConnectedTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const onVisibilityChange = () => {

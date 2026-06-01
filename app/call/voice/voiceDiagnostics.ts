@@ -248,6 +248,236 @@ function getNavigationTypeForDiagnostics(): string {
   return entry?.type ?? "unknown";
 }
 
+export type VoiceMeshPeerSummaryEntry = {
+  remoteDeviceId: string;
+  memberExists: boolean;
+  isInCall: boolean | null;
+  isOfferOwner: boolean;
+  pcExists: boolean;
+  signalingState: RTCSignalingState | null;
+  connectionState: RTCPeerConnectionState | null;
+  iceConnectionState: RTCIceConnectionState | null;
+  iceGatheringState: RTCIceGatheringState | null;
+  hasLocalTrack: boolean;
+  hasRemoteStream: boolean;
+  remoteTracksCount: number;
+  remoteAudioTrackReadyState: MediaStreamTrackState | null;
+  remoteAudioTrackMuted: boolean | null;
+  weOffered: boolean;
+  reconnectPending: boolean;
+  reconnectBlockReason: string | null;
+  pendingIceCount: number;
+  connectStartedAt: number | null;
+  msSinceConnectStart: number | null;
+  lastOfferAt: number | null;
+  lastAnswerAt: number | null;
+  lastIceCandidateAt: number | null;
+  lastOnTrackAt: number | null;
+  lastUnmuteAt: number | null;
+  lastWarning: string | null;
+  lastHealAction: string | null;
+};
+
+export type VoiceMeshPeerSummaryParams = {
+  trigger: string;
+  sessionId: string;
+  localDeviceId: string;
+  memberDeviceIds: string[];
+  inCallMemberDeviceIds: string[];
+  peers: VoiceMeshPeerSummaryEntry[];
+};
+
+export function logVoiceMeshPeerSummary(params: VoiceMeshPeerSummaryParams) {
+  console.log("[voice-mesh] peer-summary", {
+    ...params,
+    membersCount: params.memberDeviceIds.length,
+    inCallMembersCount: params.inCallMemberDeviceIds.length,
+    peerConnectionCount: params.peers.filter((p) => p.pcExists).length,
+    timestamp: Date.now(),
+  });
+}
+
+export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
+  const {
+    trigger,
+    sessionId,
+    localDeviceId,
+    memberDeviceIds,
+    inCallMemberDeviceIds,
+    peers,
+  } = params;
+
+  const expectedFromMembers = Math.max(0, memberDeviceIds.length - 1);
+  const expectedFromInCall = Math.max(
+    0,
+    inCallMemberDeviceIds.filter((id) => id !== localDeviceId).length
+  );
+  const pcCount = peers.filter((p) => p.pcExists).length;
+  const now = Date.now();
+
+  const warn = (reason: string, extra?: Record<string, unknown>) => {
+    console.warn("[voice-mesh] mesh-warning", {
+      reason,
+      trigger,
+      sessionId,
+      localDeviceId,
+      expectedFromMembers,
+      expectedFromInCall,
+      peerConnectionCount: pcCount,
+      timestamp: now,
+      ...extra,
+    });
+  };
+
+  if (expectedFromInCall > 0 && pcCount !== expectedFromInCall) {
+    warn("in_call_peer_count_mismatch", {
+      expectedFromInCall,
+      peerConnectionCount: pcCount,
+    });
+  }
+
+  for (const peer of peers) {
+    const {
+      remoteDeviceId,
+      isInCall,
+      pcExists,
+      connectionState,
+      hasRemoteStream,
+      remoteTracksCount,
+      signalingState,
+      isOfferOwner,
+      weOffered,
+      lastOfferAt,
+      lastAnswerAt,
+      lastIceCandidateAt,
+      lastOnTrackAt,
+      msSinceConnectStart,
+      reconnectBlockReason,
+      reconnectPending,
+    } = peer;
+
+    if (isInCall === true && !pcExists) {
+      warn("in_call_member_missing_pc", { remoteDeviceId, isOfferOwner });
+    }
+
+    if (pcExists && remoteTracksCount === 0) {
+      warn("pc_without_remote_tracks", {
+        remoteDeviceId,
+        connectionState,
+        signalingState,
+      });
+    }
+
+    if (pcExists && connectionState === "connected" && !hasRemoteStream) {
+      warn("connected_pc_without_remote_stream", {
+        remoteDeviceId,
+        signalingState,
+      });
+    }
+
+    if (
+      pcExists &&
+      msSinceConnectStart != null &&
+      msSinceConnectStart >= 10000 &&
+      connectionState !== "connected" &&
+      !lastOnTrackAt
+    ) {
+      warn("not_connected_after_10s", {
+        remoteDeviceId,
+        connectionState,
+        signalingState,
+        msSinceConnectStart,
+        reconnectPending,
+        reconnectBlockReason,
+      });
+    }
+
+    if (
+      pcExists &&
+      msSinceConnectStart != null &&
+      msSinceConnectStart >= 10000 &&
+      !lastOnTrackAt &&
+      (connectionState === "connecting" || connectionState === "new")
+    ) {
+      warn("ontrack_missing_after_10s", {
+        remoteDeviceId,
+        connectionState,
+        msSinceConnectStart,
+      });
+    }
+
+    if (isOfferOwner && pcExists && signalingState === "stable" && !weOffered && !lastOfferAt) {
+      warn("offer_owner_waiting_no_offer", { remoteDeviceId });
+    }
+
+    if (
+      !isOfferOwner &&
+      pcExists &&
+      signalingState === "stable" &&
+      !lastOfferAt &&
+      msSinceConnectStart != null &&
+      msSinceConnectStart >= 8000
+    ) {
+      warn("answerer_waiting_no_remote_offer", {
+        remoteDeviceId,
+        msSinceConnectStart,
+      });
+    }
+
+    if (
+      isOfferOwner &&
+      weOffered &&
+      signalingState === "have-local-offer" &&
+      !lastAnswerAt &&
+      msSinceConnectStart != null &&
+      msSinceConnectStart >= 10000
+    ) {
+      warn("offer_without_answer", {
+        remoteDeviceId,
+        lastOfferAt,
+      });
+    }
+
+    if (
+      pcExists &&
+      (signalingState === "have-local-offer" ||
+        signalingState === "have-remote-offer") &&
+      !lastIceCandidateAt &&
+      msSinceConnectStart != null &&
+      msSinceConnectStart >= 8000
+    ) {
+      warn("signaling_without_ice", {
+        remoteDeviceId,
+        signalingState,
+        msSinceConnectStart,
+      });
+    }
+
+    if (isOfferOwner && signalingState === "have-remote-offer" && weOffered) {
+      warn("possible_offer_glare", {
+        remoteDeviceId,
+        signalingState,
+        weOffered,
+      });
+    }
+
+    if (reconnectBlockReason === "reconnect_already_scheduled" && !lastOnTrackAt) {
+      warn("reconnect_blocked_no_stream", {
+        remoteDeviceId,
+        reconnectBlockReason,
+      });
+    }
+
+    if (reconnectBlockReason === "heal_cooldown" && !lastOnTrackAt && pcExists) {
+      warn("heal_cooldown_blocking_recovery", {
+        remoteDeviceId,
+        reconnectBlockReason,
+        msSinceConnectStart,
+      });
+    }
+  }
+}
+
 export function installCallPageDiagnostics(params: {
   sessionId: string;
   deviceId: string;
