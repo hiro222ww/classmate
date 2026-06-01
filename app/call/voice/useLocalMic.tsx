@@ -72,6 +72,41 @@ function getMicErrorMessage(error: unknown): string {
   return "マイク取得に失敗しました。";
 }
 
+function compactSessionId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 8) return value;
+  return value.slice(-8);
+}
+
+function formatGetUserMediaAttemptLine(params: {
+  reason: string;
+  sessionId: string;
+  previousCachedSessionId: string | null;
+  selectedMicId?: string;
+  userPickedMic: boolean;
+  cacheHit: boolean;
+  cacheMissReason: string | null;
+  willCallGetUserMedia: boolean;
+  navigationType: string;
+}): string {
+  return (
+    `[local-mic] attempt reason=${params.reason} ` +
+    `willCall=${compactBool(params.willCallGetUserMedia)} ` +
+    `cacheHit=${compactBool(params.cacheHit)} ` +
+    `cacheMiss=${params.cacheMissReason ?? "-"} ` +
+    `nav=${params.navigationType} ` +
+    `session=${compactSessionId(params.sessionId)} ` +
+    `prev=${compactSessionId(params.previousCachedSessionId)} ` +
+    `selected=${String(params.selectedMicId ?? "").trim() || "-"} ` +
+    `userPicked=${compactBool(params.userPickedMic)}`
+  );
+}
+
+function compactBool(value: boolean): string {
+  return value ? "true" : "false";
+}
+
 function logGetUserMediaAttempt(params: {
   reason: string;
   sessionId: string;
@@ -85,11 +120,27 @@ function logGetUserMediaAttempt(params: {
   cacheMissReason: string | null;
   willCallGetUserMedia: boolean;
 }) {
+  const navigationType = getNavigationType();
+
+  console.log(
+    formatGetUserMediaAttemptLine({
+      reason: params.reason,
+      sessionId: params.sessionId,
+      previousCachedSessionId: params.previousCachedSessionId,
+      selectedMicId: params.selectedMicId,
+      userPickedMic: params.userPickedMic,
+      cacheHit: params.cacheHit,
+      cacheMissReason: params.cacheMissReason,
+      willCallGetUserMedia: params.willCallGetUserMedia,
+      navigationType,
+    })
+  );
+
   console.log("[local-mic] getUserMedia attempt", {
     reason: params.reason,
     cacheHit: params.cacheHit,
     cacheMissReason: params.cacheMissReason,
-    navigationType: getNavigationType(),
+    navigationType,
     sessionId: params.sessionId,
     previousCachedSessionId: params.previousCachedSessionId,
     selectedMicId: params.selectedMicId ?? "",

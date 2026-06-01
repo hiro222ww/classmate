@@ -248,6 +248,101 @@ function getNavigationTypeForDiagnostics(): string {
   return entry?.type ?? "unknown";
 }
 
+export function compactDeviceId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 4) return value;
+  return value.slice(-3);
+}
+
+function compactSessionId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 8) return value;
+  return value.slice(-8);
+}
+
+function compactAgeMs(ts: number | null | undefined): string {
+  if (ts == null) return "-";
+  const ageSec = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  return `${ageSec}s`;
+}
+
+function compactBool(value: boolean): string {
+  return value ? "true" : "false";
+}
+
+function formatVoiceMeshPeerLine(peer: VoiceMeshPeerSummaryEntry): string {
+  const remote = compactDeviceId(peer.remoteDeviceId);
+
+  if (!peer.pcExists) {
+    const reason = peer.isInCall === true ? "missing_pc" : "no_pc";
+    return `[voice-mesh] peer remote=${remote} pc=false inCall=${compactBool(peer.isInCall === true)} reason=${reason}`;
+  }
+
+  return (
+    `[voice-mesh] peer remote=${remote} ` +
+    `pc=true conn=${peer.connectionState ?? "-"} ` +
+    `ice=${peer.iceConnectionState ?? "-"} ` +
+    `sig=${peer.signalingState ?? "-"} ` +
+    `tracks=${peer.remoteTracksCount} ` +
+    `stream=${compactBool(peer.hasRemoteStream)} ` +
+    `owner=${compactBool(peer.isOfferOwner)} ` +
+    `offered=${compactBool(peer.weOffered)} ` +
+    `offerAt=${compactAgeMs(peer.lastOfferAt)} ` +
+    `answerAt=${compactAgeMs(peer.lastAnswerAt)} ` +
+    `iceAt=${compactAgeMs(peer.lastIceCandidateAt)} ` +
+    `ontrackAt=${compactAgeMs(peer.lastOnTrackAt)} ` +
+    `block=${peer.reconnectBlockReason ?? "-"}`
+  );
+}
+
+function formatVoiceMeshSummaryHeader(params: VoiceMeshPeerSummaryParams): string {
+  const pcCount = params.peers.filter((peer) => peer.pcExists).length;
+  return (
+    `[voice-mesh] summary trigger=${params.trigger} ` +
+    `members=${params.memberDeviceIds.length} ` +
+    `inCall=${params.inCallMemberDeviceIds.length} ` +
+    `peers=${params.peers.length} pc=${pcCount} ` +
+    `session=${compactSessionId(params.sessionId)} ` +
+    `local=${compactDeviceId(params.localDeviceId)}`
+  );
+}
+
+function formatVoiceMeshWarningLine(
+  reason: string,
+  trigger: string,
+  sessionId: string,
+  localDeviceId: string,
+  extra?: Record<string, unknown>
+): string {
+  const parts = [
+    `[voice-mesh] warn reason=${reason}`,
+    `trigger=${trigger}`,
+    `session=${compactSessionId(sessionId)}`,
+    `local=${compactDeviceId(localDeviceId)}`,
+  ];
+
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value == null) continue;
+      if (key === "remoteDeviceId") {
+        parts.push(`remote=${compactDeviceId(String(value))}`);
+        continue;
+      }
+      if (typeof value === "boolean") {
+        parts.push(`${key}=${compactBool(value)}`);
+      } else if (typeof value === "number") {
+        parts.push(`${key}=${value}`);
+      } else {
+        parts.push(`${key}=${String(value)}`);
+      }
+    }
+  }
+
+  return parts.join(" ");
+}
+
 export type VoiceMeshPeerSummaryEntry = {
   remoteDeviceId: string;
   memberExists: boolean;
@@ -288,6 +383,11 @@ export type VoiceMeshPeerSummaryParams = {
 };
 
 export function logVoiceMeshPeerSummary(params: VoiceMeshPeerSummaryParams) {
+  console.log(formatVoiceMeshSummaryHeader(params));
+  for (const peer of params.peers) {
+    console.log(formatVoiceMeshPeerLine(peer));
+  }
+
   console.log("[voice-mesh] peer-summary", {
     ...params,
     membersCount: params.memberDeviceIds.length,
@@ -316,6 +416,7 @@ export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
   const now = Date.now();
 
   const warn = (reason: string, extra?: Record<string, unknown>) => {
+    console.warn(formatVoiceMeshWarningLine(reason, trigger, sessionId, localDeviceId, extra));
     console.warn("[voice-mesh] mesh-warning", {
       reason,
       trigger,
