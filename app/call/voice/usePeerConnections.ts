@@ -15,7 +15,7 @@ type Member = {
   device_id: string;
   display_name: string;
   photo_path?: string | null;
-  screen?: string;
+  screen?: string | null;
   last_seen_at?: string | null;
   is_in_call?: boolean;
 };

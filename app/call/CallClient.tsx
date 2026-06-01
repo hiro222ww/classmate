@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
+import { releaseSessionMic } from "./voice/useLocalMic";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
@@ -36,6 +37,11 @@ import {
   logParticipationStatusDecision,
   resolveCallMemberStatus,
 } from "@/lib/memberPresenceStatus";
+import {
+  clearLocalLeftCall,
+  hasLocalLeftCall,
+  markLocalLeftCall,
+} from "@/lib/localCallExit";
 
 type Member = {
   device_id: string;
@@ -43,6 +49,7 @@ type Member = {
   photo_path: string | null;
   lastSpokeAt?: number;
   is_in_call?: boolean;
+  screen?: string | null;
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
@@ -64,6 +71,8 @@ type SessionStatusResponse = {
     photo_path?: string | null;
     joined_at?: string | null;
     is_in_call?: boolean | null;
+    screen?: string | null;
+    last_seen_at?: string | null;
   }>;
   memberCount?: number;
   error?: string;
@@ -136,6 +145,7 @@ export default function CallClient() {
   const lastSpeakerIdRef = useRef<string | null>(null);
   const everConnectedPeersRef = useRef<Set<string>>(new Set());
   const prevCallStatusRef = useRef<Record<string, string>>({});
+  const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
@@ -159,11 +169,14 @@ export default function CallClient() {
 
     logCallNavigationType({ sessionId, deviceId });
     logCallLifecycle("mount", { sessionId, deviceId });
+    clearLocalLeftCall(sessionId, deviceId);
+    localExitedPeersRef.current.delete(deviceId);
 
     const cleanupDiagnostics = installCallPageDiagnostics({ sessionId, deviceId });
 
     return () => {
       logCallLifecycle("unmount", { sessionId, deviceId });
+      setPeerStates({});
       cleanupDiagnostics();
     };
   }, [sessionId, deviceId]);
@@ -256,6 +269,61 @@ export default function CallClient() {
     });
   }, [deviceId]);
 
+  const applyLocalLeftCallOverride = useCallback(
+    (member: Member): Member => {
+      const did = String(member.device_id ?? "").trim();
+      if (!did) return member;
+
+      const locallyLeft =
+        localExitedPeersRef.current.has(did) ||
+        hasLocalLeftCall(sessionId, did);
+
+      if (!locallyLeft) return member;
+
+      return {
+        ...member,
+        is_in_call: false,
+        screen: "room",
+      };
+    },
+    [sessionId]
+  );
+
+  const markSelfLeftCall = useCallback(() => {
+    const did = String(deviceId ?? "").trim();
+    if (!did || !sessionId) return;
+
+    markLocalLeftCall(sessionId, did);
+    localExitedPeersRef.current.add(did);
+    setPeerStates({});
+    prevCallStatusRef.current = {};
+    everConnectedPeersRef.current.clear();
+
+    setMembers((prev) =>
+      prev.map((member) =>
+        String(member.device_id ?? "").trim() === did
+          ? { ...member, is_in_call: false, screen: "room" }
+          : member
+      )
+    );
+
+    if (classId) {
+      void fetch("/api/class/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId,
+          deviceId: did,
+          screen: "room",
+          sessionId,
+        }),
+        cache: "no-store",
+      }).catch((e) => {
+        console.warn("[call] optimistic room presence failed", e);
+      });
+    }
+  }, [classId, deviceId, sessionId]);
+
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
       window.clearTimeout(retryTimerRef.current);
@@ -327,12 +395,15 @@ export default function CallClient() {
           const did = String(m.device_id ?? "").trim();
           if (!did) continue;
 
-          nextMembers.push({
-            device_id: did,
-            display_name: formatMemberDisplayName(m),
-            photo_path: String(m.photo_path ?? "").trim() || null,
-            is_in_call: m.is_in_call === true,
-          });
+          nextMembers.push(
+            applyLocalLeftCallOverride({
+              device_id: did,
+              display_name: formatMemberDisplayName(m),
+              photo_path: String(m.photo_path ?? "").trim() || null,
+              is_in_call: m.is_in_call === true,
+              screen: String(m.screen ?? "").trim() || null,
+            })
+          );
         }
 
         console.log("[call] fetchMembers success", {
@@ -349,6 +420,7 @@ export default function CallClient() {
         );
 
         if (deviceId && !stillJoined) {
+          releaseSessionMic("removed_from_session", sessionId);
           router.replace(withDev("/"));
           return;
         }
@@ -395,7 +467,7 @@ export default function CallClient() {
         }
       }
     },
-    [sessionId, classId, deviceId, router, clearRetryTimer]
+    [sessionId, classId, deviceId, router, clearRetryTimer, applyLocalLeftCallOverride]
   );
 
   useEffect(() => {
@@ -563,50 +635,90 @@ export default function CallClient() {
         };
       }
 
-      const isMe = member.device_id === deviceId;
-      const peerState = peerStates[member.device_id] ?? "idle";
-      const wasPeerConnected = everConnectedPeersRef.current.has(
-        member.device_id
-      );
-      const isInCall = member.is_in_call === true;
+      const memberId = String(member.device_id ?? "").trim();
+      const viewerId = String(deviceId ?? "").trim();
+      const isMe = memberId === viewerId && !!viewerId;
+      const selfLeftCall =
+        !!viewerId &&
+        !!sessionId &&
+        (hasLocalLeftCall(sessionId, viewerId) ||
+          localExitedPeersRef.current.has(viewerId));
+      const localExitedCall =
+        localExitedPeersRef.current.has(memberId) ||
+        hasLocalLeftCall(sessionId, memberId) ||
+        (isMe && selfLeftCall);
+      const isInCall = member.is_in_call === true && !localExitedCall;
+
+      if (isMe && selfLeftCall) {
+        const waiting = {
+          text: "待機中",
+          color: "#6b7280",
+          chipBg: "#f3f4f6",
+          chipText: "#6b7280",
+          reason: "localExitedCall",
+          source: "participation",
+        };
+        const prevText = prevCallStatusRef.current[memberId];
+        if (prevText !== waiting.text) {
+          logParticipationStatusDecision({
+            context: "call",
+            deviceId: memberId,
+            label: waiting.text,
+            status: "waiting",
+            used: waiting.source,
+            reason: waiting.reason,
+            sources: {
+              is_in_call: member.is_in_call ?? null,
+              screen: member.screen ?? "room",
+              peerState: peerStates[memberId] ?? "idle",
+              localExitedCall: true,
+              selfLeftCall: true,
+              isMe: true,
+            },
+          });
+          prevCallStatusRef.current[memberId] = waiting.text;
+        }
+        return waiting;
+      }
+
+      const peerState = peerStates[memberId] ?? "idle";
+      const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
 
       const status = resolveCallMemberStatus({
         isMe,
         isMuted,
         isInCall,
+        screen: localExitedCall ? "room" : member.screen,
+        localExitedCall,
         peerState,
         wasPeerConnected,
       });
-
-      const used = isMe
-        ? "self"
-        : !isInCall
-          ? "not_in_call"
-          : peerState === "idle"
-            ? "peer_idle"
-            : `peer_${peerState}`;
 
       const prevText = prevCallStatusRef.current[member.device_id];
       if (prevText !== status.text) {
         logParticipationStatusDecision({
           context: "call",
-          deviceId: member.device_id,
+          deviceId: memberId,
           label: status.text,
           status: isInCall ? "in_call" : "waiting",
-          used,
+          used: status.source,
+          reason: status.reason,
           sources: {
             is_in_call: member.is_in_call ?? null,
+            screen: member.screen ?? null,
             peerState,
             wasPeerConnected,
+            localExitedCall,
+            selfLeftCall,
             isMe,
           },
         });
-        prevCallStatusRef.current[member.device_id] = status.text;
+        prevCallStatusRef.current[memberId] = status.text;
       }
 
       return status;
     },
-    [deviceId, isMuted, peerStates]
+    [deviceId, isMuted, peerStates, sessionId]
   );
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
@@ -810,6 +922,8 @@ export default function CallClient() {
               cursor: "pointer",
             }}
             onClick={() => {
+              markSelfLeftCall();
+              releaseSessionMic("call_exit", sessionId);
               router.push(
                 withDev(
                   `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +

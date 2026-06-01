@@ -35,6 +35,13 @@ import {
 } from "@/lib/webPushClient";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
+import { hasLocalLeftCall } from "@/lib/localCallExit";
+import {
+  clearLocallyHiddenClass,
+  filterOutLocallyHiddenClasses,
+  isLocallyHiddenClass,
+  markLocallyHiddenClass,
+} from "@/lib/localHiddenClasses";
 import { isUserProfileComplete } from "@/lib/profileClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import {
@@ -150,12 +157,18 @@ function resolveHomeMemberParticipation(
   previous: UiParticipationStatus | null,
   fetchFailed = false
 ): UiParticipationStatus {
+  const localExitedCall = hasLocalLeftCall(
+    sessionId,
+    String(member.device_id ?? "").trim()
+  );
+
   return resolveParticipationStatus({
     source: mergeMemberPresenceSource(member, presence),
     currentSessionId: sessionId,
     freshMs: PRESENCE_FRESH_MS_HOME,
     previous,
     fetchFailed,
+    localExitedCall,
   });
 }
 
@@ -326,6 +339,8 @@ export default function HomeClient() {
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const openClassRef = useRef<(target: MineClass) => Promise<void>>(async () => {});
   const handledPushOpenClassIdRef = useRef<string | null>(null);
+  const leavingClassIdsRef = useRef<Set<string>>(new Set());
+  const classesBeforeLeaveRef = useRef<MineClass[] | null>(null);
 
   const [mounted, setMounted] = useState(false);
   const [inAppToasts, setInAppToasts] = useState<InAppToastItem[]>([]);
@@ -370,9 +385,9 @@ export default function HomeClient() {
           return;
         }
 
-        const nextClasses = Array.isArray(classesJson.classes)
-          ? classesJson.classes
-          : [];
+        const nextClasses = filterOutLocallyHiddenClasses(
+          Array.isArray(classesJson.classes) ? classesJson.classes : []
+        ) as MineClass[];
         const classIds = nextClasses.map((c: MineClass) =>
           String(c.id ?? "").trim()
         );
@@ -1262,6 +1277,7 @@ return () => {
     for (const c of classes) {
       const id = String(c.id ?? "").trim();
       if (!id) continue;
+      if (isLocallyHiddenClass(id)) continue;
 
       const prev = byId.get(id);
       const prevTime = prev?.created_at ? new Date(prev.created_at).getTime() : 0;
@@ -1530,62 +1546,121 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   }
 
   async function leaveClass(target: MineClass) {
+    const classId = String(target.id ?? "").trim();
     const title = formatClassLabel(target);
+
+    if (!classId) return;
+
+    if (leavingClassIdsRef.current.has(classId)) {
+      return;
+    }
 
     if (!confirm(`「${title}」を抜けますか？`)) {
       return;
     }
 
+    const currentDeviceId = String(getDeviceId() ?? deviceId ?? "").trim();
+    if (!currentDeviceId) {
+      alert("device_id_missing");
+      return;
+    }
+
+    leavingClassIdsRef.current.add(classId);
+    setLeavingClassId(classId);
+    markLocallyHiddenClass(classId);
+    console.log("[home-leave] optimistic-remove", { classId, deviceId: currentDeviceId });
+
+    classesBeforeLeaveRef.current = classes;
+    setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
+    setMembersByClass((prev) => {
+      const next = { ...prev };
+      delete next[classId];
+      return next;
+    });
+    setPresenceByClass((prev) => {
+      const next = { ...prev };
+      delete next[classId];
+      return next;
+    });
+    prevMembersRef.current = { ...prevMembersRef.current };
+    delete prevMembersRef.current[classId];
+    prevPresenceRef.current = { ...prevPresenceRef.current };
+    delete prevPresenceRef.current[classId];
+    delete prevMemberStatusRef.current[classId];
+
+    console.log("[home-leave] request", { classId, deviceId: currentDeviceId });
+
     try {
-      setLeavingClassId(target.id);
-
-      const currentDeviceId = String(getDeviceId() ?? "").trim();
-      if (!currentDeviceId) {
-        alert("device_id_missing");
-        return;
-      }
-
       const res = await fetch("/api/class/leave", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           deviceId: currentDeviceId,
-          classId: target.id,
+          classId,
         }),
         cache: "no-store",
       });
 
       const raw = await res.text().catch(() => "");
-      let json: any = {};
+      let json: { ok?: boolean; error?: string } = {};
       try {
         json = raw ? JSON.parse(raw) : {};
       } catch {
-        json = { raw };
+        json = { error: raw || "invalid_json" };
       }
 
-      console.log("[home leave] status =", res.status);
-      console.log("[home leave] json =", json);
+      const errorCode = String(json?.error ?? "").trim();
+      const alreadyLeft = errorCode === "not_member";
 
-      if (!res.ok || !json?.ok) {
-        alert(json?.error || `leave_failed (${res.status})`);
+      if (res.ok && json?.ok) {
+        console.log("[home-leave] success", { classId, deviceId: currentDeviceId });
+        classesBeforeLeaveRef.current = null;
         return;
       }
 
-      setClasses((prev) => prev.filter((c) => String(c.id) !== String(target.id)));
-      setMembersByClass((prev) => {
-        const next = { ...prev };
-        delete next[target.id];
-        return next;
+      if (alreadyLeft) {
+        console.log("[home-leave] already-left", {
+          classId,
+          deviceId: currentDeviceId,
+          status: res.status,
+        });
+        classesBeforeLeaveRef.current = null;
+        return;
+      }
+
+      console.warn("[home-leave] failed", {
+        classId,
+        deviceId: currentDeviceId,
+        status: res.status,
+        error: errorCode || raw,
       });
-      setPresenceByClass((prev) => {
-        const next = { ...prev };
-        delete next[target.id];
-        return next;
-      });
+
+      clearLocallyHiddenClass(classId);
+      const snapshot = classesBeforeLeaveRef.current;
+      if (snapshot) {
+        setClasses(snapshot);
+      } else {
+        void fetchJoinedClasses("leave_rollback", { deviceId: currentDeviceId });
+      }
+      classesBeforeLeaveRef.current = null;
+      alert(errorCode || `leave_failed (${res.status})`);
     } catch (e: any) {
-      console.error("[home leave] error =", e);
+      console.warn("[home-leave] failed", {
+        classId,
+        deviceId: currentDeviceId,
+        error: e?.message ?? "unknown_error",
+      });
+      clearLocallyHiddenClass(classId);
+      const snapshot = classesBeforeLeaveRef.current;
+      if (snapshot) {
+        setClasses(snapshot);
+      } else {
+        void fetchJoinedClasses("leave_rollback", { deviceId: currentDeviceId });
+      }
+      classesBeforeLeaveRef.current = null;
       alert(e?.message || "leave_failed");
     } finally {
+      leavingClassIdsRef.current.delete(classId);
       setLeavingClassId(null);
     }
   }
@@ -1661,7 +1736,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
           <div style={{ display: "grid", gap: 14 }}>
             {visible.map((c) => {
-              const leaving = leavingClassId === c.id;
+              const leaving =
+                leavingClassId === c.id || leavingClassIdsRef.current.has(c.id);
               const opening = openingClassId === c.id;
               const members = membersByClass[c.id] ?? [];
               const presenceMap = presenceByClass[c.id] ?? {};

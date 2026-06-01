@@ -44,6 +44,7 @@ export function resolveParticipationStatus(params: {
   freshMs?: number;
   previous?: UiParticipationStatus | null;
   fetchFailed?: boolean;
+  localExitedCall?: boolean;
 }): UiParticipationStatus {
   const {
     source,
@@ -51,6 +52,7 @@ export function resolveParticipationStatus(params: {
     freshMs = PRESENCE_FRESH_MS_HOME,
     previous = null,
     fetchFailed = false,
+    localExitedCall = false,
   } = params;
 
   const lastSeenAt = source.last_seen_at;
@@ -59,11 +61,20 @@ export function resolveParticipationStatus(params: {
   const staleGrace =
     lastTs != null && Date.now() - lastTs <= freshMs + PRESENCE_STALE_GRACE_MS;
 
+  const screen = String(source.screen ?? "").trim();
+
+  if (localExitedCall || screen === "room" || screen === "home") {
+    return "waiting";
+  }
+
+  if (source.is_in_call === false) {
+    return "waiting";
+  }
+
   if (source.is_in_call === true) {
     return "in_call";
   }
 
-  const screen = String(source.screen ?? "").trim();
   const sid = String(
     source.presence_session_id ?? source.session_id ?? ""
   ).trim();
@@ -74,10 +85,6 @@ export function resolveParticipationStatus(params: {
       if (!currentSid || !sid || sid === currentSid) {
         return "in_call";
       }
-    }
-
-    if (screen === "room" || screen === "home") {
-      return "waiting";
     }
 
     const effective = normalizedEffective(source);
@@ -140,24 +147,58 @@ export function resolveCallMemberStatus(params: {
   isMe: boolean;
   isMuted: boolean;
   isInCall: boolean;
+  screen?: string | null;
+  localExitedCall?: boolean;
   peerState: CallPeerState;
   wasPeerConnected: boolean;
 }) {
+  const screen = String(params.screen ?? "").trim();
+  const forceWaiting =
+    params.localExitedCall === true ||
+    screen === "room" ||
+    screen === "home" ||
+    params.isInCall !== true;
+
   if (params.isMe) {
+    if (forceWaiting) {
+      return {
+        text: "待機中",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
+        reason: params.localExitedCall
+          ? "localExitedCall"
+          : screen === "room"
+            ? "screen_room"
+            : "is_in_call_false",
+        source: "participation",
+      };
+    }
+
     return {
       text: params.isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
       color: "#6b7280",
       chipBg: params.isMuted ? "#fef2f2" : "#eff6ff",
       chipText: params.isMuted ? "#991b1b" : "#1d4ed8",
+      reason: "self_in_call",
+      source: "isMe",
     };
   }
 
-  if (!params.isInCall) {
+  if (forceWaiting) {
     return {
       text: "待機中",
       color: "#6b7280",
       chipBg: "#f3f4f6",
       chipText: "#6b7280",
+      reason: params.localExitedCall
+        ? "localExitedCall"
+        : screen === "room"
+          ? "screen_room"
+          : screen === "home"
+            ? "screen_home"
+            : "is_in_call_false",
+      source: "participation",
     };
   }
 
@@ -167,6 +208,8 @@ export function resolveCallMemberStatus(params: {
       color: "#065f46",
       chipBg: "#ecfdf5",
       chipText: "#047857",
+      reason: "peer_connected",
+      source: "peerState",
     };
   }
 
@@ -176,6 +219,10 @@ export function resolveCallMemberStatus(params: {
       color: "#92400e",
       chipBg: "#fffbeb",
       chipText: "#b45309",
+      reason: params.wasPeerConnected
+        ? "peer_connecting_reconnect"
+        : "peer_connecting_initial",
+      source: "peerState",
     };
   }
 
@@ -185,6 +232,8 @@ export function resolveCallMemberStatus(params: {
       color: "#991b1b",
       chipBg: "#fef2f2",
       chipText: "#dc2626",
+      reason: params.wasPeerConnected ? "peer_failed_reconnect" : "peer_failed",
+      source: "peerState",
     };
   }
 
@@ -193,6 +242,8 @@ export function resolveCallMemberStatus(params: {
     color: "#6b7280",
     chipBg: "#f3f4f6",
     chipText: "#6b7280",
+    reason: "peer_idle",
+    source: "peerState",
   };
 }
 
@@ -202,6 +253,7 @@ export function logParticipationStatusDecision(params: {
   label: string;
   status: string;
   used: string;
+  reason?: string;
   sources: Record<string, unknown>;
 }) {
   console.log(`[${params.context}-status]`, {
@@ -209,6 +261,7 @@ export function logParticipationStatusDecision(params: {
     label: params.label,
     status: params.status,
     used: params.used,
+    reason: params.reason ?? null,
     ...params.sources,
     timestamp: Date.now(),
   });

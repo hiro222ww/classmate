@@ -42,6 +42,7 @@ import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
+import { hasLocalLeftCall } from "@/lib/localCallExit";
 import {
   logParticipationStatusDecision,
   mapPresenceApiRow,
@@ -312,7 +313,8 @@ function resolveRoomMemberParticipation(
   presence: PresenceRow | undefined,
   sessionId: string,
   previous: UiParticipationStatus | null,
-  fetchFailed = false
+  fetchFailed = false,
+  localExitedCall = false
 ): UiParticipationStatus {
   return resolveParticipationStatus({
     source: mergeRoomMemberPresenceSource(member, presence),
@@ -320,6 +322,7 @@ function resolveRoomMemberParticipation(
     freshMs: PRESENCE_FRESH_MS_ROOM,
     previous,
     fetchFailed,
+    localExitedCall,
   });
 }
 
@@ -328,13 +331,22 @@ function resolveRoomMemberDisplay(
   presence: PresenceRow | undefined,
   sessionId: string,
   previous: UiParticipationStatus | null,
-  isMe: boolean
+  isMe: boolean,
+  viewerDeviceId: string
 ) {
-  if (isMe) {
+  const did = String(member.device_id ?? "").trim();
+  const viewerId = String(viewerDeviceId ?? "").trim();
+  const viewerLeftCall =
+    !!viewerId && !!sessionId && hasLocalLeftCall(sessionId, viewerId);
+  const localExitedCall =
+    hasLocalLeftCall(sessionId, did) || (isMe && viewerLeftCall);
+
+  if (isMe || localExitedCall) {
     return {
       status: "waiting" as const,
       label: "待機中",
-      used: "self_in_room",
+      used: isMe ? "self_in_room" : "local_exited_call",
+      reason: localExitedCall ? "localExitedCall" : "self_in_room",
     };
   }
 
@@ -342,19 +354,46 @@ function resolveRoomMemberDisplay(
     member,
     presence,
     sessionId,
-    previous
+    previous,
+    false,
+    localExitedCall
   );
 
-  const used = member.is_in_call
-    ? "is_in_call"
-    : presence
-      ? "presence"
-      : "member_fields";
+  const screen = String(member.screen ?? presence?.screen ?? "").trim();
+  const used = localExitedCall
+    ? "local_exited_call"
+    : member.is_in_call
+      ? "is_in_call"
+      : screen === "room"
+        ? "screen_room"
+        : presence
+          ? "presence"
+          : "member_fields";
 
   return {
     status,
     label: participationStatusLabel(status, "room"),
     used,
+    reason:
+      screen === "room"
+        ? "screen_room"
+        : member.is_in_call
+          ? "is_in_call"
+          : status,
+  };
+}
+
+function applyRoomLocalLeftOverride(
+  member: MemberRow,
+  sessionId: string
+): MemberRow {
+  const did = String(member.device_id ?? "").trim();
+  if (!did || !hasLocalLeftCall(sessionId, did)) return member;
+
+  return {
+    ...member,
+    is_in_call: false,
+    screen: "room",
   };
 }
 
@@ -740,6 +779,27 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [members, deviceId, displayName]);
 
   useEffect(() => {
+    const viewerId = String(deviceId ?? "").trim();
+    if (!sessionId || !viewerId) return;
+    if (!hasLocalLeftCall(sessionId, viewerId)) return;
+
+    setMembers((prev) => {
+      let changed = false;
+      const next = prev.map((member) => {
+        if (String(member.device_id ?? "").trim() !== viewerId) return member;
+        if (member.is_in_call === false && member.screen === "room") return member;
+        changed = true;
+        return {
+          ...member,
+          is_in_call: false,
+          screen: "room",
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [sessionId, deviceId]);
+
+  useEffect(() => {
     if (!sessionId) return;
 
     const nextStatuses: Record<string, UiParticipationStatus> = {};
@@ -754,7 +814,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         presenceMap[did],
         sessionId,
         prevMemberStatusRef.current[did] ?? null,
-        isMe
+        isMe,
+        deviceId
       );
 
       nextStatuses[did] = display.status;
@@ -767,6 +828,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           label: display.label,
           status: display.status,
           used: display.used,
+          reason: display.reason,
           sources: {
             is_in_call: member.is_in_call ?? null,
             screen: member.screen ?? presenceMap[did]?.screen ?? null,
@@ -776,6 +838,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
               member.presence_session_id ??
               presenceMap[did]?.presence_session_id ??
               null,
+            localExitedCall: hasLocalLeftCall(sessionId, did),
             sessionId,
             isMe,
           },
@@ -820,7 +883,9 @@ if (!res.ok || !json?.ok) {
           return;
         }
 
-        const incomingMembers = Array.isArray(json.members) ? json.members : [];
+        const incomingMembers = (Array.isArray(json.members) ? json.members : []).map(
+          (member) => applyRoomLocalLeftOverride(member, sessionId)
+        );
 
 const stillJoined = incomingMembers.some(
   (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
@@ -1534,7 +1599,8 @@ if (!shouldAutoStart) return;
                       presenceMap[did],
                       sessionId,
                       prevStatuses[did] ?? null,
-                      isMe
+                      isMe,
+                      deviceId
                     );
                     const pill = participationStatusStyle(memberDisplay.status);
 
