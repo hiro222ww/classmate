@@ -66,10 +66,10 @@ export default function InAppToastStack({
                 marginBottom: 4,
               }}
             >
-              {toast.className}
+              {String(toast.className ?? "クラス")}
             </div>
             <div style={{ fontSize: 13, fontWeight: 800, lineHeight: 1.45 }}>
-              {toast.message}
+              {String(toast.message ?? "")}
             </div>
             <div
               style={{
@@ -86,7 +86,7 @@ export default function InAppToastStack({
           <button
             type="button"
             aria-label="閉じる"
-            onClick={() => onDismiss(toast.id)}
+            onClick={() => onDismiss(String(toast.id ?? ""))}
             style={{
               width: "100%",
               border: "none",

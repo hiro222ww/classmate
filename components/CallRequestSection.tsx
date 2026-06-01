@@ -33,16 +33,20 @@ export default function CallRequestSection({
   onUpdated,
   onEnter,
 }: Props) {
+  const safeClassId = String(classId ?? "").trim();
+  const safeDeviceId = String(deviceId ?? "").trim();
+  const safeRequest = request ?? null;
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const activeRequest = useMemo(() => {
-    if (!request?.is_active) return null;
-    return request;
-  }, [request]);
+    if (!safeRequest?.is_active) return null;
+    return safeRequest;
+  }, [safeRequest]);
 
   async function createRequest() {
-    if (!deviceId || !classId || activeRequest) return;
+    if (!safeDeviceId || !safeClassId || activeRequest) return;
 
     setBusy(true);
     setError(null);
@@ -52,8 +56,8 @@ export default function CallRequestSection({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          device_id: deviceId,
-          class_id: classId,
+          device_id: safeDeviceId,
+          class_id: safeClassId,
         }),
       });
       const json = await readJsonSafe(res);
@@ -72,7 +76,7 @@ export default function CallRequestSection({
   }
 
   async function cancelRequest() {
-    if (!deviceId || !classId || !activeRequest?.is_mine) return;
+    if (!safeDeviceId || !safeClassId || !activeRequest?.is_mine) return;
     if (!window.confirm("「今ひま？」の呼びかけをキャンセルしますか？")) return;
 
     setBusy(true);
@@ -83,8 +87,8 @@ export default function CallRequestSection({
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          device_id: deviceId,
-          class_id: classId,
+          device_id: safeDeviceId,
+          class_id: safeClassId,
         }),
       });
       const json = await readJsonSafe(res);
@@ -122,7 +126,7 @@ export default function CallRequestSection({
             lineHeight: 1.45,
           }}
         >
-          {activeRequest.display_label}
+            {String(activeRequest.display_label ?? "今話せる人を探しています")}
         </div>
 
         <div
@@ -171,7 +175,7 @@ export default function CallRequestSection({
     );
   }
 
-  if (!showCreateButton || !deviceId) {
+  if (!showCreateButton || !safeDeviceId) {
     return null;
   }
 

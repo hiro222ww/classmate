@@ -4,18 +4,23 @@
  */
 
 function urlBase64ToUint8Array(base64String: string) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = window.atob(base64);
-  const output = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i += 1) {
-    output[i] = raw.charCodeAt(i);
+  try {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(base64);
+    const output = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) {
+      output[i] = raw.charCodeAt(i);
+    }
+    return output;
+  } catch {
+    return null;
   }
-  return output;
 }
 
 export function isWebPushSupported() {
   if (typeof window === "undefined") return false;
+  if (typeof navigator === "undefined") return false;
   return (
     "serviceWorker" in navigator &&
     "PushManager" in window &&
@@ -24,6 +29,7 @@ export function isWebPushSupported() {
 }
 
 export async function registerClassmateServiceWorker() {
+  if (typeof window === "undefined") return null;
   if (!("serviceWorker" in navigator)) return null;
   return navigator.serviceWorker.register("/sw.js", { scope: "/" });
 }
@@ -68,9 +74,14 @@ export async function subscribeWebPush(deviceId: string) {
 
   let subscription = await registration.pushManager.getSubscription();
   if (!subscription) {
+    const applicationServerKey = urlBase64ToUint8Array(publicKey);
+    if (!applicationServerKey) {
+      return { ok: false as const, error: "vapid_not_configured" };
+    }
+
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey),
+      applicationServerKey,
     });
   }
 
@@ -101,6 +112,7 @@ export async function subscribeWebPush(deviceId: string) {
 }
 
 export async function unsubscribeWebPush(deviceId: string) {
+  if (typeof window === "undefined") return { ok: true as const };
   if (!("serviceWorker" in navigator)) {
     return { ok: true as const };
   }

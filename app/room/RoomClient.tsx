@@ -36,7 +36,7 @@ import {
 } from "@/lib/memberProfileView";
 import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
-import type { MeetingPlanPublic } from "@/lib/meetingPlan";
+import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 
 type MemberRow = {

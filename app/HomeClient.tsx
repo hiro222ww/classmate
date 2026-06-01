@@ -33,7 +33,7 @@ import {
   subscribeWebPush,
   unsubscribeWebPush,
 } from "@/lib/webPushClient";
-import type { MeetingPlanPublic } from "@/lib/meetingPlan";
+import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 
 type Profile = {
@@ -236,7 +236,7 @@ function getClassStatusStyle(label: string) {
   };
 }
 
-async function pushBrowserNotification(
+function pushBrowserNotification(
   enabled: boolean,
   title: string,
   body: string
@@ -422,13 +422,19 @@ export default function HomeClient() {
   }, []);
 
   useEffect(() => {
-    if (!deviceId || !notificationsEnabled) return;
-    void subscribeWebPush(deviceId).then((result) => {
-      if (!result.ok && result.error !== "permission_denied") {
-        console.warn("[home] web push resubscribe failed", result.error);
-      }
-    });
-  }, [deviceId, notificationsEnabled]);
+    if (typeof window === "undefined") return;
+    if (!deviceId || !notificationsEnabled || !mounted) return;
+
+    void subscribeWebPush(deviceId)
+      .then((result) => {
+        if (!result.ok && result.error !== "permission_denied") {
+          console.warn("[home] web push resubscribe failed", result.error);
+        }
+      })
+      .catch((e) => {
+        console.warn("[home] web push resubscribe error", e);
+      });
+  }, [deviceId, notificationsEnabled, mounted]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1033,6 +1039,8 @@ return () => {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     const pushOpenClassId = String(
       searchParams.get("pushOpenClassId") ?? ""
     ).trim();
@@ -1046,10 +1054,15 @@ return () => {
 
     handledPushOpenClassIdRef.current = pushOpenClassId;
 
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("pushOpenClassId");
-    const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname);
+    try {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("pushOpenClassId");
+      const qs = params.toString();
+      const basePath = pathname || window.location.pathname || "/";
+      router.replace(qs ? `${basePath}?${qs}` : basePath);
+    } catch (e) {
+      console.warn("[home] pushOpenClassId url cleanup failed", e);
+    }
 
     void openClassRef.current(target);
   }, [searchParams, classes, openingClassId, pathname, router]);

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import {
   isoToJstDatetimeLocalInput,
   type MeetingPlanPublic,
-} from "@/lib/meetingPlan";
+} from "@/lib/meetingPlanClient";
 
 type Props = {
   classId: string;
@@ -44,19 +44,23 @@ export default function MeetingPlanSection({
   showActions = true,
   onUpdated,
 }: Props) {
+  const safeClassId = String(classId ?? "").trim();
+  const safeDeviceId = String(deviceId ?? "").trim();
+  const safePlan = plan ?? null;
+
   const [editing, setEditing] = useState(false);
-  const [localValue, setLocalValue] = useState(() => defaultLocalValue(plan));
+  const [localValue, setLocalValue] = useState(() => defaultLocalValue(safePlan));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const summaryText = useMemo(() => {
-    if (!plan) return "次の集合は未定";
-    if (plan.is_past) return "次の集合：終了済み";
-    return `次の集合：${plan.display_label}`;
-  }, [plan]);
+    if (!safePlan) return "次の集合は未定";
+    if (safePlan.is_past) return "次の集合：終了済み";
+    return `次の集合：${safePlan.display_label || "未定"}`;
+  }, [safePlan]);
 
   async function savePlan() {
-    if (!deviceId || !classId || !localValue.trim()) return;
+    if (!safeDeviceId || !safeClassId || !localValue.trim()) return;
 
     setBusy(true);
     setError(null);
@@ -66,8 +70,8 @@ export default function MeetingPlanSection({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          device_id: deviceId,
-          class_id: classId,
+          device_id: safeDeviceId,
+          class_id: safeClassId,
           scheduled_at: localValue,
         }),
       });
@@ -88,7 +92,7 @@ export default function MeetingPlanSection({
   }
 
   async function cancelPlan() {
-    if (!deviceId || !classId) return;
+    if (!safeDeviceId || !safeClassId || !safePlan) return;
     if (!window.confirm("次の集合時間をキャンセルしますか？")) return;
 
     setBusy(true);
@@ -99,8 +103,8 @@ export default function MeetingPlanSection({
         method: "DELETE",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          device_id: deviceId,
-          class_id: classId,
+          device_id: safeDeviceId,
+          class_id: safeClassId,
         }),
       });
       const json = await readJsonSafe(res);
@@ -120,12 +124,12 @@ export default function MeetingPlanSection({
   }
 
   function openEditor() {
-    setLocalValue(defaultLocalValue(plan));
+    setLocalValue(defaultLocalValue(safePlan));
     setEditing(true);
     setError(null);
   }
 
-  const hasFuturePlan = Boolean(plan && !plan.is_past);
+  const hasFuturePlan = Boolean(safePlan && !safePlan.is_past);
   const fontSize = compact ? 12 : 13;
 
   return (
@@ -148,7 +152,7 @@ export default function MeetingPlanSection({
         {summaryText}
       </div>
 
-      {showActions && deviceId ? (
+      {showActions && safeDeviceId ? (
         <div
           style={{
             display: "flex",

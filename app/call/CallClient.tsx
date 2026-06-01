@@ -20,7 +20,7 @@ import {
   normalizeMemberDeviceId,
   type MemberProfileTarget,
 } from "@/lib/memberProfileView";
-import type { MeetingPlanPublic } from "@/lib/meetingPlan";
+import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 
 type Member = {
