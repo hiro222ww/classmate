@@ -2,16 +2,17 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   createBillingPortalSession,
+  portalConfigEnvForAction,
   type PortalAction,
 } from "@/lib/stripePortal";
 
 export const runtime = "nodejs";
 
 const PORTAL_ACTIONS: PortalAction[] = [
-  "manage",
-  "cancel",
   "update_theme",
   "update_slots",
+  "cancel_theme",
+  "cancel_slots",
 ];
 
 function originFromEnv() {
@@ -22,33 +23,16 @@ function originFromEnv() {
   );
 }
 
-function portalConfigEnvForAction(action: PortalAction) {
-  switch (action) {
-    case "manage":
-    case "cancel":
-      return "STRIPE_PORTAL_CONFIG_MAINTENANCE";
-    case "update_theme":
-      return "STRIPE_PORTAL_CONFIG_THEME";
-    case "update_slots":
-      return "STRIPE_PORTAL_CONFIG_SLOTS";
-  }
-}
-
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
 
     const deviceId = String(body.deviceId ?? "").trim();
     const dev = String(body.dev ?? "").trim();
-    const kind = String(body.kind ?? "").trim();
-    const action = String(body.action ?? "manage").trim() as PortalAction;
+    const action = String(body.action ?? "").trim() as PortalAction;
 
     if (!PORTAL_ACTIONS.includes(action)) {
       return NextResponse.json({ error: "invalid_portal_action" }, { status: 400 });
-    }
-
-    if (action === "cancel" && kind !== "slot" && kind !== "theme") {
-      return NextResponse.json({ error: "invalid_portal_kind" }, { status: 400 });
     }
 
     if (!deviceId) {
@@ -75,22 +59,10 @@ export async function POST(req: Request) {
       ? `${origin}/billing?dev=${encodeURIComponent(dev)}`
       : `${origin}/billing`;
 
-    const category =
-      action === "cancel"
-        ? kind === "slot"
-          ? ("slots" as const)
-          : ("topic_plan" as const)
-        : action === "update_theme"
-          ? ("topic_plan" as const)
-          : action === "update_slots"
-            ? ("slots" as const)
-            : undefined;
-
     const portalRes = await createBillingPortalSession({
       customerId: data.stripe_customer_id,
       returnUrl,
       action,
-      category,
     });
 
     if (!portalRes.ok) {
@@ -101,17 +73,14 @@ export async function POST(req: Request) {
           ? 503
           : 500;
 
+      const configEnv = portalConfigEnvForAction(action);
+
       console.error("[billing/create-portal-session] failed", {
         deviceId,
-        kind,
         action,
         error: portalRes.error,
-        configEnv: portalConfigEnvForAction(action),
-        configConfigured: Boolean(
-          String(
-            process.env[portalConfigEnvForAction(action)] ?? ""
-          ).trim()
-        ),
+        configEnv,
+        configConfigured: Boolean(String(process.env[configEnv] ?? "").trim()),
       });
 
       return NextResponse.json({ error: portalRes.error }, { status });
@@ -119,7 +88,6 @@ export async function POST(req: Request) {
 
     console.log("[billing/create-portal-session] ok", {
       deviceId,
-      kind,
       action,
       configuration: portalRes.configuration,
     });

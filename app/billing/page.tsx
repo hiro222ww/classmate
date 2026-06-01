@@ -5,17 +5,20 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 
-type PortalKind = "slot" | "theme";
-type PortalAction = "manage" | "cancel" | "update_theme" | "update_slots";
+type PortalAction =
+  | "update_theme"
+  | "update_slots"
+  | "cancel_theme"
+  | "cancel_slots";
 
 function portalConfigHint(action: PortalAction) {
   switch (action) {
     case "update_theme":
+    case "cancel_theme":
       return "STRIPE_PORTAL_CONFIG_THEME";
     case "update_slots":
+    case "cancel_slots":
       return "STRIPE_PORTAL_CONFIG_SLOTS";
-    default:
-      return "STRIPE_PORTAL_CONFIG_MAINTENANCE";
   }
 }
 
@@ -27,14 +30,9 @@ function BillingPageInner() {
   const [loadingKey, setLoadingKey] = useState("");
   const [msg, setMsg] = useState("");
 
-  async function openBillingPortal(
-    kind: PortalKind | null,
-    action: PortalAction
-  ) {
-    const loadingToken = kind ? `${kind}:${action}` : action;
-
+  async function openBillingPortal(action: PortalAction) {
     try {
-      setLoadingKey(loadingToken);
+      setLoadingKey(action);
       setMsg("");
 
       const deviceId = getDeviceId();
@@ -42,12 +40,7 @@ function BillingPageInner() {
       const r = await fetch("/api/billing/create-portal-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId,
-          dev,
-          ...(kind ? { kind } : {}),
-          action,
-        }),
+        body: JSON.stringify({ deviceId, dev, action }),
         cache: "no-store",
       });
 
@@ -109,16 +102,13 @@ function BillingPageInner() {
   const loading = loadingKey !== "";
 
   function renderPlanSection(params: {
-    kind: PortalKind;
     title: string;
     description: string;
     updateAction: "update_theme" | "update_slots";
+    cancelAction: "cancel_theme" | "cancel_slots";
     updateLabel: string;
+    cancelLabel: string;
   }) {
-    const manageKey = `${params.kind}:manage`;
-    const cancelKey = `${params.kind}:cancel`;
-    const updateKey = `${params.kind}:${params.updateAction}`;
-
     return (
       <section
         style={{
@@ -147,28 +137,7 @@ function BillingPageInner() {
         <button
           type="button"
           disabled={loading}
-          onClick={() =>
-            void openBillingPortal(params.kind, params.updateAction)
-          }
-          style={{
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 14,
-            border: "1px solid #111",
-            background: "#fff",
-            color: "#111",
-            fontWeight: 900,
-            cursor: loading ? "default" : "pointer",
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          {loadingKey === updateKey ? "開いています…" : params.updateLabel}
-        </button>
-
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => void openBillingPortal(params.kind, "manage")}
+          onClick={() => void openBillingPortal(params.updateAction)}
           style={{
             width: "100%",
             padding: "14px 16px",
@@ -181,15 +150,15 @@ function BillingPageInner() {
             opacity: loading ? 0.7 : 1,
           }}
         >
-          {loadingKey === manageKey
+          {loadingKey === params.updateAction
             ? "開いています…"
-            : "支払い方法・請求履歴"}
+            : params.updateLabel}
         </button>
 
         <button
           type="button"
           disabled={loading}
-          onClick={() => void openBillingPortal(params.kind, "cancel")}
+          onClick={() => void openBillingPortal(params.cancelAction)}
           style={{
             width: "100%",
             padding: "12px 16px",
@@ -202,7 +171,9 @@ function BillingPageInner() {
             opacity: loading ? 0.7 : 1,
           }}
         >
-          {loadingKey === cancelKey ? "開いています…" : "このプランを解約"}
+          {loadingKey === params.cancelAction
+            ? "開いています…"
+            : params.cancelLabel}
         </button>
       </section>
     );
@@ -243,8 +214,8 @@ function BillingPageInner() {
               lineHeight: 1.7,
             }}
           >
-            クラススロットとテーマプランを分けて管理できます。プラン変更は Stripe
-            Portal の更新画面から行い、支払い方法・請求履歴・解約もここから行えます。
+            クラススロットとテーマプランを分けて管理できます。プラン変更・解約は
+            Stripe Portal から行います。支払い方法や請求履歴は、各プラン管理画面内で確認・変更できます。
           </p>
         </div>
 
@@ -265,21 +236,23 @@ function BillingPageInner() {
       </header>
 
       {renderPlanSection({
-        kind: "slot",
         title: "クラススロット",
         description:
-          "クラス枠の変更、支払い方法や請求履歴の確認、クラススロット契約の解約ができます。",
+          "クラス枠の変更や解約ができます。Portal 内で支払い方法・請求履歴も確認できます。",
         updateAction: "update_slots",
+        cancelAction: "cancel_slots",
         updateLabel: "クラス枠を変更",
+        cancelLabel: "クラス枠を解約",
       })}
 
       {renderPlanSection({
-        kind: "theme",
         title: "テーマプラン",
         description:
-          "支援額の変更、支払い方法や請求履歴の確認、テーマプラン契約の解約ができます。",
+          "支援額の変更や解約ができます。Portal 内で支払い方法・請求履歴も確認できます。",
         updateAction: "update_theme",
+        cancelAction: "cancel_theme",
         updateLabel: "支援額を変更",
+        cancelLabel: "テーマプランを解約",
       })}
 
       <div

@@ -405,7 +405,7 @@ export default function PremiumPage() {
       <SoftCard>
         <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "#374151" }}>
           テーマプランの支援額変更・クラス枠の変更はこの画面から Stripe Portal
-          の更新画面を開いて行い、解約・支払い方法・請求履歴は支払い管理ページから行えます。
+          の更新画面を開いて行い、解約や支払い方法・請求履歴はお支払い管理ページから行えます。
         </p>
         <Link
           href={withDev("/billing")}

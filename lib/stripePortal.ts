@@ -3,18 +3,17 @@ import type { BillingCategory } from "@/lib/billingCatalog";
 import { findActiveSubscriptionItem } from "@/lib/billingSubscriptions";
 
 /**
- * Portal plan updates are opened via flow_data.subscription_update with the
- * subscription ID for that billing category. Configurations limit target prices
- * (THEME → topic prices only, SLOTS → slot prices only). General portal home
- * is not used for updates.
+ * Portal sessions use STRIPE_PORTAL_CONFIG_THEME or STRIPE_PORTAL_CONFIG_SLOTS.
+ * Plan updates and cancels are opened via flow_data deep links for the
+ * subscription in that billing category only.
  */
 export type PortalAction =
-  | "manage"
-  | "cancel"
   | "update_theme"
-  | "update_slots";
+  | "update_slots"
+  | "cancel_theme"
+  | "cancel_slots";
 
-type PortalConfigKind = "maintenance" | "theme" | "slots";
+type PortalConfigKind = "theme" | "slots";
 
 const validatedConfigCache = new Map<
   string,
@@ -23,8 +22,6 @@ const validatedConfigCache = new Map<
 
 function readPortalConfigurationId(kind: PortalConfigKind) {
   switch (kind) {
-    case "maintenance":
-      return String(process.env.STRIPE_PORTAL_CONFIG_MAINTENANCE ?? "").trim();
     case "theme":
       return String(process.env.STRIPE_PORTAL_CONFIG_THEME ?? "").trim();
     case "slots":
@@ -34,8 +31,6 @@ function readPortalConfigurationId(kind: PortalConfigKind) {
 
 function configEnvName(kind: PortalConfigKind) {
   switch (kind) {
-    case "maintenance":
-      return "STRIPE_PORTAL_CONFIG_MAINTENANCE";
     case "theme":
       return "STRIPE_PORTAL_CONFIG_THEME";
     case "slots":
@@ -43,14 +38,28 @@ function configEnvName(kind: PortalConfigKind) {
   }
 }
 
+export function portalConfigEnvForAction(action: PortalAction) {
+  return configEnvName(configKindForAction(action));
+}
+
 function configKindForAction(action: PortalAction): PortalConfigKind {
   switch (action) {
-    case "manage":
-    case "cancel":
-      return "maintenance";
     case "update_theme":
+    case "cancel_theme":
       return "theme";
     case "update_slots":
+    case "cancel_slots":
+      return "slots";
+  }
+}
+
+function categoryForAction(action: PortalAction): BillingCategory {
+  switch (action) {
+    case "update_theme":
+    case "cancel_theme":
+      return "topic_plan";
+    case "update_slots":
+    case "cancel_slots":
       return "slots";
   }
 }
@@ -71,30 +80,7 @@ async function requireValidatedPortalConfiguration(kind: PortalConfigKind) {
   if (cached) return cached;
 
   try {
-    const config =
-      await stripe.billingPortal.configurations.retrieve(configurationId);
-
-    const updateEnabled = Boolean(
-      config.features?.subscription_update?.enabled
-    );
-
-    if (kind === "maintenance") {
-      if (updateEnabled) {
-        const result = {
-          ok: false as const,
-          error: "portal_configuration_invalid:subscription_update_enabled",
-        };
-        validatedConfigCache.set(cacheKey, result);
-        return result;
-      }
-    } else if (!updateEnabled) {
-      const result = {
-        ok: false as const,
-        error: "portal_configuration_invalid:subscription_update_disabled",
-      };
-      validatedConfigCache.set(cacheKey, result);
-      return result;
-    }
+    await stripe.billingPortal.configurations.retrieve(configurationId);
 
     const result = { ok: true as const, id: configurationId };
     validatedConfigCache.set(cacheKey, result);
@@ -125,8 +111,6 @@ export async function createBillingPortalSession(params: {
   customerId: string;
   returnUrl: string;
   action: PortalAction;
-  /** Required for cancel and subscription_update flows. */
-  category?: BillingCategory;
 }) {
   const configKind = configKindForAction(params.action);
   const configRes = await requireValidatedPortalConfiguration(configKind);
@@ -135,36 +119,7 @@ export async function createBillingPortalSession(params: {
   }
 
   const configuration = configRes.id;
-
-  if (params.action === "manage") {
-    const session = await stripe.billingPortal.sessions.create({
-      customer: params.customerId,
-      return_url: params.returnUrl,
-      configuration,
-    });
-
-    console.log("[stripePortal] manage session", {
-      configuration,
-      customerId: params.customerId,
-    });
-
-    return { ok: true as const, url: session.url, configuration };
-  }
-
-  const category =
-    params.category ??
-    (params.action === "update_theme"
-      ? "topic_plan"
-      : params.action === "update_slots"
-        ? "slots"
-        : null);
-
-  if (!category) {
-    return {
-      ok: false as const,
-      error: "portal_category_required",
-    };
-  }
+  const category = categoryForAction(params.action);
 
   const existing = await findActiveSubscriptionItem({
     customerId: params.customerId,
@@ -178,7 +133,10 @@ export async function createBillingPortalSession(params: {
     };
   }
 
-  if (params.action === "cancel") {
+  if (
+    params.action === "cancel_theme" ||
+    params.action === "cancel_slots"
+  ) {
     const session = await stripe.billingPortal.sessions.create({
       customer: params.customerId,
       return_url: params.returnUrl,
@@ -194,6 +152,7 @@ export async function createBillingPortalSession(params: {
 
     console.log("[stripePortal] cancel session", {
       configuration,
+      configKind,
       customerId: params.customerId,
       category,
       subscriptionId: existing.subscription.id,
