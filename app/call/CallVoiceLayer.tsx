@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import RemoteAudio from "./voice/RemoteAudio";
+import RemoteAudio, {
+  type RemotePlaybackHealth,
+} from "./voice/RemoteAudio";
 import { useLocalMic } from "./voice/useLocalMic";
 import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
 import { voiceDebugLog } from "./voice/voiceDiagnostics";
+import { logVoiceClientEnv } from "@/lib/voiceClientEnv";
 
 type Member = {
   device_id: string;
@@ -27,6 +30,10 @@ type CallVoiceLayerProps = {
   onMicReadyChange?: (ready: boolean) => void;
   onMicLevelChange?: (level: number) => void;
   onRemoteSpeakingChange?: (remoteId: string, level: number) => void;
+  onRemotePlaybackHealthChange?: (
+    remoteId: string,
+    health: RemotePlaybackHealth
+  ) => void;
   onRemoteCountChange?: (count: number) => void;
   onStatusChange?: (text: string) => void;
   onPeerStatesChange?: (states: Record<string, PeerState>) => void;
@@ -41,6 +48,7 @@ export default function CallVoiceLayer({
   onMicReadyChange,
   onMicLevelChange,
   onRemoteSpeakingChange,
+  onRemotePlaybackHealthChange,
   onRemoteCountChange,
   onStatusChange,
   onPeerStatesChange,
@@ -93,6 +101,10 @@ export default function CallVoiceLayer({
   });
 
   useEffect(() => {
+    logVoiceClientEnv("voice-layer-mount");
+  }, []);
+
+  useEffect(() => {
     signaling.setOnSignal(peer.handleSignal);
   }, [signaling.setOnSignal, peer.handleSignal]);
 
@@ -125,6 +137,7 @@ export default function CallVoiceLayer({
           stream={state.stream}
           remoteId={remoteId}
           onSpeaking={onRemoteSpeakingChange}
+          onPlaybackHealthChange={onRemotePlaybackHealthChange}
         />
       ))}
     </>

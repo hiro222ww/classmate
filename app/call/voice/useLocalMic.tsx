@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatVoiceModeSuffix } from "@/lib/voiceClientEnv";
 
 type UseLocalMicArgs = {
   sessionId: string;
@@ -99,7 +100,8 @@ function formatGetUserMediaAttemptLine(params: {
     `session=${compactSessionId(params.sessionId)} ` +
     `prev=${compactSessionId(params.previousCachedSessionId)} ` +
     `selected=${String(params.selectedMicId ?? "").trim() || "-"} ` +
-    `userPicked=${compactBool(params.userPickedMic)}`
+    `userPicked=${compactBool(params.userPickedMic)} ` +
+    formatVoiceModeSuffix()
   );
 }
 

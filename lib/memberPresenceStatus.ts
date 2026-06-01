@@ -151,6 +151,7 @@ export function resolveCallMemberStatus(params: {
   localExitedCall?: boolean;
   peerState: CallPeerState;
   wasPeerConnected: boolean;
+  remoteAudioVerified?: boolean | null;
 }) {
   const screen = String(params.screen ?? "").trim();
   const forceWaiting =
@@ -203,12 +204,26 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.peerState === "connected") {
+    if (params.remoteAudioVerified === true) {
+      return {
+        text: "接続中",
+        color: "#065f46",
+        chipBg: "#ecfdf5",
+        chipText: "#047857",
+        reason: "peer_connected_audio_verified",
+        source: "peerState",
+      };
+    }
+
     return {
-      text: "接続中",
-      color: "#065f46",
-      chipBg: "#ecfdf5",
-      chipText: "#047857",
-      reason: "peer_connected",
+      text: "音声確認中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+      reason:
+        params.remoteAudioVerified === false
+          ? "peer_connected_audio_unverified"
+          : "peer_connected_audio_pending",
       source: "peerState",
     };
   }

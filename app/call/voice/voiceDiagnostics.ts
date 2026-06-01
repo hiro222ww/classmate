@@ -1,5 +1,7 @@
 "use client";
 
+import { formatVoiceModeSuffix } from "@/lib/voiceClientEnv";
+
 import {
   isLikelyChunkLoadError,
   recordCallReloadContext,
@@ -132,7 +134,8 @@ export function logRemoteTrackEvent(params: {
 }) {
   const compact =
     `[voice-peer] track remote=${compactDeviceId(params.remoteDeviceId)} ` +
-    `event=${params.event} kind=${params.trackKind} id=${params.trackId.slice(-6)}`;
+    `event=${params.event} kind=${params.trackKind} id=${params.trackId.slice(-6)} ` +
+    formatVoiceModeSuffix();
 
   recordCallReloadContext({ lastRemoteTrackEvent: compact });
 
@@ -184,7 +187,7 @@ export function logHealPeerAction(params: {
 
   const compact =
     `[voice-peer] heal remote=${compactDeviceId(params.remoteDeviceId)} ` +
-    `action=${params.action} reason=${params.reason}`;
+    `action=${params.action} reason=${params.reason} ${formatVoiceModeSuffix()}`;
 
   recordCallReloadContext({ lastHealAction: compact });
 
@@ -347,7 +350,8 @@ function formatVoiceMeshSummaryHeader(params: VoiceMeshPeerSummaryParams): strin
     `inCall=${params.inCallMemberDeviceIds.length} ` +
     `peers=${params.peers.length} pc=${pcCount} ` +
     `session=${compactSessionId(params.sessionId)} ` +
-    `local=${compactDeviceId(params.localDeviceId)}`
+    `local=${compactDeviceId(params.localDeviceId)} ` +
+    formatVoiceModeSuffix()
   );
 }
 

@@ -145,6 +145,9 @@ export default function CallClient() {
   const [micLevel, setMicLevel] = useState(0);
   const [callInfo, setCallInfo] = useState("");
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
+  const [remoteAudioHealth, setRemoteAudioHealth] = useState<
+    Record<string, { verified: boolean }>
+  >({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
   const [nowMs, setNowMs] = useState(0);
@@ -740,6 +743,15 @@ export default function CallClient() {
 
       const peerState = peerStates[memberId] ?? "idle";
       const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
+      const audioHealth = remoteAudioHealth[memberId];
+      const remoteAudioVerified =
+        peerState === "connected"
+          ? audioHealth?.verified === true
+            ? true
+            : audioHealth
+              ? false
+              : null
+          : null;
 
       const status = resolveCallMemberStatus({
         isMe,
@@ -749,6 +761,7 @@ export default function CallClient() {
         localExitedCall,
         peerState,
         wasPeerConnected,
+        remoteAudioVerified,
       });
 
       const prevText = prevCallStatusRef.current[member.device_id];
@@ -765,6 +778,7 @@ export default function CallClient() {
             screen: member.screen ?? null,
             peerState,
             wasPeerConnected,
+            remoteAudioVerified,
             localExitedCall,
             selfLeftCall,
             isMe,
@@ -775,8 +789,13 @@ export default function CallClient() {
 
       return status;
     },
-    [deviceId, isMuted, peerStates, sessionId]
+    [deviceId, isMuted, peerStates, remoteAudioHealth, sessionId]
   );
+
+  useEffect(() => {
+    if (!micReady) return;
+    requestRemoteAudioUnlock();
+  }, [micReady]);
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
 
@@ -878,6 +897,16 @@ export default function CallClient() {
                 : m
             )
           );
+        }}
+        onRemotePlaybackHealthChange={(remoteId, health) => {
+          setRemoteAudioHealth((prev) => {
+            const current = prev[remoteId];
+            if (current?.verified === health.verified) return prev;
+            return {
+              ...prev,
+              [remoteId]: { verified: health.verified },
+            };
+          });
         }}
         onRemoteCountChange={handleRemoteCountChange}
         onStatusChange={setCallInfo}
