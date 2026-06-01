@@ -476,10 +476,12 @@ function checkGenderRestriction(params: {
 async function enforceAdmissionForNewJoin(params: {
   deviceId: string;
   classId?: string;
+  sessionId?: string;
 }) {
   const blocked = await blockNewJoinIfAdmissionClosed({
     deviceId: params.deviceId,
     classId: params.classId ?? "",
+    sessionId: params.sessionId,
   });
   if (blocked) return blocked;
 
@@ -499,6 +501,9 @@ export async function matchJoinV2Post(req: Request) {
       body.classId ?? body.forcedClassId ?? ""
     ).trim();
     const forcedClassId = openJoinedClass ? rawClassId : "";
+    const forcedSessionId = openJoinedClass
+      ? String(body.sessionId ?? body.session_id ?? "").trim()
+      : "";
 
     if (!openJoinedClass && rawClassId) {
       console.warn("[class/match-join-v2] ignored classId without openJoinedClass", {
@@ -523,11 +528,16 @@ export async function matchJoinV2Post(req: Request) {
     const admissionBlocked = await enforceAdmissionForNewJoin({
       deviceId,
       classId: forcedClassId,
+      sessionId: forcedSessionId || undefined,
     });
     if (admissionBlocked) return admissionBlocked;
 
     const rejoinEligibility = forcedClassId
-      ? await loadRejoinEligibility({ deviceId, classId: forcedClassId })
+      ? await loadRejoinEligibility({
+          deviceId,
+          classId: forcedClassId,
+          sessionId: forcedSessionId || undefined,
+        })
       : { existingClassMember: false, existingSessionMember: false };
     const canRejoinTargetClass = canRejoinFromEligibility(rejoinEligibility);
 

@@ -7,6 +7,7 @@ export type MatchJoinRequestBody = {
   maxAge?: number;
   openJoinedClass?: boolean;
   classId?: string;
+  sessionId?: string;
 };
 
 /**
@@ -21,6 +22,7 @@ export function buildMatchJoinRequestBody(params: {
   minAge?: number;
   maxAge?: number;
   openJoinedClassId?: string | null;
+  sessionId?: string | null;
 }): MatchJoinRequestBody {
   const body: MatchJoinRequestBody = {
     deviceId: params.deviceId,
@@ -42,6 +44,10 @@ export function buildMatchJoinRequestBody(params: {
   if (openJoinedClassId) {
     body.openJoinedClass = true;
     body.classId = openJoinedClassId;
+    const sessionId = String(params.sessionId ?? "").trim();
+    if (sessionId) {
+      body.sessionId = sessionId;
+    }
   }
 
   return body;

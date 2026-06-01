@@ -202,7 +202,7 @@ export async function POST(req: Request) {
     });
     const canRejoin = canRejoinFromEligibility(rejoinEligibility);
 
-    if (!canRejoin) {
+    if (!canRejoin && !invite) {
       const admission = await getAdmissionStatus();
       if (!admission.open) {
         console.log("[session/join] admission_closed", {

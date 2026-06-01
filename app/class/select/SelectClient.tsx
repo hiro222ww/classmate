@@ -883,6 +883,8 @@ return;
   function BoardCard({ b }: { b: EntryBoard }) {
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
+    const admissionClosed = !joinWindowOpen;
+    const joinDisabled = busy || !deviceId || profileMissing || admissionClosed;
 
     return (
       <div
@@ -928,25 +930,36 @@ return;
 
         <button
           onClick={() => void joinMatchedBoard(b)}
-          disabled={busy || !deviceId || profileMissing}
+          disabled={joinDisabled}
           style={{
             marginTop: 14,
             width: "100%",
             padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid #ccc",
-            background: profileMissing ? "#e5e5e5" : locked ? "#f3f3f3" : "#111",
-            color: profileMissing ? "#666" : locked ? "#111" : "#fff",
+            background:
+              profileMissing || admissionClosed
+                ? "#e5e5e5"
+                : locked
+                  ? "#f3f3f3"
+                  : "#111",
+            color:
+              profileMissing || admissionClosed
+                ? "#666"
+                : locked
+                  ? "#111"
+                  : "#fff",
             fontWeight: 900,
-            cursor:
-              busy || !deviceId || profileMissing ? "not-allowed" : "pointer",
+            cursor: joinDisabled ? "not-allowed" : "pointer",
           }}
         >
           {profileMissing
             ? "プロフィール登録が必要"
-            : locked
-              ? `参加（要：${tierName(b.monthly_price)}以上）`
-              : "入る"}
+            : admissionClosed
+              ? "入校受付時間外"
+              : locked
+                ? `参加（要：${tierName(b.monthly_price)}以上）`
+                : "入る"}
         </button>
       </div>
     );
@@ -1132,7 +1145,7 @@ return;
             </>
           ) : null}
           <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700 }}>
-            テーマの確認や設定はできます。入室は受付時間内に「入る」を押してください。
+            テーマの確認や設定はできます。新規入校は受付時間内に「入る」を押してください。所属中のクラスへの再入室は Home から可能です。
           </div>
         </div>
       ) : null}
@@ -1332,23 +1345,28 @@ return;
 
           <button
             onClick={() => void enterQuickFreeTheme()}
-            disabled={busy || !deviceId || hasProfile === false}
+            disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen}
             style={{
               padding: "12px 14px",
               borderRadius: 14,
               border: "none",
-              background: hasProfile === false ? "#d4d4d4" : "#111",
-              color: hasProfile === false ? "#666" : "#fff",
+              background:
+                hasProfile === false || !joinWindowOpen ? "#d4d4d4" : "#111",
+              color: hasProfile === false || !joinWindowOpen ? "#666" : "#fff",
               fontWeight: 900,
               cursor:
-                busy || !deviceId || hasProfile === false
+                busy || !deviceId || hasProfile === false || !joinWindowOpen
                   ? "not-allowed"
                   : "pointer",
               whiteSpace: "nowrap",
               opacity: busy || !deviceId ? 0.6 : 1,
             }}
           >
-            {hasProfile === false ? "プロフィール登録が必要" : "入る"}
+            {hasProfile === false
+              ? "プロフィール登録が必要"
+              : !joinWindowOpen
+                ? "入校受付時間外"
+                : "入る"}
           </button>
         </div>
 

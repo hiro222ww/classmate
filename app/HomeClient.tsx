@@ -1153,6 +1153,7 @@ return () => {
       const openBody = buildMatchJoinRequestBody({
         deviceId: currentDeviceId,
         openJoinedClassId: target.id,
+        sessionId: target.session_id ?? null,
         topicKey: target.topic_key,
         worldKey: target.world_key ?? "default",
         capacity: 5,
@@ -1425,19 +1426,23 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
         <button
           onClick={quickJoinFreeAndOpen}
-          disabled={quickBusy}
+          disabled={quickBusy || !joinWindowOpen}
           style={{
             padding: "12px 16px",
             borderRadius: 12,
             border: "1px solid #ddd",
-            background: "#fff",
-            color: "#111",
+            background: !joinWindowOpen ? "#e5e5e5" : "#fff",
+            color: !joinWindowOpen ? "#666" : "#111",
             fontWeight: 900,
-            cursor: quickBusy ? "default" : "pointer",
-            opacity: quickBusy ? 0.7 : 1,
+            cursor: quickBusy || !joinWindowOpen ? "default" : "pointer",
+            opacity: quickBusy || !joinWindowOpen ? 0.7 : 1,
           }}
         >
-          {quickBusy ? "参加中…" : "今すぐ入る"}
+          {quickBusy
+            ? "参加中…"
+            : !joinWindowOpen
+              ? "入校受付時間外"
+              : "今すぐ入る"}
         </button>
 
         <button
@@ -1478,7 +1483,29 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       ) : null}
 
       <div style={{ marginTop: 6, borderTop: "1px solid #eee", paddingTop: 12 }}>
-        <div style={{ fontWeight: 900, marginBottom: 8 }}>自分のクラス</div>
+        <div style={{ fontWeight: 900, marginBottom: 8 }}>
+          {!joinWindowOpen && visible.length > 0
+            ? "今のクラスに入ろう"
+            : "自分のクラス"}
+        </div>
+
+        {!joinWindowOpen && visible.length > 0 ? (
+          <div
+            style={{
+              marginBottom: 10,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #bfdbfe",
+              background: "#eff6ff",
+              color: "#1e40af",
+              fontSize: 12,
+              fontWeight: 700,
+              lineHeight: 1.6,
+            }}
+          >
+            所属中のクラスがあります。入校受付時間外でも、所属中のクラスには入れます。
+          </div>
+        ) : null}
 
         {error ? (
           <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>
@@ -1758,7 +1785,11 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                         opacity: opening ? 0.7 : 1,
                       }}
                     >
-                      {opening ? "開いています…" : "開く"}
+                      {opening
+                        ? "入っています…"
+                        : !joinWindowOpen
+                          ? "今のクラスに入る"
+                          : "入る"}
                     </button>
 
                     <button
