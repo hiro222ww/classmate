@@ -497,7 +497,7 @@ export function resolveCallEntryUserMuted(
   stored: boolean | null;
   isFirstCallEntry: boolean;
 } {
-  const stored = readCallMutePreference(sessionId, deviceId);
+  const storedPreference = readCallMutePreference(sessionId, deviceId);
   const nav = getNavigationType();
   const entrySeen = isCallEntrySeen(sessionId, deviceId);
   const isReloadLike =
@@ -506,14 +506,14 @@ export function resolveCallEntryUserMuted(
     options?.navigationContext === "bfcache";
   const isFirstCallEntry = !entrySeen && !isReloadLike;
 
-  if (stored !== null) {
+  if (storedPreference !== null) {
     const reason: CallMuteInitReason = isReloadLike
       ? options?.navigationContext === "bfcache"
         ? "bfcache_restore"
         : "reload_restore"
       : "reload_restore";
 
-    if (stored === false && isReloadLike) {
+    if (storedPreference === false && isReloadLike) {
       markCallMicEverUnmuted(sessionId, deviceId);
       console.log(
         `[local-mic] prevent-safety-mute-on-reload stored=false reason=${reason}`
@@ -524,15 +524,15 @@ export function resolveCallEntryUserMuted(
       sessionId,
       deviceId,
       nav,
-      stored,
+      stored: storedPreference,
       isFirstCallEntry: false,
-      decision: stored,
+      decision: storedPreference,
       reason,
     });
 
     return {
-      userMuted: stored,
-      stored,
+      userMuted: storedPreference,
+      stored: storedPreference,
       reason,
       isFirstCallEntry: false,
     };
