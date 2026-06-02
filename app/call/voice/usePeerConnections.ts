@@ -349,6 +349,57 @@ function evaluateLiveStreamWaitConnectedHold(params: {
   };
 }
 
+function getLiveStreamWaitConnectedCheckForPeer(params: {
+  pc: RTCPeerConnection | null | undefined;
+  hasLiveRemoteStream: boolean;
+  remoteTracksCount: number;
+  hasRemoteStream: boolean;
+  timestamps: PeerSignalTimestamps;
+  connectStartedAt: number | null | undefined;
+}): LiveStreamWaitConnectedCheck | null {
+  const { pc, hasLiveRemoteStream, remoteTracksCount, hasRemoteStream } = params;
+  if (!pc || !isUsablePeerConnection(pc)) return null;
+
+  const hasMedia =
+    hasLiveRemoteStream || remoteTracksCount > 0 || hasRemoteStream;
+  if (!hasMedia) return null;
+  if (!isPcConnectingOrIceChecking(pc)) return null;
+
+  return evaluateLiveStreamWaitConnectedHold({
+    pc,
+    timestamps: params.timestamps,
+    connectStartedAt: params.connectStartedAt,
+    graceMs: LIVE_STREAM_WAIT_CONNECTED_MS,
+  });
+}
+
+function resolveGraceExpiredReconnectReason(baseReason: string): string {
+  if (baseReason === "checking_timeout") return "checking_timeout_after_grace";
+  if (baseReason === "connecting_timeout") return "connecting_timeout_after_grace";
+  if (
+    baseReason === "unspecified" ||
+    baseReason === "heal_stream_without_connected_pc"
+  ) {
+    return "live_stream_not_connected_timeout";
+  }
+  return baseReason;
+}
+
+function formatReconnectHoldLog(
+  remoteId: string,
+  source: string,
+  pc: RTCPeerConnection,
+  tracks: number,
+  check: LiveStreamWaitConnectedCheck
+): string {
+  return (
+    `[voice-peer] reconnect-hold remote=${compactDeviceId(remoteId)} reason=recent_live_stream_wait_connected source=${source} ` +
+    `conn=${pc.connectionState} ice=${pc.iceConnectionState} tracks=${tracks} ` +
+    `ontrackAgeMs=${check.ontrackAgeMs ?? "-"} answerAgeMs=${check.answerAgeMs ?? "-"} ` +
+    `playAgeMs=${check.playAgeMs ?? "-"} activityAgeMs=${check.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
+  );
+}
+
 async function detectConnectionType(pc: RTCPeerConnection) {
   const stats = await pc.getStats();
 
@@ -485,7 +536,7 @@ export function usePeerConnections({
     ((
       remoteId: string,
       delay?: number,
-      opts?: { reason?: string; force?: boolean }
+      opts?: { reason?: string; force?: boolean; source?: string }
     ) => boolean) | null
   >(null);
   const setPeerStateRef = useRef<(remoteId: string, state: PeerState) => void>(
@@ -1534,7 +1585,7 @@ export function usePeerConnections({
     (
       remoteId: string,
       delay = 2000,
-      opts?: { reason?: string; force?: boolean }
+      opts?: { reason?: string; force?: boolean; source?: string }
     ): boolean => {
       if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
         console.warn(
@@ -1544,7 +1595,40 @@ export function usePeerConnections({
         return false;
       }
 
-      const reason = opts?.reason ?? "unspecified";
+      const source = opts?.source ?? opts?.reason ?? "unspecified";
+      let reason = opts?.reason ?? "unspecified";
+      const pc = pcsRef.current.get(remoteId);
+      const media = getPeerMedia(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
+        pc,
+        hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
+        remoteTracksCount: media.remoteTracksCount,
+        hasRemoteStream: media.hasRemoteStream,
+        timestamps,
+        connectStartedAt: connectStartedAtRef.current.get(remoteId),
+      });
+
+      if (waitCheck?.shouldHold && !opts?.force) {
+        if (pc) {
+          console.log(
+            formatReconnectHoldLog(
+              remoteId,
+              source,
+              pc,
+              media.remoteTracksCount,
+              waitCheck
+            )
+          );
+        }
+        return false;
+      }
+
+      if (waitCheck?.graceExpired) {
+        reason = resolveGraceExpiredReconnectReason(reason);
+      }
 
       if (!opts?.force && reconnectPendingRef.current.has(remoteId)) {
         console.log(
@@ -1573,7 +1657,7 @@ export function usePeerConnections({
       });
 
       console.log(
-        `[voice-peer] reconnect-scheduled target=${compactDeviceId(remoteId)} reason=${reason} delayMs=${delay} owner=${deviceId < remoteId} ` +
+        `[voice-peer] reconnect-scheduled target=${compactDeviceId(remoteId)} reason=${reason} source=${source} delayMs=${delay} owner=${deviceId < remoteId} ` +
           `otherPeers=${buildPeerScopeSnapshot(pcsRef.current, getPeerMedia, remoteId)} ${formatVoiceModeSuffix()}`
       );
 
@@ -1583,7 +1667,7 @@ export function usePeerConnections({
 
         const nextConnectionId = makeConnectionId(deviceId, remoteId);
         console.log(
-          `[voice-peer] reconnect-fire remote=${compactDeviceId(remoteId)} reason=${reason} beforeClose pc=${!!pcsRef.current.get(remoteId)}`
+          `[voice-peer] reconnect-fire remote=${compactDeviceId(remoteId)} reason=${reason} source=${source} beforeClose pc=${!!pcsRef.current.get(remoteId)}`
         );
 
         closePeer(remoteId, {
@@ -1856,7 +1940,10 @@ export function usePeerConnections({
         emitMeshSummary("checking_timeout", { immediate: true });
 
         markRecoveryStart(remoteId);
-        scheduleReconnectRef.current?.(remoteId, 1200);
+        scheduleReconnectRef.current?.(remoteId, 1200, {
+          reason: "checking_timeout",
+          source: "checking_timeout",
+        });
       }, 10000);
 
       iceCheckingTimersRef.current.set(remoteId, timer);
@@ -1892,7 +1979,10 @@ export function usePeerConnections({
         emitMeshSummary("connecting_timeout", { immediate: true });
 
         markRecoveryStart(remoteId);
-        scheduleReconnectRef.current?.(remoteId, 1200);
+        scheduleReconnectRef.current?.(remoteId, 1200, {
+          reason: "connecting_timeout",
+          source: "connecting_timeout",
+        });
       }, 12000);
 
       connectingTimersRef.current.set(remoteId, timer);
@@ -2982,14 +3072,16 @@ export function usePeerConnections({
         const timestamps =
           peerSignalTimestampsRef.current.get(remoteId) ??
           emptyPeerSignalTimestamps();
-        const waitCheck = evaluateLiveStreamWaitConnectedHold({
+        const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
           pc,
+          hasLiveRemoteStream: hasStream,
+          remoteTracksCount: media.remoteTracksCount,
+          hasRemoteStream: media.hasRemoteStream,
           timestamps,
           connectStartedAt: connectStartedAtRef.current.get(remoteId),
-          graceMs: LIVE_STREAM_WAIT_CONNECTED_MS,
         });
 
-        if (waitCheck.shouldHold) {
+        if (waitCheck?.shouldHold) {
           console.log(
             `[voice-peer] heal-hold remote=${compactDeviceId(remoteId)} reason=recent_live_stream_wait_connected ` +
               `conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +
@@ -3001,7 +3093,7 @@ export function usePeerConnections({
           continue;
         }
 
-        if (waitCheck.graceExpired) {
+        if (waitCheck?.graceExpired) {
           console.log(
             `[voice-peer] heal remote=${compactDeviceId(remoteId)} action=reconnect reason=live_stream_not_connected_timeout ` +
               `conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +

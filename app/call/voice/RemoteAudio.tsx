@@ -12,6 +12,7 @@ import {
 } from "@/lib/remoteAudioUnlock";
 
 const voicePolicy = getVoiceModePolicy();
+const ATTACH_LOG_THROTTLE_MS = 5000;
 
 export type RemotePlaybackHealth = {
   playSuccess: boolean;
@@ -168,6 +169,17 @@ export default function RemoteAudio({
   const playbackCheckTimersRef = useRef<number[]>([]);
   const levelRef = useRef(0);
   const playSuccessRef = useRef(false);
+  const attachLogThrottleRef = useRef(
+    new Map<
+      string,
+      {
+        at: number;
+        willSkip: boolean;
+        streamId: string;
+        trackId: string;
+      }
+    >()
+  );
   const fallbackActiveRef = useRef(false);
   const fallbackCtxRef = useRef<AudioContext | null>(null);
   const fallbackSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -482,12 +494,33 @@ export default function RemoteAudio({
       streamId && trackId && sameStream && sameTrack && sameSrcObject
     );
 
-    console.log(
-      `[remote-audio] attach-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
-        `streamId=${compactMediaId(streamId)} prevStreamId=${compactMediaId(prevStreamId)} ` +
-        `trackId=${compactMediaId(trackId)} prevTrackId=${compactMediaId(prevTrackId)} ` +
-        `sameStream=${sameStream} sameTrack=${sameTrack} sameSrcObject=${sameSrcObject} willSkip=${willSkip}`
-    );
+    const attachLogKey = `${remoteId}|${streamId}|${trackId}|${instanceId}`;
+    const now = Date.now();
+    const prevAttachLog = attachLogThrottleRef.current.get(attachLogKey);
+    const attachStateChanged =
+      !prevAttachLog ||
+      prevAttachLog.willSkip !== willSkip ||
+      prevAttachLog.streamId !== streamId ||
+      prevAttachLog.trackId !== trackId;
+    const shouldLogAttach =
+      attachStateChanged ||
+      !prevAttachLog ||
+      now - prevAttachLog.at >= ATTACH_LOG_THROTTLE_MS;
+
+    if (shouldLogAttach) {
+      attachLogThrottleRef.current.set(attachLogKey, {
+        at: now,
+        willSkip,
+        streamId,
+        trackId,
+      });
+      console.log(
+        `[remote-audio] attach-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+          `streamId=${compactMediaId(streamId)} prevStreamId=${compactMediaId(prevStreamId)} ` +
+          `trackId=${compactMediaId(trackId)} prevTrackId=${compactMediaId(prevTrackId)} ` +
+          `sameStream=${sameStream} sameTrack=${sameTrack} sameSrcObject=${sameSrcObject} willSkip=${willSkip}`
+      );
+    }
 
     if (willSkip) {
       if (isPlaybackTrackEnded(el, stream)) {
@@ -495,10 +528,12 @@ export default function RemoteAudio({
         emitEndedTrackHealth();
         return;
       }
-      console.log(
-        `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
-          `streamId=${compactMediaId(streamId)} trackId=${compactMediaId(trackId)} ${formatVoiceModeSuffix()}`
-      );
+      if (shouldLogAttach) {
+        console.log(
+          `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+            `streamId=${compactMediaId(streamId)} trackId=${compactMediaId(trackId)} ${formatVoiceModeSuffix()}`
+        );
+      }
       return;
     }
 
