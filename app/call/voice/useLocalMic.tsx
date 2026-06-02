@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  hasCallMicEverUnmuted,
+  markCallMicEverUnmuted,
+  readCallMutePreference,
+  shouldReleaseMicOnMute,
+} from "@/lib/callLifecycle";
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
 import { formatVoiceModeSuffix, getVoiceModePolicy } from "@/lib/voiceClientEnv";
 
@@ -33,6 +39,20 @@ type MicSessionCache = {
 
 let activeMicCache: MicSessionCache | null = null;
 let acquirePromise: Promise<boolean> | null = null;
+
+async function queryMicrophonePermissionState(): Promise<string> {
+  if (typeof navigator === "undefined" || !navigator.permissions?.query) {
+    return "unsupported";
+  }
+  try {
+    const status = await navigator.permissions.query({
+      name: "microphone" as PermissionName,
+    });
+    return status.state;
+  } catch {
+    return "error";
+  }
+}
 
 function getNavigationType(): string {
   if (typeof performance === "undefined") return "unknown";
@@ -498,6 +518,9 @@ async function ensureLocalMicStream(params: {
       return true;
     }
 
+    const navigationType = getNavigationType();
+    const permissionBefore = await queryMicrophonePermissionState();
+
     logGetUserMediaAttempt({
       reason,
       sessionId,
@@ -512,7 +535,17 @@ async function ensureLocalMicStream(params: {
       willCallGetUserMedia: true,
     });
 
-    if (showInitialPermissionHint) {
+    console.log("[local-mic] permission-before-getUserMedia", {
+      reason,
+      navigationType,
+      permissionState: permissionBefore,
+      sessionId,
+      deviceId,
+      cacheMissReason: missReason,
+      timestamp: Date.now(),
+    });
+
+    if (showInitialPermissionHint && permissionBefore !== "granted") {
       onStatusChange?.("マイクを許可してください");
     }
 
@@ -612,8 +645,9 @@ export function useLocalMic({
 
   const [micReady, setMicReady] = useState(false);
   const [micMutedWithoutTrack, setMicMutedWithoutTrack] = useState(false);
-  const releaseMicOnMuteRef = useRef(getVoiceModePolicy().releaseMicOnMute);
-  const releaseMicOnMute = releaseMicOnMuteRef.current;
+  const releaseMicOnMutePolicy = getVoiceModePolicy().releaseMicOnMute;
+  const effectiveReleaseMicOnMute =
+    releaseMicOnMutePolicy && !hasCallMicEverUnmuted(sessionId, deviceId);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedMicId, setSelectedMicIdState] = useState("");
 
@@ -678,12 +712,12 @@ export function useLocalMic({
       const mutedWithoutTrack = params.mutedWithoutTrack === true;
       setMicReady(params.hasTrack);
       setMicMutedWithoutTrack(mutedWithoutTrack);
-      const interactionReady = releaseMicOnMute
+      const interactionReady = effectiveReleaseMicOnMute
         ? mutedWithoutTrack || params.hasTrack
         : params.hasTrack;
       onMicReadyChangeRef.current?.(interactionReady);
     },
-    [releaseMicOnMute]
+    [effectiveReleaseMicOnMute]
   );
 
   const getUserMuted = useCallback(() => userMutedRef.current, [userMutedRef]);
@@ -716,7 +750,28 @@ export function useLocalMic({
     let mounted = true;
 
     void (async () => {
-      if (releaseMicOnMute && getUserMuted()) {
+      const navigationType = getNavigationType();
+      const storedMute = readCallMutePreference(sessionId, deviceId);
+      const everUnmuted = hasCallMicEverUnmuted(sessionId, deviceId);
+      const releaseOnMute = shouldReleaseMicOnMute({
+        policyReleaseMicOnMute: releaseMicOnMutePolicy,
+        sessionId,
+        deviceId,
+        userMuted: getUserMuted(),
+      });
+
+      console.log("[local-mic] session_mount context", {
+        navigationType,
+        storedMute,
+        releaseMicOnMutePolicy,
+        effectiveReleaseMicOnMute,
+        everUnmuted,
+        userMuted: getUserMuted(),
+        releaseOnMute,
+        timestamp: Date.now(),
+      });
+
+      if (releaseOnMute && getUserMuted()) {
         if (!mounted) return;
         releaseLocalMicCapture({
           sessionId,
@@ -732,9 +787,20 @@ export function useLocalMic({
         return;
       }
 
-      if (releaseMicOnMute && !getUserMuted()) {
+      const isReloadLike =
+        navigationType === "reload" || navigationType === "back_forward";
+      const mountReason =
+        isReloadLike && !getUserMuted()
+          ? "reload_restore_unmuted"
+          : "session_mount";
+
+      if (mountReason === "reload_restore_unmuted") {
+        markCallMicEverUnmuted(sessionId, deviceId);
         console.log(
-          `[local-mic] session_mount acquire reason=reload_restore_unmuted ${formatVoiceModeSuffix()}`
+          `[local-mic] session_mount acquire reason=reload_restore_unmuted ` +
+            `stored=${storedMute ?? "-"} releaseMicOnMute=${releaseMicOnMutePolicy} ` +
+            `effectiveReleaseMicOnMute=${effectiveReleaseMicOnMute} everUnmuted=${everUnmuted} ` +
+            `${formatVoiceModeSuffix()}`
         );
       }
 
@@ -745,7 +811,7 @@ export function useLocalMic({
       }
 
       const ok = await ensureLocalMicStream({
-        reason: "session_mount",
+        reason: mountReason,
         sessionId,
         deviceId,
         getUserMuted,
@@ -757,10 +823,11 @@ export function useLocalMic({
           if (!mounted) return;
           bindMicCaptureState({
             hasTrack: ready,
-            mutedWithoutTrack: !ready && releaseMicOnMute && getUserMuted(),
+            mutedWithoutTrack:
+              !ready && effectiveReleaseMicOnMute && getUserMuted(),
           });
           if (ready) {
-            notifyLocalMicTrackChange(localAudioTrackRef.current, "session_mount");
+            notifyLocalMicTrackChange(localAudioTrackRef.current, mountReason);
           }
         },
         onStatusChange: (text) => {
@@ -769,7 +836,8 @@ export function useLocalMic({
         },
         streamRef: localStreamRef,
         trackRef: localAudioTrackRef,
-        showInitialPermissionHint: showHint,
+        showInitialPermissionHint:
+          showHint && mountReason !== "reload_restore_unmuted",
       });
 
       if (!mounted || !ok) return;
@@ -794,14 +862,24 @@ export function useLocalMic({
     deviceId,
     getUserMuted,
     syncSelectedMicFromTrack,
-    releaseMicOnMute,
+    effectiveReleaseMicOnMute,
+    releaseMicOnMutePolicy,
     notifyLocalMicTrackChange,
   ]);
 
   useEffect(() => {
     if (!sessionId || !selectedMicId) return;
     if (!userPickedMicRef.current) return;
-    if (releaseMicOnMute && getUserMuted()) return;
+    if (
+      shouldReleaseMicOnMute({
+        policyReleaseMicOnMute: releaseMicOnMutePolicy,
+        sessionId,
+        deviceId,
+        userMuted: getUserMuted(),
+      })
+    ) {
+      return;
+    }
 
     const depsChanged: string[] = [];
     if (prevMicSelectDepsRef.current.sessionId !== sessionId) {
@@ -847,7 +925,14 @@ export function useLocalMic({
       onMicReadyChange: (ready) =>
         bindMicCaptureState({
           hasTrack: ready,
-          mutedWithoutTrack: !ready && releaseMicOnMute && getUserMuted(),
+          mutedWithoutTrack:
+            !ready &&
+            shouldReleaseMicOnMute({
+              policyReleaseMicOnMute: releaseMicOnMutePolicy,
+              sessionId,
+              deviceId,
+              userMuted: getUserMuted(),
+            }),
         }),
       onStatusChange: (text) => onStatusChangeRef.current?.(text),
       streamRef: localStreamRef,
@@ -865,7 +950,7 @@ export function useLocalMic({
     bindMicCaptureState,
     getUserMuted,
     syncSelectedMicFromTrack,
-    releaseMicOnMute,
+    releaseMicOnMutePolicy,
     notifyLocalMicTrackChange,
   ]);
 
@@ -949,7 +1034,14 @@ export function useLocalMic({
       localAudioTrackRef.current = null;
       releaseSessionMic("local_track_ended", sessionId);
 
-      if (releaseMicOnMute && getUserMuted()) {
+      if (
+        shouldReleaseMicOnMute({
+          policyReleaseMicOnMute: releaseMicOnMutePolicy,
+          sessionId,
+          deviceId,
+          userMuted: getUserMuted(),
+        })
+      ) {
         bindMicCaptureState({ hasTrack: false, mutedWithoutTrack: true });
         onStatusChangeRef.current?.("");
         return;
@@ -966,7 +1058,7 @@ export function useLocalMic({
         onMicReadyChange: (ready) =>
           bindMicCaptureState({
             hasTrack: ready,
-            mutedWithoutTrack: !ready && releaseMicOnMute && getUserMuted(),
+            mutedWithoutTrack: false,
           }),
         onStatusChange: (text) => onStatusChangeRef.current?.(text),
         streamRef: localStreamRef,
@@ -989,7 +1081,7 @@ export function useLocalMic({
     sessionId,
     syncSelectedMicFromTrack,
     getUserMuted,
-    releaseMicOnMute,
+    releaseMicOnMutePolicy,
     notifyLocalMicTrackChange,
   ]);
 
@@ -1003,7 +1095,18 @@ export function useLocalMic({
     prevUserMutedEffectRef.current = muted;
     if (prevMuted === null) return;
 
-    if (releaseMicOnMute) {
+    if (!muted) {
+      markCallMicEverUnmuted(sessionId, deviceId);
+    }
+
+    const releaseOnMute = shouldReleaseMicOnMute({
+      policyReleaseMicOnMute: releaseMicOnMutePolicy,
+      sessionId,
+      deviceId,
+      userMuted: muted,
+    });
+
+    if (releaseOnMute) {
       if (muted) {
         releaseLocalMicCapture({
           sessionId,
@@ -1069,12 +1172,12 @@ export function useLocalMic({
     deviceId,
     bindMicCaptureState,
     getUserMuted,
-    releaseMicOnMute,
+    releaseMicOnMutePolicy,
     notifyLocalMicTrackChange,
     syncSelectedMicFromTrack,
   ]);
 
-  const micInteractionReady = releaseMicOnMute
+  const micInteractionReady = effectiveReleaseMicOnMute
     ? micMutedWithoutTrack || micReady
     : micReady;
 

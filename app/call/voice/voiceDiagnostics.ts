@@ -352,6 +352,7 @@ export type PeerStatusDiagnostics = {
   reconnectRequestPending?: boolean;
   transportUnconfirmed?: boolean;
   p2pRetryActive?: boolean;
+  p2pRetryExhausted?: boolean;
 };
 
 const remoteAudioPipelineLogAt = new Map<string, number>();

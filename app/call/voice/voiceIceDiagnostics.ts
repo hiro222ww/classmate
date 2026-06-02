@@ -302,9 +302,83 @@ function readStatNumber(value: unknown): string {
   return "-";
 }
 
+export function logVoiceIceStatsDiagnostic(params: {
+  remoteId: string;
+  pc: RTCPeerConnection;
+  pairSnapshot: VoiceIceCandidatePairSnapshot;
+  iceDiagnostics?: PeerIceDiagnostics;
+}): void {
+  const { remoteId, pc, pairSnapshot, iceDiagnostics } = params;
+  const ice = pc.iceConnectionState;
+  const conn = pc.connectionState;
+  const gathering = pc.iceGatheringState;
+  const sig = pc.signalingState;
+
+  let pairTotal = 0;
+  let pairInProgress = 0;
+  let pairSucceeded = 0;
+  let pairFailed = 0;
+  let bestProgressState = "-";
+  let bestProgressLocal = "-";
+  let bestProgressRemote = "-";
+
+  try {
+    void pc.getStats().then((stats) => {
+      stats.forEach((report) => {
+        if (report.type !== "candidate-pair") return;
+        pairTotal += 1;
+        const state = String(
+          (report as RTCStats & { state?: string }).state ?? "-"
+        );
+        if (state === "succeeded") pairSucceeded += 1;
+        else if (state === "failed") pairFailed += 1;
+        else pairInProgress += 1;
+
+        if (
+          bestProgressState === "-" &&
+          (state === "in-progress" || state === "waiting")
+        ) {
+          const pair = report as RTCStats & {
+            localCandidateId?: string;
+            remoteCandidateId?: string;
+          };
+          const local = stats.get(String(pair.localCandidateId ?? ""));
+          const remote = stats.get(String(pair.remoteCandidateId ?? ""));
+          bestProgressState = state;
+          bestProgressLocal = String(
+            (local as RTCStats & { candidateType?: string })?.candidateType ?? "-"
+          );
+          bestProgressRemote = String(
+            (remote as RTCStats & { candidateType?: string })?.candidateType ?? "-"
+          );
+        }
+      });
+
+      console.log(
+        `[voice-ice] ice-stats-diagnostic remote=${compactDeviceId(remoteId)} ` +
+          `conn=${conn} ice=${ice} gathering=${gathering} sig=${sig} ` +
+          `pairTotal=${pairTotal} inProgress=${pairInProgress} succeeded=${pairSucceeded} failed=${pairFailed} ` +
+          `bestProgressState=${bestProgressState} bestProgressLocal=${bestProgressLocal} ` +
+          `bestProgressRemote=${bestProgressRemote} ` +
+          `selected=${pairSnapshot.selected} nominated=${pairSnapshot.nominated} ` +
+          `localTypes=${iceDiagnostics ? formatIceTypeSet(iceDiagnostics.localTypes) : "-"} ` +
+          `remoteTypes=${iceDiagnostics ? formatIceTypeSet(iceDiagnostics.remoteTypes) : "-"} ` +
+          `remoteAdded=${iceDiagnostics?.remoteAddedCount ?? "-"} ` +
+          `remoteQueued=${iceDiagnostics?.remoteQueuedCount ?? "-"}`
+      );
+    });
+  } catch (e) {
+    console.log(
+      `[voice-ice] ice-stats-diagnostic remote=${compactDeviceId(remoteId)} ` +
+        `error=${String(e)} conn=${conn} ice=${ice}`
+    );
+  }
+}
+
 export async function logVoiceIceCandidatePairFromPc(
   remoteId: string,
-  pc: RTCPeerConnection
+  pc: RTCPeerConnection,
+  iceDiagnostics?: PeerIceDiagnostics
 ): Promise<VoiceIceCandidatePairSnapshot> {
   const empty: VoiceIceCandidatePairSnapshot = {
     selected: false,
@@ -380,6 +454,15 @@ export async function logVoiceIceCandidatePairFromPc(
         `networkType=${result.networkType} currentRoundTripTime=${result.currentRoundTripTime} ` +
         `bytesSent=${result.bytesSent} bytesReceived=${result.bytesReceived} route=${result.route}`
     );
+
+    if (!result.selected && !result.nominated) {
+      logVoiceIceStatsDiagnostic({
+        remoteId,
+        pc,
+        pairSnapshot: result,
+        iceDiagnostics,
+      });
+    }
 
     return result;
   } catch (e) {

@@ -1089,6 +1089,7 @@ export function resolveCallMemberStatus(params: {
   lastPlaybackConfirmedAt?: number | null;
   lastPlaybackActiveAt?: number | null;
   p2pRetryActive?: boolean;
+  p2pRetryExhausted?: boolean;
   showReconnectButton?: boolean;
   nowMs?: number;
 }): {
@@ -1251,6 +1252,7 @@ export function resolveCallMemberStatus(params: {
     params.wasPeerConnected &&
     (params.transportUnconfirmed === true ||
       params.p2pRetryActive === true ||
+      params.p2pRetryExhausted === true ||
       (params.p2pDirectFailedHoldActive === true &&
         (!params.hasPc ||
           params.conn === "failed" ||

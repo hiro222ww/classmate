@@ -1059,6 +1059,7 @@ export default function CallClient() {
         p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
         transportUnconfirmed: diag?.transportUnconfirmed === true,
         p2pRetryActive: diag?.p2pRetryActive === true,
+        p2pRetryExhausted: diag?.p2pRetryExhausted === true,
         lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
         lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
         liveStreamHealHold: diag?.liveStreamHealHold === true,

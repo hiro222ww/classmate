@@ -338,6 +338,7 @@ export function installCallLifecycleDiagnostics(params: {
 export { consumeCallReloadSnapshot } from "@/lib/callReloadDiagnostics";
 
 const CALL_MUTE_PREFERENCE_PREFIX = "classmate_call_mute_preference";
+const CALL_MIC_EVER_UNMUTED_PREFIX = "classmate_call_mic_ever_unmuted";
 const CALL_ENTRY_SEEN_PREFIX = "classmate_call_entry_seen";
 const LEGACY_CALL_MUTE_KEY_PREFIX = "classmate_call_muted";
 
@@ -390,6 +391,52 @@ function parseMutePreferenceRaw(raw: string | null): boolean | null {
   if (raw === "1") return true;
   if (raw === "0") return false;
   return null;
+}
+
+export function callMicEverUnmutedKey(sessionId: string, deviceId: string): string {
+  const sid = String(sessionId ?? "").trim();
+  const did = String(deviceId ?? "").trim();
+  return `${CALL_MIC_EVER_UNMUTED_PREFIX}:${sid}:${did}`;
+}
+
+export function hasCallMicEverUnmuted(
+  sessionId: string,
+  deviceId: string
+): boolean {
+  if (typeof window === "undefined") return false;
+  const sid = String(sessionId ?? "").trim();
+  const did = String(deviceId ?? "").trim();
+  if (!sid || !did) return false;
+  try {
+    return sessionStorage.getItem(callMicEverUnmutedKey(sid, did)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markCallMicEverUnmuted(sessionId: string, deviceId: string) {
+  if (typeof window === "undefined") return;
+  const sid = String(sessionId ?? "").trim();
+  const did = String(deviceId ?? "").trim();
+  if (!sid || !did) return;
+  try {
+    sessionStorage.setItem(callMicEverUnmutedKey(sid, did), "1");
+  } catch {
+    // ignore
+  }
+}
+
+/** releaseMicOnMute applies only before the user has unmuted once this session. */
+export function shouldReleaseMicOnMute(params: {
+  policyReleaseMicOnMute: boolean;
+  sessionId: string;
+  deviceId: string;
+  userMuted: boolean;
+}): boolean {
+  if (!params.policyReleaseMicOnMute) return false;
+  if (!params.userMuted) return false;
+  if (hasCallMicEverUnmuted(params.sessionId, params.deviceId)) return false;
+  return true;
 }
 
 export function readCallMutePreference(
@@ -466,7 +513,8 @@ export function resolveCallEntryUserMuted(
         : "reload_restore"
       : "reload_restore";
 
-    if (stored === false && isReloadLike) {
+    if (resolved.stored === false && isReloadLike) {
+      markCallMicEverUnmuted(sessionId, deviceId);
       console.log(
         `[local-mic] prevent-safety-mute-on-reload stored=false reason=${reason}`
       );

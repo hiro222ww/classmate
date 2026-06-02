@@ -185,6 +185,7 @@ const ICE_CHECKING_DIAGNOSTICS_MS_IOS = 6000;
 const MAX_P2P_NO_RELAY_RETRY_ATTEMPTS = 3;
 const P2P_NO_RELAY_RETRY_FOLLOWUP_MS = 3000;
 const P2P_BACKGROUND_RETRY_INTERVAL_MS = 30_000;
+const P2P_BACKGROUND_RECONNECT_EVERY_N_CYCLES = 2;
 
 function getIceCheckingDiagnosticsMs(): number {
   return voicePolicy.voiceMode === "ios_conservative"
@@ -1800,9 +1801,11 @@ export function usePeerConnections({
           voiceMode: voicePolicy.voiceMode,
         }),
         p2pRetryActive:
+          p2pRetryExhaustedRef.current.has(remoteId) ||
           (p2pNoRelayRetryAttemptsRef.current.get(remoteId) ?? 0) > 0 ||
           p2pNoRelayRetryInFlightRef.current.has(remoteId) ||
           p2pRetryBackgroundTimersRef.current.has(remoteId),
+        p2pRetryExhausted: p2pRetryExhaustedRef.current.has(remoteId),
       };
     }
 
@@ -2429,6 +2432,8 @@ export function usePeerConnections({
       p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
       p2pNoRelayRetryInFlightRef.current.delete(remoteId);
       p2pNoRelaySelectedPairRef.current.delete(remoteId);
+      p2pRetryExhaustedRef.current.delete(remoteId);
+      p2pBackgroundRetryCycleRef.current.delete(remoteId);
       const p2pRetryFollowup = p2pNoRelayRetryFollowupTimersRef.current.get(remoteId);
       if (p2pRetryFollowup) {
         window.clearTimeout(p2pRetryFollowup);
@@ -2504,6 +2509,8 @@ export function usePeerConnections({
   const p2pNoRelayRetryInFlightRef = useRef<Set<string>>(new Set());
   const p2pNoRelayRetryFollowupTimersRef = useRef<Map<string, number>>(new Map());
   const p2pRetryBackgroundTimersRef = useRef<Map<string, number>>(new Map());
+  const p2pBackgroundRetryCycleRef = useRef<Map<string, number>>(new Map());
+  const p2pRetryExhaustedRef = useRef<Set<string>>(new Set());
   const p2pNoRelaySelectedPairRef = useRef<
     Map<string, VoiceIceCandidatePairSnapshot>
   >(new Map());
@@ -4956,34 +4963,68 @@ export function usePeerConnections({
 
       const timer = window.setTimeout(() => {
         p2pRetryBackgroundTimersRef.current.delete(remoteId);
-        p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
 
         const pc = pcsRef.current.get(remoteId);
         if (!pc || !isUsablePeerConnection(pc)) return;
-        if (!isPeerEligibleForP2pIceRetry(remoteId, pc)) return;
+        if (!isPeerEligibleForP2pIceRetry(remoteId, pc)) {
+          p2pRetryExhaustedRef.current.delete(remoteId);
+          return;
+        }
+
+        const cycle = (p2pBackgroundRetryCycleRef.current.get(remoteId) ?? 0) + 1;
+        p2pBackgroundRetryCycleRef.current.set(remoteId, cycle);
+        p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+
+        if (
+          cycle % P2P_BACKGROUND_RECONNECT_EVERY_N_CYCLES === 0 &&
+          deviceId < remoteId &&
+          !reconnectPendingRef.current.has(remoteId)
+        ) {
+          console.log(
+            `[voice-peer] p2p-background-reconnect remote=${compactDeviceId(remoteId)} ` +
+              `cycle=${cycle} ${formatVoiceModeSuffix()}`
+          );
+          scheduleReconnectRef.current?.(remoteId, 1500, {
+            reason: "p2p_background_retry_reconnect",
+            source: "p2p_background_retry",
+            force: true,
+          });
+          scheduleP2pBackgroundRetry(remoteId);
+          return;
+        }
 
         void runP2pNoRelayRetryPhaseRef.current(
           remoteId,
           pc,
           "p2p_background_retry"
         );
+        scheduleP2pBackgroundRetry(remoteId);
       }, P2P_BACKGROUND_RETRY_INTERVAL_MS);
 
       p2pRetryBackgroundTimersRef.current.set(remoteId, timer);
     },
-    [isPeerEligibleForP2pIceRetry]
+    [deviceId, isPeerEligibleForP2pIceRetry]
   );
 
   const checkP2pNoRelayRetrySuccess = useCallback(
     async (remoteId: string, pc: RTCPeerConnection): Promise<boolean> => {
-      const pair = await logVoiceIceCandidatePairFromPc(remoteId, pc);
+      const iceStats = getOrCreatePeerIceStats(remoteId);
+      const pair = await logVoiceIceCandidatePairFromPc(
+        remoteId,
+        pc,
+        iceStats
+      );
       if (!isTransportMediaConnected(pc.connectionState, pc.iceConnectionState)) {
         return false;
       }
-      if (pair.route === "turn") return false;
+      if (pair.route === "turn" && !turnFallbackEnabledRef.current) {
+        return false;
+      }
 
       p2pNoRelaySelectedPairRef.current.set(remoteId, pair);
       p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+      p2pRetryExhaustedRef.current.delete(remoteId);
+      p2pBackgroundRetryCycleRef.current.delete(remoteId);
       clearP2pNoRelayRetryFollowup(remoteId);
 
       console.log(
@@ -4993,7 +5034,7 @@ export function usePeerConnections({
       );
       return true;
     },
-    [clearP2pNoRelayRetryFollowup]
+    [clearP2pNoRelayRetryFollowup, getOrCreatePeerIceStats]
   );
 
   const runP2pNoRelayRetryPhase = useCallback(
@@ -5021,19 +5062,22 @@ export function usePeerConnections({
 
       const attempts = p2pNoRelayRetryAttemptsRef.current.get(remoteId) ?? 0;
       if (attempts >= MAX_P2P_NO_RELAY_RETRY_ATTEMPTS) {
+        const turnEnabled = turnFallbackEnabledRef.current;
         console.log(
           `[voice-peer] p2p-retry-exhausted remote=${compactDeviceId(remoteId)} ` +
-            `attempts=${attempts} context=${context} turnFallback=false ${formatVoiceModeSuffix()}`
+            `attempts=${attempts} context=${context} turnFallback=${turnEnabled} ` +
+            `${formatVoiceModeSuffix()}`
         );
         p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
         clearP2pNoRelayRetryFollowup(remoteId);
+        p2pRetryExhaustedRef.current.add(remoteId);
 
-        if (turnFallbackEnabledRef.current) {
+        if (turnEnabled) {
           return attemptTurnFallbackForPeer(remoteId, "p2p_retry_exhausted");
         }
 
         scheduleP2pBackgroundRetry(remoteId);
-        return true;
+        return false;
       }
 
       p2pNoRelayRetryInFlightRef.current.add(remoteId);
@@ -5051,7 +5095,8 @@ export function usePeerConnections({
 
         await logVoiceIceCandidatePairFromPc(
           remoteId,
-          pcsRef.current.get(remoteId) ?? pc
+          pcsRef.current.get(remoteId) ?? pc,
+          stats
         );
 
         if (step === 0) {
@@ -6522,6 +6567,8 @@ export function usePeerConnections({
         window.clearTimeout(timer);
       }
       p2pRetryBackgroundTimersRef.current.clear();
+      p2pRetryExhaustedRef.current.clear();
+      p2pBackgroundRetryCycleRef.current.clear();
       manualHardResetHealPassRef.current.clear();
       for (const state of passiveReconnectStateRef.current.values()) {
         if (state.retryTimerId != null) {
