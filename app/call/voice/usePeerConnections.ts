@@ -265,15 +265,22 @@ type PeerSignalTimestamps = {
   lastOnTrackAt: number | null;
   lastUnmuteAt: number | null;
   lastPlaySuccessAt: number | null;
+  lastPlaybackActiveAt: number | null;
 };
+
+type LiveStreamWaitHoldReason =
+  | "active_playback_wait_connected"
+  | "recent_live_stream_wait_connected";
 
 type LiveStreamWaitConnectedCheck = {
   shouldHold: boolean;
   graceExpired: boolean;
+  holdReason: LiveStreamWaitHoldReason | null;
   isConnectingOrChecking: boolean;
   ontrackAgeMs: number | null;
   answerAgeMs: number | null;
   playAgeMs: number | null;
+  playbackActiveAgeMs: number | null;
   unmuteAgeMs: number | null;
   activityAgeMs: number | null;
 };
@@ -291,6 +298,7 @@ function emptyPeerSignalTimestamps(): PeerSignalTimestamps {
     lastOnTrackAt: null,
     lastUnmuteAt: null,
     lastPlaySuccessAt: null,
+    lastPlaybackActiveAt: null,
   };
 }
 
@@ -316,9 +324,10 @@ function evaluateLiveStreamWaitConnectedHold(params: {
   const ontrackAgeMs = signalAgeMs(timestamps.lastOnTrackAt);
   const answerAgeMs = signalAgeMs(timestamps.lastAnswerAt);
   const playAgeMs = signalAgeMs(timestamps.lastPlaySuccessAt);
+  const playbackActiveAgeMs = signalAgeMs(timestamps.lastPlaybackActiveAt);
   const unmuteAgeMs = signalAgeMs(timestamps.lastUnmuteAt);
 
-  const activityAnchors = [
+  const signalAnchors = [
     timestamps.lastOnTrackAt,
     timestamps.lastAnswerAt,
     timestamps.lastUnmuteAt,
@@ -326,24 +335,35 @@ function evaluateLiveStreamWaitConnectedHold(params: {
     connectStartedAt ?? null,
   ].filter((value): value is number => value != null);
 
-  const latestActivityAt = activityAnchors.length
-    ? Math.max(...activityAnchors)
-    : null;
-  const activityAgeMs = signalAgeMs(latestActivityAt);
+  const latestSignalAt = signalAnchors.length ? Math.max(...signalAnchors) : null;
+  const activityAgeMs = signalAgeMs(latestSignalAt);
 
   const isConnectingOrChecking = isPcConnectingOrIceChecking(pc);
-  const withinGrace =
+  const withinSignalGrace =
     activityAgeMs != null && activityAgeMs < graceMs;
-  const graceExpired =
+  const playbackRecentlyActive =
+    playbackActiveAgeMs != null && playbackActiveAgeMs < graceMs;
+
+  let holdReason: LiveStreamWaitHoldReason | null = null;
+  if (isConnectingOrChecking && playbackRecentlyActive) {
+    holdReason = "active_playback_wait_connected";
+  } else if (isConnectingOrChecking && withinSignalGrace) {
+    holdReason = "recent_live_stream_wait_connected";
+  }
+
+  const signalGraceExpired =
     activityAgeMs != null && activityAgeMs >= graceMs;
 
   return {
-    shouldHold: isConnectingOrChecking && withinGrace,
-    graceExpired: isConnectingOrChecking && graceExpired,
+    shouldHold: holdReason != null,
+    graceExpired:
+      isConnectingOrChecking && signalGraceExpired && !playbackRecentlyActive,
+    holdReason,
     isConnectingOrChecking,
     ontrackAgeMs,
     answerAgeMs,
     playAgeMs,
+    playbackActiveAgeMs,
     unmuteAgeMs,
     activityAgeMs,
   };
@@ -392,11 +412,12 @@ function formatReconnectHoldLog(
   tracks: number,
   check: LiveStreamWaitConnectedCheck
 ): string {
+  const reason = check.holdReason ?? "recent_live_stream_wait_connected";
   return (
-    `[voice-peer] reconnect-hold remote=${compactDeviceId(remoteId)} reason=recent_live_stream_wait_connected source=${source} ` +
+    `[voice-peer] reconnect-hold remote=${compactDeviceId(remoteId)} reason=${reason} source=${source} ` +
     `conn=${pc.connectionState} ice=${pc.iceConnectionState} tracks=${tracks} ` +
-    `ontrackAgeMs=${check.ontrackAgeMs ?? "-"} answerAgeMs=${check.answerAgeMs ?? "-"} ` +
-    `playAgeMs=${check.playAgeMs ?? "-"} activityAgeMs=${check.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
+    `playbackActiveAgeMs=${check.playbackActiveAgeMs ?? "-"} playAgeMs=${check.playAgeMs ?? "-"} ` +
+    `ontrackAgeMs=${check.ontrackAgeMs ?? "-"} activityAgeMs=${check.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
   );
 }
 
@@ -1010,6 +1031,7 @@ export function usePeerConnections({
         | "ontrack"
         | "unmute"
         | "play_success"
+        | "playback_active"
     ) => {
       const prev =
         peerSignalTimestampsRef.current.get(remoteId) ??
@@ -1036,6 +1058,9 @@ export function usePeerConnections({
       if (event === "play_success") {
         next.lastPlaySuccessAt = now;
       }
+      if (event === "playback_active") {
+        next.lastPlaybackActiveAt = now;
+      }
 
       peerSignalTimestampsRef.current.set(remoteId, next);
     },
@@ -1044,8 +1069,11 @@ export function usePeerConnections({
 
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {
-      if (health.playSuccess && health.trackReady === "live") {
+      if (health.playSuccessEvent) {
         touchPeerSignal(remoteId, "play_success");
+      }
+      if (health.playbackActive) {
+        touchPeerSignal(remoteId, "playback_active");
       }
     },
     [touchPeerSignal]
@@ -1117,6 +1145,7 @@ export function usePeerConnections({
         lastOnTrackAt: timestamps.lastOnTrackAt,
         lastUnmuteAt: timestamps.lastUnmuteAt,
         lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
+        lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
         lastWarning: meta.lastWarning,
         lastHealAction: meta.lastHealAction,
       };
@@ -3083,12 +3112,10 @@ export function usePeerConnections({
 
         if (waitCheck?.shouldHold) {
           console.log(
-            `[voice-peer] heal-hold remote=${compactDeviceId(remoteId)} reason=recent_live_stream_wait_connected ` +
+            `[voice-peer] heal-hold remote=${compactDeviceId(remoteId)} reason=${waitCheck.holdReason ?? "recent_live_stream_wait_connected"} ` +
               `conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +
-              `ontrackAgeMs=${waitCheck.ontrackAgeMs ?? "-"} ` +
-              `answerAgeMs=${waitCheck.answerAgeMs ?? "-"} ` +
-              `playAgeMs=${waitCheck.playAgeMs ?? "-"} ` +
-              `activityAgeMs=${waitCheck.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
+              `playbackActiveAgeMs=${waitCheck.playbackActiveAgeMs ?? "-"} playAgeMs=${waitCheck.playAgeMs ?? "-"} ` +
+              `ontrackAgeMs=${waitCheck.ontrackAgeMs ?? "-"} activityAgeMs=${waitCheck.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
           );
           continue;
         }

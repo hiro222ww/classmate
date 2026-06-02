@@ -16,6 +16,8 @@ const ATTACH_LOG_THROTTLE_MS = 5000;
 
 export type RemotePlaybackHealth = {
   playSuccess: boolean;
+  playSuccessEvent?: boolean;
+  playbackActive: boolean;
   currentTimeAdvanced: boolean;
   trackMuted: boolean;
   trackReady: string;
@@ -107,6 +109,7 @@ function logRemoteAudioCompact(
 
 function buildPlaybackHealth(params: {
   playSuccess: boolean;
+  playSuccessEvent?: boolean;
   currentTimeAdvanced: boolean;
   trackMuted: boolean;
   trackReady: string;
@@ -117,6 +120,7 @@ function buildPlaybackHealth(params: {
 }): RemotePlaybackHealth {
   const {
     playSuccess,
+    playSuccessEvent = false,
     currentTimeAdvanced,
     trackMuted,
     trackReady,
@@ -125,6 +129,12 @@ function buildPlaybackHealth(params: {
     elPaused,
     afterMs = 0,
   } = params;
+
+  const playbackActive =
+    playSuccess &&
+    trackReady === "live" &&
+    !elPaused &&
+    (currentTimeAdvanced || level > 0);
 
   const verified =
     playSuccess &&
@@ -138,6 +148,8 @@ function buildPlaybackHealth(params: {
 
   return {
     playSuccess,
+    playSuccessEvent,
+    playbackActive,
     currentTimeAdvanced,
     trackMuted,
     trackReady,
@@ -402,6 +414,7 @@ export default function RemoteAudio({
         emitPlaybackHealth(
           buildPlaybackHealth({
             playSuccess: true,
+            playSuccessEvent: true,
             currentTimeAdvanced: false,
             trackMuted: playbackTrack.muted ?? false,
             trackReady: playbackTrack.readyState ?? "-",
@@ -655,6 +668,46 @@ export default function RemoteAudio({
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [playAudio]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !stream) return;
+
+    let lastSampledTime = el.currentTime;
+
+    const timer = window.setInterval(() => {
+      if (!playSuccessRef.current) return;
+      if (isPlaybackTrackEnded(el, stream)) return;
+
+      const track = getPlaybackTrack(el, stream);
+      if (!track || track.readyState !== "live") return;
+
+      const currentTime = el.currentTime;
+      const advanced = currentTime > lastSampledTime + 0.01;
+      if (advanced) {
+        lastSampledTime = currentTime;
+      }
+
+      const level = levelRef.current;
+      if (!advanced && level <= 0) return;
+
+      emitPlaybackHealth(
+        buildPlaybackHealth({
+          playSuccess: true,
+          currentTimeAdvanced: advanced,
+          trackMuted: track.muted ?? false,
+          trackReady: track.readyState,
+          level,
+          webAudioFallback: fallbackActiveRef.current,
+          elPaused: el.paused,
+        })
+      );
+    }, 2000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [emitPlaybackHealth, stream]);
 
   useEffect(() => {
     if (voicePolicy.disableRemoteAudioMeter) {
