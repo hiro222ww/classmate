@@ -69,6 +69,38 @@ export function isTransportMediaConnected(conn: string, ice: string): boolean {
   );
 }
 
+export const TRANSPORT_UNCONFIRMED_MS_DEFAULT = 17_000;
+export const TRANSPORT_UNCONFIRMED_MS_IOS = 10_000;
+
+export function isPeerTransportUnconfirmed(params: {
+  conn: string;
+  ice: string;
+  lastPlaybackConfirmedAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  iceCheckingStuckSince?: number | null;
+  nowMs?: number;
+  voiceMode?: string;
+}): boolean {
+  const ice = params.ice;
+  const conn = params.conn;
+  const transportPending =
+    ice === "checking" ||
+    conn === "connecting" ||
+    (ice === "disconnected" && conn === "connecting");
+  if (!transportPending) return false;
+  if (params.lastPlaybackConfirmedAt != null) return false;
+  if (params.lastPlaySuccessAt == null) return false;
+
+  const now = params.nowMs ?? Date.now();
+  const threshold =
+    params.voiceMode === "ios_conservative"
+      ? TRANSPORT_UNCONFIRMED_MS_IOS
+      : TRANSPORT_UNCONFIRMED_MS_DEFAULT;
+  const stuckSince =
+    params.iceCheckingStuckSince ?? params.lastPlaySuccessAt;
+  return now - stuckSince >= threshold;
+}
+
 export function isStalePlayFailure(
   health: RemoteAudioHealthInput | null | undefined,
   nowMs: number
@@ -461,6 +493,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   trackLive: boolean;
   hasRemoteStream: boolean;
   recentPlaySuccess: boolean;
+  transportUnconfirmed?: boolean;
   lastOnTrackAt?: number | null;
   lastUnmuteAt?: number | null;
   lastPlaySuccessAt?: number | null;
@@ -485,6 +518,15 @@ export function resolveUserFacingRemoteAudioLabel(params: {
     source: "remoteAudioHealth",
     statusSource: "remote_audio_health",
   };
+
+  if (params.transportUnconfirmed === true) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+      text: "音声を調整中",
+      reason: "transport_unconfirmed",
+    };
+  }
 
   if (
     (verified || actuallyPlaying) &&
@@ -790,6 +832,7 @@ export function resolveEffectivePeerConnection(params: {
   lastPlaybackConfirmedAt?: number | null;
   playbackActive?: boolean;
   playbackActiveMode?: PlaybackActiveMode;
+  transportUnconfirmed?: boolean;
   nowMs?: number;
 }): {
   effectivePeerState: EffectivePeerState;
@@ -808,6 +851,7 @@ export function resolveEffectivePeerConnection(params: {
 
   if (
     activePlaybackConnected &&
+    params.transportUnconfirmed !== true &&
     (params.peerState === "connecting" || params.peerState === "idle")
   ) {
     return {
@@ -1003,6 +1047,7 @@ export function resolveCallMemberStatus(params: {
   hasPc?: boolean;
   orphanRemoteAudio?: boolean;
   p2pDirectFailedHoldActive?: boolean;
+  transportUnconfirmed?: boolean;
   liveStreamHealHold?: boolean;
   autoHardResetInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
@@ -1095,6 +1140,7 @@ export function resolveCallMemberStatus(params: {
       trackLive,
       hasRemoteStream,
       recentPlaySuccess,
+      transportUnconfirmed: params.transportUnconfirmed,
       lastOnTrackAt: params.lastOnTrackAt,
       lastUnmuteAt: params.lastUnmuteAt,
       lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
@@ -1163,11 +1209,14 @@ export function resolveCallMemberStatus(params: {
 
   const transportRecovering =
     params.wasPeerConnected &&
-    params.p2pDirectFailedHoldActive === true &&
-    (!params.hasPc ||
-      params.conn === "failed" ||
-      params.ice === "failed" ||
-      params.peerState === "failed");
+    (params.transportUnconfirmed === true ||
+      (params.p2pDirectFailedHoldActive === true &&
+        (!params.hasPc ||
+          params.conn === "failed" ||
+          params.ice === "failed" ||
+          params.peerState === "failed" ||
+          params.ice === "checking" ||
+          params.conn === "connecting")));
 
   if (transportRecovering) {
     return {

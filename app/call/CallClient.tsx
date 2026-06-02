@@ -340,6 +340,7 @@ export default function CallClient() {
         playbackActive:
           health?.playbackActive === true || health?.audioActuallyPlaying === true,
         playbackActiveMode: health?.playbackActiveMode,
+        transportUnconfirmed: diag?.transportUnconfirmed === true,
         nowMs,
       });
       if (effective.effectiveConnected) {
@@ -987,11 +988,12 @@ export default function CallClient() {
           audioHealth?.playbackActive === true ||
           audioHealth?.audioActuallyPlaying === true,
         playbackActiveMode: audioHealth?.playbackActiveMode,
+        transportUnconfirmed: diag?.transportUnconfirmed === true,
         nowMs,
       });
       const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
       const remoteAudioVerified =
-        effective.effectiveConnected
+        effective.effectiveConnected && diag?.transportUnconfirmed !== true
           ? audioHealth?.verified === true ||
             audioHealth?.audioActuallyPlaying === true ||
             isRecentPlaySuccess(audioHealth?.lastPlaySuccessAt, nowMs) ||
@@ -1055,6 +1057,7 @@ export default function CallClient() {
         hasPc: diag?.hasPc ?? false,
         orphanRemoteAudio: diag?.orphanRemoteAudio === true,
         p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+        transportUnconfirmed: diag?.transportUnconfirmed === true,
         liveStreamHealHold: diag?.liveStreamHealHold === true,
         autoHardResetInProgress: diag?.autoHardResetInProgress === true,
         autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,

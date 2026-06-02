@@ -350,6 +350,7 @@ export type PeerStatusDiagnostics = {
   autoHardResetAttempts?: number;
   reconnectRequestSent?: boolean;
   reconnectRequestPending?: boolean;
+  transportUnconfirmed?: boolean;
 };
 
 const remoteAudioPipelineLogAt = new Map<string, number>();

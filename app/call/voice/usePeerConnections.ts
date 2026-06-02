@@ -39,7 +39,10 @@ import {
 } from "@/lib/voiceClientEnv";
 import type { RemotePlaybackHealth } from "./RemoteAudio";
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
-import { isTransportMediaConnected } from "@/lib/memberPresenceStatus";
+import {
+  isPeerTransportUnconfirmed,
+  isTransportMediaConnected,
+} from "@/lib/memberPresenceStatus";
 import {
   createEmptyPeerIceDiagnostics,
   evaluateInsufficientRemoteCandidates,
@@ -175,6 +178,14 @@ const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
 const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
 const PLAYBACK_ACTIVE_HOLD_MS = 15000;
 const ICE_CHECKING_DIAGNOSTICS_MS = 10000;
+const ICE_CHECKING_DIAGNOSTICS_MS_IOS = 6000;
+const IOS_NO_RELAY_GATHERING_PROBE_MS = 3500;
+
+function getIceCheckingDiagnosticsMs(): number {
+  return voicePolicy.voiceMode === "ios_conservative"
+    ? ICE_CHECKING_DIAGNOSTICS_MS_IOS
+    : ICE_CHECKING_DIAGNOSTICS_MS;
+}
 const ICE_RESTART_STUCK_MS = 15000;
 const ICE_RESTART_POST_TIMEOUT_MS = 10000;
 const MAX_ICE_RESTART_ATTEMPTS = 1;
@@ -1445,9 +1456,17 @@ export function usePeerConnections({
       checkingPlaybackStuckAtRef.current.delete(remoteId);
       softIceRestartAttemptsRef.current.delete(remoteId);
 
+      const stats = peerIceDiagnosticsRef.current.get(remoteId);
+      const route =
+        voiceRouteRef.current === "turn" ||
+        stats?.localTypes.has("relay") ||
+        stats?.remoteTypes.has("relay")
+          ? "turn"
+          : "p2p";
+
       console.log(
         `[voice-peer] ice-confirmed remote=${compactDeviceId(remoteId)} ` +
-          `conn=${conn} ice=${ice} ${formatVoiceModeSuffix()}`
+          `route=${route} conn=${conn} ice=${ice} ${formatVoiceModeSuffix()}`
       );
     },
     [touchPeerSignal]
@@ -1761,6 +1780,15 @@ export function usePeerConnections({
         reconnectRequestPending:
           passiveReconnectStateRef.current.has(remoteId) &&
           passiveReconnectStateRef.current.get(remoteId)?.sentAt == null,
+        transportUnconfirmed: isPeerTransportUnconfirmed({
+          conn: pc?.connectionState ?? "-",
+          ice: pc?.iceConnectionState ?? "-",
+          lastPlaybackConfirmedAt: timestamps.lastPlaybackConfirmedAt,
+          lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
+          iceCheckingStuckSince:
+            checkingPlaybackStuckAtRef.current.get(remoteId) ?? null,
+          voiceMode: voicePolicy.voiceMode,
+        }),
       };
     }
 
@@ -2406,6 +2434,14 @@ export function usePeerConnections({
   const attemptIceRestartRef = useRef<
     (remoteId: string) => Promise<boolean>
   >(async () => false);
+  const maybeTurnFallbackOnNoRelayRef = useRef<
+    (
+      remoteId: string,
+      pc: RTCPeerConnection,
+      context: string
+    ) => Promise<boolean>
+  >(async () => false);
+
   const attemptTurnFallbackForPeerRef = useRef<
     (remoteId: string, turnReason?: string) => Promise<boolean>
   >(async () => false);
@@ -2589,11 +2625,16 @@ export function usePeerConnections({
             ? "failed_with_host_srflx_only"
             : "host_srflx_checking_stuck";
           if (turnFallbackEnabledRef.current) {
-            console.log(
-              `[voice-peer] turn-fallback-needed remote=${compactDeviceId(remoteId)} ` +
-                `reason=${turnReason} enabled=true source=${source} ${formatVoiceModeSuffix()}`
-            );
-            void attemptTurnFallbackForPeerRef.current(remoteId, turnReason);
+            const pcForRelay = pcsRef.current.get(remoteId);
+            if (pcForRelay) {
+              void maybeTurnFallbackOnNoRelayRef.current(
+                remoteId,
+                pcForRelay,
+                `reconnect_${source}`
+              );
+            } else {
+              void attemptTurnFallbackForPeerRef.current(remoteId, turnReason);
+            }
           } else {
             p2pDirectFailedHoldUntilRef.current.set(
               remoteId,
@@ -2943,6 +2984,11 @@ export function usePeerConnections({
           stats,
         });
         p2pDirectFailedSignalAtRef.current.set(remoteId, Date.now());
+        void maybeTurnFallbackOnNoRelayRef.current(
+          remoteId,
+          pc,
+          "ice_checking_diagnostics"
+        );
       }
       const insufficient = evaluateInsufficientRemoteCandidates(stats);
       if (insufficient) {
@@ -2962,6 +3008,7 @@ export function usePeerConnections({
       if (existing) window.clearTimeout(existing);
 
       const timer = window.setTimeout(() => {
+        void (async () => {
         iceCheckingTimersRef.current.delete(remoteId);
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
@@ -2974,39 +3021,40 @@ export function usePeerConnections({
 
         logIceCheckingDiagnostics(remoteId, currentPc);
 
-        const timestamps =
-          peerSignalTimestampsRef.current.get(remoteId) ??
-          emptyPeerSignalTimestamps();
-        const media = getPeerMedia(remoteId);
-        const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
-          pc: currentPc,
-          hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
-          remoteTracksCount: media.remoteTracksCount,
-          hasRemoteStream: media.hasRemoteStream,
-          timestamps,
-          connectStartedAt: connectStartedAtRef.current.get(remoteId),
-        });
-
-        if (
-          waitCheck?.shouldHold &&
-          waitCheck.holdReason === "active_playback_wait_connected"
-        ) {
-          void maybeSoftRenegotiatePeerRef.current(remoteId);
-          return;
-        }
-
-        if (isEligibleForIceRestart(remoteId)) {
-          void maybeSoftRenegotiatePeerRef.current(remoteId);
-          return;
-        }
-
         const stats = getOrCreatePeerIceStats(remoteId);
-        if (hasNoRelayCandidates(stats) && !turnFallbackEnabledRef.current) {
-          p2pDirectFailedHoldUntilRef.current.set(
+        if (hasNoRelayCandidates(stats)) {
+          const turnStarted = await maybeTurnFallbackOnNoRelayRef.current(
             remoteId,
-            Date.now() + P2P_DIRECT_FAILED_HOLD_MS
+            currentPc,
+            "checking_timeout"
           );
-          shouldBlockTurnFallbackOnly(remoteId, "checking_timeout");
+          if (turnStarted) return;
+        } else {
+          const timestamps =
+            peerSignalTimestampsRef.current.get(remoteId) ??
+            emptyPeerSignalTimestamps();
+          const media = getPeerMedia(remoteId);
+          const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
+            pc: currentPc,
+            hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
+            remoteTracksCount: media.remoteTracksCount,
+            hasRemoteStream: media.hasRemoteStream,
+            timestamps,
+            connectStartedAt: connectStartedAtRef.current.get(remoteId),
+          });
+
+          if (
+            waitCheck?.shouldHold &&
+            waitCheck.holdReason === "active_playback_wait_connected"
+          ) {
+            void maybeSoftRenegotiatePeerRef.current(remoteId);
+            return;
+          }
+
+          if (isEligibleForIceRestart(remoteId)) {
+            void maybeSoftRenegotiatePeerRef.current(remoteId);
+            return;
+          }
         }
 
         logPeerStateWarning({
@@ -3025,7 +3073,8 @@ export function usePeerConnections({
           reason: "checking_timeout",
           source: "checking_timeout",
         });
-      }, ICE_CHECKING_DIAGNOSTICS_MS);
+        })();
+      }, getIceCheckingDiagnosticsMs());
 
       iceCheckingTimersRef.current.set(remoteId, timer);
     },
@@ -3261,6 +3310,11 @@ export function usePeerConnections({
         return shouldBlockTurnFallbackOnly(remoteId, `turn_fallback_${turnReason}`);
       }
 
+      console.log(
+        `[voice-peer] turn-fallback-start remote=${compactDeviceId(remoteId)} ` +
+          `reason=${turnReason} ${formatVoiceModeSuffix()}`
+      );
+
       turnFallbackAttemptedRef.current.set(remoteId, true);
       const ok = await enableTurnFallback();
       if (!ok) {
@@ -3300,6 +3354,42 @@ export function usePeerConnections({
       enableTurnFallback,
       getOrCreatePeerIceStats,
       hasLiveRemoteAudioStream,
+      shouldBlockTurnFallbackOnly,
+    ]
+  );
+
+  const maybeTurnFallbackOnNoRelay = useCallback(
+    async (
+      remoteId: string,
+      pc: RTCPeerConnection,
+      context: string
+    ): Promise<boolean> => {
+      const stats = getOrCreatePeerIceStats(remoteId);
+      if (!hasNoRelayCandidates(stats)) return false;
+
+      const transportFailed =
+        pc.connectionState === "failed" || pc.iceConnectionState === "failed";
+      const turnReason =
+        voicePolicy.voiceMode === "ios_conservative"
+          ? "ios_p2p_direct_failed_no_relay_candidate"
+          : transportFailed
+            ? "failed_no_relay_candidate"
+            : "p2p_direct_failed_no_relay_candidate";
+
+      if (turnFallbackEnabledRef.current) {
+        return attemptTurnFallbackForPeer(remoteId, turnReason);
+      }
+
+      p2pDirectFailedHoldUntilRef.current.set(
+        remoteId,
+        Date.now() + P2P_DIRECT_FAILED_HOLD_MS
+      );
+      shouldBlockTurnFallbackOnly(remoteId, context);
+      return false;
+    },
+    [
+      attemptTurnFallbackForPeer,
+      getOrCreatePeerIceStats,
       shouldBlockTurnFallbackOnly,
     ]
   );
@@ -3433,6 +3523,20 @@ export function usePeerConnections({
             connectionId: getCurrentConnectionId(remoteId),
             stats,
           });
+
+          if (voicePolicy.voiceMode === "ios_conservative") {
+            window.setTimeout(() => {
+              const currentPc = pcsRef.current.get(remoteId);
+              if (!currentPc || currentPc !== pc) return;
+              if (!isPcConnectingOrIceChecking(currentPc)) return;
+              if (!hasNoRelayCandidates(stats)) return;
+              void maybeTurnFallbackOnNoRelayRef.current(
+                remoteId,
+                currentPc,
+                "ios_gathering_complete_no_relay"
+              );
+            }, IOS_NO_RELAY_GATHERING_PROBE_MS);
+          }
         }
       };
 
@@ -4667,8 +4771,9 @@ export function usePeerConnections({
       if (softAttempts >= MAX_SOFT_ICE_RESTART_ATTEMPTS) {
         const stats = getOrCreatePeerIceStats(remoteId);
         if (hasNoRelayCandidates(stats)) {
-          void attemptTurnFallbackForPeerRef.current(
+          void maybeTurnFallbackOnNoRelayRef.current(
             remoteId,
+            pc,
             "soft_rebuild_ice_unconfirmed"
           );
         }
@@ -4809,6 +4914,10 @@ export function usePeerConnections({
   useEffect(() => {
     attemptTurnFallbackForPeerRef.current = attemptTurnFallbackForPeer;
   }, [attemptTurnFallbackForPeer]);
+
+  useEffect(() => {
+    maybeTurnFallbackOnNoRelayRef.current = maybeTurnFallbackOnNoRelay;
+  }, [maybeTurnFallbackOnNoRelay]);
 
   const scanAndEnsureMissingPcs = useCallback(
     (trigger: string, peers: VoiceMeshPeerSummaryEntry[]) => {
