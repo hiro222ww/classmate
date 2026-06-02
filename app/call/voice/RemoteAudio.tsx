@@ -304,6 +304,11 @@ export default function RemoteAudio({
       const el = ref.current;
       if (!el || !stream) return;
 
+      const track = stream.getAudioTracks()[0];
+      if (track?.readyState === "ended") {
+        return;
+      }
+
       if (!voicePolicy.aggressivePlayRetry && opts?.fromUnlock !== true) {
         logRemoteAudioCompact(remoteId, el, stream, "play-skipped", {
           reason: "wait_user_gesture",
@@ -378,6 +383,22 @@ export default function RemoteAudio({
     void playAudio({ fromUnlock: true });
   }, [playAudio]);
 
+  const emitEndedTrackHealth = useCallback(() => {
+    const track = stream.getAudioTracks()[0];
+    playSuccessRef.current = false;
+    emitPlaybackHealth(
+      buildPlaybackHealth({
+        playSuccess: false,
+        currentTimeAdvanced: false,
+        trackMuted: track?.muted ?? false,
+        trackReady: "ended",
+        level: levelRef.current,
+        webAudioFallback: fallbackActiveRef.current,
+        elPaused: ref.current?.paused ?? true,
+      })
+    );
+  }, [emitPlaybackHealth, stream]);
+
   useEffect(() => {
     console.log(
       `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
@@ -386,6 +407,8 @@ export default function RemoteAudio({
       console.log(
         `[remote-audio] unmount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
       );
+      lastAttachedStreamIdRef.current = null;
+      lastAttachedTrackIdRef.current = null;
     };
   }, [instanceId, remoteId]);
 
@@ -393,9 +416,18 @@ export default function RemoteAudio({
     const el = ref.current;
     if (!el || !stream) return;
 
+    const track = stream.getAudioTracks()[0] ?? null;
+    if (track?.readyState === "ended") {
+      console.log(
+        `[remote-audio] attach-skip-ended-track remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+          `streamId=${compactMediaId(stream.id)} trackId=${compactMediaId(track.id)} ${formatVoiceModeSuffix()}`
+      );
+      emitEndedTrackHealth();
+      return;
+    }
+
     configureAudioElement(el);
 
-    const track = stream.getAudioTracks()[0] ?? null;
     const streamId = stream.id ?? "";
     const trackId = track?.id ?? "";
     const prevStreamId = lastAttachedStreamIdRef.current ?? "";
@@ -443,7 +475,14 @@ export default function RemoteAudio({
     if (voicePolicy.aggressivePlayRetry) {
       void playAudio();
     }
-  }, [configureAudioElement, instanceId, playAudio, remoteId, stream]);
+  }, [
+    configureAudioElement,
+    emitEndedTrackHealth,
+    instanceId,
+    playAudio,
+    remoteId,
+    stream,
+  ]);
 
   useEffect(() => {
     const el = ref.current;
@@ -483,8 +522,6 @@ export default function RemoteAudio({
     return () => {
       if (retryTimer) window.clearTimeout(retryTimer);
       clearPlaybackChecks();
-      lastAttachedStreamIdRef.current = null;
-      lastAttachedTrackIdRef.current = null;
       el.removeEventListener("canplay", onCanPlay);
       el.removeEventListener("loadedmetadata", onCanPlay);
       stream.removeEventListener("addtrack", onAddTrack);
