@@ -165,6 +165,7 @@ export default function CallClient() {
   const everConnectedPeersRef = useRef<Set<string>>(new Set());
   const prevCallStatusRef = useRef<Record<string, string>>({});
   const prevCallStatusPeerLogRef = useRef<Record<string, string>>({});
+  const missingRemoteAudioWarnedRef = useRef<Set<string>>(new Set());
   const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
@@ -917,6 +918,19 @@ export default function CallClient() {
           },
         });
         prevCallStatusRef.current[memberId] = status.text;
+      }
+
+      const hasRemoteMedia =
+        (diag?.remoteTracksCount ?? 0) > 0 || diag?.hasRemoteStream === true;
+      if (hasRemoteMedia && !diag?.remoteAudioMounted && !isMe) {
+        if (!missingRemoteAudioWarnedRef.current.has(memberId)) {
+          missingRemoteAudioWarnedRef.current.add(memberId);
+          console.warn(
+            `[call-audio] missing-remote-audio remote=${memberId.slice(-3)} reason=stream_exists_but_audio_component_missing`
+          );
+        }
+      } else if (diag?.remoteAudioMounted) {
+        missingRemoteAudioWarnedRef.current.delete(memberId);
       }
 
       const playbackActiveAgeMs =

@@ -186,6 +186,7 @@ export default function CallVoiceLayer({
           }
           stream={state.stream}
           remoteId={remoteId}
+          replayReason={state.replayReason ?? null}
           onSpeaking={onRemoteSpeakingChange}
           onPlaybackHealthChange={handleRemotePlaybackHealthChange}
         />

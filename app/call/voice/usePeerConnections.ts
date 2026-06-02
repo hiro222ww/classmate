@@ -47,6 +47,7 @@ type RemoteAudioState = {
   stream: MediaStream;
   member?: Member;
   attachSeq: number;
+  replayReason?: string | null;
 };
 
 function getLocalAudioTrack(
@@ -618,8 +619,21 @@ export function usePeerConnections({
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
   >({});
+  const remoteAudiosRef = useRef<Record<string, RemoteAudioState>>({});
+  const missingRemoteAudioWarnedRef = useRef<Set<string>>(new Set());
+  const ensureRemoteAudioMountedRef = useRef<
+    (remoteId: string, reason: string) => boolean
+  >(() => false);
+  const triggerRemoteAudioReplayRef = useRef<
+    (remoteId: string, reason: string) => void
+  >(() => {});
+  const audioReplayAtRef = useRef<Map<string, number>>(new Map());
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
+
+  useEffect(() => {
+    remoteAudiosRef.current = remoteAudios;
+  }, [remoteAudios]);
 
   const notifyStatus = useCallback(
     (text: string) => {
@@ -1268,6 +1282,10 @@ export function usePeerConnections({
         peerSignalTimestampsRef.current.get(remoteId) ??
         emptyPeerSignalTimestamps();
 
+      if (media.remoteTracksCount > 0 || media.hasRemoteStream) {
+        ensureRemoteAudioMountedRef.current(remoteId, "emit_peer_states");
+      }
+
       diagnostics[remoteId] = {
         hasPc: isUsablePeerConnection(pc),
         conn: pc?.connectionState ?? "-",
@@ -1278,6 +1296,7 @@ export function usePeerConnections({
         trackReady: audioTrack?.readyState ?? media.primaryTrackReadyState ?? "-",
         isRemoteInCall: isRemoteInCall(remoteId),
         lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
+        remoteAudioMounted: !!remoteAudiosRef.current[remoteId],
       };
     }
 
@@ -1444,6 +1463,7 @@ export function usePeerConnections({
             stream,
             member,
             attachSeq: Date.now(),
+            replayReason: null,
           },
         };
       });
@@ -1498,6 +1518,134 @@ export function usePeerConnections({
     },
     [upsertRemoteAudio]
   );
+
+  const ensureRemoteAudioMounted = useCallback(
+    (remoteId: string, reason: string) => {
+      if (remoteAudiosRef.current[remoteId]) return true;
+
+      const pc = pcsRef.current.get(remoteId);
+      const stream = remoteStreamsRef.current.get(remoteId);
+      const snapshot = getRemoteStreamAudioSnapshot(stream);
+
+      if (stream && snapshot.hasLiveStream) {
+        upsertRemoteAudio(remoteId, stream, { force: true, reason });
+        return true;
+      }
+
+      if (pc) {
+        const synced = syncRemoteAudioFromPc(remoteId, pc, reason);
+        if (synced) return true;
+
+        const liveTrack = pc
+          .getReceivers()
+          .map((receiver) => receiver.track)
+          .find(
+            (track): track is MediaStreamTrack =>
+              !!track && track.kind === "audio" && track.readyState === "live"
+          );
+
+        if (liveTrack) {
+          upsertRemoteAudio(remoteId, new MediaStream([liveTrack]), {
+            force: true,
+            reason,
+          });
+          return true;
+        }
+      }
+
+      return false;
+    },
+    [syncRemoteAudioFromPc, upsertRemoteAudio]
+  );
+
+  const triggerRemoteAudioReplay = useCallback(
+    (remoteId: string, reason: string) => {
+      console.log(
+        `[remote-audio] replay remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
+      );
+
+      ensureRemoteAudioMounted(remoteId, `replay:${reason}`);
+
+      const member = members.find((m) => m.device_id === remoteId);
+      setRemoteAudios((prev) => {
+        const existing = prev[remoteId];
+        const stream =
+          existing?.stream ?? remoteStreamsRef.current.get(remoteId) ?? null;
+        if (!stream) return prev;
+
+        return {
+          ...prev,
+          [remoteId]: {
+            stream,
+            member,
+            attachSeq: Date.now(),
+            replayReason: reason,
+          },
+        };
+      });
+    },
+    [ensureRemoteAudioMounted, members]
+  );
+
+  useEffect(() => {
+    ensureRemoteAudioMountedRef.current = ensureRemoteAudioMounted;
+    triggerRemoteAudioReplayRef.current = triggerRemoteAudioReplay;
+  }, [ensureRemoteAudioMounted, triggerRemoteAudioReplay]);
+
+  useEffect(() => {
+    if (!micReady || !signalReady) return;
+
+    const timer = window.setInterval(() => {
+      const remoteIds = getRemoteIds();
+
+      for (const remoteId of remoteIds) {
+        const media = getPeerMedia(remoteId);
+        if (media.remoteTracksCount === 0 && !media.hasRemoteStream) continue;
+
+        const timestamps =
+          peerSignalTimestampsRef.current.get(remoteId) ??
+          emptyPeerSignalTimestamps();
+        const ontrackAgeMs = timestamps.lastOnTrackAt
+          ? Date.now() - timestamps.lastOnTrackAt
+          : null;
+        const neverPlayed = timestamps.lastPlaySuccessAt == null;
+
+        if (!remoteAudiosRef.current[remoteId]) {
+          if (!missingRemoteAudioWarnedRef.current.has(remoteId)) {
+            missingRemoteAudioWarnedRef.current.add(remoteId);
+            console.warn(
+              `[call-audio] missing-remote-audio remote=${compactDeviceId(remoteId)} reason=stream_exists_but_audio_component_missing ${formatVoiceModeSuffix()}`
+            );
+          }
+          ensureRemoteAudioMountedRef.current(remoteId, "audio_watchdog_mount");
+        } else {
+          missingRemoteAudioWarnedRef.current.delete(remoteId);
+        }
+
+        if (ontrackAgeMs != null && ontrackAgeMs >= 5000 && neverPlayed) {
+          const lastReplay = audioReplayAtRef.current.get(remoteId) ?? 0;
+          if (Date.now() - lastReplay >= 5000) {
+            audioReplayAtRef.current.set(remoteId, Date.now());
+            if (remoteAudiosRef.current[remoteId]) {
+              triggerRemoteAudioReplayRef.current(
+                remoteId,
+                "stream_present_but_never_played"
+              );
+            } else {
+              ensureRemoteAudioMountedRef.current(
+                remoteId,
+                "stream_present_but_never_played_mount"
+              );
+            }
+          }
+        }
+      }
+    }, 2000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [getPeerMedia, getRemoteIds, micReady, signalReady]);
 
   useEffect(() => {
     setRemoteAudios((prev) => {

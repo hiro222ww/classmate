@@ -341,6 +341,7 @@ export type PeerStatusDiagnostics = {
   trackReady: string;
   isRemoteInCall: boolean;
   lastPlaybackActiveAt: number | null;
+  remoteAudioMounted: boolean;
 };
 
 export function logCallStatusPeer(params: {

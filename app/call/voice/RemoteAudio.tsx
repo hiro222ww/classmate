@@ -197,14 +197,25 @@ function evaluateRemotePlaybackHealth(params: {
   };
 }
 
+type PlayAttemptReason =
+  | "mount_or_stream_changed"
+  | "mount_ref"
+  | "play_missing_retry"
+  | "stream_present_but_never_played"
+  | "replay"
+  | "canplay"
+  | "user_unlock";
+
 export default function RemoteAudio({
   stream,
   remoteId,
+  replayReason = null,
   onSpeaking,
   onPlaybackHealthChange,
 }: {
   stream: MediaStream;
   remoteId: string;
+  replayReason?: string | null;
   onSpeaking?: (remoteId: string, level: number) => void;
   onPlaybackHealthChange?: (
     remoteId: string,
@@ -220,6 +231,8 @@ export default function RemoteAudio({
   const levelRef = useRef(0);
   const playSuccessRef = useRef(false);
   const provisionalPlaybackStartedAtRef = useRef<number | null>(null);
+  const mountedAtRef = useRef<number>(Date.now());
+  const lastPlayAttemptAtRef = useRef<number | null>(null);
   const attachLogThrottleRef = useRef(
     new Map<
       string,
@@ -473,7 +486,7 @@ export default function RemoteAudio({
   }, [emitPlaybackHealth, stream]);
 
   const playAudio = useCallback(
-    async (opts?: { fromUnlock?: boolean }) => {
+    async (opts?: { fromUnlock?: boolean; reason?: PlayAttemptReason }) => {
       const el = ref.current;
       if (!el || !stream) return;
 
@@ -482,12 +495,29 @@ export default function RemoteAudio({
         return;
       }
 
-      if (!voicePolicy.aggressivePlayRetry && opts?.fromUnlock !== true) {
+      const reason = opts?.reason ?? (opts?.fromUnlock ? "user_unlock" : "mount_or_stream_changed");
+      const allowWithoutGesture =
+        opts?.fromUnlock === true ||
+        reason === "mount_or_stream_changed" ||
+        reason === "mount_ref" ||
+        reason === "play_missing_retry" ||
+        reason === "stream_present_but_never_played" ||
+        reason === "replay" ||
+        reason === "canplay" ||
+        voicePolicy.aggressivePlayRetry;
+
+      if (!allowWithoutGesture) {
         logRemoteAudioCompact(remoteId, el, stream, "play-skipped", {
           reason: "wait_user_gesture",
         });
         return;
       }
+
+      lastPlayAttemptAtRef.current = Date.now();
+      console.log(
+        `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason} ` +
+          `paused=${el.paused} readyState=${el.readyState} srcObjectSet=${el.srcObject === stream} ${formatVoiceModeSuffix()}`
+      );
 
       configureAudioElement(el);
 
@@ -531,9 +561,15 @@ export default function RemoteAudio({
         playSuccessRef.current = false;
         provisionalPlaybackStartedAtRef.current = null;
         const err = e as { name?: string; message?: string };
+        const errName = err?.name ?? "unknown";
+        const errMessage = String(err?.message ?? "").slice(0, 120);
+        console.log(
+          `[remote-audio] play-failed remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+            `name=${errName} message=${errMessage} ${formatVoiceModeSuffix()}`
+        );
         logRemoteAudioCompact(remoteId, el, stream, "play-failed", {
-          err: err?.name ?? "unknown",
-          msg: String(err?.message ?? "").slice(0, 80),
+          name: errName,
+          message: errMessage,
         });
 
         if (err?.name === "NotAllowedError") {
@@ -563,21 +599,48 @@ export default function RemoteAudio({
   );
 
   const unlockRemoteAudio = useCallback(() => {
-    void playAudio({ fromUnlock: true });
+    void playAudio({ fromUnlock: true, reason: "user_unlock" });
   }, [playAudio]);
 
+  const logStreamProps = useCallback(
+    (tag: string) => {
+      const track = stream?.getAudioTracks?.()[0] ?? null;
+      console.log(
+        `[remote-audio] props remote=${compactRemoteId(remoteId)} instance=${instanceId} tag=${tag} ` +
+          `hasStream=${!!stream} streamId=${compactMediaId(stream?.id)} tracks=${stream?.getAudioTracks?.().length ?? 0} ` +
+          `trackId=${compactMediaId(track?.id)} trackReady=${track?.readyState ?? "-"} replayReason=${replayReason ?? "-"} ${formatVoiceModeSuffix()}`
+      );
+    },
+    [instanceId, remoteId, replayReason, stream]
+  );
+
   useEffect(() => {
+    mountedAtRef.current = Date.now();
+    const track = stream?.getAudioTracks?.()[0] ?? null;
     console.log(
-      `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
+      `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+        `streamId=${compactMediaId(stream?.id)} trackId=${compactMediaId(track?.id)} trackReady=${track?.readyState ?? "-"} ${formatVoiceModeSuffix()}`
     );
+    logStreamProps("mount");
     return () => {
       console.log(
-        `[remote-audio] unmount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
+        `[remote-audio] unmount remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${replayReason ?? "component_unmount"} ${formatVoiceModeSuffix()}`
       );
       lastAttachedStreamIdRef.current = null;
       lastAttachedTrackIdRef.current = null;
     };
-  }, [instanceId, remoteId]);
+  }, [instanceId, logStreamProps, remoteId, replayReason, stream]);
+
+  useEffect(() => {
+    logStreamProps("stream_changed");
+  }, [logStreamProps, stream]);
+
+  const attemptPlay = useCallback(
+    (reason: PlayAttemptReason) => {
+      void playAudio({ reason });
+    },
+    [playAudio]
+  );
 
   const attachStream = useCallback(() => {
     const track = stream?.getAudioTracks?.()[0] ?? null;
@@ -666,28 +729,43 @@ export default function RemoteAudio({
     const attachTag = trackChanged || streamChanged ? "attach-track-changed" : "attach";
     logRemoteAudioCompact(remoteId, el, stream, attachTag);
 
-    if (voicePolicy.aggressivePlayRetry) {
-      void playAudio();
-    }
+    attemptPlay("mount_or_stream_changed");
   }, [
+    attemptPlay,
     configureAudioElement,
     emitEndedTrackHealth,
     instanceId,
     logAttachSkipEndedTrack,
-    playAudio,
     remoteId,
     stream,
   ]);
 
   useEffect(() => {
+    if (!replayReason) return;
+    lastAttachedStreamIdRef.current = null;
+    lastAttachedTrackIdRef.current = null;
+    const el = ref.current;
+    if (!el) return;
+    attachStream();
+    attemptPlay("stream_present_but_never_played");
+  }, [attachStream, attemptPlay, replayReason]);
+
+  const bindAudioElement = useCallback(
+    (node: HTMLAudioElement | null) => {
+      ref.current = node;
+      if (!node || !stream) return;
+      configureAudioElement(node);
+      attachStream();
+    },
+    [attachStream, configureAudioElement, stream]
+  );
+
+  useEffect(() => {
     const el = ref.current;
     if (!el) return;
 
-    configureAudioElement(el);
-    attachStream();
-
     const onCanPlay = () => {
-      void playAudio();
+      attemptPlay("canplay");
     };
 
     el.addEventListener("canplay", onCanPlay);
@@ -709,12 +787,12 @@ export default function RemoteAudio({
       };
     }
 
+    attachStream();
+
     let retryTimer = 0;
-    if (voicePolicy.aggressivePlayRetry) {
-      retryTimer = window.setTimeout(() => {
-        attachStream();
-      }, voicePolicy.ontrackDelayedPlayMs ?? 300);
-    }
+    retryTimer = window.setTimeout(() => {
+      attachStream();
+    }, voicePolicy.ontrackDelayedPlayMs ?? 300);
 
     return () => {
       if (retryTimer) window.clearTimeout(retryTimer);
@@ -755,7 +833,7 @@ export default function RemoteAudio({
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void playAudio({ fromUnlock: true });
+        void playAudio({ fromUnlock: true, reason: "user_unlock" });
       }
     };
 
@@ -772,8 +850,21 @@ export default function RemoteAudio({
     let lastSampledTime = el.currentTime;
 
     const timer = window.setInterval(() => {
-      if (!playSuccessRef.current) return;
       if (isPlaybackTrackEnded(el, stream)) return;
+
+      if (!playSuccessRef.current) {
+        const sinceMount = Date.now() - mountedAtRef.current;
+        const sinceAttempt = lastPlayAttemptAtRef.current
+          ? Date.now() - lastPlayAttemptAtRef.current
+          : sinceMount;
+        if (sinceAttempt >= 2000) {
+          lastAttachedStreamIdRef.current = null;
+          lastAttachedTrackIdRef.current = null;
+          attachStream();
+          attemptPlay("play_missing_retry");
+        }
+        return;
+      }
 
       const track = getPlaybackTrack(el, stream);
       if (!track || track.readyState !== "live") return;
@@ -820,7 +911,7 @@ export default function RemoteAudio({
     return () => {
       window.clearInterval(timer);
     };
-  }, [emitPlaybackHealth, instanceId, logRemotePlaybackActive, remoteId, stream]);
+  }, [attachStream, attemptPlay, emitPlaybackHealth, instanceId, logRemotePlaybackActive, remoteId, stream]);
 
   useEffect(() => {
     if (voicePolicy.disableRemoteAudioMeter) {
@@ -910,7 +1001,7 @@ export default function RemoteAudio({
   return (
     <>
       <audio
-        ref={ref}
+        ref={bindAudioElement}
         data-remote={remoteId}
         playsInline
         muted={false}
@@ -922,7 +1013,7 @@ export default function RemoteAudio({
           type="button"
           onClick={() => {
             requestRemoteAudioUnlock();
-            void playAudio({ fromUnlock: true });
+            void playAudio({ fromUnlock: true, reason: "user_unlock" });
           }}
           style={{
             marginTop: 8,
