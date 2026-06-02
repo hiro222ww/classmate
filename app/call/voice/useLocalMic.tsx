@@ -109,6 +109,41 @@ function compactBool(value: boolean): string {
   return value ? "true" : "false";
 }
 
+function compactMediaId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 6) return value;
+  return value.slice(-6);
+}
+
+function logLocalMicReady(stream: MediaStream, track: MediaStreamTrack) {
+  console.log(
+    `[local-mic] ready streamId=${compactMediaId(stream.id)} trackId=${compactMediaId(track.id)} ` +
+      `trackReady=${track.readyState} enabled=${track.enabled} muted=${track.muted} ${formatVoiceModeSuffix()}`
+  );
+}
+
+async function logLocalMicFailed(error: unknown) {
+  const err = error instanceof DOMException ? error : null;
+  let permissionState = "-";
+
+  try {
+    if (navigator.permissions?.query) {
+      const status = await navigator.permissions.query({
+        name: "microphone" as PermissionName,
+      });
+      permissionState = status.state;
+    }
+  } catch {
+    // permissions API may be unavailable
+  }
+
+  console.log(
+    `[local-mic] failed errName=${err?.name ?? "unknown"} ` +
+      `errMessage=${String(err?.message ?? error).slice(0, 120)} permissionState=${permissionState}`
+  );
+}
+
 function logGetUserMediaAttempt(params: {
   reason: string;
   sessionId: string;
@@ -348,6 +383,7 @@ async function ensureLocalMicStream(params: {
       cached.track.enabled = true;
       onMicReadyChange?.(true);
       onStatusChange?.("");
+      logLocalMicReady(cached.stream, cached.track);
       logGetUserMediaAttempt({
         reason,
         sessionId,
@@ -384,6 +420,7 @@ async function ensureLocalMicStream(params: {
       setMicCache(sessionId, existingStream, existingTrack!, selectedMicId);
       onMicReadyChange?.(true);
       onStatusChange?.("");
+      logLocalMicReady(existingStream, existingTrack!);
       logGetUserMediaAttempt({
         reason,
         sessionId,
@@ -424,7 +461,7 @@ async function ensureLocalMicStream(params: {
     });
 
     if (showInitialPermissionHint) {
-      onStatusChange?.("マイクの使用を許可してください");
+      onStatusChange?.("マイクを許可してください");
     }
 
     try {
@@ -462,6 +499,7 @@ async function ensureLocalMicStream(params: {
       onMicReadyChange?.(true);
       onStatusChange?.("");
 
+      logLocalMicReady(stream, track);
       logGetUserMediaResult({
         ok: true,
         reason,
@@ -474,6 +512,7 @@ async function ensureLocalMicStream(params: {
     } catch (error) {
       onMicReadyChange?.(false);
       onStatusChange?.(getMicErrorMessage(error));
+      void logLocalMicFailed(error);
       logGetUserMediaResult({
         ok: false,
         reason,
@@ -750,6 +789,49 @@ export function useLocalMic({
       if (ctx) void ctx.close().catch(() => {});
     };
   }, [micReady]);
+
+  useEffect(() => {
+    const track = localAudioTrackRef.current;
+    if (!track || !micReady) return;
+
+    const onEnded = () => {
+      if (localAudioTrackRef.current !== track) return;
+
+      console.log(
+        `[local-mic] track-ended trackId=${compactMediaId(track.id)} ${formatVoiceModeSuffix()}`
+      );
+      bindReadyState(false);
+      onStatusChangeRef.current?.("マイクを許可してください");
+      localStreamRef.current = null;
+      localAudioTrackRef.current = null;
+      releaseSessionMic("local_track_ended", sessionId);
+
+      void ensureLocalMicStream({
+        reason: "track_ended",
+        sessionId,
+        deviceId,
+        selectedMicId: selectedMicIdRef.current || undefined,
+        onMicReadyChange: bindReadyState,
+        onStatusChange: (text) => onStatusChangeRef.current?.(text),
+        streamRef: localStreamRef,
+        trackRef: localAudioTrackRef,
+        showInitialPermissionHint: true,
+      }).then((ok) => {
+        if (ok) {
+          syncSelectedMicFromTrack(localAudioTrackRef.current);
+        }
+      });
+    };
+
+    track.addEventListener("ended", onEnded);
+    return () => track.removeEventListener("ended", onEnded);
+  }, [
+    bindReadyState,
+    deviceId,
+    micReady,
+    sessionId,
+    syncSelectedMicFromTrack,
+  ]);
 
   useEffect(() => {
     const track = localAudioTrackRef.current;

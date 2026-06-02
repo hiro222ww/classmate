@@ -718,6 +718,68 @@ export default function CallClient() {
         (isMe && selfLeftCall);
       const isInCall = member.is_in_call === true && !localExitedCall;
 
+      if (!micReady) {
+        if (isMe) {
+          const micStatus = {
+            text: callInfo || "マイク準備中",
+            color: "#92400e",
+            chipBg: "#fffbeb",
+            chipText: "#b45309",
+            reason: callInfo ? "mic_permission_required" : "mic_not_ready",
+            source: "localMic",
+          };
+          const prevText = prevCallStatusRef.current[memberId];
+          if (prevText !== micStatus.text) {
+            logParticipationStatusDecision({
+              context: "call",
+              deviceId: memberId,
+              label: micStatus.text,
+              status: "waiting",
+              used: micStatus.source,
+              reason: micStatus.reason,
+              sources: {
+                is_in_call: member.is_in_call ?? null,
+                screen: member.screen ?? "room",
+                peerState: peerStates[memberId] ?? "idle",
+                micReady: false,
+                isMe: true,
+              },
+            });
+            prevCallStatusRef.current[memberId] = micStatus.text;
+          }
+          return micStatus;
+        }
+
+        const waitingForMic = {
+          text: "接続待ち",
+          color: "#6b7280",
+          chipBg: "#f3f4f6",
+          chipText: "#6b7280",
+          reason: "local_mic_not_ready",
+          source: "localMic",
+        };
+        const prevText = prevCallStatusRef.current[memberId];
+        if (prevText !== waitingForMic.text) {
+          logParticipationStatusDecision({
+            context: "call",
+            deviceId: memberId,
+            label: waitingForMic.text,
+            status: isInCall ? "in_call" : "waiting",
+            used: waitingForMic.source,
+            reason: waitingForMic.reason,
+            sources: {
+              is_in_call: member.is_in_call ?? null,
+              screen: member.screen ?? null,
+              peerState: peerStates[memberId] ?? "idle",
+              micReady: false,
+              isMe: false,
+            },
+          });
+          prevCallStatusRef.current[memberId] = waitingForMic.text;
+        }
+        return waitingForMic;
+      }
+
       if (isMe && selfLeftCall) {
         const waiting = {
           text: "待機中",
@@ -843,7 +905,7 @@ export default function CallClient() {
 
       return status;
     },
-    [deviceId, isMuted, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
+    [callInfo, deviceId, isMuted, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
   );
 
   useEffect(() => {
@@ -966,6 +1028,13 @@ export default function CallClient() {
         onStatusChange={setCallInfo}
         onPeerStatesChange={setPeerStates}
         onPeerDiagnosticsChange={setPeerDiagnostics}
+        onVoiceCleanup={() => {
+          setPeerStates({});
+          setPeerDiagnostics({});
+          setRemoteAudioHealth({});
+          prevCallStatusRef.current = {};
+          prevCallStatusPeerLogRef.current = {};
+        }}
       />
 
       <div
@@ -984,6 +1053,18 @@ export default function CallClient() {
           <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
             参加人数 {filled}/{capacity}
           </div>
+          {callInfo ? (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 13,
+                color: "#b45309",
+                fontWeight: 800,
+              }}
+            >
+              {callInfo}
+            </div>
+          ) : null}
           {meetingPlan && !meetingPlan.is_past ? (
             <div style={{ marginTop: 4, fontSize: 12, color: "#374151", fontWeight: 800 }}>
               次の集合：{meetingPlan.display_label}

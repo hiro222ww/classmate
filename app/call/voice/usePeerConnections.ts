@@ -48,6 +48,31 @@ type RemoteAudioState = {
   attachSeq: number;
 };
 
+function getLocalAudioTrack(
+  localAudioTrackRef: React.MutableRefObject<MediaStreamTrack | null>,
+  localStreamRef: React.MutableRefObject<MediaStream | null>
+): MediaStreamTrack | null {
+  return (
+    localAudioTrackRef.current ??
+    localStreamRef.current?.getAudioTracks()[0] ??
+    null
+  );
+}
+
+function getLocalTrackReadyState(
+  localAudioTrackRef: React.MutableRefObject<MediaStreamTrack | null>,
+  localStreamRef: React.MutableRefObject<MediaStream | null>
+): string {
+  return getLocalAudioTrack(localAudioTrackRef, localStreamRef)?.readyState ?? "none";
+}
+
+function isLocalTrackLive(
+  localAudioTrackRef: React.MutableRefObject<MediaStreamTrack | null>,
+  localStreamRef: React.MutableRefObject<MediaStream | null>
+): boolean {
+  return getLocalAudioTrack(localAudioTrackRef, localStreamRef)?.readyState === "live";
+}
+
 type UsePeerConnectionsArgs = {
   sessionId: string;
   deviceId: string;
@@ -69,6 +94,7 @@ type UsePeerConnectionsArgs = {
   onPeerDiagnosticsChange?: (
     diagnostics: Record<string, PeerStatusDiagnostics>
   ) => void;
+  onVoiceCleanup?: () => void;
 };
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
@@ -264,6 +290,7 @@ export function usePeerConnections({
   onStatusChange,
   onPeerStatesChange,
   onPeerDiagnosticsChange,
+  onVoiceCleanup,
 }: UsePeerConnectionsArgs) {
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
@@ -1051,6 +1078,15 @@ export function usePeerConnections({
       stream: MediaStream,
       opts?: { reason?: string; force?: boolean }
     ) => {
+      const audioTrack = stream.getAudioTracks()[0] ?? null;
+      if (!audioTrack || audioTrack.readyState !== "live") {
+        console.log(
+          `[voice-peer] upsertRemoteAudio skipped remote=${compactDeviceId(remoteId)} ` +
+            `reason=${opts?.reason ?? "ontrack"} trackReady=${audioTrack?.readyState ?? "none"} ${formatVoiceModeSuffix()}`
+        );
+        return;
+      }
+
       remoteStreamsRef.current.set(remoteId, stream);
 
       for (const track of stream.getAudioTracks()) {
@@ -1271,9 +1307,10 @@ export function usePeerConnections({
       delay = 2000,
       opts?: { reason?: string; force?: boolean }
     ): boolean => {
-      if (!localAudioTrackRef.current && !localStreamRef.current) {
+      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
         console.warn(
-          `[voice-peer] reconnect-skip remote=${compactDeviceId(remoteId)} reason=${opts?.reason ?? "unspecified"} micMissing=true`
+          `[voice-peer] reconnect-skip remote=${compactDeviceId(remoteId)} reason=${opts?.reason ?? "unspecified"} ` +
+            `micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)}`
         );
         return false;
       }
@@ -1352,6 +1389,7 @@ export function usePeerConnections({
       localAudioTrackRef,
       localStreamRef,
       markRecoveryStart,
+      micReady,
       setCurrentConnectionId,
       getPeerMedia,
     ]
@@ -1753,23 +1791,6 @@ export function usePeerConnections({
 
         window.setTimeout(() => {
           syncRemoteAudioFromPc(remoteId, pc, "ontrack_delayed");
-
-          const audioEl = document.querySelector(
-            `audio[data-remote="${remoteId}"]`
-          ) as HTMLAudioElement | null;
-
-          if (audioEl) {
-            audioEl.muted = false;
-            audioEl.defaultMuted = false;
-            audioEl.volume = 1;
-            audioEl.play().catch((e) => {
-              console.warn(
-                "[call] delayed remote audio play failed",
-                remoteId,
-                e
-              );
-            });
-          }
         }, voicePolicy.ontrackDelayedPlayMs);
       };
 
@@ -2024,7 +2045,7 @@ export function usePeerConnections({
       const isOfferOwner = deviceId < remoteId;
       if (!isOfferOwner) return;
 
-      if (!localAudioTrackRef.current && !localStreamRef.current) return;
+      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
 
       const hasRemoteStream = hasLiveRemoteStream(remoteId);
       const existingPc = pcsRef.current.get(remoteId);
@@ -2133,8 +2154,17 @@ export function usePeerConnections({
         return false;
       }
 
-      if (!localAudioTrackRef.current && !localStreamRef.current) {
-        logEnsureSkipped(remoteId, reason, "missing_local_track");
+      const localTrackState = getLocalTrackReadyState(
+        localAudioTrackRef,
+        localStreamRef
+      );
+      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+        logEnsureSkipped(
+          remoteId,
+          reason,
+          "local_track_not_live",
+          `micReady=${micReady} localTrack=${localTrackState}`
+        );
         return false;
       }
 
@@ -2233,10 +2263,18 @@ export function usePeerConnections({
       const missing = peers.filter(
         (peer) => !peer.pcExists && peer.isInCall !== false
       );
-      const localTrackState =
-        localAudioTrackRef.current?.readyState ??
-        localStreamRef.current?.getAudioTracks()[0]?.readyState ??
-        "none";
+      const localTrackState = getLocalTrackReadyState(
+        localAudioTrackRef,
+        localStreamRef
+      );
+
+      if (!micReady || !signalReady || !isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+        console.log(
+          `[voice-peer] recoverMissingPcsFromMesh skipped trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
+            `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState} ${formatVoiceModeSuffix()}`
+        );
+        return;
+      }
 
       console.log(
         `[voice-peer] recoverMissingPcsFromMesh start trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
@@ -2371,6 +2409,14 @@ export function usePeerConnections({
 
     if (!micReady || !signalReady) {
       runHealScan(!micReady ? "healRun_mic_not_ready" : "healRun_signal_not_ready");
+      return;
+    }
+
+    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+      console.log(
+        `[voice-peer] healPeerConnections skipped micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} ${formatVoiceModeSuffix()}`
+      );
+      runHealScan("healRun_local_track_not_live");
       return;
     }
 
@@ -2715,6 +2761,8 @@ export function usePeerConnections({
     getTrackEndedHoldCheck,
     hasLiveRemoteStream,
     isRemoteInCall,
+    localAudioTrackRef,
+    localStreamRef,
     logHealPeerAction,
     markConnectStart,
     maybeStartOffer,
@@ -3024,6 +3072,14 @@ export function usePeerConnections({
       return;
     }
 
+    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+      voiceDebugLog("[voice-peer] offer effect stop", {
+        reason: "local_track_not_live",
+        localTrack: getLocalTrackReadyState(localAudioTrackRef, localStreamRef),
+      });
+      return;
+    }
+
     if (remoteIds.length < 1) {
       voiceDebugLog("[voice-peer] offer effect stop", { reason: "no_remoteIds" });
       return;
@@ -3078,9 +3134,108 @@ export function usePeerConnections({
 
   useEffect(() => {
     if (membersSyncRevision <= 0) return;
+    if (!micReady || !isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
     healPeerConnections();
     emitMeshSummary("members_updated", { immediate: true });
-  }, [membersSyncRevision, emitMeshSummary, healPeerConnections]);
+  }, [
+    membersSyncRevision,
+    emitMeshSummary,
+    healPeerConnections,
+    localAudioTrackRef,
+    localStreamRef,
+    micReady,
+  ]);
+
+  const cleanupVoicePeersOnUnmount = useCallback(() => {
+    const pcCount = pcsRef.current.size;
+    let timerCount = 0;
+
+    for (const timer of reconnectTimersRef.current.values()) {
+      window.clearTimeout(timer);
+      timerCount += 1;
+    }
+    reconnectTimersRef.current.clear();
+    reconnectPendingRef.current.clear();
+
+    for (const timer of endedHoldTimersRef.current.values()) {
+      window.clearTimeout(timer);
+      timerCount += 1;
+    }
+    endedHoldTimersRef.current.clear();
+
+    for (const timer of iceCheckingTimersRef.current.values()) {
+      window.clearTimeout(timer);
+      timerCount += 1;
+    }
+    iceCheckingTimersRef.current.clear();
+
+    for (const timer of connectingTimersRef.current.values()) {
+      window.clearTimeout(timer);
+      timerCount += 1;
+    }
+    connectingTimersRef.current.clear();
+
+    if (meshSummaryTimerRef.current) {
+      window.clearTimeout(meshSummaryTimerRef.current);
+      meshSummaryTimerRef.current = null;
+      timerCount += 1;
+    }
+    if (meshNotConnectedTimerRef.current) {
+      window.clearTimeout(meshNotConnectedTimerRef.current);
+      meshNotConnectedTimerRef.current = null;
+      timerCount += 1;
+    }
+
+    const remoteAudioCount = remoteStreamsRef.current.size;
+
+    for (const [remoteId, pc] of Array.from(pcsRef.current.entries())) {
+      try {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onsignalingstatechange = null;
+        pc.onicegatheringstatechange = null;
+        pc.close();
+      } catch {}
+      pcsRef.current.delete(remoteId);
+    }
+
+    pcsRef.current.clear();
+    remoteStreamsRef.current.clear();
+    pendingIceRef.current.clear();
+    connectionIdsRef.current.clear();
+    offeredPeersRef.current.clear();
+    startedPeersRef.current.clear();
+    processedSignalIdsRef.current.clear();
+    connectStartedAtRef.current.clear();
+    loggedConnectedRef.current.clear();
+    peerSnapshotRef.current.clear();
+    peerEverConnectedRef.current.clear();
+    peerLastConnectedAtRef.current.clear();
+    recoveryStartedAtRef.current.clear();
+    attachedTrackIdsRef.current.clear();
+    trackEndedAtRef.current.clear();
+    peerHealActionRef.current.clear();
+    lastHealActionAtRef.current.clear();
+    peerSignalTimestampsRef.current.clear();
+    peerMetaRef.current.clear();
+    peerStatesRef.current.clear();
+
+    setRemoteAudios({});
+    emitPeerStates();
+    onVoiceCleanup?.();
+
+    console.log(
+      `[voice-peer] cleanup-on-unmount pcs=${pcCount} timers=${timerCount} remoteAudios=${remoteAudioCount} ${formatVoiceModeSuffix()}`
+    );
+  }, [emitPeerStates, onVoiceCleanup]);
+
+  useEffect(() => {
+    return () => {
+      cleanupVoicePeersOnUnmount();
+    };
+  }, [sessionId, cleanupVoicePeersOnUnmount]);
 
   useEffect(() => {
     if (!micReady || !signalReady) return;

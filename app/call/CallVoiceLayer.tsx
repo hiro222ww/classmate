@@ -4,7 +4,7 @@ import { useEffect, useMemo } from "react";
 import RemoteAudio, {
   type RemotePlaybackHealth,
 } from "./voice/RemoteAudio";
-import { useLocalMic } from "./voice/useLocalMic";
+import { useLocalMic, releaseSessionMic } from "./voice/useLocalMic";
 import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
 import { voiceDebugLog, type PeerStatusDiagnostics } from "./voice/voiceDiagnostics";
@@ -40,6 +40,7 @@ type CallVoiceLayerProps = {
   onPeerDiagnosticsChange?: (
     diagnostics: Record<string, PeerStatusDiagnostics>
   ) => void;
+  onVoiceCleanup?: () => void;
 };
 
 export default function CallVoiceLayer({
@@ -56,6 +57,7 @@ export default function CallVoiceLayer({
   onStatusChange,
   onPeerStatesChange,
   onPeerDiagnosticsChange,
+  onVoiceCleanup,
 }: CallVoiceLayerProps) {
   voiceDebugLog("[voice-layer] render", {
     sessionId,
@@ -103,7 +105,14 @@ export default function CallVoiceLayer({
     onStatusChange,
     onPeerStatesChange,
     onPeerDiagnosticsChange,
+    onVoiceCleanup,
   });
+
+  useEffect(() => {
+    return () => {
+      releaseSessionMic("voice_layer_unmount", sessionId);
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     logVoiceClientEnv("voice-layer-mount");

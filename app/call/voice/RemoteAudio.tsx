@@ -45,6 +45,25 @@ function createRemoteAudioInstanceId(): string {
   return Math.random().toString(36).slice(2, 6);
 }
 
+function getPlaybackTrack(
+  el: HTMLAudioElement | null,
+  stream: MediaStream | null | undefined
+): MediaStreamTrack | null {
+  const srcObject = el?.srcObject;
+  if (srcObject instanceof MediaStream) {
+    return srcObject.getAudioTracks()[0] ?? null;
+  }
+  return stream?.getAudioTracks?.()[0] ?? null;
+}
+
+function isPlaybackTrackEnded(
+  el: HTMLAudioElement | null,
+  stream: MediaStream | null | undefined
+): boolean {
+  const track = getPlaybackTrack(el, stream);
+  return !track || track.readyState === "ended";
+}
+
 function getSinkId(el: HTMLAudioElement): string {
   return String(
     (el as HTMLMediaElement & { sinkId?: string }).sinkId ?? "-"
@@ -189,6 +208,7 @@ export default function RemoteAudio({
 
   const activateIOSWebAudioFallback = useCallback(async () => {
     if (voicePolicy.voiceMode !== "ios_conservative") return false;
+    if (isPlaybackTrackEnded(ref.current, stream)) return false;
 
     try {
       const Ctx =
@@ -246,7 +266,11 @@ export default function RemoteAudio({
 
       for (const afterMs of [500, 1500]) {
         const timer = window.setTimeout(() => {
-          const track = stream.getAudioTracks()[0];
+          if (isPlaybackTrackEnded(el, stream)) {
+            return;
+          }
+
+          const track = getPlaybackTrack(el, stream);
           const currentTime = el.currentTime;
           const advanced = currentTime > baselineTime + 0.01;
           const level = levelRef.current;
@@ -290,8 +314,8 @@ export default function RemoteAudio({
   );
 
   const configureAudioElement = useCallback((el: HTMLAudioElement) => {
-    el.autoplay = true;
-    el.setAttribute("autoplay", "true");
+    el.autoplay = false;
+    el.removeAttribute("autoplay");
     el.setAttribute("playsinline", "true");
     el.setAttribute("webkit-playsinline", "true");
     el.volume = 1;
@@ -299,13 +323,39 @@ export default function RemoteAudio({
     el.defaultMuted = false;
   }, []);
 
+  const logAttachSkipEndedTrack = useCallback(
+    (track: MediaStreamTrack | null) => {
+      console.log(
+        `[remote-audio] attach-skip-ended-track remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+          `streamId=${compactMediaId(stream.id)} trackId=${compactMediaId(track?.id)} ${formatVoiceModeSuffix()}`
+      );
+    },
+    [instanceId, remoteId, stream]
+  );
+
+  const emitEndedTrackHealth = useCallback(() => {
+    const track = getPlaybackTrack(ref.current, stream);
+    playSuccessRef.current = false;
+    emitPlaybackHealth(
+      buildPlaybackHealth({
+        playSuccess: false,
+        currentTimeAdvanced: false,
+        trackMuted: track?.muted ?? false,
+        trackReady: "ended",
+        level: levelRef.current,
+        webAudioFallback: fallbackActiveRef.current,
+        elPaused: ref.current?.paused ?? true,
+      })
+    );
+  }, [emitPlaybackHealth, stream]);
+
   const playAudio = useCallback(
     async (opts?: { fromUnlock?: boolean }) => {
       const el = ref.current;
       if (!el || !stream) return;
 
-      const track = stream.getAudioTracks()[0];
-      if (track?.readyState === "ended") {
+      const playbackTrack = getPlaybackTrack(el, stream);
+      if (!playbackTrack || playbackTrack.readyState === "ended") {
         return;
       }
 
@@ -321,20 +371,28 @@ export default function RemoteAudio({
       try {
         await applyOutputDevice();
         await resumeSharedAudioContext();
+
+        if (isPlaybackTrackEnded(el, stream)) {
+          return;
+        }
+
         await el.play();
+
+        if (isPlaybackTrackEnded(el, stream)) {
+          return;
+        }
 
         setBlocked(false);
         playSuccessRef.current = true;
 
         logRemoteAudioCompact(remoteId, el, stream, "play-success");
 
-        const track = stream.getAudioTracks()[0];
         emitPlaybackHealth(
           buildPlaybackHealth({
             playSuccess: true,
             currentTimeAdvanced: false,
-            trackMuted: track?.muted ?? false,
-            trackReady: track?.readyState ?? "-",
+            trackMuted: playbackTrack.muted ?? false,
+            trackReady: playbackTrack.readyState ?? "-",
             level: levelRef.current,
             webAudioFallback: fallbackActiveRef.current,
             elPaused: el.paused,
@@ -347,6 +405,10 @@ export default function RemoteAudio({
           await activateIOSWebAudioFallback();
         }
       } catch (e: unknown) {
+        if (isPlaybackTrackEnded(el, stream)) {
+          return;
+        }
+
         playSuccessRef.current = false;
         const err = e as { name?: string; message?: string };
         logRemoteAudioCompact(remoteId, el, stream, "play-failed", {
@@ -383,22 +445,6 @@ export default function RemoteAudio({
     void playAudio({ fromUnlock: true });
   }, [playAudio]);
 
-  const emitEndedTrackHealth = useCallback(() => {
-    const track = stream.getAudioTracks()[0];
-    playSuccessRef.current = false;
-    emitPlaybackHealth(
-      buildPlaybackHealth({
-        playSuccess: false,
-        currentTimeAdvanced: false,
-        trackMuted: track?.muted ?? false,
-        trackReady: "ended",
-        level: levelRef.current,
-        webAudioFallback: fallbackActiveRef.current,
-        elPaused: ref.current?.paused ?? true,
-      })
-    );
-  }, [emitPlaybackHealth, stream]);
-
   useEffect(() => {
     console.log(
       `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
@@ -413,23 +459,20 @@ export default function RemoteAudio({
   }, [instanceId, remoteId]);
 
   const attachStream = useCallback(() => {
-    const el = ref.current;
-    if (!el || !stream) return;
-
-    const track = stream.getAudioTracks()[0] ?? null;
-    if (track?.readyState === "ended") {
-      console.log(
-        `[remote-audio] attach-skip-ended-track remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
-          `streamId=${compactMediaId(stream.id)} trackId=${compactMediaId(track.id)} ${formatVoiceModeSuffix()}`
-      );
+    const track = stream?.getAudioTracks?.()[0] ?? null;
+    if (!track || track.readyState === "ended") {
+      logAttachSkipEndedTrack(track);
       emitEndedTrackHealth();
       return;
     }
 
+    const el = ref.current;
+    if (!el || !stream) return;
+
     configureAudioElement(el);
 
     const streamId = stream.id ?? "";
-    const trackId = track?.id ?? "";
+    const trackId = track.id ?? "";
     const prevStreamId = lastAttachedStreamIdRef.current ?? "";
     const prevTrackId = lastAttachedTrackIdRef.current ?? "";
     const sameStream = Boolean(streamId && prevStreamId && streamId === prevStreamId);
@@ -447,6 +490,11 @@ export default function RemoteAudio({
     );
 
     if (willSkip) {
+      if (isPlaybackTrackEnded(el, stream)) {
+        logAttachSkipEndedTrack(getPlaybackTrack(el, stream));
+        emitEndedTrackHealth();
+        return;
+      }
       console.log(
         `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
           `streamId=${compactMediaId(streamId)} trackId=${compactMediaId(trackId)} ${formatVoiceModeSuffix()}`
@@ -461,16 +509,18 @@ export default function RemoteAudio({
       el.srcObject = null;
     }
 
+    if (isPlaybackTrackEnded(el, stream)) {
+      logAttachSkipEndedTrack(track);
+      emitEndedTrackHealth();
+      return;
+    }
+
     el.srcObject = stream;
     lastAttachedStreamIdRef.current = streamId || null;
     lastAttachedTrackIdRef.current = trackId || null;
 
-    logRemoteAudioCompact(
-      remoteId,
-      el,
-      stream,
-      trackChanged || streamChanged ? "attach-track-changed" : "attach"
-    );
+    const attachTag = trackChanged || streamChanged ? "attach-track-changed" : "attach";
+    logRemoteAudioCompact(remoteId, el, stream, attachTag);
 
     if (voicePolicy.aggressivePlayRetry) {
       void playAudio();
@@ -479,6 +529,7 @@ export default function RemoteAudio({
     configureAudioElement,
     emitEndedTrackHealth,
     instanceId,
+    logAttachSkipEndedTrack,
     playAudio,
     remoteId,
     stream,
@@ -492,9 +543,7 @@ export default function RemoteAudio({
     attachStream();
 
     const onCanPlay = () => {
-      if (voicePolicy.aggressivePlayRetry) {
-        void playAudio();
-      }
+      void playAudio();
     };
 
     el.addEventListener("canplay", onCanPlay);
@@ -506,8 +555,12 @@ export default function RemoteAudio({
 
     stream.addEventListener("addtrack", onAddTrack);
 
-    for (const track of stream.getAudioTracks()) {
-      track.onunmute = () => {
+    for (const streamTrack of stream.getAudioTracks()) {
+      streamTrack.onended = () => {
+        logAttachSkipEndedTrack(streamTrack);
+        emitEndedTrackHealth();
+      };
+      streamTrack.onunmute = () => {
         attachStream();
       };
     }
@@ -525,6 +578,10 @@ export default function RemoteAudio({
       el.removeEventListener("canplay", onCanPlay);
       el.removeEventListener("loadedmetadata", onCanPlay);
       stream.removeEventListener("addtrack", onAddTrack);
+      for (const streamTrack of stream.getAudioTracks()) {
+        streamTrack.onended = null;
+        streamTrack.onunmute = null;
+      }
       fallbackSourceRef.current?.disconnect();
       fallbackSourceRef.current = null;
       fallbackActiveRef.current = false;
@@ -537,6 +594,8 @@ export default function RemoteAudio({
     attachStream,
     clearPlaybackChecks,
     configureAudioElement,
+    emitEndedTrackHealth,
+    logAttachSkipEndedTrack,
     playAudio,
     stream,
   ]);
@@ -653,7 +712,6 @@ export default function RemoteAudio({
       <audio
         ref={ref}
         data-remote={remoteId}
-        autoPlay
         playsInline
         muted={false}
         style={{ display: "none" }}
