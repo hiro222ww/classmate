@@ -1361,6 +1361,7 @@ export default function CallClient() {
                 lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
                 p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
                 autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
+                reconnectRequestPending: diag?.reconnectRequestPending === true,
                 nowMs,
               });
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";

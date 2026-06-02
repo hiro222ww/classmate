@@ -27,6 +27,12 @@ export type SignalRow = {
   created_at: string;
 };
 
+export type SendSignalResult = {
+  ok: boolean;
+  errorName?: string;
+  errorMessage?: string;
+};
+
 type UseCallSignalingArgs = {
   sessionId: string;
   deviceId: string;
@@ -61,20 +67,43 @@ export function useCallSignaling({
       toDeviceId: string | null,
       signalType: SignalType,
       payload: SignalPayload
-    ) => {
-      if (!sessionId || !deviceId) return;
+    ): Promise<SendSignalResult> => {
+      if (!sessionId || !deviceId) {
+        return {
+          ok: false,
+          errorName: "MissingContext",
+          errorMessage: "session_or_device_missing",
+        };
+      }
 
-      const { error } = await supabase.from("call_signals").insert({
-        session_id: sessionId,
-        from_device_id: deviceId,
-        to_device_id: toDeviceId,
-        signal_type: signalType,
-        payload,
-      });
+      try {
+        const { error } = await supabase.from("call_signals").insert({
+          session_id: sessionId,
+          from_device_id: deviceId,
+          to_device_id: toDeviceId,
+          signal_type: signalType,
+          payload,
+        });
 
-      if (error) {
-        console.error("[call] signal insert error", error);
-        onStatusChange?.(`signal error: ${error.message}`);
+        if (error) {
+          console.error("[call] signal insert error", error);
+          onStatusChange?.(`signal error: ${error.message}`);
+          return {
+            ok: false,
+            errorName: error.name ?? "SignalInsertError",
+            errorMessage: error.message ?? "insert_failed",
+          };
+        }
+
+        return { ok: true };
+      } catch (e: unknown) {
+        const err = e as { name?: string; message?: string };
+        console.error("[call] signal insert exception", e);
+        return {
+          ok: false,
+          errorName: err?.name ?? "SignalInsertException",
+          errorMessage: err?.message ?? String(e),
+        };
       }
     },
     [sessionId, deviceId, onStatusChange]

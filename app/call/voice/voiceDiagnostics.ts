@@ -349,6 +349,8 @@ export type PeerStatusDiagnostics = {
   autoHardResetInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   autoHardResetAttempts?: number;
+  reconnectRequestSent?: boolean;
+  reconnectRequestPending?: boolean;
 };
 
 export function logCallStatusPeer(params: {

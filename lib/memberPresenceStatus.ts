@@ -237,9 +237,11 @@ export function shouldShowManualAudioReconnect(params: {
   lastPlaybackActiveAt: number | null;
   p2pDirectFailedHoldActive?: boolean;
   autoHardResetGiveUp?: boolean;
+  reconnectRequestPending?: boolean;
   nowMs?: number;
 }): boolean {
   if (params.isMe) return false;
+  if (params.reconnectRequestPending) return false;
   if (params.autoHardResetGiveUp) return true;
 
   const now = params.nowMs ?? Date.now();
