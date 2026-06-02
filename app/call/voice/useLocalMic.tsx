@@ -1,15 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
 import { formatVoiceModeSuffix } from "@/lib/voiceClientEnv";
 
 type UseLocalMicArgs = {
   sessionId: string;
   deviceId: string;
-  isMuted: boolean;
+  userMuted: boolean;
+  userMutedRef: React.MutableRefObject<boolean>;
   onMicReadyChange?: (ready: boolean) => void;
   onMicLevelChange?: (level: number) => void;
   onStatusChange?: (text: string) => void;
+  onLocalTrackMutedApplied?: (params: {
+    userMuted: boolean;
+    trackEnabled: boolean;
+    reason: string;
+  }) => void;
 };
 
 type MicSessionCache = {
@@ -343,6 +350,8 @@ async function ensureLocalMicStream(params: {
   reason: string;
   sessionId: string;
   deviceId: string;
+  getUserMuted: () => boolean;
+  onLocalTrackMutedApplied?: UseLocalMicArgs["onLocalTrackMutedApplied"];
   selectedMicId?: string;
   userPickedMic?: boolean;
   onMicReadyChange?: (ready: boolean) => void;
@@ -372,7 +381,19 @@ async function ensureLocalMicStream(params: {
       trackRef,
       showInitialPermissionHint = false,
       userPickedMic = false,
+      getUserMuted,
+      onLocalTrackMutedApplied,
     } = params;
+
+    const applyMuted = (track: MediaStreamTrack, applyReason: string) => {
+      const muted = getUserMuted();
+      applyUserMutedToTrack(track, muted, applyReason, "ensureLocalMicStream");
+      onLocalTrackMutedApplied?.({
+        userMuted: muted,
+        trackEnabled: track.enabled,
+        reason: applyReason,
+      });
+    };
 
     const previousCachedSessionId = activeMicCache?.sessionId ?? null;
     const { cache: cached, missReason } = getCachedMic(sessionId, selectedMicId);
@@ -380,7 +401,7 @@ async function ensureLocalMicStream(params: {
     if (cached) {
       streamRef.current = cached.stream;
       trackRef.current = cached.track;
-      cached.track.enabled = true;
+      applyMuted(cached.track, params.reason);
       onMicReadyChange?.(true);
       onStatusChange?.("");
       logLocalMicReady(cached.stream, cached.track);
@@ -418,6 +439,7 @@ async function ensureLocalMicStream(params: {
       micDeviceIdsMatch(existingTrack!.getSettings().deviceId, selectedMicId)
     ) {
       setMicCache(sessionId, existingStream, existingTrack!, selectedMicId);
+      applyMuted(existingTrack!, params.reason);
       onMicReadyChange?.(true);
       onStatusChange?.("");
       logLocalMicReady(existingStream, existingTrack!);
@@ -491,7 +513,7 @@ async function ensureLocalMicStream(params: {
         existingStream.getTracks().forEach((t) => t.stop());
       }
 
-      track.enabled = true;
+      applyMuted(track, params.reason);
       streamRef.current = stream;
       trackRef.current = track;
       setMicCache(sessionId, stream, track, selectedMicId);
@@ -534,10 +556,12 @@ async function ensureLocalMicStream(params: {
 export function useLocalMic({
   sessionId,
   deviceId,
-  isMuted,
+  userMuted,
+  userMutedRef,
   onMicReadyChange,
   onMicLevelChange,
   onStatusChange,
+  onLocalTrackMutedApplied,
 }: UseLocalMicArgs) {
   const localStreamRef = useRef<MediaStream | null>(null);
   const localAudioTrackRef = useRef<MediaStreamTrack | null>(null);
@@ -608,6 +632,13 @@ export function useLocalMic({
     onMicReadyChangeRef.current?.(ready);
   }, []);
 
+  const getUserMuted = useCallback(() => userMutedRef.current, [userMutedRef]);
+
+  const onLocalTrackMutedAppliedRef = useRef(onLocalTrackMutedApplied);
+  useEffect(() => {
+    onLocalTrackMutedAppliedRef.current = onLocalTrackMutedApplied;
+  }, [onLocalTrackMutedApplied]);
+
   useEffect(() => {
     if (!sessionId) return;
 
@@ -641,6 +672,9 @@ export function useLocalMic({
         reason: "session_mount",
         sessionId,
         deviceId,
+        getUserMuted,
+        onLocalTrackMutedApplied: (params) =>
+          onLocalTrackMutedAppliedRef.current?.(params),
         userPickedMic: false,
         selectedMicId: selectedMicIdRef.current || undefined,
         onMicReadyChange: (ready) => {
@@ -672,7 +706,7 @@ export function useLocalMic({
     return () => {
       mounted = false;
     };
-  }, [sessionId, bindReadyState, deviceId, syncSelectedMicFromTrack]);
+  }, [sessionId, bindReadyState, deviceId, getUserMuted, syncSelectedMicFromTrack]);
 
   useEffect(() => {
     if (!sessionId || !selectedMicId) return;
@@ -714,6 +748,9 @@ export function useLocalMic({
       reason: "mic_device_selected",
       sessionId,
       deviceId,
+      getUserMuted,
+      onLocalTrackMutedApplied: (params) =>
+        onLocalTrackMutedAppliedRef.current?.(params),
       userPickedMic: true,
       selectedMicId,
       onMicReadyChange: bindReadyState,
@@ -725,7 +762,7 @@ export function useLocalMic({
         syncSelectedMicFromTrack(localAudioTrackRef.current);
       }
     });
-  }, [selectedMicId, sessionId, deviceId, bindReadyState, syncSelectedMicFromTrack]);
+  }, [selectedMicId, sessionId, deviceId, bindReadyState, getUserMuted, syncSelectedMicFromTrack]);
 
   useEffect(() => {
     if (!micReady || !localStreamRef.current) return;
@@ -810,6 +847,9 @@ export function useLocalMic({
         reason: "track_ended",
         sessionId,
         deviceId,
+        getUserMuted,
+        onLocalTrackMutedApplied: (params) =>
+          onLocalTrackMutedAppliedRef.current?.(params),
         selectedMicId: selectedMicIdRef.current || undefined,
         onMicReadyChange: bindReadyState,
         onStatusChange: (text) => onStatusChangeRef.current?.(text),
@@ -831,14 +871,21 @@ export function useLocalMic({
     micReady,
     sessionId,
     syncSelectedMicFromTrack,
+    getUserMuted,
   ]);
 
   useEffect(() => {
     const track = localAudioTrackRef.current;
     if (!track) return;
 
-    track.enabled = true;
-  }, [isMuted]);
+    const muted = userMutedRef.current;
+    applyUserMutedToTrack(track, muted, "userMuted_changed", "useLocalMic");
+    onLocalTrackMutedAppliedRef.current?.({
+      userMuted: muted,
+      trackEnabled: track.enabled,
+      reason: "userMuted_changed",
+    });
+  }, [userMuted, userMutedRef]);
 
   return {
     micReady,

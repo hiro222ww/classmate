@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
@@ -32,6 +39,7 @@ import {
   logNavigationIntent,
   logRouteChange,
   readCallMutePreference,
+  readInitialUserMuted,
   restoreCallSessionAfterReload,
   writeCallMutePreference,
 } from "@/lib/callLifecycle";
@@ -46,10 +54,16 @@ import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
   logParticipationStatusDecision,
+  isRecentPlaySuccess,
+  isRemoteAudioHealthyNow,
   resolveCallMemberStatus,
   resolveEffectivePeerConnection,
-  shouldShowManualAudioReconnect,
+  resolveManualAudioReconnect,
 } from "@/lib/memberPresenceStatus";
+import {
+  logMuteStateSet,
+  logRestoreMutedState,
+} from "@/lib/localMicMuteState";
 import type { RemotePlaybackHealth } from "@/app/call/voice/RemoteAudio";
 import {
   clearLocalLeftCall,
@@ -153,7 +167,9 @@ export default function CallClient() {
   }, []);
 
   const [members, setMembers] = useState<Member[]>([]);
-  const [isMuted, setIsMuted] = useState(true);
+  const userMutedRef = useRef(false);
+  const [userMuted, setUserMuted] = useState(false);
+  const localTrackEnabledRef = useRef<boolean | null>(null);
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [callInfo, setCallInfo] = useState("");
@@ -189,6 +205,10 @@ export default function CallClient() {
   const [callRequest, setCallRequest] = useState<CallRequestPublic | null>(null);
 
   useEffect(() => {
+    userMutedRef.current = userMuted;
+  }, [userMuted]);
+
+  useEffect(() => {
     setNowMs(Date.now());
 
     const timer = window.setInterval(() => {
@@ -198,6 +218,25 @@ export default function CallClient() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!sessionId || !deviceId) return;
+
+    const nextMuted = readInitialUserMuted(sessionId);
+    const savedMute = readCallMutePreference(sessionId);
+    const prevMuted = userMutedRef.current;
+    userMutedRef.current = nextMuted;
+    setUserMuted(nextMuted);
+    logRestoreMutedState({
+      stored: savedMute,
+      userMutedBefore: prevMuted,
+      userMutedAfter: nextMuted,
+      trackEnabledBefore: localTrackEnabledRef.current,
+      trackEnabledAfter: localTrackEnabledRef.current,
+      reason:
+        savedMute != null ? "reload_restore_stored" : "reload_default_unmuted",
+    });
+  }, [sessionId, deviceId]);
+
   useEffect(() => {
     if (!sessionId || !deviceId) return;
 
@@ -206,11 +245,6 @@ export default function CallClient() {
       localExitedPeersRef.current.delete(deviceId);
     } else if (!hasLocalLeftCall(sessionId, deviceId)) {
       localExitedPeersRef.current.delete(deviceId);
-    }
-
-    const savedMute = readCallMutePreference(sessionId);
-    if (savedMute != null && getCallNavigationType() === "reload") {
-      setIsMuted(savedMute);
     }
 
     logCallLifecycle("mount", {
@@ -610,6 +644,18 @@ export default function CallClient() {
         if (restoredSessionId !== sessionId || restoredDeviceId !== deviceId) return;
         clearLocalLeftCall(sessionId, deviceId);
         localExitedPeersRef.current.delete(deviceId);
+        const savedMute = readCallMutePreference(sessionId);
+        const nextMuted = savedMute ?? false;
+        userMutedRef.current = nextMuted;
+        logRestoreMutedState({
+          stored: savedMute,
+          userMutedBefore: userMutedRef.current,
+          userMutedAfter: nextMuted,
+          trackEnabledBefore: localTrackEnabledRef.current,
+          trackEnabledAfter: localTrackEnabledRef.current,
+          reason: "bfcache_restore",
+        });
+        setUserMuted(nextMuted);
         setMembersSyncRevision((revision) => revision + 1);
         void fetchMembers("bfcache_restore");
         requestRemoteAudioUnlock();
@@ -780,8 +826,8 @@ export default function CallClient() {
 
   const muteButtonLabel = useMemo(() => {
     if (!micReady) return "マイク準備中…";
-    return isMuted ? "ミュート解除" : "ミュート";
-  }, [micReady, isMuted]);
+    return userMuted ? "ミュート解除" : "ミュート";
+  }, [micReady, userMuted]);
 
   const getMemberStatus = useCallback(
     (member?: Member) => {
@@ -921,7 +967,15 @@ export default function CallClient() {
       const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
       const remoteAudioVerified =
         effective.effectiveConnected
-          ? audioHealth?.verified === true
+          ? audioHealth?.verified === true ||
+            audioHealth?.audioActuallyPlaying === true ||
+            isRecentPlaySuccess(audioHealth?.lastPlaySuccessAt, nowMs) ||
+            isRemoteAudioHealthyNow({
+              health: audioHealth ?? null,
+              trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
+              hasRemoteStream: diag?.hasRemoteStream ?? false,
+              nowMs,
+            })
             ? true
             : audioHealth
               ? false
@@ -932,7 +986,7 @@ export default function CallClient() {
 
       const status = resolveCallMemberStatus({
         isMe,
-        isMuted,
+        isMuted: userMuted,
         isInCall,
         screen: localExitedCall ? "room" : member.screen,
         localExitedCall,
@@ -1006,6 +1060,31 @@ export default function CallClient() {
         audioHealth?.lastPlaySuccessAt != null && nowMs > 0
           ? nowMs - audioHealth.lastPlaySuccessAt
           : null;
+      const playFailedAgeMs =
+        audioHealth?.playFailedAt != null && nowMs > 0
+          ? nowMs - audioHealth.playFailedAt
+          : null;
+      const manualReconnect = resolveManualAudioReconnect({
+        isMe,
+        hasRemoteStream: diag?.hasRemoteStream ?? false,
+        trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
+        conn: diag?.conn ?? "-",
+        ice: diag?.ice ?? "-",
+        hasPc: diag?.hasPc ?? false,
+        remoteAudioHealth: audioHealth ?? null,
+        lastOnTrackAt: diag?.lastOnTrackAt ?? null,
+        lastUnmuteAt: diag?.lastUnmuteAt ?? null,
+        lastPlaySuccessAt:
+          audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
+        lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
+        lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+        liveStreamHealHold: diag?.liveStreamHealHold === true,
+        p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+        autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
+        reconnectRequestPending: diag?.reconnectRequestPending === true,
+        wasPeerConnected,
+        nowMs,
+      });
       const remoteAudioHealthStr =
         audioHealth == null
           ? "pending"
@@ -1024,6 +1103,9 @@ export default function CallClient() {
         remoteAudioHealthStr,
         audioHealth?.audioActuallyPlaying ?? false,
         playSuccessAgeMs ?? "-",
+        playFailedAgeMs ?? "-",
+        manualReconnect.show,
+        manualReconnect.reason,
         diag?.hasPc ?? false,
         diag?.conn ?? "-",
         diag?.ice ?? "-",
@@ -1048,7 +1130,10 @@ export default function CallClient() {
           remoteAudioHealth: remoteAudioHealthStr,
           audioActuallyPlaying: audioHealth?.audioActuallyPlaying === true,
           playSuccessAgeMs,
+          playFailedAgeMs,
           audioLevel: audioHealth?.level ?? null,
+          showReconnectButton: manualReconnect.show,
+          reconnectReason: manualReconnect.reason,
           playbackActiveAgeMs,
           hasPc: diag?.hasPc ?? false,
           conn: diag?.conn ?? "-",
@@ -1065,8 +1150,16 @@ export default function CallClient() {
 
       return status;
     },
-    [callInfo, deviceId, isMuted, nowMs, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
+    [callInfo, deviceId, userMuted, nowMs, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
   );
+
+  useEffect(() => {
+    if (!sessionId || !deviceId) return;
+    console.log(
+      `[call-status] self-muted-debug userMuted=${userMuted} trackEnabled=${localTrackEnabledRef.current ?? "-"} ` +
+        `micReady=${micReady} label=${userMuted ? "自分 / ミュート中" : "自分 / 発話可能"} reason=state_sync`
+    );
+  }, [deviceId, micReady, sessionId, userMuted]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -1150,12 +1243,24 @@ export default function CallClient() {
         deviceId={deviceId}
         members={callMembers}
         membersSyncRevision={membersSyncRevision}
-        isMuted={isMuted}
+        userMuted={userMuted}
+        userMutedRef={userMutedRef}
+        onLocalTrackMutedApplied={({ userMuted: muted, trackEnabled, reason }) => {
+          localTrackEnabledRef.current = trackEnabled;
+          logRestoreMutedState({
+            stored: readCallMutePreference(sessionId),
+            userMutedBefore: userMutedRef.current,
+            userMutedAfter: muted,
+            trackEnabledBefore: localTrackEnabledRef.current,
+            trackEnabledAfter: trackEnabled,
+            reason: `track_apply_${reason}`,
+          });
+        }}
         onMicReadyChange={setMicReady}
         onMicLevelChange={(level) => {
           setMicLevel(level);
 
-          if (!isMuted && level > 0.08) {
+          if (!userMuted && level > 0.08) {
             setMembers((prev) =>
               prev.map((m) =>
                 m.device_id === deviceId
@@ -1175,26 +1280,33 @@ export default function CallClient() {
           );
         }}
         onRemotePlaybackHealthChange={(remoteId, health) => {
+          const normalizedHealth =
+            health.lastPlaySuccessAt != null &&
+            health.playFailedAt != null &&
+            health.lastPlaySuccessAt >= health.playFailedAt
+              ? { ...health, playFailedAt: null }
+              : health;
+
           setRemoteAudioHealth((prev) => {
             const current = prev[remoteId];
             if (
-              current?.verified === health.verified &&
-              current?.playbackActive === health.playbackActive &&
-              current?.playbackActiveMode === health.playbackActiveMode &&
-              current?.audioActuallyPlaying === health.audioActuallyPlaying &&
-              current?.trackReady === health.trackReady &&
-              current?.playSuccess === health.playSuccess &&
-              current?.lastPlaySuccessAt === health.lastPlaySuccessAt &&
-              current?.playFailedAt === health.playFailedAt &&
-              current?.lastAttachAt === health.lastAttachAt &&
-              current?.level === health.level &&
-              current?.currentTimeAdvanced === health.currentTimeAdvanced
+              current?.verified === normalizedHealth.verified &&
+              current?.playbackActive === normalizedHealth.playbackActive &&
+              current?.playbackActiveMode === normalizedHealth.playbackActiveMode &&
+              current?.audioActuallyPlaying === normalizedHealth.audioActuallyPlaying &&
+              current?.trackReady === normalizedHealth.trackReady &&
+              current?.playSuccess === normalizedHealth.playSuccess &&
+              current?.lastPlaySuccessAt === normalizedHealth.lastPlaySuccessAt &&
+              current?.playFailedAt === normalizedHealth.playFailedAt &&
+              current?.lastAttachAt === normalizedHealth.lastAttachAt &&
+              current?.level === normalizedHealth.level &&
+              current?.currentTimeAdvanced === normalizedHealth.currentTimeAdvanced
             ) {
               return prev;
             }
             return {
               ...prev,
-              [remoteId]: health,
+              [remoteId]: normalizedHealth,
             };
           });
         }}
@@ -1393,16 +1505,20 @@ export default function CallClient() {
             const showManualAudioReconnect =
               !!member &&
               !isMe &&
-              shouldShowManualAudioReconnect({
+              resolveManualAudioReconnect({
                 isMe: false,
-                statusText: status.text,
-                statusReason: "reason" in status ? String(status.reason ?? "") : "",
                 conn: diag?.conn ?? "-",
                 ice: diag?.ice ?? "-",
                 hasPc: diag?.hasPc ?? false,
                 hasRemoteStream: diag?.hasRemoteStream ?? false,
                 lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
                 lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+                lastOnTrackAt: diag?.lastOnTrackAt ?? null,
+                lastUnmuteAt: diag?.lastUnmuteAt ?? null,
+                lastPlaySuccessAt:
+                  (memberId ? remoteAudioHealth[memberId]?.lastPlaySuccessAt : null) ??
+                  diag?.lastPlaySuccessAt ??
+                  null,
                 remoteAudioHealth: memberId
                   ? remoteAudioHealth[memberId] ?? null
                   : null,
@@ -1410,11 +1526,13 @@ export default function CallClient() {
                   (memberId ? remoteAudioHealth[memberId]?.trackReady : null) ??
                   diag?.trackReady ??
                   "-",
+                liveStreamHealHold: diag?.liveStreamHealHold === true,
                 p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
                 autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
                 reconnectRequestPending: diag?.reconnectRequestPending === true,
+                wasPeerConnected: everConnectedPeersRef.current.has(memberId),
                 nowMs,
-              });
+              }).show;
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
 
             const isSpeaking =
@@ -1655,17 +1773,26 @@ export default function CallClient() {
               padding: "10px 14px",
               borderRadius: 12,
               border: "1px solid #d1d5db",
-              background: isMuted ? "#fff" : "#111827",
-              color: isMuted ? "#111827" : "#fff",
+              background: userMuted ? "#fff" : "#111827",
+              color: userMuted ? "#111827" : "#fff",
               fontWeight: 900,
               cursor: micReady ? "pointer" : "not-allowed",
               opacity: micReady ? 1 : 0.6,
             }}
             onClick={() => {
               requestRemoteAudioUnlock();
-              setIsMuted((prev) => {
+              setUserMuted((prev) => {
                 const next = !prev;
-                writeCallMutePreference(sessionId, next);
+                userMutedRef.current = next;
+                logMuteStateSet({
+                  userMuted: next,
+                  prev,
+                  reason: "mute_button_click",
+                  source: "CallClient",
+                });
+                writeCallMutePreference(sessionId, next, {
+                  source: "user_click",
+                });
                 return next;
               });
             }}

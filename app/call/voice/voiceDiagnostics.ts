@@ -363,8 +363,11 @@ export function logCallStatusPeer(params: {
   remoteAudioHealth: string;
   audioActuallyPlaying?: boolean;
   playSuccessAgeMs?: number | null;
+  playFailedAgeMs?: number | null;
   audioLevel?: number | null;
   playbackActiveAgeMs?: number | null;
+  showReconnectButton?: boolean;
+  reconnectReason?: string;
   hasPc: boolean;
   conn: string;
   ice: string;
@@ -383,8 +386,9 @@ export function logCallStatusPeer(params: {
       `label=${params.label} status=${params.status} peerState=${params.effectivePeerState ?? params.peerState} ` +
       `statusSource=${params.statusSource ?? "-"} ` +
       `audioActuallyPlaying=${params.audioActuallyPlaying === true} ` +
-      `playSuccessAgeMs=${params.playSuccessAgeMs ?? "-"} audioLevel=${params.audioLevel ?? "-"} ` +
-      `remoteAudioHealth=${params.remoteAudioHealth} ` +
+      `playSuccessAgeMs=${params.playSuccessAgeMs ?? "-"} playFailedAgeMs=${params.playFailedAgeMs ?? "-"} ` +
+      `audioLevel=${params.audioLevel ?? "-"} showReconnectButton=${params.showReconnectButton === true} ` +
+      `reconnectReason=${params.reconnectReason ?? "-"} remoteAudioHealth=${params.remoteAudioHealth} ` +
       `playbackActiveAgeMs=${params.playbackActiveAgeMs ?? "-"} hasPc=${params.hasPc} ` +
       `${orphanPc ? "hasPc=false orphanPc=true " : ""}` +
       `conn=${params.conn} ice=${params.ice} sig=${params.sig} ` +

@@ -411,6 +411,9 @@ export default function RemoteAudio({
         afterMs?: number;
       }
     ): RemotePlaybackHealth => {
+      if (params.playSuccessEvent) {
+        playFailedAtRef.current = null;
+      }
       const health = evaluateRemotePlaybackHealth({
         el,
         stream,
@@ -655,6 +658,7 @@ export default function RemoteAudio({
         playSuccessRef.current = true;
         const now = Date.now();
         playSuccessAtRef.current = now;
+        playFailedAtRef.current = null;
         provisionalPlaybackStartedAtRef.current = now;
 
         logRemoteAudioCompact(remoteId, el, stream, "play-success");

@@ -357,7 +357,26 @@ export function readCallMutePreference(sessionId: string): boolean | null {
   }
 }
 
-export function writeCallMutePreference(sessionId: string, isMuted: boolean) {
+/** Initial userMuted on reload/bfcache; default unmuted when nothing stored. */
+export function readInitialUserMuted(sessionId: string): boolean {
+  if (typeof window === "undefined") return false;
+  const sid = String(sessionId ?? "").trim();
+  if (!sid) return false;
+
+  const nav = getNavigationType();
+  if (nav !== "reload" && nav !== "back_forward") {
+    return false;
+  }
+
+  return readCallMutePreference(sid) ?? false;
+}
+
+export function writeCallMutePreference(
+  sessionId: string,
+  isMuted: boolean,
+  options?: { source?: "user_click" }
+) {
+  if (options?.source !== "user_click") return;
   if (typeof window === "undefined") return;
   const sid = String(sessionId ?? "").trim();
   if (!sid) return;

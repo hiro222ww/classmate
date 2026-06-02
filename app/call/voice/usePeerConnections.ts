@@ -37,6 +37,7 @@ import {
   logVoiceClientEnv,
 } from "@/lib/voiceClientEnv";
 import type { RemotePlaybackHealth } from "./RemoteAudio";
+import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
 import {
   createEmptyPeerIceDiagnostics,
   evaluateInsufficientRemoteCandidates,
@@ -113,7 +114,8 @@ type UsePeerConnectionsArgs = {
   deviceId: string;
   members: Member[];
   membersSyncRevision?: number;
-  isMuted: boolean;
+  userMuted: boolean;
+  userMutedRef: React.MutableRefObject<boolean>;
   micReady: boolean;
   signalReady: boolean;
   localStreamRef: React.MutableRefObject<MediaStream | null>;
@@ -721,7 +723,8 @@ export function usePeerConnections({
   deviceId,
   members,
   membersSyncRevision = 0,
-  isMuted,
+  userMuted,
+  userMutedRef,
   micReady,
   signalReady,
   localStreamRef,
@@ -3199,7 +3202,7 @@ export function usePeerConnections({
           .getSenders()
           .find((s) => s.track?.kind === "audio" || s.track === null);
 
-        if (sender && isMuted) {
+        if (sender && userMutedRef.current) {
           void sender.replaceTrack(null);
         }
       }
@@ -3466,7 +3469,7 @@ export function usePeerConnections({
           const track = localAudioTrackRef.current;
 
           if (sender && track) {
-            void sender.replaceTrack(isMuted ? null : track);
+            void sender.replaceTrack(userMutedRef.current ? null : track);
           }
 
           window.setTimeout(() => {
@@ -3567,7 +3570,7 @@ export function usePeerConnections({
       getCurrentConnectionId,
       getOrCreatePeerIceStats,
       getPeerMedia,
-      isMuted,
+      userMutedRef,
       localAudioTrackRef,
       localStreamRef,
       logVoiceConnection,
@@ -5506,7 +5509,8 @@ export function usePeerConnections({
     const track = localAudioTrackRef.current;
     if (!track) return;
 
-    track.enabled = true;
+    const muted = userMutedRef.current;
+    applyUserMutedToTrack(track, muted, "userMuted_changed", "usePeerConnections");
 
     for (const pc of pcsRef.current.values()) {
       const sender = pc
@@ -5514,10 +5518,10 @@ export function usePeerConnections({
         .find((s) => s.track?.kind === "audio" || s.track === null);
 
       if (sender) {
-        void sender.replaceTrack(isMuted ? null : track);
+        void sender.replaceTrack(muted ? null : track);
       }
     }
-  }, [isMuted, localAudioTrackRef]);
+  }, [userMuted, userMutedRef, localAudioTrackRef, micReady]);
 
   useEffect(() => {
     const remoteIds = getRemoteIds();

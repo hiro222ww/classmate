@@ -9,6 +9,8 @@ export const MANUAL_AUDIO_RECONNECT_UNCONFIRMED_MS = 15_000;
 export const RECENT_REMOTE_SIGNAL_MS = 10_000;
 export const REMOTE_AUDIO_PLAY_SUCCESS_RECENT_MS = 15_000;
 export const REMOTE_AUDIO_UNSTABLE_MS = 15_000;
+export const RECONNECT_BUTTON_STALL_MS = 15_000;
+export const REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD = 0.02;
 
 export type RemoteAudioHealthInput = {
   playSuccess?: boolean;
@@ -57,29 +59,203 @@ export function isTransportMediaConnected(conn: string, ice: string): boolean {
   );
 }
 
-function isRemoteAudioHealthyNow(params: {
+export function isStalePlayFailure(
+  health: RemoteAudioHealthInput | null | undefined,
+  nowMs: number
+): boolean {
+  if (!health?.playFailedAt) return false;
+  if (
+    health.lastPlaySuccessAt != null &&
+    health.lastPlaySuccessAt >= health.playFailedAt
+  ) {
+    return false;
+  }
+  return nowMs - health.playFailedAt < REMOTE_AUDIO_UNSTABLE_MS;
+}
+
+export function mergeRemoteAudioHealthInput(params: {
+  health?: RemoteAudioHealthInput | null;
+  trackReady?: string;
+  lastPlaySuccessAt?: number | null;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+}): RemoteAudioHealthInput | null {
+  const health = params.health;
+  if (!health && params.lastPlaySuccessAt == null) return null;
+
+  return {
+    ...health,
+    trackReady: health?.trackReady ?? params.trackReady,
+    lastPlaySuccessAt:
+      health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt ?? null,
+    playFailedAt: health?.playFailedAt ?? null,
+  };
+}
+
+export function isRemoteAudioHealthyNow(params: {
   health?: RemoteAudioHealthInput | null;
   trackReady: string;
   hasRemoteStream: boolean;
   nowMs: number;
+  lastPlaySuccessAt?: number | null;
 }): boolean {
   const health = params.health;
-  if (!health) return false;
-
-  const trackLive = (health.trackReady ?? params.trackReady) === "live";
+  const trackReady = health?.trackReady ?? params.trackReady;
+  const trackLive = trackReady === "live";
   if (!trackLive || !params.hasRemoteStream) return false;
 
-  if (health.audioActuallyPlaying === true) return true;
+  const lastPlaySuccessAt =
+    health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt ?? null;
+  const recentPlaySuccess = isRecentPlaySuccess(lastPlaySuccessAt, params.nowMs);
+
+  if (health && isStalePlayFailure(health, params.nowMs)) return false;
+
+  if (health?.audioActuallyPlaying === true) return true;
+  if (recentPlaySuccess) return true;
+  if (health?.verified === true && recentPlaySuccess) return true;
+  if (health?.playSuccess === true && recentPlaySuccess) return true;
+  if (health?.playbackActive === true && recentPlaySuccess) return true;
+
   if (
-    health.playSuccess &&
-    isRecentPlaySuccess(health.lastPlaySuccessAt, params.nowMs)
+    health &&
+    recentPlaySuccess &&
+    (health.currentTimeAdvanced === true ||
+      (health.level ?? 0) > REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD)
   ) {
     return true;
   }
-  if (health.verified === true) return true;
-  if (health.playbackActive === true) return true;
 
   return false;
+}
+
+export function resolveManualAudioReconnect(params: {
+  isMe: boolean;
+  hasRemoteStream: boolean;
+  trackReady?: string;
+  conn: string;
+  ice: string;
+  hasPc: boolean;
+  remoteAudioHealth?: RemoteAudioHealthInput | null;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  lastPlaybackConfirmedAt?: number | null;
+  lastPlaybackActiveAt?: number | null;
+  liveStreamHealHold?: boolean;
+  p2pDirectFailedHoldActive?: boolean;
+  autoHardResetGiveUp?: boolean;
+  reconnectRequestPending?: boolean;
+  wasPeerConnected?: boolean;
+  nowMs?: number;
+}): { show: boolean; reason: string } {
+  if (params.isMe) return { show: false, reason: "is_me" };
+  if (params.reconnectRequestPending) {
+    return { show: false, reason: "reconnect_request_pending" };
+  }
+
+  const now = params.nowMs ?? Date.now();
+  const trackReady = params.trackReady ?? "-";
+  const health = mergeRemoteAudioHealthInput({
+    health: params.remoteAudioHealth,
+    trackReady,
+    lastPlaySuccessAt: params.lastPlaySuccessAt,
+    lastOnTrackAt: params.lastOnTrackAt,
+    lastUnmuteAt: params.lastUnmuteAt,
+  });
+
+  if (
+    isRemoteAudioHealthyNow({
+      health,
+      trackReady,
+      hasRemoteStream: params.hasRemoteStream,
+      nowMs: now,
+      lastPlaySuccessAt: params.lastPlaySuccessAt,
+    })
+  ) {
+    return { show: false, reason: "audio_healthy" };
+  }
+
+  if (params.liveStreamHealHold === true) {
+    return { show: false, reason: "live_stream_heal_hold" };
+  }
+
+  if (
+    hasRecentRemoteAudioSignals({
+      lastOnTrackAt: params.lastOnTrackAt,
+      lastUnmuteAt: params.lastUnmuteAt,
+      lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+      nowMs: now,
+    }) &&
+    trackReady === "live" &&
+    params.hasRemoteStream
+  ) {
+    return { show: false, reason: "recent_remote_signals" };
+  }
+
+  if (isRecentPlaySuccess(health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt, now)) {
+    return { show: false, reason: "recent_play_success" };
+  }
+
+  if (trackReady === "ended") {
+    return { show: true, reason: "track_ended" };
+  }
+
+  if (isStalePlayFailure(health, now)) {
+    return { show: true, reason: "play_failed_recent" };
+  }
+
+  const noLiveStream =
+    !params.hasRemoteStream || trackReady === "ended" || trackReady === "-";
+  if (noLiveStream && params.wasPeerConnected) {
+    return { show: true, reason: "no_live_stream" };
+  }
+
+  const audioStalled =
+    params.hasRemoteStream &&
+    trackReady === "live" &&
+    health?.audioActuallyPlaying !== true &&
+    (health?.lastPlaySuccessAt == null ||
+      now - health.lastPlaySuccessAt >= RECONNECT_BUTTON_STALL_MS) &&
+    (health?.level ?? 0) <= REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD &&
+    health?.currentTimeAdvanced !== true &&
+    (health?.lastAttachAt == null ||
+      now - health.lastAttachAt >= RECONNECT_BUTTON_STALL_MS);
+
+  if (audioStalled && params.wasPeerConnected) {
+    return { show: true, reason: "audio_stalled" };
+  }
+
+  if (params.autoHardResetGiveUp) {
+    if (
+      isRecentPlaySuccess(health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt, now) ||
+      isRemoteAudioHealthyNow({
+        health,
+        trackReady,
+        hasRemoteStream: params.hasRemoteStream,
+        nowMs: now,
+        lastPlaySuccessAt: params.lastPlaySuccessAt,
+      })
+    ) {
+      return { show: false, reason: "auto_hard_reset_give_up_recovered" };
+    }
+    return { show: true, reason: "auto_hard_reset_give_up" };
+  }
+
+  if (params.p2pDirectFailedHoldActive && !params.hasPc) {
+    return { show: false, reason: "p2p_direct_failed_hold" };
+  }
+
+  const failedTransport = params.conn === "failed" || params.ice === "failed";
+  if (failedTransport && params.wasPeerConnected) {
+    return { show: true, reason: "transport_failed" };
+  }
+
+  const orphanNoPc = !params.hasPc && params.hasRemoteStream;
+  if (orphanNoPc) {
+    return { show: true, reason: "orphan_remote_audio" };
+  }
+
+  return { show: false, reason: "none" };
 }
 
 export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
@@ -302,64 +478,27 @@ export function participationStatusStyle(status: UiParticipationStatus) {
 
 export function shouldShowManualAudioReconnect(params: {
   isMe: boolean;
-  statusText: string;
-  statusReason: string;
+  statusText?: string;
+  statusReason?: string;
   conn: string;
   ice: string;
   hasPc: boolean;
   hasRemoteStream: boolean;
-  lastPlaybackConfirmedAt: number | null;
-  lastPlaybackActiveAt: number | null;
+  lastPlaybackConfirmedAt?: number | null;
+  lastPlaybackActiveAt?: number | null;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
   remoteAudioHealth?: RemoteAudioHealthInput | null;
   trackReady?: string;
+  liveStreamHealHold?: boolean;
   p2pDirectFailedHoldActive?: boolean;
   autoHardResetGiveUp?: boolean;
   reconnectRequestPending?: boolean;
+  wasPeerConnected?: boolean;
   nowMs?: number;
 }): boolean {
-  if (params.isMe) return false;
-  if (params.reconnectRequestPending) return false;
-
-  const now = params.nowMs ?? Date.now();
-  if (
-    isRemoteAudioHealthyNow({
-      health: params.remoteAudioHealth,
-      trackReady: params.trackReady ?? "-",
-      hasRemoteStream: params.hasRemoteStream,
-      nowMs: now,
-    })
-  ) {
-    return false;
-  }
-
-  if (params.autoHardResetGiveUp) return true;
-
-  const failedTransport = params.conn === "failed" || params.ice === "failed";
-  const orphanNoPc = !params.hasPc && params.hasRemoteStream;
-  const reconnectingLabel =
-    params.statusText === "再接続中" ||
-    params.statusText === "音声確認中" ||
-    params.statusText === "音声受信中" ||
-    params.statusText === "接続中" ||
-    params.statusText === "再接続を試みています";
-  const matchingReason =
-    params.statusReason === "orphan_remote_audio_provisional" ||
-    params.statusReason === "p2p_direct_failed_turn_disabled" ||
-    params.statusReason === "peer_failed_reconnect" ||
-    params.statusReason === "peer_failed" ||
-    params.statusReason === "peer_connecting_reconnect";
-  const unconfirmedStuck =
-    params.lastPlaybackConfirmedAt == null &&
-    params.lastPlaybackActiveAt != null &&
-    now - params.lastPlaybackActiveAt >= MANUAL_AUDIO_RECONNECT_UNCONFIRMED_MS;
-
-  return (
-    params.p2pDirectFailedHoldActive === true ||
-    failedTransport ||
-    orphanNoPc ||
-    (reconnectingLabel && matchingReason) ||
-    unconfirmedStuck
-  );
+  return resolveManualAudioReconnect(params).show;
 }
 
 export function resolveCallMemberStatus(params: {
@@ -433,16 +572,17 @@ export function resolveCallMemberStatus(params: {
     source: string;
     statusSource: string;
   } => {
-    const verified =
+    const connectedLabel =
+      recentPlaySuccess ||
+      health?.audioActuallyPlaying === true ||
       health?.verified === true ||
-      params.remoteAudioVerified === true ||
-      (health?.playSuccess === true && recentPlaySuccess);
+      params.remoteAudioVerified === true;
     return {
-      text: verified ? "接続中" : "音声受信中",
+      text: connectedLabel ? "接続中" : "音声受信中",
       color: "#065f46",
       chipBg: "#ecfdf5",
       chipText: "#047857",
-      reason: verified
+      reason: connectedLabel
         ? "remote_audio_playback_healthy"
         : "remote_audio_playback_active",
       source: "remoteAudioHealth",
@@ -537,17 +677,7 @@ export function resolveCallMemberStatus(params: {
 
   // B. Live track + remote stream + recent ontrack/unmute/play-success.
   if (trackLive && hasRemoteStream && recentSignals) {
-    return {
-      text: recentPlaySuccess ? "接続中" : "音声確認中",
-      color: recentPlaySuccess ? "#065f46" : "#92400e",
-      chipBg: recentPlaySuccess ? "#ecfdf5" : "#fffbeb",
-      chipText: recentPlaySuccess ? "#047857" : "#b45309",
-      reason: recentPlaySuccess
-        ? "recent_remote_signal_play_success"
-        : "recent_remote_signal_wait_audio",
-      source: "remoteAudioHealth",
-      statusSource: "remote_audio_health",
-    };
+    return connectedFromRemoteAudio();
   }
 
   if (params.activePlaybackConnected && params.peerState !== "connected") {
@@ -555,6 +685,9 @@ export function resolveCallMemberStatus(params: {
       params.hasPc === false || params.orphanRemoteAudio === true;
 
     if (orphanPlayback) {
+      if (audioHealthy || recentPlaySuccess) {
+        return connectedFromRemoteAudio();
+      }
       return {
         text: params.wasPeerConnected ? "再接続中" : "音声確認中",
         color: "#92400e",
@@ -581,15 +714,13 @@ export function resolveCallMemberStatus(params: {
 
   // C. Transport connected (conn/ice), when playback health has not already won.
   if (params.peerState === "connected" || transportConnected) {
-    if (params.remoteAudioVerified === true || audioHealthy) {
-      return {
-        text: "接続中",
-        color: "#065f46",
-        chipBg: "#ecfdf5",
-        chipText: "#047857",
-        reason: "peer_connected_audio_verified",
-        source: "peerState",
-      };
+    if (
+      audioHealthy ||
+      recentPlaySuccess ||
+      params.remoteAudioVerified === true ||
+      recentSignals
+    ) {
+      return connectedFromRemoteAudio();
     }
 
     return {
@@ -597,10 +728,7 @@ export function resolveCallMemberStatus(params: {
       color: "#92400e",
       chipBg: "#fffbeb",
       chipText: "#b45309",
-      reason:
-        params.remoteAudioVerified === false
-          ? "peer_connected_audio_unverified"
-          : "peer_connected_audio_pending",
+      reason: "peer_connected_audio_pending",
       source: "peerState",
     };
   }
@@ -617,9 +745,7 @@ export function resolveCallMemberStatus(params: {
   }
 
   // D. Playback/track failure or stalled audio.
-  const playFailedRecently =
-    health?.playFailedAt != null &&
-    nowMs - health.playFailedAt < REMOTE_AUDIO_UNSTABLE_MS;
+  const playFailedRecently = isStalePlayFailure(health, nowMs);
   const trackEnded = trackReady === "ended";
   const noLiveStream =
     !hasRemoteStream || trackReady === "ended" || trackReady === "-";

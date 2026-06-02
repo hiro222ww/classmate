@@ -41,8 +41,14 @@ type CallVoiceLayerProps = {
   deviceId: string;
   members: Member[];
   membersSyncRevision?: number;
-  isMuted: boolean;
+  userMuted: boolean;
+  userMutedRef: React.MutableRefObject<boolean>;
   onMicReadyChange?: (ready: boolean) => void;
+  onLocalTrackMutedApplied?: (params: {
+    userMuted: boolean;
+    trackEnabled: boolean;
+    reason: string;
+  }) => void;
   onMicLevelChange?: (level: number) => void;
   onRemoteSpeakingChange?: (remoteId: string, level: number) => void;
   onRemotePlaybackHealthChange?: (
@@ -66,9 +72,11 @@ export default function CallVoiceLayer({
   deviceId,
   members,
   membersSyncRevision = 0,
-  isMuted,
+  userMuted,
+  userMutedRef,
   onMicReadyChange,
   onMicLevelChange,
+  onLocalTrackMutedApplied,
   onRemoteSpeakingChange,
   onRemotePlaybackHealthChange,
   onRemoteCountChange,
@@ -89,16 +97,18 @@ export default function CallVoiceLayer({
       device_id: m.device_id,
       is_in_call: m.is_in_call,
     })),
-    isMuted,
+    userMuted,
   });
 
   const mic = useLocalMic({
     sessionId,
     deviceId,
-    isMuted,
+    userMuted,
+    userMutedRef,
     onMicReadyChange,
     onMicLevelChange,
     onStatusChange,
+    onLocalTrackMutedApplied,
   });
 
   const noopSignal = useMemo(() => {
@@ -117,7 +127,8 @@ export default function CallVoiceLayer({
     deviceId,
     members,
     membersSyncRevision,
-    isMuted,
+    userMuted,
+    userMutedRef,
     micReady: mic.micReady,
     signalReady: signaling.signalReady,
     localStreamRef: mic.localStreamRef,
