@@ -76,6 +76,61 @@ logVoiceClientEnv("peer-connections-init");
 
 const MESH_SUMMARY_DEBOUNCE_MS = 150;
 const TRACK_ENDED_HOLD_MS = 2000;
+const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
+
+type TrackEndedHoldCheck = {
+  shouldHold: boolean;
+  reason: string;
+  conn: string;
+  ice: string;
+  lastConnectedAgoMs: number | null;
+  tracks: number;
+  hasStream: boolean;
+};
+
+function evaluateTrackEndedHold(params: {
+  pc: RTCPeerConnection | null | undefined;
+  media: { hasRemoteStream: boolean; remoteTracksCount: number };
+  lastConnectedAt?: number;
+}): TrackEndedHoldCheck {
+  const { pc, media, lastConnectedAt } = params;
+  const conn = pc?.connectionState ?? "-";
+  const ice = pc?.iceConnectionState ?? "-";
+  const lastConnectedAgoMs =
+    lastConnectedAt != null ? Date.now() - lastConnectedAt : null;
+  const tracks = media.remoteTracksCount;
+  const hasStream = media.hasRemoteStream;
+
+  let shouldHold = false;
+  let reason = "not_healthy";
+
+  if (conn === "connected") {
+    shouldHold = true;
+    reason = "transport_connected";
+  } else if (ice === "connected" || ice === "completed") {
+    shouldHold = true;
+    reason = "transport_connected";
+  } else if (
+    lastConnectedAgoMs != null &&
+    lastConnectedAgoMs <= TRACK_ENDED_RECENT_CONNECTED_MS
+  ) {
+    shouldHold = true;
+    reason = "recent_connected";
+  } else if (hasStream || tracks > 0) {
+    shouldHold = true;
+    reason = "has_stream";
+  }
+
+  return { shouldHold, reason, conn, ice, lastConnectedAgoMs, tracks, hasStream };
+}
+
+function logTrackEndedHoldCheck(remoteId: string, check: TrackEndedHoldCheck) {
+  console.log(
+    `[voice-peer] track-ended-hold-check remote=${compactDeviceId(remoteId)} shouldHold=${check.shouldHold} reason=${check.reason} ` +
+      `conn=${check.conn} ice=${check.ice} lastConnectedAgoMs=${check.lastConnectedAgoMs ?? "-"} ` +
+      `tracks=${check.tracks} hasStream=${check.hasStream} ${formatVoiceModeSuffix()}`
+  );
+}
 const CLOSE_FOR_RECONNECT = {
   clearConnectionId: false,
   preserveRemoteAudio: true,
@@ -286,6 +341,7 @@ export function usePeerConnections({
     >
   >(new Map());
   const peerEverConnectedRef = useRef<Set<string>>(new Set());
+  const peerLastConnectedAtRef = useRef<Map<string, number>>(new Map());
   const recoveryStartedAtRef = useRef<Map<string, number>>(new Map());
   const iceCheckingTimersRef = useRef<Map<string, number>>(new Map());
   const connectingTimersRef = useRef<Map<string, number>>(new Map());
@@ -324,6 +380,21 @@ export function usePeerConnections({
       remoteTracksCount: remoteStream?.getAudioTracks().length ?? 0,
     };
   }, []);
+
+  const markPeerLastConnected = useCallback((remoteId: string) => {
+    peerLastConnectedAtRef.current.set(remoteId, Date.now());
+  }, []);
+
+  const getTrackEndedHoldCheck = useCallback(
+    (remoteId: string, pc: RTCPeerConnection | null | undefined) => {
+      return evaluateTrackEndedHold({
+        pc,
+        media: getPeerMedia(remoteId),
+        lastConnectedAt: peerLastConnectedAtRef.current.get(remoteId),
+      });
+    },
+    [getPeerMedia]
+  );
 
   const hasLiveRemoteStream = useCallback((remoteId: string) => {
     const stream = remoteStreamsRef.current.get(remoteId);
@@ -523,7 +594,8 @@ export function usePeerConnections({
       const pc = pcsRef.current.get(remoteId) ?? null;
       if (
         isPeerTransportHealthy(pc) ||
-        peerEverConnectedRef.current.has(remoteId)
+        peerEverConnectedRef.current.has(remoteId) ||
+        getTrackEndedHoldCheck(remoteId, pc).shouldHold
       ) {
         setPeerStateRef.current(remoteId, "connected");
       }
@@ -538,7 +610,7 @@ export function usePeerConnections({
         );
       }
     },
-    [clearEndedHoldTimer, finalizeRecovery]
+    [clearEndedHoldTimer, finalizeRecovery, getTrackEndedHoldCheck]
   );
 
   const scheduleTrackEndedHold = useCallback(
@@ -554,7 +626,7 @@ export function usePeerConnections({
 
       if (
         peerEverConnectedRef.current.has(remoteId) ||
-        isPeerTransportHealthy(pc)
+        getTrackEndedHoldCheck(remoteId, pc).shouldHold
       ) {
         setPeerStateRef.current(remoteId, "connected");
       }
@@ -598,7 +670,7 @@ export function usePeerConnections({
 
       endedHoldTimersRef.current.set(remoteId, timer);
     },
-    [clearEndedHoldTimer, hasLiveRemoteStream]
+    [clearEndedHoldTimer, getTrackEndedHoldCheck, hasLiveRemoteStream]
   );
 
   const maybeLogRecoverySuccess = useCallback(
@@ -1088,6 +1160,7 @@ export function usePeerConnections({
       peerSnapshotRef.current.delete(remoteId);
       attachedTrackIdsRef.current.delete(remoteId);
       trackEndedAtRef.current.delete(remoteId);
+      peerLastConnectedAtRef.current.delete(remoteId);
       reconnectPendingRef.current.delete(remoteId);
       lastHealActionAtRef.current.delete(remoteId);
       peerSignalTimestampsRef.current.delete(remoteId);
@@ -1354,9 +1427,10 @@ export function usePeerConnections({
           `[voice-peer] track-ended-chain remote=${compactDeviceId(remoteId)} step=ended pc=${!!pcBefore} conn=${pcBefore?.connectionState ?? "-"} ${formatVoiceModeSuffix()}`
         );
 
-        const transportHealthy = isPeerTransportHealthy(pcBefore);
+        const holdCheck = getTrackEndedHoldCheck(remoteId, pcBefore);
+        logTrackEndedHoldCheck(remoteId, holdCheck);
 
-        if (transportHealthy) {
+        if (holdCheck.shouldHold) {
           scheduleTrackEndedHold(remoteId, pcBefore);
           emitTrackEvent("ended", {
             scheduledReconnectInMs: TRACK_ENDED_HOLD_MS,
@@ -1424,6 +1498,7 @@ export function usePeerConnections({
       emitMeshSummary,
       finalizeRecovery,
       getPeerMedia,
+      getTrackEndedHoldCheck,
       markRecoveryStart,
       observePeerField,
       scheduleTrackEndedHold,
@@ -1678,6 +1753,10 @@ export function usePeerConnections({
           }
         }
 
+        if (iceState === "connected" || iceState === "completed") {
+          markPeerLastConnected(remoteId);
+        }
+
         if (iceState === "disconnected") {
           logPeerStateWarning({
             sessionId,
@@ -1775,6 +1854,7 @@ export function usePeerConnections({
 
         if (state === "connected") {
           peerEverConnectedRef.current.add(remoteId);
+          markPeerLastConnected(remoteId);
           setPeerState(remoteId, "connected");
           clearReconnectTimer(remoteId);
           clearPeerWatchdogTimers(remoteId);
@@ -1877,6 +1957,7 @@ export function usePeerConnections({
       localStreamRef,
       logVoiceConnection,
       markConnectStart,
+      markPeerLastConnected,
       maybeLogRecoverySuccess,
       scheduleConnectingTimeout,
       scheduleIceCheckingTimeout,
@@ -2304,19 +2385,24 @@ export function usePeerConnections({
       const inCall = isRemoteInCall(remoteId);
       const needsPc = peerNeedsPc(remoteId);
       const transportHealthy = isPeerTransportHealthy(pc);
+      const holdCheck = getTrackEndedHoldCheck(remoteId, pc);
 
       if (hasStream && connected) {
         setPeerState(remoteId, "connected");
         continue;
       }
 
-      if (transportHealthy && !hasStream) {
-        if (endedHoldTimersRef.current.has(remoteId)) {
-          logHealSkipHealthy(remoteId, "track_ended_hold_pending", pc);
-          continue;
-        }
-
-        logHealSkipHealthy(remoteId, "connected_pc_waiting_stream", pc);
+      if (
+        endedHoldTimersRef.current.has(remoteId) ||
+        (holdCheck.shouldHold && !hasStream)
+      ) {
+        logHealSkipHealthy(
+          remoteId,
+          endedHoldTimersRef.current.has(remoteId)
+            ? "track_ended_hold_pending"
+            : `track_ended_${holdCheck.reason}`,
+          pc
+        );
         continue;
       }
 
@@ -2347,12 +2433,12 @@ export function usePeerConnections({
       }
 
       if (trackEndedAtRef.current.has(remoteId) && !hasStream) {
-        if (transportHealthy || endedHoldTimersRef.current.has(remoteId)) {
+        if (holdCheck.shouldHold || endedHoldTimersRef.current.has(remoteId)) {
           logHealSkipHealthy(
             remoteId,
             endedHoldTimersRef.current.has(remoteId)
               ? "track_ended_hold_pending"
-              : "track_ended_pc_still_connected",
+              : `track_ended_${holdCheck.reason}`,
             pc
           );
           continue;
@@ -2581,6 +2667,7 @@ export function usePeerConnections({
     getCurrentConnectionId,
     getReconnectBlockReason,
     getRemoteIds,
+    getTrackEndedHoldCheck,
     hasLiveRemoteStream,
     isRemoteInCall,
     logHealPeerAction,
