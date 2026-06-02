@@ -236,3 +236,19 @@ export function evaluateInsufficientRemoteCandidates(
   }
   return null;
 }
+
+export function hasNoRelayCandidates(stats: PeerIceDiagnostics): boolean {
+  return !stats.localTypes.has("relay") && !stats.remoteTypes.has("relay");
+}
+
+export function logVoiceIceP2pDirectFailed(params: {
+  remoteId: string;
+  reason: string;
+  stats: PeerIceDiagnostics;
+}): void {
+  console.log(
+    `[voice-ice] p2p-direct-failed remote=${compactDeviceId(params.remoteId)} ` +
+      `reason=${params.reason} localTypes=${formatIceTypeSet(params.stats.localTypes)} ` +
+      `remoteTypes=${formatIceTypeSet(params.stats.remoteTypes)}`
+  );
+}

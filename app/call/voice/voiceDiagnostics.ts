@@ -343,6 +343,7 @@ export type PeerStatusDiagnostics = {
   lastPlaybackActiveAt: number | null;
   lastPlaybackConfirmedAt: number | null;
   remoteAudioMounted: boolean;
+  orphanRemoteAudio?: boolean;
 };
 
 export function logCallStatusPeer(params: {
@@ -364,11 +365,15 @@ export function logCallStatusPeer(params: {
   isRemoteInCall: boolean;
   reason: string;
 }) {
+  const orphanPc =
+    !params.hasPc && params.hasRemoteStream && params.remoteTracksCount > 0;
+
   console.log(
     `[call-status-peer] local=${compactDeviceId(params.localDeviceId)} remote=${compactDeviceId(params.remoteDeviceId)} ` +
       `label=${params.label} status=${params.status} peerState=${params.effectivePeerState ?? params.peerState} ` +
       `remoteAudioHealth=${params.remoteAudioHealth} ` +
       `playbackActiveAgeMs=${params.playbackActiveAgeMs ?? "-"} hasPc=${params.hasPc} ` +
+      `${orphanPc ? "hasPc=false orphanPc=true " : ""}` +
       `conn=${params.conn} ice=${params.ice} sig=${params.sig} ` +
       `hasRemoteStream=${params.hasRemoteStream} remoteTracksCount=${params.remoteTracksCount} ` +
       `trackReady=${params.trackReady} isRemoteInCall=${params.isRemoteInCall} reason=${params.reason}`

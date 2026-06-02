@@ -234,6 +234,8 @@ export function resolveCallMemberStatus(params: {
   effectivePeerState?: EffectivePeerState;
   activePlaybackConnected?: boolean;
   playbackActiveMode?: PlaybackActiveMode;
+  hasPc?: boolean;
+  orphanRemoteAudio?: boolean;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
 }) {
@@ -291,6 +293,20 @@ export function resolveCallMemberStatus(params: {
     params.activePlaybackConnected &&
     params.peerState !== "connected"
   ) {
+    const orphanPlayback =
+      params.hasPc === false || params.orphanRemoteAudio === true;
+
+    if (orphanPlayback) {
+      return {
+        text: params.wasPeerConnected ? "再接続中" : "音声確認中",
+        color: "#92400e",
+        chipBg: "#fffbeb",
+        chipText: "#b45309",
+        reason: "orphan_remote_audio_provisional",
+        source: "effectivePeerState",
+      };
+    }
+
     const playbackReason =
       params.playbackActiveMode === "confirmed"
         ? "active_playback_confirmed"
