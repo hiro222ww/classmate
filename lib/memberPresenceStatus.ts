@@ -2,6 +2,72 @@ export type UiParticipationStatus = "in_call" | "waiting" | "offline";
 
 export type CallPeerState = "idle" | "connecting" | "connected" | "failed";
 
+export type EffectivePeerState = CallPeerState | "connected_effective";
+
+export const PLAYBACK_EFFECTIVE_CONNECTED_MS = 15_000;
+
+export function isActivePlaybackConnected(params: {
+  remoteTracksCount: number;
+  hasRemoteStream: boolean;
+  trackReady: string;
+  lastPlaybackActiveAt: number | null;
+  playbackActive?: boolean;
+  nowMs?: number;
+}): boolean {
+  const now = params.nowMs ?? Date.now();
+  const trackLive = params.trackReady === "live";
+  const hasMedia =
+    params.remoteTracksCount > 0 && params.hasRemoteStream && trackLive;
+  if (!hasMedia) return false;
+
+  const playbackRecent =
+    params.lastPlaybackActiveAt != null &&
+    now - params.lastPlaybackActiveAt < PLAYBACK_EFFECTIVE_CONNECTED_MS;
+
+  return playbackRecent || params.playbackActive === true;
+}
+
+export function resolveEffectivePeerConnection(params: {
+  peerState: CallPeerState;
+  remoteTracksCount: number;
+  hasRemoteStream: boolean;
+  trackReady: string;
+  lastPlaybackActiveAt: number | null;
+  playbackActive?: boolean;
+  nowMs?: number;
+}): {
+  effectivePeerState: EffectivePeerState;
+  effectiveConnected: boolean;
+  activePlaybackConnected: boolean;
+} {
+  const activePlaybackConnected = isActivePlaybackConnected(params);
+
+  if (params.peerState === "connected") {
+    return {
+      effectivePeerState: "connected",
+      effectiveConnected: true,
+      activePlaybackConnected,
+    };
+  }
+
+  if (
+    activePlaybackConnected &&
+    (params.peerState === "connecting" || params.peerState === "idle")
+  ) {
+    return {
+      effectivePeerState: "connected_effective",
+      effectiveConnected: true,
+      activePlaybackConnected: true,
+    };
+  }
+
+  return {
+    effectivePeerState: params.peerState,
+    effectiveConnected: false,
+    activePlaybackConnected,
+  };
+}
+
 export const PRESENCE_FRESH_MS_HOME = 45_000;
 export const PRESENCE_FRESH_MS_ROOM = 15_000;
 export const PRESENCE_STALE_GRACE_MS = 20_000;
@@ -150,6 +216,8 @@ export function resolveCallMemberStatus(params: {
   screen?: string | null;
   localExitedCall?: boolean;
   peerState: CallPeerState;
+  effectivePeerState?: EffectivePeerState;
+  activePlaybackConnected?: boolean;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
 }) {
@@ -200,6 +268,20 @@ export function resolveCallMemberStatus(params: {
             ? "screen_home"
             : "is_in_call_false",
       source: "participation",
+    };
+  }
+
+  if (
+    params.activePlaybackConnected &&
+    params.peerState !== "connected"
+  ) {
+    return {
+      text: "通話中",
+      color: "#065f46",
+      chipBg: "#ecfdf5",
+      chipText: "#047857",
+      reason: "active_playback_connected",
+      source: "effectivePeerState",
     };
   }
 

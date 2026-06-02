@@ -40,6 +40,7 @@ import type { CallRequestPublic } from "@/lib/callRequest";
 import {
   logParticipationStatusDecision,
   resolveCallMemberStatus,
+  resolveEffectivePeerConnection,
 } from "@/lib/memberPresenceStatus";
 import {
   clearLocalLeftCall,
@@ -151,7 +152,7 @@ export default function CallClient() {
     Record<string, PeerStatusDiagnostics>
   >({});
   const [remoteAudioHealth, setRemoteAudioHealth] = useState<
-    Record<string, { verified: boolean }>
+    Record<string, { verified: boolean; playbackActive?: boolean }>
   >({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
@@ -254,7 +255,22 @@ export default function CallClient() {
         everConnectedPeersRef.current.add(id);
       }
     }
-  }, [peerStates]);
+    for (const [id, diag] of Object.entries(peerDiagnostics)) {
+      const health = remoteAudioHealth[id];
+      const effective = resolveEffectivePeerConnection({
+        peerState: peerStates[id] ?? "idle",
+        remoteTracksCount: diag?.remoteTracksCount ?? 0,
+        hasRemoteStream: diag?.hasRemoteStream ?? false,
+        trackReady: diag?.trackReady ?? "-",
+        lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+        playbackActive: health?.playbackActive,
+        nowMs,
+      });
+      if (effective.effectiveConnected) {
+        everConnectedPeersRef.current.add(id);
+      }
+    }
+  }, [nowMs, peerDiagnostics, peerStates, remoteAudioHealth]);
 
   useEffect(() => {
     if (!classId || !deviceId) return;
@@ -842,15 +858,27 @@ export default function CallClient() {
       }
 
       const peerState = peerStates[memberId] ?? "idle";
-      const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
+      const diag = peerDiagnostics[memberId];
       const audioHealth = remoteAudioHealth[memberId];
+      const effective = resolveEffectivePeerConnection({
+        peerState,
+        remoteTracksCount: diag?.remoteTracksCount ?? 0,
+        hasRemoteStream: diag?.hasRemoteStream ?? false,
+        trackReady: diag?.trackReady ?? "-",
+        lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+        playbackActive: audioHealth?.playbackActive,
+        nowMs,
+      });
+      const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
       const remoteAudioVerified =
-        peerState === "connected"
+        effective.effectiveConnected
           ? audioHealth?.verified === true
             ? true
             : audioHealth
               ? false
-              : null
+              : effective.activePlaybackConnected
+                ? true
+                : null
           : null;
 
       const status = resolveCallMemberStatus({
@@ -860,6 +888,8 @@ export default function CallClient() {
         screen: localExitedCall ? "room" : member.screen,
         localExitedCall,
         peerState,
+        effectivePeerState: effective.effectivePeerState,
+        activePlaybackConnected: effective.activePlaybackConnected,
         wasPeerConnected,
         remoteAudioVerified,
       });
@@ -877,6 +907,8 @@ export default function CallClient() {
             is_in_call: member.is_in_call ?? null,
             screen: member.screen ?? null,
             peerState,
+            effectivePeerState: effective.effectivePeerState,
+            activePlaybackConnected: effective.activePlaybackConnected,
             wasPeerConnected,
             remoteAudioVerified,
             localExitedCall,
@@ -887,18 +919,23 @@ export default function CallClient() {
         prevCallStatusRef.current[memberId] = status.text;
       }
 
-      const diag = peerDiagnostics[memberId];
-      const remoteAudioHealthStr =
-        peerState !== "connected"
-          ? "n/a"
-          : audioHealth == null
-            ? "pending"
-            : audioHealth.verified
-              ? "verified"
+      const playbackActiveAgeMs =
+        diag?.lastPlaybackActiveAt != null && nowMs > 0
+          ? nowMs - diag.lastPlaybackActiveAt
+          : null;
+      const remoteAudioHealthStr = !effective.effectiveConnected
+        ? "n/a"
+        : audioHealth == null
+          ? "pending"
+          : audioHealth.verified
+            ? "verified"
+            : audioHealth.playbackActive
+              ? "playback_active"
               : "unverified";
       const peerLogSignature = [
         status.text,
         peerState,
+        effective.effectivePeerState,
         remoteAudioHealthStr,
         diag?.hasPc ?? false,
         diag?.conn ?? "-",
@@ -909,6 +946,7 @@ export default function CallClient() {
         diag?.trackReady ?? "-",
         diag?.isRemoteInCall ?? isInCall,
         status.reason,
+        playbackActiveAgeMs ?? "-",
       ].join("|");
 
       if (prevCallStatusPeerLogRef.current[memberId] !== peerLogSignature) {
@@ -918,7 +956,9 @@ export default function CallClient() {
           label: status.text,
           status: isInCall ? "in_call" : "waiting",
           peerState,
+          effectivePeerState: effective.effectivePeerState,
           remoteAudioHealth: remoteAudioHealthStr,
+          playbackActiveAgeMs,
           hasPc: diag?.hasPc ?? false,
           conn: diag?.conn ?? "-",
           ice: diag?.ice ?? "-",
@@ -934,7 +974,7 @@ export default function CallClient() {
 
       return status;
     },
-    [callInfo, deviceId, isMuted, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
+    [callInfo, deviceId, isMuted, nowMs, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
   );
 
   useEffect(() => {
@@ -1046,10 +1086,18 @@ export default function CallClient() {
         onRemotePlaybackHealthChange={(remoteId, health) => {
           setRemoteAudioHealth((prev) => {
             const current = prev[remoteId];
-            if (current?.verified === health.verified) return prev;
+            if (
+              current?.verified === health.verified &&
+              current?.playbackActive === health.playbackActive
+            ) {
+              return prev;
+            }
             return {
               ...prev,
-              [remoteId]: { verified: health.verified },
+              [remoteId]: {
+                verified: health.verified,
+                playbackActive: health.playbackActive,
+              },
             };
           });
         }}

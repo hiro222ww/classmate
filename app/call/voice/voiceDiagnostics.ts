@@ -340,6 +340,7 @@ export type PeerStatusDiagnostics = {
   remoteTracksCount: number;
   trackReady: string;
   isRemoteInCall: boolean;
+  lastPlaybackActiveAt: number | null;
 };
 
 export function logCallStatusPeer(params: {
@@ -348,7 +349,9 @@ export function logCallStatusPeer(params: {
   label: string;
   status: string;
   peerState: string;
+  effectivePeerState?: string;
   remoteAudioHealth: string;
+  playbackActiveAgeMs?: number | null;
   hasPc: boolean;
   conn: string;
   ice: string;
@@ -361,8 +364,9 @@ export function logCallStatusPeer(params: {
 }) {
   console.log(
     `[call-status-peer] local=${compactDeviceId(params.localDeviceId)} remote=${compactDeviceId(params.remoteDeviceId)} ` +
-      `label=${params.label} status=${params.status} peerState=${params.peerState} ` +
-      `remoteAudioHealth=${params.remoteAudioHealth} hasPc=${params.hasPc} ` +
+      `label=${params.label} status=${params.status} peerState=${params.effectivePeerState ?? params.peerState} ` +
+      `remoteAudioHealth=${params.remoteAudioHealth} ` +
+      `playbackActiveAgeMs=${params.playbackActiveAgeMs ?? "-"} hasPc=${params.hasPc} ` +
       `conn=${params.conn} ice=${params.ice} sig=${params.sig} ` +
       `hasRemoteStream=${params.hasRemoteStream} remoteTracksCount=${params.remoteTracksCount} ` +
       `trackReady=${params.trackReady} isRemoteInCall=${params.isRemoteInCall} reason=${params.reason}`

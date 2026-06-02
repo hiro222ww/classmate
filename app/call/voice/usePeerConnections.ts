@@ -1264,6 +1264,9 @@ export function usePeerConnections({
       const media = getPeerMedia(remoteId);
       const stream = remoteStreamsRef.current.get(remoteId);
       const audioTrack = stream?.getAudioTracks()[0] ?? null;
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
 
       diagnostics[remoteId] = {
         hasPc: isUsablePeerConnection(pc),
@@ -1274,6 +1277,7 @@ export function usePeerConnections({
         remoteTracksCount: media.remoteTracksCount,
         trackReady: audioTrack?.readyState ?? media.primaryTrackReadyState ?? "-",
         isRemoteInCall: isRemoteInCall(remoteId),
+        lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
       };
     }
 
