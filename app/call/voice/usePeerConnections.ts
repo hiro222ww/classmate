@@ -39,6 +39,7 @@ import {
 } from "@/lib/voiceClientEnv";
 import type { RemotePlaybackHealth } from "./RemoteAudio";
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
+import { isTransportMediaConnected } from "@/lib/memberPresenceStatus";
 import {
   createEmptyPeerIceDiagnostics,
   evaluateInsufficientRemoteCandidates,
@@ -187,6 +188,9 @@ const AUTO_HARD_RESET_ORPHAN_MS = 5_000;
 const AUTO_HARD_RESET_P2P_FAILED_WINDOW_MS = 5_000;
 const AUTO_HARD_RESET_EVAL_INTERVAL_MS = 2_000;
 const RECONNECT_REQUEST_RETRY_MS = 5_000;
+const SOFT_REBUILD_ICE_UNCONFIRMED_MS = 17_000;
+const SOFT_REBUILD_MIN_INTERVAL_MS = 25_000;
+const MAX_SOFT_ICE_RESTART_ATTEMPTS = 2;
 
 type PeerHardResetMode = "manual" | "auto";
 
@@ -226,6 +230,33 @@ function isSelfInitiatedHealEnsureReason(reason: string): boolean {
     reason.includes("safety_net") ||
     reason.includes("no_stream_no_offer")
   );
+}
+
+function hasActivePlaybackWithoutConfirmation(
+  timestamps: PeerSignalTimestamps
+): boolean {
+  return (
+    timestamps.lastPlaybackConfirmedAt == null &&
+    (timestamps.lastPlaySuccessAt != null ||
+      timestamps.lastPlaybackActiveAt != null)
+  );
+}
+
+function getSoftRebuildStuckSinceMs(params: {
+  timestamps: PeerSignalTimestamps;
+  connectStartedAt: number | null | undefined;
+  checkingStuckSince: number | null | undefined;
+}): number | null {
+  const anchors = [
+    params.checkingStuckSince ?? null,
+    params.connectStartedAt ?? null,
+    params.timestamps.lastPlaybackActiveAt,
+    params.timestamps.lastPlaySuccessAt,
+    params.timestamps.lastOnTrackAt,
+  ].filter((value): value is number => value != null);
+
+  if (!anchors.length) return null;
+  return Math.min(...anchors);
 }
 
 function evaluateAutoHardResetTrigger(params: {
@@ -272,6 +303,11 @@ function evaluateAutoHardResetTrigger(params: {
       : null;
   const isConnectingChecking =
     conn === "connecting" || ice === "checking" || ice === "new";
+
+  if (hasActivePlaybackWithoutConfirmation(timestamps) && isConnectingChecking) {
+    return null;
+  }
+
   if (
     isConnectingChecking &&
     connectAgeMs != null &&
@@ -285,7 +321,11 @@ function evaluateAutoHardResetTrigger(params: {
       params.connectStartedAt ??
       timestamps.lastOnTrackAt ??
       timestamps.lastPlaybackActiveAt;
-    if (anchor != null && nowMs - anchor >= AUTO_HARD_RESET_STUCK_MS) {
+    if (
+      anchor != null &&
+      nowMs - anchor >= AUTO_HARD_RESET_STUCK_MS &&
+      !hasActivePlaybackWithoutConfirmation(timestamps)
+    ) {
       return "confirmed_at_missing";
     }
   }
@@ -293,7 +333,8 @@ function evaluateAutoHardResetTrigger(params: {
   if (
     timestamps.lastPlaybackActiveAt != null &&
     timestamps.lastPlaybackConfirmedAt == null &&
-    nowMs - timestamps.lastPlaybackActiveAt >= AUTO_HARD_RESET_STUCK_MS
+    nowMs - timestamps.lastPlaybackActiveAt >= AUTO_HARD_RESET_STUCK_MS &&
+    !isConnectingChecking
   ) {
     return "playback_provisional_unconfirmed";
   }
@@ -898,6 +939,9 @@ export function usePeerConnections({
   const peerIceDiagnosticsRef = useRef<Map<string, PeerIceDiagnostics>>(new Map());
   const iceRestartAttemptsRef = useRef<Map<string, number>>(new Map());
   const checkingPlaybackStuckAtRef = useRef<Map<string, number>>(new Map());
+  const softRenegotiateLastAtRef = useRef<Map<string, number>>(new Map());
+  const softIceRestartAttemptsRef = useRef<Map<string, number>>(new Map());
+  const softRebuildCandidateLoggedRef = useRef<Set<string>>(new Set());
   const iceRestartPostTimersRef = useRef<Map<string, number>>(new Map());
   const turnFallbackAttemptedRef = useRef<Map<string, boolean>>(new Map());
   const p2pDirectFailedHoldUntilRef = useRef<Map<string, number>>(new Map());
@@ -1384,6 +1428,31 @@ export function usePeerConnections({
     []
   );
 
+  const markIceTransportConfirmed = useCallback(
+    (remoteId: string, pc: RTCPeerConnection) => {
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      if (timestamps.lastPlaybackConfirmedAt != null) return;
+      if (!hasActivePlaybackWithoutConfirmation(timestamps)) return;
+
+      const conn = pc.connectionState;
+      const ice = pc.iceConnectionState;
+      if (!isTransportMediaConnected(conn, ice)) return;
+
+      touchPeerSignal(remoteId, "playback_confirmed");
+      softRebuildCandidateLoggedRef.current.delete(remoteId);
+      checkingPlaybackStuckAtRef.current.delete(remoteId);
+      softIceRestartAttemptsRef.current.delete(remoteId);
+
+      console.log(
+        `[voice-peer] ice-confirmed remote=${compactDeviceId(remoteId)} ` +
+          `conn=${conn} ice=${ice} ${formatVoiceModeSuffix()}`
+      );
+    },
+    [touchPeerSignal]
+  );
+
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {
       if (health.playSuccessEvent) {
@@ -1428,16 +1497,26 @@ export function usePeerConnections({
         `confirmedAt=- playAt=${playAt} playbackAt=${playbackAt} attempts=3 ${formatVoiceModeSuffix()}`
     );
 
-    void attemptSignalingRecoverRef
-      .current(remoteId, "audio_playback_unconfirmed_timeout")
+    void maybeSoftRenegotiatePeerRef
+      .current(remoteId)
+      .then((softOk) => {
+        if (softOk) return;
+        return attemptSignalingRecoverRef.current(
+          remoteId,
+          "audio_playback_unconfirmed_timeout"
+        );
+      })
       .finally(() => {
-        if (!reconnectPendingRef.current.has(remoteId)) {
-          scheduleReconnectRef.current?.(remoteId, 1200, {
-            reason: "audio_playback_unconfirmed_timeout",
-            source: "audio_playback_unconfirmed_timeout",
-            force: true,
-          });
-        }
+        const timestamps =
+          peerSignalTimestampsRef.current.get(remoteId) ??
+          emptyPeerSignalTimestamps();
+        if (timestamps.lastPlaybackConfirmedAt != null) return;
+        if (reconnectPendingRef.current.has(remoteId)) return;
+        scheduleReconnectRef.current?.(remoteId, 1200, {
+          reason: "audio_playback_unconfirmed_timeout",
+          source: "audio_playback_unconfirmed_timeout",
+          force: true,
+        });
       });
   }, []);
 
@@ -2129,15 +2208,16 @@ export function usePeerConnections({
 
             const stuckAt = checkingPlaybackStuckAtRef.current.get(remoteId);
             const stuckAgeMs = stuckAt ? Date.now() - stuckAt : null;
-            if (
-              stalled &&
-              media.remoteTracksCount > 0 &&
-              stuckAgeMs != null &&
-              stuckAgeMs >= ICE_RESTART_STUCK_MS &&
-              (iceRestartAttemptsRef.current.get(remoteId) ?? 0) <
-                MAX_ICE_RESTART_ATTEMPTS
-            ) {
-              void attemptIceRestartRef.current(remoteId);
+            if (stalled && media.remoteTracksCount > 0 && stuckAgeMs != null) {
+              if (stuckAgeMs >= SOFT_REBUILD_ICE_UNCONFIRMED_MS) {
+                void maybeSoftRenegotiatePeerRef.current(remoteId);
+              } else if (
+                stuckAgeMs >= ICE_RESTART_STUCK_MS &&
+                (iceRestartAttemptsRef.current.get(remoteId) ?? 0) <
+                  MAX_ICE_RESTART_ATTEMPTS
+              ) {
+                void attemptIceRestartRef.current(remoteId);
+              }
             }
           }
         }
@@ -2322,6 +2402,9 @@ export function usePeerConnections({
 
   const attemptSignalingRecoverRef = useRef<
     (remoteId: string, source: string) => Promise<boolean>
+  >(async () => false);
+  const maybeSoftRenegotiatePeerRef = useRef<
+    (remoteId: string) => Promise<boolean>
   >(async () => false);
   const attemptIceRestartRef = useRef<
     (remoteId: string) => Promise<boolean>
@@ -2896,7 +2979,29 @@ export function usePeerConnections({
 
         logIceCheckingDiagnostics(remoteId, currentPc);
 
+        const timestamps =
+          peerSignalTimestampsRef.current.get(remoteId) ??
+          emptyPeerSignalTimestamps();
+        const media = getPeerMedia(remoteId);
+        const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
+          pc: currentPc,
+          hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
+          remoteTracksCount: media.remoteTracksCount,
+          hasRemoteStream: media.hasRemoteStream,
+          timestamps,
+          connectStartedAt: connectStartedAtRef.current.get(remoteId),
+        });
+
+        if (
+          waitCheck?.shouldHold &&
+          waitCheck.holdReason === "active_playback_wait_connected"
+        ) {
+          void maybeSoftRenegotiatePeerRef.current(remoteId);
+          return;
+        }
+
         if (isEligibleForIceRestart(remoteId)) {
+          void maybeSoftRenegotiatePeerRef.current(remoteId);
           return;
         }
 
@@ -3038,6 +3143,26 @@ export function usePeerConnections({
 
         if (currentPc.connectionState !== "connecting") return;
 
+        const timestamps =
+          peerSignalTimestampsRef.current.get(remoteId) ??
+          emptyPeerSignalTimestamps();
+        const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
+          pc: currentPc,
+          hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
+          remoteTracksCount: getPeerMedia(remoteId).remoteTracksCount,
+          hasRemoteStream: getPeerMedia(remoteId).hasRemoteStream,
+          timestamps,
+          connectStartedAt: connectStartedAtRef.current.get(remoteId),
+        });
+
+        if (
+          waitCheck?.shouldHold &&
+          waitCheck.holdReason === "active_playback_wait_connected"
+        ) {
+          void maybeSoftRenegotiatePeerRef.current(remoteId);
+          return;
+        }
+
         logPeerStateWarning({
           sessionId,
           localDeviceId: deviceId,
@@ -3058,7 +3183,16 @@ export function usePeerConnections({
 
       connectingTimersRef.current.set(remoteId, timer);
     },
-    [deviceId, getCurrentConnectionId, getPeerMedia, markRecoveryStart, sessionId, setPeerMeta, emitMeshSummary]
+    [
+      deviceId,
+      getCurrentConnectionId,
+      getPeerMedia,
+      hasLiveRemoteAudioStream,
+      markRecoveryStart,
+      sessionId,
+      setPeerMeta,
+      emitMeshSummary,
+    ]
   );
 
   useEffect(() => {
@@ -3349,12 +3483,15 @@ export function usePeerConnections({
           markPeerLastConnected(remoteId);
           checkingPlaybackStuckAtRef.current.delete(remoteId);
           iceRestartAttemptsRef.current.delete(remoteId);
+          softIceRestartAttemptsRef.current.delete(remoteId);
+          softRebuildCandidateLoggedRef.current.delete(remoteId);
           p2pDirectFailedHoldUntilRef.current.delete(remoteId);
           orphanRemoteAudioAtRef.current.delete(remoteId);
           if (orphanRemoteAudioRef.current.delete(remoteId)) {
             emitPeerStates();
           }
           orphanRemoteAudioLoggedRef.current.delete(remoteId);
+          markIceTransportConfirmed(remoteId, pc);
         }
 
         if (iceState === "disconnected") {
@@ -3492,6 +3629,7 @@ export function usePeerConnections({
           clearPeerWatchdogTimers(remoteId);
           maybeLogRecoverySuccess(remoteId, pc);
           syncRemoteAudioFromPc(remoteId, pc, "pc_connected");
+          markIceTransportConfirmed(remoteId, pc);
 
           const sender = pc
             .getSenders()
@@ -3606,6 +3744,7 @@ export function usePeerConnections({
       localStreamRef,
       logVoiceConnection,
       markConnectStart,
+      markIceTransportConfirmed,
       markPeerLastConnected,
       maybeLogRecoverySuccess,
       scheduleConnectingTimeout,
@@ -4394,6 +4533,162 @@ export function usePeerConnections({
 
   ensurePeerConnectionRef.current = ensurePeerConnection;
 
+  const attemptSoftIceRestart = useCallback(
+    async (remoteId: string) => {
+      if (deviceId >= remoteId) return false;
+
+      const attempts = softIceRestartAttemptsRef.current.get(remoteId) ?? 0;
+      if (attempts >= MAX_SOFT_ICE_RESTART_ATTEMPTS) {
+        return false;
+      }
+
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc || !isUsablePeerConnection(pc)) return false;
+
+      const connectionId = getCurrentConnectionId(remoteId);
+      if (!connectionId) return false;
+      if (pc.signalingState !== "stable") return false;
+
+      softIceRestartAttemptsRef.current.set(remoteId, attempts + 1);
+
+      const stats = getOrCreatePeerIceStats(remoteId);
+      stats.localTypes.clear();
+      stats.localCount = 0;
+      stats.gatheringState = "new";
+
+      console.log(
+        `[voice-peer] soft-ice-restart remote=${compactDeviceId(remoteId)} ` +
+          `attempt=${attempts + 1}/${MAX_SOFT_ICE_RESTART_ATTEMPTS} ` +
+          `conn=${pc.connectionState} ice=${pc.iceConnectionState} ${formatVoiceModeSuffix()}`
+      );
+
+      try {
+        const offer = await pc.createOffer({ iceRestart: true });
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) {
+          return false;
+        }
+
+        await pc.setLocalDescription(offer);
+        await sendSignal(remoteId, "offer", {
+          connectionId: activeConnectionId,
+          sdp: pc.localDescription,
+        });
+        offeredPeersRef.current.add(remoteId);
+        touchPeerSignal(remoteId, "offer_sent");
+        scheduleIceCheckingTimeout(remoteId, connectionId, pc);
+        return true;
+      } catch (e) {
+        console.warn("[call] soft-ice-restart failed", remoteId, e);
+        return false;
+      }
+    },
+    [
+      deviceId,
+      getCurrentConnectionId,
+      getOrCreatePeerIceStats,
+      scheduleIceCheckingTimeout,
+      sendSignal,
+      touchPeerSignal,
+    ]
+  );
+
+  const maybeSoftRenegotiatePeer = useCallback(
+    async (remoteId: string) => {
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc || !isUsablePeerConnection(pc)) return false;
+      if (!isPcConnectingOrIceChecking(pc)) return false;
+
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      if (!hasActivePlaybackWithoutConfirmation(timestamps)) return false;
+
+      const now = Date.now();
+      const stuckSince = getSoftRebuildStuckSinceMs({
+        timestamps,
+        connectStartedAt: connectStartedAtRef.current.get(remoteId),
+        checkingStuckSince: checkingPlaybackStuckAtRef.current.get(remoteId),
+      });
+      if (stuckSince == null) return false;
+
+      const stuckAgeMs = now - stuckSince;
+      if (stuckAgeMs < SOFT_REBUILD_ICE_UNCONFIRMED_MS) return false;
+
+      const playbackAgeMs =
+        signalAgeMs(timestamps.lastPlaybackActiveAt) ??
+        signalAgeMs(timestamps.lastPlaySuccessAt);
+
+      if (!softRebuildCandidateLoggedRef.current.has(remoteId)) {
+        softRebuildCandidateLoggedRef.current.add(remoteId);
+        console.log(
+          `[voice-peer] soft-rebuild-candidate remote=${compactDeviceId(remoteId)} ` +
+            `reason=playback_active_but_ice_unconfirmed conn=${pc.connectionState} ` +
+            `ice=${pc.iceConnectionState} playbackAgeMs=${playbackAgeMs ?? "-"} ` +
+            `confirmedAt=- stuckAgeMs=${stuckAgeMs} ${formatVoiceModeSuffix()}`
+        );
+      }
+
+      const lastSoftAt = softRenegotiateLastAtRef.current.get(remoteId) ?? 0;
+      if (now - lastSoftAt < SOFT_REBUILD_MIN_INTERVAL_MS) {
+        return false;
+      }
+      softRenegotiateLastAtRef.current.set(remoteId, now);
+
+      console.log(
+        `[voice-peer] soft-renegotiate remote=${compactDeviceId(remoteId)} ` +
+          `reason=ice_unconfirmed_with_playback conn=${pc.connectionState} ` +
+          `ice=${pc.iceConnectionState} playbackAgeMs=${playbackAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
+      );
+      logVoicePeerAutoRecover({
+        remoteId,
+        action: "reconnect",
+        reason: "ice_unconfirmed_with_playback",
+      });
+
+      await attemptSignalingRecoverRef.current(
+        remoteId,
+        "ice_unconfirmed_with_playback"
+      );
+
+      if (deviceId < remoteId) {
+        await attemptSoftIceRestart(remoteId);
+      } else {
+        const connectionId = getCurrentConnectionId(remoteId);
+        if (connectionId && !reconnectPendingRef.current.has(remoteId)) {
+          const passiveState = passiveReconnectStateRef.current.get(remoteId);
+          if (!passiveState || passiveState.sentAt == null) {
+            void sendReconnectRequest(
+              remoteId,
+              connectionId,
+              "soft_renegotiate_passive"
+            );
+          }
+        }
+      }
+
+      const softAttempts = softIceRestartAttemptsRef.current.get(remoteId) ?? 0;
+      if (softAttempts >= MAX_SOFT_ICE_RESTART_ATTEMPTS) {
+        const stats = getOrCreatePeerIceStats(remoteId);
+        if (hasNoRelayCandidates(stats)) {
+          void attemptTurnFallbackForPeerRef.current(
+            remoteId,
+            "soft_rebuild_ice_unconfirmed"
+          );
+        }
+      }
+
+      return true;
+    },
+    [
+      attemptSoftIceRestart,
+      deviceId,
+      getCurrentConnectionId,
+      getOrCreatePeerIceStats,
+      sendReconnectRequest,
+    ]
+  );
+
   const attemptIceRestart = useCallback(
     async (remoteId: string) => {
       if (deviceId >= remoteId) return false;
@@ -4506,6 +4801,10 @@ export function usePeerConnections({
   useEffect(() => {
     attemptSignalingRecoverRef.current = attemptSignalingRecover;
   }, [attemptSignalingRecover]);
+
+  useEffect(() => {
+    maybeSoftRenegotiatePeerRef.current = maybeSoftRenegotiatePeer;
+  }, [maybeSoftRenegotiatePeer]);
 
   useEffect(() => {
     attemptIceRestartRef.current = attemptIceRestart;
@@ -4907,6 +5206,7 @@ export function usePeerConnections({
               `playbackActiveAgeMs=${waitCheck.playbackActiveAgeMs ?? "-"} playAgeMs=${waitCheck.playAgeMs ?? "-"} ` +
               `ontrackAgeMs=${waitCheck.ontrackAgeMs ?? "-"} activityAgeMs=${waitCheck.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
           );
+          void maybeSoftRenegotiatePeerRef.current(remoteId);
           continue;
         }
 
