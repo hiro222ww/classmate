@@ -128,7 +128,7 @@ type TrackEndedHoldCheck = {
 
 function evaluateTrackEndedHold(params: {
   pc: RTCPeerConnection | null | undefined;
-  media: { hasRemoteStream: boolean; remoteTracksCount: number };
+  media: { hasLiveRemoteAudioStream: boolean; remoteTracksCount: number };
   lastConnectedAt?: number;
 }): TrackEndedHoldCheck {
   const { pc, media, lastConnectedAt } = params;
@@ -137,7 +137,7 @@ function evaluateTrackEndedHold(params: {
   const lastConnectedAgoMs =
     lastConnectedAt != null ? Date.now() - lastConnectedAt : null;
   const tracks = media.remoteTracksCount;
-  const hasStream = media.hasRemoteStream;
+  const hasStream = media.hasLiveRemoteAudioStream;
 
   let shouldHold = false;
   let reason = "not_healthy";
@@ -156,7 +156,7 @@ function evaluateTrackEndedHold(params: {
     reason = "recent_connected";
   } else if (hasStream || tracks > 0) {
     shouldHold = true;
-    reason = "has_stream";
+    reason = "has_live_stream";
   }
 
   return { shouldHold, reason, conn, ice, lastConnectedAgoMs, tracks, hasStream };
@@ -171,9 +171,37 @@ function logTrackEndedHoldCheck(remoteId: string, check: TrackEndedHoldCheck) {
 }
 const CLOSE_FOR_RECONNECT = {
   clearConnectionId: false,
-  preserveRemoteAudio: true,
-  reason: "reconnect_preserve_audio",
+  preserveRemoteAudio: false,
+  reason: "reconnect_clear_ended_audio",
 } as const;
+
+const PASSIVE_WAIT_OFFER_TIMEOUT_MS = 8000;
+
+function compactStreamId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 6) return value;
+  return value.slice(-6);
+}
+
+function getRemoteStreamAudioSnapshot(stream: MediaStream | null | undefined) {
+  const audioTracks = stream?.getAudioTracks() ?? [];
+  const liveTracks = audioTracks.filter((track) => track.readyState === "live");
+  return {
+    primaryTrack: audioTracks[0] ?? null,
+    hasLiveStream: liveTracks.length > 0,
+    liveTrackCount: liveTracks.length,
+    totalTrackCount: audioTracks.length,
+  };
+}
+
+function isEndedStreamReconnectReason(reason: string): boolean {
+  return (
+    reason.includes("remote_track_ended") ||
+    reason.includes("ended_stream") ||
+    reason.includes("track_ended")
+  );
+}
 
 function makeConnectionId(localId: string, remoteId: string) {
   return `${localId}__${remoteId}__${Date.now()}__${Math.random()
@@ -397,6 +425,7 @@ export function usePeerConnections({
   const attachedTrackIdsRef = useRef<Map<string, Set<string>>>(new Map());
   const trackEndedAtRef = useRef<Map<string, number>>(new Map());
   const endedHoldTimersRef = useRef<Map<string, number>>(new Map());
+  const passiveWaitOfferTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
     Map<string, { reason: string; scheduledInMs: number; scheduledAt: number }>
   >(new Map());
@@ -424,11 +453,56 @@ export function usePeerConnections({
 
   const getPeerMedia = useCallback((remoteId: string) => {
     const remoteStream = remoteStreamsRef.current.get(remoteId);
+    const snapshot = getRemoteStreamAudioSnapshot(remoteStream);
     return {
-      hasRemoteStream: !!remoteStream,
-      remoteTracksCount: remoteStream?.getAudioTracks().length ?? 0,
+      hasRemoteStream: snapshot.hasLiveStream,
+      remoteTracksCount: snapshot.liveTrackCount,
+      remoteTracksTotal: snapshot.totalTrackCount,
+      primaryTrackReadyState: snapshot.primaryTrack?.readyState ?? null,
     };
   }, []);
+
+  const hasLiveRemoteAudioStream = useCallback((remoteId: string) => {
+    const stream = remoteStreamsRef.current.get(remoteId);
+    return getRemoteStreamAudioSnapshot(stream).hasLiveStream;
+  }, []);
+
+  const hasStaleEndedRemoteAudio = useCallback((remoteId: string) => {
+    const stream = remoteStreamsRef.current.get(remoteId);
+    const snapshot = getRemoteStreamAudioSnapshot(stream);
+    return snapshot.totalTrackCount > 0 && !snapshot.hasLiveStream;
+  }, []);
+
+  const clearEndedRemoteAudio = useCallback(
+    (remoteId: string, track?: MediaStreamTrack | null) => {
+      const stream = remoteStreamsRef.current.get(remoteId);
+      const endedTrack =
+        track ?? stream?.getAudioTracks()[0] ?? null;
+
+      if (!stream && !endedTrack) {
+        return false;
+      }
+
+      remoteStreamsRef.current.delete(remoteId);
+
+      setRemoteAudios((prev) => {
+        if (!prev[remoteId]) return prev;
+        const next = { ...prev };
+        delete next[remoteId];
+        return next;
+      });
+
+      console.log(
+        `[voice-peer] remote-audio-clear-ended remote=${compactDeviceId(remoteId)} ` +
+          `streamId=${compactStreamId(stream?.id ?? endedTrack?.id)} ` +
+          `trackId=${compactStreamId(endedTrack?.id)} ${formatVoiceModeSuffix()}`
+      );
+
+      emitPeerStatesRef.current();
+      return true;
+    },
+    []
+  );
 
   const markPeerLastConnected = useCallback((remoteId: string) => {
     peerLastConnectedAtRef.current.set(remoteId, Date.now());
@@ -436,24 +510,30 @@ export function usePeerConnections({
 
   const getTrackEndedHoldCheck = useCallback(
     (remoteId: string, pc: RTCPeerConnection | null | undefined) => {
+      const media = getPeerMedia(remoteId);
       return evaluateTrackEndedHold({
         pc,
-        media: getPeerMedia(remoteId),
+        media: {
+          hasLiveRemoteAudioStream: media.hasRemoteStream,
+          remoteTracksCount: media.remoteTracksCount,
+        },
         lastConnectedAt: peerLastConnectedAtRef.current.get(remoteId),
       });
     },
     [getPeerMedia]
   );
 
-  const hasLiveRemoteStream = useCallback((remoteId: string) => {
-    const stream = remoteStreamsRef.current.get(remoteId);
-    return (
-      !!stream &&
-      stream.getAudioTracks().some((track) => track.readyState === "live")
-    );
+  const clearPassiveWaitOfferTimer = useCallback((remoteId: string) => {
+    const timer = passiveWaitOfferTimersRef.current.get(remoteId);
+    if (timer) {
+      window.clearTimeout(timer);
+      passiveWaitOfferTimersRef.current.delete(remoteId);
+    }
   }, []);
 
   const clearPeerWatchdogTimers = useCallback((remoteId: string) => {
+    clearPassiveWaitOfferTimer(remoteId);
+
     const checkingTimer = iceCheckingTimersRef.current.get(remoteId);
     if (checkingTimer) {
       window.clearTimeout(checkingTimer);
@@ -471,7 +551,7 @@ export function usePeerConnections({
       window.clearTimeout(endedHoldTimer);
       endedHoldTimersRef.current.delete(remoteId);
     }
-  }, []);
+  }, [clearPassiveWaitOfferTimer]);
 
   const observePeerField = useCallback(
     (
@@ -683,7 +763,7 @@ export function usePeerConnections({
       const timer = window.setTimeout(() => {
         endedHoldTimersRef.current.delete(remoteId);
 
-        if (hasLiveRemoteStream(remoteId)) {
+        if (hasLiveRemoteAudioStream(remoteId)) {
           trackEndedAtRef.current.delete(remoteId);
           recoveryStartedAtRef.current.delete(remoteId);
           setPeerStateRef.current(remoteId, "connected");
@@ -719,7 +799,7 @@ export function usePeerConnections({
 
       endedHoldTimersRef.current.set(remoteId, timer);
     },
-    [clearEndedHoldTimer, getTrackEndedHoldCheck, hasLiveRemoteStream]
+    [clearEndedHoldTimer, getTrackEndedHoldCheck, hasLiveRemoteAudioStream]
   );
 
   const maybeLogRecoverySuccess = useCallback(
@@ -980,7 +1060,7 @@ export function usePeerConnections({
         sig: pc?.signalingState ?? "-",
         hasRemoteStream: media.hasRemoteStream,
         remoteTracksCount: media.remoteTracksCount,
-        trackReady: audioTrack?.readyState ?? "-",
+        trackReady: audioTrack?.readyState ?? media.primaryTrackReadyState ?? "-",
         isRemoteInCall: isRemoteInCall(remoteId),
       };
     }
@@ -1230,7 +1310,8 @@ export function usePeerConnections({
       }
     ) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
-      const preserveRemoteAudio = opts?.preserveRemoteAudio === true;
+      const preserveRemoteAudio =
+        opts?.preserveRemoteAudio === true && hasLiveRemoteAudioStream(remoteId);
       const reason = opts?.reason ?? "unspecified";
       const pc = pcsRef.current.get(remoteId);
       const hadPc = !!pc;
@@ -1295,7 +1376,7 @@ export function usePeerConnections({
         });
       }
     },
-    [clearPeerWatchdogTimers, clearReconnectTimer, clearCurrentConnectionId, emitPeerStates]
+    [clearPeerWatchdogTimers, clearReconnectTimer, clearCurrentConnectionId, emitPeerStates, hasLiveRemoteAudioStream]
   );
 
   const flushPendingIce = useCallback(
@@ -1380,7 +1461,7 @@ export function usePeerConnections({
 
         closePeer(remoteId, {
           clearConnectionId: false,
-          preserveRemoteAudio: true,
+          preserveRemoteAudio: hasLiveRemoteAudioStream(remoteId),
           reason,
         });
         console.log(
@@ -1407,6 +1488,7 @@ export function usePeerConnections({
       clearReconnectTimer,
       closePeer,
       deviceId,
+      hasLiveRemoteAudioStream,
       localAudioTrackRef,
       localStreamRef,
       markRecoveryStart,
@@ -1531,6 +1613,8 @@ export function usePeerConnections({
           `[voice-peer] track-ended-chain remote=${compactDeviceId(remoteId)} step=ended pc=${!!pcBefore} conn=${pcBefore?.connectionState ?? "-"} ${formatVoiceModeSuffix()}`
         );
 
+        clearEndedRemoteAudio(remoteId, track);
+
         const holdCheck = getTrackEndedHoldCheck(remoteId, pcBefore);
         logTrackEndedHoldCheck(remoteId, holdCheck);
 
@@ -1598,6 +1682,7 @@ export function usePeerConnections({
     },
     [
       cancelTrackEndedHold,
+      clearEndedRemoteAudio,
       deviceId,
       emitMeshSummary,
       finalizeRecovery,
@@ -2068,7 +2153,7 @@ export function usePeerConnections({
 
       if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
 
-      const hasRemoteStream = hasLiveRemoteStream(remoteId);
+      const hasRemoteStream = hasLiveRemoteAudioStream(remoteId);
       const existingPc = pcsRef.current.get(remoteId);
 
       if (hasRemoteStream) return;
@@ -2135,7 +2220,7 @@ export function usePeerConnections({
       deviceId,
       emitMeshSummary,
       getCurrentConnectionId,
-      hasLiveRemoteStream,
+      hasLiveRemoteAudioStream,
       localAudioTrackRef,
       localStreamRef,
       markConnectStart,
@@ -2149,6 +2234,42 @@ export function usePeerConnections({
   useEffect(() => {
     maybeStartOfferRef.current = maybeStartOffer;
   }, [maybeStartOffer]);
+
+  const schedulePassiveWaitOfferTimeout = useCallback(
+    (remoteId: string, triggerReason: string) => {
+      clearPassiveWaitOfferTimer(remoteId);
+      if (deviceId < remoteId) return;
+
+      const timer = window.setTimeout(() => {
+        passiveWaitOfferTimersRef.current.delete(remoteId);
+        const pc = pcsRef.current.get(remoteId);
+        if (!pc || hasLiveRemoteAudioStream(remoteId)) return;
+
+        if (
+          pc.signalingState === "have-remote-offer" ||
+          pc.connectionState === "connected"
+        ) {
+          return;
+        }
+
+        console.log(
+          `[voice-peer] passive-wait-offer-timeout remote=${compactDeviceId(remoteId)} action=force_offer reason=ended_stream_reconnect_timeout trigger=${triggerReason} ${formatVoiceModeSuffix()}`
+        );
+
+        if (deviceId < remoteId) {
+          void maybeStartOfferRef.current?.(remoteId);
+        } else {
+          scheduleReconnectRef.current?.(remoteId, 500, {
+            reason: "ended_stream_reconnect_timeout",
+            force: true,
+          });
+        }
+      }, PASSIVE_WAIT_OFFER_TIMEOUT_MS);
+
+      passiveWaitOfferTimersRef.current.set(remoteId, timer);
+    },
+    [clearPassiveWaitOfferTimer, deviceId, hasLiveRemoteAudioStream]
+  );
 
   const ensurePeerConnection = useCallback(
     (
@@ -2228,7 +2349,7 @@ export function usePeerConnections({
       if (hasUsablePc) {
         closePeer(remoteId, {
           clearConnectionId: false,
-          preserveRemoteAudio: true,
+          preserveRemoteAudio: hasLiveRemoteAudioStream(remoteId),
           reason: `ensure_replace_${reason}`,
         });
       }
@@ -2247,6 +2368,9 @@ export function usePeerConnections({
       } else {
         createPeerConnection(remoteId, connectionId);
         setPeerState(remoteId, "connecting");
+        if (isEndedStreamReconnectReason(reason)) {
+          schedulePassiveWaitOfferTimeout(remoteId, reason);
+        }
       }
 
       const createdPc = pcsRef.current.get(remoteId) ?? null;
@@ -2271,6 +2395,7 @@ export function usePeerConnections({
       markConnectStart,
       maybeStartOffer,
       micReady,
+      schedulePassiveWaitOfferTimeout,
       setCurrentConnectionId,
       setPeerState,
       signalReady,
@@ -2451,6 +2576,12 @@ export function usePeerConnections({
 
     const remoteIds = getRemoteIds();
 
+    for (const remoteId of remoteIds) {
+      if (hasStaleEndedRemoteAudio(remoteId)) {
+        clearEndedRemoteAudio(remoteId);
+      }
+    }
+
     type PlannedHeal = {
       remoteId: string;
       action:
@@ -2491,7 +2622,28 @@ export function usePeerConnections({
 
     for (const remoteId of remoteIds) {
       const pc = pcsRef.current.get(remoteId);
-      const hasStream = hasLiveRemoteStream(remoteId);
+
+      if (hasStaleEndedRemoteAudio(remoteId)) {
+        clearEndedRemoteAudio(remoteId);
+        console.log(
+          `[voice-peer] heal remote=${compactDeviceId(remoteId)} action=reconnect reason=ended_stream_without_live_track ${formatVoiceModeSuffix()}`
+        );
+        planned.push({
+          remoteId,
+          action: "reconnect",
+          reason: "ended_stream_without_live_track",
+          scheduledInMs: voicePolicy.trackEndedReconnectMs,
+          run: () => {
+            scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
+              reason: "ended_stream_without_live_track",
+              force: true,
+            });
+          },
+        });
+        continue;
+      }
+
+      const hasStream = hasLiveRemoteAudioStream(remoteId);
       const connected = pc?.connectionState === "connected";
       const blockReason = getReconnectBlockReason(remoteId);
       const inCall = isRemoteInCall(remoteId);
@@ -2730,7 +2882,7 @@ export function usePeerConnections({
         pcsRef.current.get(item.remoteId),
         {
           healRun,
-          hasRemoteStream: remoteStreamsRef.current.has(item.remoteId),
+          hasRemoteStream: hasLiveRemoteAudioStream(item.remoteId),
           scheduledInMs: item.scheduledInMs,
         }
       );
@@ -2747,7 +2899,7 @@ export function usePeerConnections({
         pcsRef.current.get(item.remoteId),
         {
           healRun,
-          hasRemoteStream: remoteStreamsRef.current.has(item.remoteId),
+          hasRemoteStream: hasLiveRemoteAudioStream(item.remoteId),
           scheduledInMs: item.scheduledInMs,
         }
       );
@@ -2780,7 +2932,9 @@ export function usePeerConnections({
     getReconnectBlockReason,
     getRemoteIds,
     getTrackEndedHoldCheck,
-    hasLiveRemoteStream,
+    hasLiveRemoteAudioStream,
+    hasStaleEndedRemoteAudio,
+    clearEndedRemoteAudio,
     isRemoteInCall,
     localAudioTrackRef,
     localStreamRef,
@@ -3185,6 +3339,12 @@ export function usePeerConnections({
       }
       endedHoldTimersRef.current.clear();
 
+      for (const timer of passiveWaitOfferTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      passiveWaitOfferTimersRef.current.clear();
+
       for (const timer of iceCheckingTimersRef.current.values()) {
         window.clearTimeout(timer);
         timerCount += 1;
@@ -3337,7 +3497,7 @@ export function usePeerConnections({
       const remoteIds = getRemoteIds();
 
       for (const remoteId of remoteIds) {
-        const hasRemoteStream = remoteStreamsRef.current.has(remoteId);
+        const hasRemoteStream = hasLiveRemoteAudioStream(remoteId);
         const pc = pcsRef.current.get(remoteId);
 
         if (hasRemoteStream) continue;
