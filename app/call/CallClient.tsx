@@ -902,6 +902,7 @@ export default function CallClient() {
         peerState,
         effectivePeerState: effective.effectivePeerState,
         activePlaybackConnected: effective.activePlaybackConnected,
+        playbackActiveMode: audioHealth?.playbackActiveMode,
         wasPeerConnected,
         remoteAudioVerified,
       });

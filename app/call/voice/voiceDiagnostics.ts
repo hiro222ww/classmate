@@ -477,6 +477,11 @@ function formatVoiceMeshPeerLine(peer: VoiceMeshPeerSummaryEntry): string {
     return `[voice-mesh] peer remote=${remote} pc=false inCall=${compactBool(peer.isInCall === true)} reason=${reason}`;
   }
 
+  const confirmedAgeMs =
+    peer.lastPlaybackConfirmedAt != null
+      ? Math.max(0, Date.now() - peer.lastPlaybackConfirmedAt)
+      : null;
+
   return (
     `[voice-mesh] peer remote=${remote} ` +
     `pc=true conn=${peer.connectionState ?? "-"} ` +
@@ -492,7 +497,8 @@ function formatVoiceMeshPeerLine(peer: VoiceMeshPeerSummaryEntry): string {
     `ontrackAt=${compactAgeMs(peer.lastOnTrackAt)} ` +
     `playAt=${compactAgeMs(peer.lastPlaySuccessAt)} ` +
     `playbackAt=${compactAgeMs(peer.lastPlaybackActiveAt)} ` +
-    `confirmedAt=${compactAgeMs(peer.lastPlaybackConfirmedAt)} ` +
+    `confirmedAt=${peer.lastPlaybackConfirmedAt != null ? compactAgeMs(peer.lastPlaybackConfirmedAt) : "-"} ` +
+    `confirmedAgeMs=${confirmedAgeMs ?? "-"} ` +
     `block=${peer.reconnectBlockReason ?? "-"}`
   );
 }

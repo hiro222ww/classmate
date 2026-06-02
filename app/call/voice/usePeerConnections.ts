@@ -119,8 +119,6 @@ const TRACK_ENDED_HOLD_MS = 2000;
 const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
 const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
 const PLAYBACK_ACTIVE_HOLD_MS = 15000;
-const AUDIO_PLAYBACK_UNCONFIRMED_TIMEOUT_MS = 15000;
-const MAX_AUDIO_REATTACH_BEFORE_RECONNECT = 3;
 
 type TrackEndedHoldCheck = {
   shouldHold: boolean;
@@ -639,7 +637,7 @@ export function usePeerConnections({
     (remoteId: string, reason: string) => void
   >(() => {});
   const audioReplayAtRef = useRef<Map<string, number>>(new Map());
-  const audioUnconfirmedReattachAttemptsRef = useRef<Map<string, number>>(new Map());
+  const audioUnconfirmedTimeoutNotifiedRef = useRef<Set<string>>(new Set());
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
 
@@ -1092,7 +1090,7 @@ export function usePeerConnections({
       if (event === "playback_confirmed") {
         next.lastPlaybackConfirmedAt = now;
         next.lastPlaybackActiveAt = now;
-        audioUnconfirmedReattachAttemptsRef.current.delete(remoteId);
+        audioUnconfirmedTimeoutNotifiedRef.current.delete(remoteId);
       }
 
       peerSignalTimestampsRef.current.set(remoteId, next);
@@ -1119,6 +1117,39 @@ export function usePeerConnections({
     },
     [touchPeerSignal]
   );
+
+  const handlePlaybackUnconfirmedTimeout = useCallback((remoteId: string) => {
+    if (audioUnconfirmedTimeoutNotifiedRef.current.has(remoteId)) return;
+
+    const timestamps =
+      peerSignalTimestampsRef.current.get(remoteId) ??
+      emptyPeerSignalTimestamps();
+    if (timestamps.lastPlaybackConfirmedAt != null) return;
+
+    audioUnconfirmedTimeoutNotifiedRef.current.add(remoteId);
+
+    const playAt =
+      timestamps.lastPlaySuccessAt != null
+        ? `${Math.max(0, Math.round((Date.now() - timestamps.lastPlaySuccessAt) / 1000))}s`
+        : "-";
+    const playbackAt =
+      timestamps.lastPlaybackActiveAt != null
+        ? `${Math.max(0, Math.round((Date.now() - timestamps.lastPlaybackActiveAt) / 1000))}s`
+        : "-";
+
+    console.log(
+      `[voice-peer] audio-unconfirmed-timeout remote=${compactDeviceId(remoteId)} ` +
+        `confirmedAt=- playAt=${playAt} playbackAt=${playbackAt} attempts=3 ${formatVoiceModeSuffix()}`
+    );
+
+    if (!reconnectPendingRef.current.has(remoteId)) {
+      scheduleReconnectRef.current?.(remoteId, 1200, {
+        reason: "audio_playback_unconfirmed_timeout",
+        source: "audio_playback_unconfirmed_timeout",
+        force: true,
+      });
+    }
+  }, []);
 
   const setPeerMeta = useCallback(
     (
@@ -1646,10 +1677,6 @@ export function usePeerConnections({
           missingRemoteAudioWarnedRef.current.delete(remoteId);
         }
 
-        const playSuccessAt = timestamps.lastPlaySuccessAt;
-        const confirmedAt = timestamps.lastPlaybackConfirmedAt;
-        const playSuccessAgeMs = playSuccessAt ? Date.now() - playSuccessAt : null;
-
         if (ontrackAgeMs != null && ontrackAgeMs >= 5000 && neverPlayed) {
           const lastReplay = audioReplayAtRef.current.get(remoteId) ?? 0;
           if (Date.now() - lastReplay >= 5000) {
@@ -1665,37 +1692,6 @@ export function usePeerConnections({
                 "stream_present_but_never_played_mount"
               );
             }
-          }
-        }
-
-        if (
-          playSuccessAgeMs != null &&
-          playSuccessAgeMs >= AUDIO_PLAYBACK_UNCONFIRMED_TIMEOUT_MS &&
-          !confirmedAt
-        ) {
-          const attempts =
-            audioUnconfirmedReattachAttemptsRef.current.get(remoteId) ?? 0;
-          if (attempts < MAX_AUDIO_REATTACH_BEFORE_RECONNECT) {
-            audioUnconfirmedReattachAttemptsRef.current.set(remoteId, attempts + 1);
-            console.log(
-              `[voice-peer] audio-reattach-attempt remote=${compactDeviceId(remoteId)} attempt=${attempts + 1}/${MAX_AUDIO_REATTACH_BEFORE_RECONNECT} reason=audio_playback_unconfirmed_timeout ${formatVoiceModeSuffix()}`
-            );
-            triggerRemoteAudioReplayRef.current(
-              remoteId,
-              "audio_playback_unconfirmed_timeout"
-            );
-          } else if (
-            attempts >= MAX_AUDIO_REATTACH_BEFORE_RECONNECT &&
-            !reconnectPendingRef.current.has(remoteId)
-          ) {
-            console.log(
-              `[voice-peer] audio-reconnect remote=${compactDeviceId(remoteId)} reason=audio_playback_unconfirmed_timeout attempts=${attempts} ${formatVoiceModeSuffix()}`
-            );
-            scheduleReconnectRef.current?.(remoteId, 1200, {
-              reason: "audio_playback_unconfirmed_timeout",
-              source: "audio_playback_unconfirmed_timeout",
-              force: true,
-            });
           }
         }
       }
@@ -4172,5 +4168,6 @@ export function usePeerConnections({
     remoteAudios,
     handleSignal,
     handleRemotePlaybackHealthChange,
+    handlePlaybackUnconfirmedTimeout,
   };
 }

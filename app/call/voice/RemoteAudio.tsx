@@ -17,6 +17,9 @@ const PROVISIONAL_PLAYBACK_MS = 15000;
 const SILENT_PLAYBACK_SUSPECT_MS = 5000;
 const CONFIRMED_LEVEL_THRESHOLD = 0.02;
 const REATTACH_DELAY_MS = 100;
+const AUDIO_OUTPUT_CONFIG_LOG_THROTTLE_MS = 10000;
+const PLAYBACK_CHECK_INTERVAL_MS = 2000;
+const MAX_SILENT_REATTACH_ATTEMPTS = 3;
 
 export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
 
@@ -121,15 +124,17 @@ function logPlaybackCheck(params: {
   const track = getPlaybackTrack(el, stream);
   const safari = getSafariAudioDebug(el);
 
+  const confirmed =
+    health.playbackActiveMode === "confirmed" || health.currentTimeAdvanced;
+
   console.log(
     `[remote-audio] playback-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
       `afterMs=${afterMs} currentTime=${el.currentTime.toFixed(2)} previousCurrentTime=${previousCurrentTime.toFixed(2)} ` +
       `advanced=${health.currentTimeAdvanced} level=${level.toFixed(3)} paused=${el.paused} muted=${el.muted} volume=${el.volume} ` +
       `readyState=${el.readyState} networkState=${el.networkState} trackReady=${track?.readyState ?? "-"} ` +
       `trackMuted=${track?.muted ?? "-"} srcObjectSet=${el.srcObject === stream} audioTracks=${stream.getAudioTracks().length} ` +
-      `playbackActive=${health.playbackActive} playbackMode=${health.playbackActiveMode} ` +
-      `visibilityState=${safari.visibilityState} webkitAudioDecodedByteCount=${safari.webkitAudioDecodedByteCount ?? "-"} ` +
-      `mediaElementAudioTrack0Enabled=${safari.mediaElementAudioTrack0Enabled ?? "-"} ${formatVoiceModeSuffix()}`
+      `playbackActive=${health.playbackActive} playbackMode=${health.playbackActiveMode} confirmed=${confirmed} ` +
+      `visibility=${safari.visibilityState} decodedBytes=${safari.webkitAudioDecodedByteCount ?? "-"} ${formatVoiceModeSuffix()}`
   );
 }
 
@@ -276,6 +281,7 @@ export default function RemoteAudio({
   replayReason = null,
   onSpeaking,
   onPlaybackHealthChange,
+  onPlaybackUnconfirmedTimeout,
 }: {
   stream: MediaStream;
   remoteId: string;
@@ -285,6 +291,7 @@ export default function RemoteAudio({
     remoteId: string,
     health: RemotePlaybackHealth
   ) => void;
+  onPlaybackUnconfirmedTimeout?: (remoteId: string) => void;
 }) {
   const ref = useRef<HTMLAudioElement | null>(null);
   const instanceRef = useRef(createRemoteAudioInstanceId());
@@ -298,8 +305,16 @@ export default function RemoteAudio({
   const mountedAtRef = useRef<number>(Date.now());
   const lastPlayAttemptAtRef = useRef<number | null>(null);
   const firstConfirmedAtRef = useRef<number | null>(null);
-  const silentSuspectHandledRef = useRef(false);
+  const playSuccessAtRef = useRef<number | null>(null);
+  const silentReattachAttemptsRef = useRef(0);
+  const lastSilentSuspectLogAtRef = useRef(0);
+  const unconfirmedTimeoutFiredRef = useRef(false);
   const reattachInProgressRef = useRef(false);
+  const periodicCheckIntervalRef = useRef<number | null>(null);
+  const audioOutputConfigLogRef = useRef<{
+    at: number;
+    signature: string;
+  } | null>(null);
   const attachLogThrottleRef = useRef(
     new Map<
       string,
@@ -361,7 +376,7 @@ export default function RemoteAudio({
       });
       if (health.playbackActiveMode === "confirmed") {
         firstConfirmedAtRef.current = Date.now();
-        silentSuspectHandledRef.current = false;
+        silentReattachAttemptsRef.current = 0;
       }
       emitPlaybackHealth(health);
       return health;
@@ -370,10 +385,15 @@ export default function RemoteAudio({
   );
 
   const playAudioRef = useRef<
-    (opts?: { fromUnlock?: boolean; reason?: PlayAttemptReason }) => Promise<void>
+    (opts?: {
+      fromUnlock?: boolean;
+      reason?: PlayAttemptReason;
+      attempt?: number;
+      maxAttempts?: number;
+    }) => Promise<void>
   >(async () => {});
 
-  const configureAudioElement = useCallback((el: HTMLAudioElement) => {
+  const applyAudioOutputConfig = useCallback((el: HTMLAudioElement) => {
     el.muted = false;
     el.defaultMuted = false;
     el.volume = 1;
@@ -381,9 +401,21 @@ export default function RemoteAudio({
     el.setAttribute("autoplay", "true");
     el.setAttribute("playsinline", "true");
     el.setAttribute("webkit-playsinline", "true");
-    console.log(
-      `[remote-audio] audio-output-config remote=${compactRemoteId(remoteId)} instance=${instanceId} muted=false volume=1 autoplay=true playsInline=true ${formatVoiceModeSuffix()}`
-    );
+
+    const signature = `${el.muted}|${el.volume}|${el.autoplay}`;
+    const now = Date.now();
+    const prev = audioOutputConfigLogRef.current;
+    const shouldLog =
+      !prev ||
+      prev.signature !== signature ||
+      now - prev.at >= AUDIO_OUTPUT_CONFIG_LOG_THROTTLE_MS;
+
+    if (shouldLog) {
+      audioOutputConfigLogRef.current = { at: now, signature };
+      console.log(
+        `[remote-audio] audio-output-config remote=${compactRemoteId(remoteId)} instance=${instanceId} muted=false volume=1 autoplay=true playsInline=true ${formatVoiceModeSuffix()}`
+      );
+    }
   }, [instanceId, remoteId]);
 
   const clearPlaybackChecks = useCallback(() => {
@@ -391,6 +423,10 @@ export default function RemoteAudio({
       window.clearTimeout(timer);
     }
     playbackCheckTimersRef.current = [];
+    if (periodicCheckIntervalRef.current != null) {
+      window.clearInterval(periodicCheckIntervalRef.current);
+      periodicCheckIntervalRef.current = null;
+    }
   }, []);
 
   const applyOutputDevice = useCallback(async () => {
@@ -466,6 +502,7 @@ export default function RemoteAudio({
   const schedulePlaybackChecksRef = useRef<
     (el: HTMLAudioElement, baselineTime: number) => void
   >(() => {});
+  const attachStreamRef = useRef<(() => void) | null>(null);
 
   const logAttachSkipEndedTrack = useCallback(
     (track: MediaStreamTrack | null) => {
@@ -480,6 +517,7 @@ export default function RemoteAudio({
   const emitEndedTrackHealth = useCallback(() => {
     const track = getPlaybackTrack(ref.current, stream);
     playSuccessRef.current = false;
+    playSuccessAtRef.current = null;
     provisionalPlaybackStartedAtRef.current = null;
     const el = ref.current;
     if (el) {
@@ -498,7 +536,12 @@ export default function RemoteAudio({
   }, [emitPlaybackHealth, stream]);
 
   const playAudio = useCallback(
-    async (opts?: { fromUnlock?: boolean; reason?: PlayAttemptReason }) => {
+    async (opts?: {
+      fromUnlock?: boolean;
+      reason?: PlayAttemptReason;
+      attempt?: number;
+      maxAttempts?: number;
+    }) => {
       const el = ref.current;
       if (!el || !stream) return;
 
@@ -527,9 +570,13 @@ export default function RemoteAudio({
       }
 
       lastPlayAttemptAtRef.current = Date.now();
-      configureAudioElement(el);
+      applyAudioOutputConfig(el);
+      const attemptLabel =
+        opts?.attempt != null && opts?.maxAttempts != null
+          ? ` attempt=${opts.attempt}/${opts.maxAttempts}`
+          : "";
       console.log(
-        `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason} ` +
+        `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason}${attemptLabel} ` +
           `paused=${el.paused} muted=${el.muted} volume=${el.volume} readyState=${el.readyState} ` +
           `srcObjectSet=${el.srcObject === stream} ${formatVoiceModeSuffix()}`
       );
@@ -550,7 +597,9 @@ export default function RemoteAudio({
 
         setBlocked(false);
         playSuccessRef.current = true;
-        provisionalPlaybackStartedAtRef.current = Date.now();
+        const now = Date.now();
+        playSuccessAtRef.current = now;
+        provisionalPlaybackStartedAtRef.current = now;
 
         logRemoteAudioCompact(remoteId, el, stream, "play-success");
 
@@ -572,6 +621,7 @@ export default function RemoteAudio({
         }
 
         playSuccessRef.current = false;
+        playSuccessAtRef.current = null;
         provisionalPlaybackStartedAtRef.current = null;
         const err = e as { name?: string; message?: string };
         const errName = err?.name ?? "unknown";
@@ -601,8 +651,8 @@ export default function RemoteAudio({
     },
     [
       activateIOSWebAudioFallback,
+      applyAudioOutputConfig,
       applyOutputDevice,
-      configureAudioElement,
       logRemotePlaybackActive,
       publishPlaybackHealth,
       remoteId,
@@ -615,7 +665,7 @@ export default function RemoteAudio({
   }, [playAudio]);
 
   const reattachAudioElement = useCallback(
-    async (reason: string) => {
+    async (reason: string, attempt: number) => {
       const el = ref.current;
       if (!el || !stream || reattachInProgressRef.current) return;
 
@@ -624,7 +674,7 @@ export default function RemoteAudio({
       lastAttachedTrackIdRef.current = null;
 
       console.log(
-        `[remote-audio] reattach remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason} ${formatVoiceModeSuffix()}`
+        `[remote-audio] reattach remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason} attempt=${attempt}/${MAX_SILENT_REATTACH_ATTEMPTS} ${formatVoiceModeSuffix()}`
       );
 
       try {
@@ -634,7 +684,7 @@ export default function RemoteAudio({
 
         if (isPlaybackTrackEnded(el, stream)) return;
 
-        configureAudioElement(el);
+        applyAudioOutputConfig(el);
         el.srcObject = stream;
         lastAttachedStreamIdRef.current = stream.id || null;
         lastAttachedTrackIdRef.current = stream.getAudioTracks()[0]?.id ?? null;
@@ -645,12 +695,16 @@ export default function RemoteAudio({
           // load() may throw on some streams; play() retry still runs
         }
 
-        await playAudioRef.current({ reason: "reattach_after_silent_playback" });
+        await playAudioRef.current({
+          reason: "reattach_after_silent_playback",
+          attempt,
+          maxAttempts: MAX_SILENT_REATTACH_ATTEMPTS,
+        });
       } finally {
         reattachInProgressRef.current = false;
       }
     },
-    [configureAudioElement, instanceId, remoteId, stream]
+    [applyAudioOutputConfig, instanceId, remoteId, stream]
   );
 
   const maybeHandleSilentPlaybackSuspect = useCallback(
@@ -659,21 +713,42 @@ export default function RemoteAudio({
         return;
       }
 
-      const startedAt =
-        provisionalPlaybackStartedAtRef.current ?? mountedAtRef.current;
-      const provisionalAgeMs = Date.now() - startedAt;
-      if (provisionalAgeMs < SILENT_PLAYBACK_SUSPECT_MS) return;
-      if (silentSuspectHandledRef.current) return;
+      const playSuccessAt = playSuccessAtRef.current;
+      if (playSuccessAt == null) return;
 
-      silentSuspectHandledRef.current = true;
+      const elapsedMs = Date.now() - playSuccessAt;
+      if (elapsedMs < SILENT_PLAYBACK_SUSPECT_MS) return;
+
+      const now = Date.now();
+      if (now - lastSilentSuspectLogAtRef.current < SILENT_PLAYBACK_SUSPECT_MS) {
+        return;
+      }
+      lastSilentSuspectLogAtRef.current = now;
+
+      const safari = getSafariAudioDebug(el);
       console.log(
         `[remote-audio] silent-playback-suspect remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
-          `reason=play_success_but_no_time_or_level currentTime=${el.currentTime.toFixed(2)} level=${level.toFixed(3)} ` +
-          `paused=${el.paused} muted=${el.muted} volume=${el.volume} playbackMode=${health.playbackActiveMode} ${formatVoiceModeSuffix()}`
+          `reason=play_success_but_unconfirmed elapsedMs=${elapsedMs} currentTime=${el.currentTime.toFixed(2)} ` +
+          `level=${level.toFixed(3)} advanced=${health.currentTimeAdvanced} decodedBytes=${safari.webkitAudioDecodedByteCount ?? "-"} ${formatVoiceModeSuffix()}`
       );
-      void reattachAudioElement("silent_playback_suspect");
+
+      if (reattachInProgressRef.current) return;
+
+      if (silentReattachAttemptsRef.current >= MAX_SILENT_REATTACH_ATTEMPTS) {
+        if (!unconfirmedTimeoutFiredRef.current) {
+          unconfirmedTimeoutFiredRef.current = true;
+          onPlaybackUnconfirmedTimeout?.(remoteId);
+        }
+        return;
+      }
+
+      silentReattachAttemptsRef.current += 1;
+      void reattachAudioElement(
+        "silent_playback_suspect",
+        silentReattachAttemptsRef.current
+      );
     },
-    [instanceId, reattachAudioElement, remoteId]
+    [instanceId, onPlaybackUnconfirmedTimeout, reattachAudioElement, remoteId]
   );
 
   const schedulePlaybackChecks = useCallback(
@@ -700,6 +775,8 @@ export default function RemoteAudio({
 
         if (health.playbackActiveMode === "confirmed") {
           firstConfirmedAtRef.current = Date.now();
+          silentReattachAttemptsRef.current = 0;
+          unconfirmedTimeoutFiredRef.current = false;
         }
 
         logPlaybackCheck({
@@ -739,13 +816,33 @@ export default function RemoteAudio({
       };
 
       let rollingTime = baselineTime;
+      const runScheduled = (afterMs: number) => {
+        runCheck(afterMs, rollingTime);
+        rollingTime = el.currentTime;
+      };
+
       for (const afterMs of [500, 1500, 5000]) {
         const timer = window.setTimeout(() => {
-          runCheck(afterMs, rollingTime);
-          rollingTime = el.currentTime;
+          runScheduled(afterMs);
         }, afterMs);
         playbackCheckTimersRef.current.push(timer);
       }
+
+      periodicCheckIntervalRef.current = window.setInterval(() => {
+        if (!playSuccessRef.current) {
+          const sinceAttempt = lastPlayAttemptAtRef.current
+            ? Date.now() - lastPlayAttemptAtRef.current
+            : Date.now() - mountedAtRef.current;
+          if (sinceAttempt >= PLAYBACK_CHECK_INTERVAL_MS) {
+            lastAttachedStreamIdRef.current = null;
+            lastAttachedTrackIdRef.current = null;
+            attachStreamRef.current?.();
+            void playAudioRef.current({ reason: "play_missing_retry" });
+          }
+          return;
+        }
+        runScheduled(PLAYBACK_CHECK_INTERVAL_MS);
+      }, PLAYBACK_CHECK_INTERVAL_MS);
     },
     [
       clearPlaybackChecks,
@@ -817,7 +914,7 @@ export default function RemoteAudio({
     const el = ref.current;
     if (!el || !stream) return;
 
-    configureAudioElement(el);
+    applyAudioOutputConfig(el);
 
     const streamId = stream.id ?? "";
     const trackId = track.id ?? "";
@@ -895,14 +992,18 @@ export default function RemoteAudio({
 
     attemptPlay("mount_or_stream_changed");
   }, [
+    applyAudioOutputConfig,
     attemptPlay,
-    configureAudioElement,
     emitEndedTrackHealth,
     instanceId,
     logAttachSkipEndedTrack,
     remoteId,
     stream,
   ]);
+
+  useEffect(() => {
+    attachStreamRef.current = attachStream;
+  }, [attachStream]);
 
   useEffect(() => {
     if (!replayReason) return;
@@ -918,10 +1019,10 @@ export default function RemoteAudio({
     (node: HTMLAudioElement | null) => {
       ref.current = node;
       if (!node || !stream) return;
-      configureAudioElement(node);
+      applyAudioOutputConfig(node);
       attachStream();
     },
-    [attachStream, configureAudioElement, stream]
+    [applyAudioOutputConfig, attachStream, stream]
   );
 
   useEffect(() => {
@@ -979,7 +1080,7 @@ export default function RemoteAudio({
   }, [
     attachStream,
     clearPlaybackChecks,
-    configureAudioElement,
+    applyAudioOutputConfig,
     emitEndedTrackHealth,
     logAttachSkipEndedTrack,
     playAudio,
@@ -1006,93 +1107,6 @@ export default function RemoteAudio({
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [playAudio]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !stream) return;
-
-    let lastSampledTime = el.currentTime;
-
-    const timer = window.setInterval(() => {
-      if (isPlaybackTrackEnded(el, stream)) return;
-
-      if (!playSuccessRef.current) {
-        const sinceMount = Date.now() - mountedAtRef.current;
-        const sinceAttempt = lastPlayAttemptAtRef.current
-          ? Date.now() - lastPlayAttemptAtRef.current
-          : sinceMount;
-        if (sinceAttempt >= 2000) {
-          lastAttachedStreamIdRef.current = null;
-          lastAttachedTrackIdRef.current = null;
-          attachStream();
-          attemptPlay("play_missing_retry");
-        }
-        return;
-      }
-
-      const track = getPlaybackTrack(el, stream);
-      if (!track || track.readyState !== "live") return;
-
-      const currentTime = el.currentTime;
-      const previousCurrentTime = lastSampledTime;
-      const level = levelRef.current;
-
-      const health = evaluateRemotePlaybackHealth({
-        el,
-        stream,
-        playSuccess: true,
-        currentTime,
-        previousCurrentTime,
-        level,
-        webAudioFallback: fallbackActiveRef.current,
-        provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
-      });
-
-      if (health.playbackActiveMode === "confirmed") {
-        firstConfirmedAtRef.current = Date.now();
-      }
-
-      logPlaybackCheck({
-        remoteId,
-        instanceId,
-        el,
-        stream,
-        afterMs: 2000,
-        previousCurrentTime,
-        level,
-        health,
-      });
-
-      if (health.currentTimeAdvanced) {
-        lastSampledTime = currentTime;
-      }
-
-      if (health.playbackActive) {
-        emitPlaybackHealth(health);
-        logRemotePlaybackActive(
-          health,
-          health.playbackActiveMode === "provisional"
-            ? "live_track_playing_no_meter"
-            : "interval_check_confirmed"
-        );
-      }
-
-      maybeHandleSilentPlaybackSuspect(el, health, level);
-    }, 2000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [
-    attachStream,
-    attemptPlay,
-    emitPlaybackHealth,
-    instanceId,
-    logRemotePlaybackActive,
-    maybeHandleSilentPlaybackSuspect,
-    remoteId,
-    stream,
-  ]);
 
   useEffect(() => {
     if (voicePolicy.disableRemoteAudioMeter) {

@@ -189,6 +189,7 @@ export default function CallVoiceLayer({
           replayReason={state.replayReason ?? null}
           onSpeaking={onRemoteSpeakingChange}
           onPlaybackHealthChange={handleRemotePlaybackHealthChange}
+          onPlaybackUnconfirmedTimeout={peer.handlePlaybackUnconfirmedTimeout}
         />
       ))}
     </>
