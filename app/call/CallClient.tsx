@@ -152,7 +152,14 @@ export default function CallClient() {
     Record<string, PeerStatusDiagnostics>
   >({});
   const [remoteAudioHealth, setRemoteAudioHealth] = useState<
-    Record<string, { verified: boolean; playbackActive?: boolean }>
+    Record<
+      string,
+      {
+        verified: boolean;
+        playbackActive?: boolean;
+        playbackActiveMode?: "confirmed" | "provisional" | "none";
+      }
+    >
   >({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
@@ -264,7 +271,9 @@ export default function CallClient() {
         hasRemoteStream: diag?.hasRemoteStream ?? false,
         trackReady: diag?.trackReady ?? "-",
         lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+        lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
         playbackActive: health?.playbackActive,
+        playbackActiveMode: health?.playbackActiveMode,
         nowMs,
       });
       if (effective.effectiveConnected) {
@@ -867,7 +876,9 @@ export default function CallClient() {
         hasRemoteStream: diag?.hasRemoteStream ?? false,
         trackReady: diag?.trackReady ?? "-",
         lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+        lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
         playbackActive: audioHealth?.playbackActive,
+        playbackActiveMode: audioHealth?.playbackActiveMode,
         nowMs,
       });
       const wasPeerConnected = everConnectedPeersRef.current.has(memberId);
@@ -1102,7 +1113,8 @@ export default function CallClient() {
             const current = prev[remoteId];
             if (
               current?.verified === health.verified &&
-              current?.playbackActive === health.playbackActive
+              current?.playbackActive === health.playbackActive &&
+              current?.playbackActiveMode === health.playbackActiveMode
             ) {
               return prev;
             }
@@ -1111,6 +1123,7 @@ export default function CallClient() {
               [remoteId]: {
                 verified: health.verified,
                 playbackActive: health.playbackActive,
+                playbackActiveMode: health.playbackActiveMode,
               },
             };
           });

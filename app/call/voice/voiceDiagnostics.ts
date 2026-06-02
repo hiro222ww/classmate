@@ -341,6 +341,7 @@ export type PeerStatusDiagnostics = {
   trackReady: string;
   isRemoteInCall: boolean;
   lastPlaybackActiveAt: number | null;
+  lastPlaybackConfirmedAt: number | null;
   remoteAudioMounted: boolean;
 };
 
@@ -491,6 +492,7 @@ function formatVoiceMeshPeerLine(peer: VoiceMeshPeerSummaryEntry): string {
     `ontrackAt=${compactAgeMs(peer.lastOnTrackAt)} ` +
     `playAt=${compactAgeMs(peer.lastPlaySuccessAt)} ` +
     `playbackAt=${compactAgeMs(peer.lastPlaybackActiveAt)} ` +
+    `confirmedAt=${compactAgeMs(peer.lastPlaybackConfirmedAt)} ` +
     `block=${peer.reconnectBlockReason ?? "-"}`
   );
 }
@@ -570,6 +572,7 @@ export type VoiceMeshPeerSummaryEntry = {
   lastUnmuteAt: number | null;
   lastPlaySuccessAt: number | null;
   lastPlaybackActiveAt: number | null;
+  lastPlaybackConfirmedAt: number | null;
   lastWarning: string | null;
   lastHealAction: string | null;
 };

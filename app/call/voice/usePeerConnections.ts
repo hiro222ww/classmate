@@ -119,6 +119,8 @@ const TRACK_ENDED_HOLD_MS = 2000;
 const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
 const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
 const PLAYBACK_ACTIVE_HOLD_MS = 15000;
+const AUDIO_PLAYBACK_UNCONFIRMED_TIMEOUT_MS = 15000;
+const MAX_AUDIO_REATTACH_BEFORE_RECONNECT = 3;
 
 type TrackEndedHoldCheck = {
   shouldHold: boolean;
@@ -268,6 +270,7 @@ type PeerSignalTimestamps = {
   lastUnmuteAt: number | null;
   lastPlaySuccessAt: number | null;
   lastPlaybackActiveAt: number | null;
+  lastPlaybackConfirmedAt: number | null;
 };
 
 type LiveStreamWaitHoldReason =
@@ -301,6 +304,7 @@ function emptyPeerSignalTimestamps(): PeerSignalTimestamps {
     lastUnmuteAt: null,
     lastPlaySuccessAt: null,
     lastPlaybackActiveAt: null,
+    lastPlaybackConfirmedAt: null,
   };
 }
 
@@ -327,6 +331,7 @@ function evaluateLiveStreamWaitConnectedHold(params: {
   const answerAgeMs = signalAgeMs(timestamps.lastAnswerAt);
   const playAgeMs = signalAgeMs(timestamps.lastPlaySuccessAt);
   const playbackActiveAgeMs = signalAgeMs(timestamps.lastPlaybackActiveAt);
+  const playbackConfirmedAgeMs = signalAgeMs(timestamps.lastPlaybackConfirmedAt);
   const unmuteAgeMs = signalAgeMs(timestamps.lastUnmuteAt);
 
   const signalAnchors = [
@@ -345,9 +350,12 @@ function evaluateLiveStreamWaitConnectedHold(params: {
     activityAgeMs != null && activityAgeMs < graceMs;
   const playbackRecentlyActive =
     playbackActiveAgeMs != null && playbackActiveAgeMs < PLAYBACK_ACTIVE_HOLD_MS;
+  const playbackConfirmedRecently =
+    playbackConfirmedAgeMs != null &&
+    playbackConfirmedAgeMs < PLAYBACK_ACTIVE_HOLD_MS;
 
   let holdReason: LiveStreamWaitHoldReason | null = null;
-  if (isConnectingOrChecking && playbackRecentlyActive) {
+  if (isConnectingOrChecking && (playbackConfirmedRecently || playbackRecentlyActive)) {
     holdReason = "active_playback_wait_connected";
   } else if (isConnectingOrChecking && withinSignalGrace) {
     holdReason = "recent_live_stream_wait_connected";
@@ -359,7 +367,10 @@ function evaluateLiveStreamWaitConnectedHold(params: {
   return {
     shouldHold: holdReason != null,
     graceExpired:
-      isConnectingOrChecking && signalGraceExpired && !playbackRecentlyActive,
+      isConnectingOrChecking &&
+      signalGraceExpired &&
+      !playbackRecentlyActive &&
+      !playbackConfirmedRecently,
     holdReason,
     isConnectingOrChecking,
     ontrackAgeMs,
@@ -628,6 +639,7 @@ export function usePeerConnections({
     (remoteId: string, reason: string) => void
   >(() => {});
   const audioReplayAtRef = useRef<Map<string, number>>(new Map());
+  const audioUnconfirmedReattachAttemptsRef = useRef<Map<string, number>>(new Map());
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
 
@@ -1047,6 +1059,7 @@ export function usePeerConnections({
         | "unmute"
         | "play_success"
         | "playback_active"
+        | "playback_confirmed"
     ) => {
       const prev =
         peerSignalTimestampsRef.current.get(remoteId) ??
@@ -1076,6 +1089,11 @@ export function usePeerConnections({
       if (event === "playback_active") {
         next.lastPlaybackActiveAt = now;
       }
+      if (event === "playback_confirmed") {
+        next.lastPlaybackConfirmedAt = now;
+        next.lastPlaybackActiveAt = now;
+        audioUnconfirmedReattachAttemptsRef.current.delete(remoteId);
+      }
 
       peerSignalTimestampsRef.current.set(remoteId, next);
     },
@@ -1087,8 +1105,12 @@ export function usePeerConnections({
       if (health.playSuccessEvent) {
         touchPeerSignal(remoteId, "play_success");
       }
-      if (health.playbackActive) {
+      if (health.playbackActiveMode === "confirmed") {
+        touchPeerSignal(remoteId, "playback_confirmed");
+      } else if (health.playbackActive) {
         touchPeerSignal(remoteId, "playback_active");
+      }
+      if (health.playbackActive) {
         console.log(
           `[voice-peer] playback-active remote=${compactDeviceId(remoteId)} ageMs=0 source=remote_audio ` +
             `mode=${health.playbackActiveMode} ${formatVoiceModeSuffix()}`
@@ -1165,6 +1187,7 @@ export function usePeerConnections({
         lastUnmuteAt: timestamps.lastUnmuteAt,
         lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
         lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
+        lastPlaybackConfirmedAt: timestamps.lastPlaybackConfirmedAt,
         lastWarning: meta.lastWarning,
         lastHealAction: meta.lastHealAction,
       };
@@ -1296,6 +1319,7 @@ export function usePeerConnections({
         trackReady: audioTrack?.readyState ?? media.primaryTrackReadyState ?? "-",
         isRemoteInCall: isRemoteInCall(remoteId),
         lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
+        lastPlaybackConfirmedAt: timestamps.lastPlaybackConfirmedAt,
         remoteAudioMounted: !!remoteAudiosRef.current[remoteId],
       };
     }
@@ -1622,6 +1646,10 @@ export function usePeerConnections({
           missingRemoteAudioWarnedRef.current.delete(remoteId);
         }
 
+        const playSuccessAt = timestamps.lastPlaySuccessAt;
+        const confirmedAt = timestamps.lastPlaybackConfirmedAt;
+        const playSuccessAgeMs = playSuccessAt ? Date.now() - playSuccessAt : null;
+
         if (ontrackAgeMs != null && ontrackAgeMs >= 5000 && neverPlayed) {
           const lastReplay = audioReplayAtRef.current.get(remoteId) ?? 0;
           if (Date.now() - lastReplay >= 5000) {
@@ -1637,6 +1665,37 @@ export function usePeerConnections({
                 "stream_present_but_never_played_mount"
               );
             }
+          }
+        }
+
+        if (
+          playSuccessAgeMs != null &&
+          playSuccessAgeMs >= AUDIO_PLAYBACK_UNCONFIRMED_TIMEOUT_MS &&
+          !confirmedAt
+        ) {
+          const attempts =
+            audioUnconfirmedReattachAttemptsRef.current.get(remoteId) ?? 0;
+          if (attempts < MAX_AUDIO_REATTACH_BEFORE_RECONNECT) {
+            audioUnconfirmedReattachAttemptsRef.current.set(remoteId, attempts + 1);
+            console.log(
+              `[voice-peer] audio-reattach-attempt remote=${compactDeviceId(remoteId)} attempt=${attempts + 1}/${MAX_AUDIO_REATTACH_BEFORE_RECONNECT} reason=audio_playback_unconfirmed_timeout ${formatVoiceModeSuffix()}`
+            );
+            triggerRemoteAudioReplayRef.current(
+              remoteId,
+              "audio_playback_unconfirmed_timeout"
+            );
+          } else if (
+            attempts >= MAX_AUDIO_REATTACH_BEFORE_RECONNECT &&
+            !reconnectPendingRef.current.has(remoteId)
+          ) {
+            console.log(
+              `[voice-peer] audio-reconnect remote=${compactDeviceId(remoteId)} reason=audio_playback_unconfirmed_timeout attempts=${attempts} ${formatVoiceModeSuffix()}`
+            );
+            scheduleReconnectRef.current?.(remoteId, 1200, {
+              reason: "audio_playback_unconfirmed_timeout",
+              source: "audio_playback_unconfirmed_timeout",
+              force: true,
+            });
           }
         }
       }

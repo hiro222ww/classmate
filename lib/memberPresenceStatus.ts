@@ -6,12 +6,16 @@ export type EffectivePeerState = CallPeerState | "connected_effective";
 
 export const PLAYBACK_EFFECTIVE_CONNECTED_MS = 15_000;
 
+export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
+
 export function isActivePlaybackConnected(params: {
   remoteTracksCount: number;
   hasRemoteStream: boolean;
   trackReady: string;
   lastPlaybackActiveAt: number | null;
+  lastPlaybackConfirmedAt?: number | null;
   playbackActive?: boolean;
+  playbackActiveMode?: PlaybackActiveMode;
   nowMs?: number;
 }): boolean {
   const now = params.nowMs ?? Date.now();
@@ -23,8 +27,17 @@ export function isActivePlaybackConnected(params: {
   const playbackRecent =
     params.lastPlaybackActiveAt != null &&
     now - params.lastPlaybackActiveAt < PLAYBACK_EFFECTIVE_CONNECTED_MS;
+  const confirmedRecent =
+    params.lastPlaybackConfirmedAt != null &&
+    now - params.lastPlaybackConfirmedAt < PLAYBACK_EFFECTIVE_CONNECTED_MS;
 
-  return playbackRecent || params.playbackActive === true;
+  return (
+    confirmedRecent ||
+    playbackRecent ||
+    params.playbackActive === true ||
+    params.playbackActiveMode === "confirmed" ||
+    params.playbackActiveMode === "provisional"
+  );
 }
 
 export function resolveEffectivePeerConnection(params: {
@@ -33,7 +46,9 @@ export function resolveEffectivePeerConnection(params: {
   hasRemoteStream: boolean;
   trackReady: string;
   lastPlaybackActiveAt: number | null;
+  lastPlaybackConfirmedAt?: number | null;
   playbackActive?: boolean;
+  playbackActiveMode?: PlaybackActiveMode;
   nowMs?: number;
 }): {
   effectivePeerState: EffectivePeerState;
@@ -218,6 +233,7 @@ export function resolveCallMemberStatus(params: {
   peerState: CallPeerState;
   effectivePeerState?: EffectivePeerState;
   activePlaybackConnected?: boolean;
+  playbackActiveMode?: PlaybackActiveMode;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
 }) {
@@ -275,12 +291,16 @@ export function resolveCallMemberStatus(params: {
     params.activePlaybackConnected &&
     params.peerState !== "connected"
   ) {
+    const playbackReason =
+      params.playbackActiveMode === "confirmed"
+        ? "active_playback_confirmed"
+        : "active_playback_provisional";
     return {
       text: "通話中",
       color: "#065f46",
       chipBg: "#ecfdf5",
       chipText: "#047857",
-      reason: "active_playback_connected",
+      reason: playbackReason,
       source: "effectivePeerState",
     };
   }
