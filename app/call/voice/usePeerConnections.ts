@@ -1611,6 +1611,19 @@ export function usePeerConnections({
         }
       }
 
+      const trackReady =
+        audioTrack?.readyState ?? media.primaryTrackReadyState ?? "-";
+      const hasLiveRemoteStream =
+        trackReady === "live" && media.hasRemoteStream;
+      const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
+        pc,
+        hasLiveRemoteStream,
+        remoteTracksCount: media.remoteTracksCount,
+        hasRemoteStream: media.hasRemoteStream,
+        timestamps,
+        connectStartedAt: connectStartedAtRef.current.get(remoteId),
+      });
+
       diagnostics[remoteId] = {
         hasPc: isUsablePeerConnection(pc),
         conn: pc?.connectionState ?? "-",
@@ -1618,12 +1631,16 @@ export function usePeerConnections({
         sig: pc?.signalingState ?? "-",
         hasRemoteStream: media.hasRemoteStream,
         remoteTracksCount: media.remoteTracksCount,
-        trackReady: audioTrack?.readyState ?? media.primaryTrackReadyState ?? "-",
+        trackReady,
         isRemoteInCall: isRemoteInCall(remoteId),
         lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
         lastPlaybackConfirmedAt: timestamps.lastPlaybackConfirmedAt,
+        lastOnTrackAt: timestamps.lastOnTrackAt,
+        lastUnmuteAt: timestamps.lastUnmuteAt,
+        lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
         remoteAudioMounted: !!remoteAudiosRef.current[remoteId],
         orphanRemoteAudio: orphanRemoteAudioRef.current.has(remoteId),
+        liveStreamHealHold: waitCheck?.shouldHold === true,
         p2pDirectFailedHoldActive: p2pDirectFailedHoldRemainingMs != null,
         p2pDirectFailedHoldRemainingMs,
         autoHardResetInProgress: autoHardResetInProgressRef.current.has(remoteId),

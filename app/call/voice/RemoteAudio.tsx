@@ -34,7 +34,13 @@ export type RemotePlaybackHealth = {
   level: number;
   webAudioFallback: boolean;
   verified: boolean;
+  lastPlaySuccessAt: number | null;
+  playFailedAt: number | null;
+  lastAttachAt: number | null;
+  audioActuallyPlaying: boolean;
 };
+
+const PLAYBACK_HEALTH_LOG_THROTTLE_MS = 2000;
 
 function callWarn(...args: unknown[]) {
   console.warn(...args);
@@ -182,7 +188,11 @@ function evaluateRemotePlaybackHealth(params: {
   level: number;
   webAudioFallback: boolean;
   provisionalStartedAt: number | null;
+  lastPlaySuccessAt: number | null;
+  playFailedAt: number | null;
+  lastAttachAt: number | null;
   afterMs?: number;
+  nowMs?: number;
 }): RemotePlaybackHealth {
   const {
     el,
@@ -194,7 +204,11 @@ function evaluateRemotePlaybackHealth(params: {
     level,
     webAudioFallback,
     provisionalStartedAt,
+    lastPlaySuccessAt,
+    playFailedAt,
+    lastAttachAt,
     afterMs = 0,
+    nowMs = Date.now(),
   } = params;
 
   const track = getPlaybackTrack(el, stream);
@@ -245,6 +259,20 @@ function evaluateRemotePlaybackHealth(params: {
       webAudioFallback ||
       (voicePolicy.voiceMode !== "ios_conservative" && afterMs >= 1500));
 
+  const playSuccessRecent =
+    lastPlaySuccessAt != null &&
+    nowMs - lastPlaySuccessAt < PROVISIONAL_PLAYBACK_MS;
+
+  const audioActuallyPlaying =
+    trackReady === "live" &&
+    !trackMuted &&
+    !elPaused &&
+    (playbackActive ||
+      verified ||
+      (playSuccess && playSuccessRecent) ||
+      currentTimeAdvanced ||
+      level > CONFIRMED_LEVEL_THRESHOLD);
+
   return {
     playSuccess,
     playSuccessEvent,
@@ -256,6 +284,10 @@ function evaluateRemotePlaybackHealth(params: {
     level,
     webAudioFallback,
     verified,
+    lastPlaySuccessAt,
+    playFailedAt,
+    lastAttachAt,
+    audioActuallyPlaying,
   };
 }
 
@@ -306,6 +338,9 @@ export default function RemoteAudio({
   const lastPlayAttemptAtRef = useRef<number | null>(null);
   const firstConfirmedAtRef = useRef<number | null>(null);
   const playSuccessAtRef = useRef<number | null>(null);
+  const playFailedAtRef = useRef<number | null>(null);
+  const lastAttachAtRef = useRef<number | null>(null);
+  const playbackHealthLogAtRef = useRef(0);
   const silentReattachAttemptsRef = useRef(0);
   const lastSilentSuspectLogAtRef = useRef(0);
   const unconfirmedTimeoutFiredRef = useRef(false);
@@ -333,6 +368,20 @@ export default function RemoteAudio({
 
   const emitPlaybackHealth = useCallback(
     (health: RemotePlaybackHealth) => {
+      const now = Date.now();
+      if (now - playbackHealthLogAtRef.current >= PLAYBACK_HEALTH_LOG_THROTTLE_MS) {
+        playbackHealthLogAtRef.current = now;
+        const playSuccessAgeMs =
+          health.lastPlaySuccessAt != null
+            ? now - health.lastPlaySuccessAt
+            : null;
+        console.log(
+          `[remote-audio] playback-health remote=${compactRemoteId(remoteId)} ` +
+            `playing=${health.audioActuallyPlaying} advanced=${health.currentTimeAdvanced} ` +
+            `level=${health.level.toFixed(3)} trackReady=${health.trackReady} ` +
+            `playSuccessAgeMs=${playSuccessAgeMs ?? "-"} mode=${health.playbackActiveMode} ${formatVoiceModeSuffix()}`
+        );
+      }
       onPlaybackHealthChange?.(remoteId, health);
     },
     [onPlaybackHealthChange, remoteId]
@@ -372,6 +421,9 @@ export default function RemoteAudio({
         level: levelRef.current,
         webAudioFallback: fallbackActiveRef.current,
         provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
+        lastPlaySuccessAt: playSuccessAtRef.current,
+        playFailedAt: playFailedAtRef.current,
+        lastAttachAt: lastAttachAtRef.current,
         afterMs: params.afterMs,
       });
       if (health.playbackActiveMode === "confirmed") {
@@ -518,6 +570,7 @@ export default function RemoteAudio({
     const track = getPlaybackTrack(ref.current, stream);
     playSuccessRef.current = false;
     playSuccessAtRef.current = null;
+    playFailedAtRef.current = null;
     provisionalPlaybackStartedAtRef.current = null;
     const el = ref.current;
     if (el) {
@@ -530,6 +583,9 @@ export default function RemoteAudio({
           level: levelRef.current,
           webAudioFallback: fallbackActiveRef.current,
           provisionalStartedAt: null,
+          lastPlaySuccessAt: null,
+          playFailedAt: playFailedAtRef.current,
+          lastAttachAt: lastAttachAtRef.current,
         })
       );
     }
@@ -622,6 +678,7 @@ export default function RemoteAudio({
 
         playSuccessRef.current = false;
         playSuccessAtRef.current = null;
+        playFailedAtRef.current = Date.now();
         provisionalPlaybackStartedAtRef.current = null;
         const err = e as { name?: string; message?: string };
         const errName = err?.name ?? "unknown";
@@ -770,6 +827,9 @@ export default function RemoteAudio({
           level,
           webAudioFallback: fallbackActiveRef.current,
           provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
+          lastPlaySuccessAt: playSuccessAtRef.current,
+          playFailedAt: playFailedAtRef.current,
+          lastAttachAt: lastAttachAtRef.current,
           afterMs,
         });
 
@@ -984,6 +1044,7 @@ export default function RemoteAudio({
     }
 
     el.srcObject = stream;
+    lastAttachAtRef.current = Date.now();
     lastAttachedStreamIdRef.current = streamId || null;
     lastAttachedTrackIdRef.current = trackId || null;
 

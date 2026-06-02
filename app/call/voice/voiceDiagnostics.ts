@@ -337,8 +337,12 @@ export type PeerStatusDiagnostics = {
   isRemoteInCall: boolean;
   lastPlaybackActiveAt: number | null;
   lastPlaybackConfirmedAt: number | null;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
   remoteAudioMounted: boolean;
   orphanRemoteAudio?: boolean;
+  liveStreamHealHold?: boolean;
   p2pDirectFailedHoldActive?: boolean;
   p2pDirectFailedHoldRemainingMs?: number | null;
   autoHardResetInProgress?: boolean;
@@ -355,7 +359,11 @@ export function logCallStatusPeer(params: {
   status: string;
   peerState: string;
   effectivePeerState?: string;
+  statusSource?: string;
   remoteAudioHealth: string;
+  audioActuallyPlaying?: boolean;
+  playSuccessAgeMs?: number | null;
+  audioLevel?: number | null;
   playbackActiveAgeMs?: number | null;
   hasPc: boolean;
   conn: string;
@@ -373,6 +381,9 @@ export function logCallStatusPeer(params: {
   console.log(
     `[call-status-peer] local=${compactDeviceId(params.localDeviceId)} remote=${compactDeviceId(params.remoteDeviceId)} ` +
       `label=${params.label} status=${params.status} peerState=${params.effectivePeerState ?? params.peerState} ` +
+      `statusSource=${params.statusSource ?? "-"} ` +
+      `audioActuallyPlaying=${params.audioActuallyPlaying === true} ` +
+      `playSuccessAgeMs=${params.playSuccessAgeMs ?? "-"} audioLevel=${params.audioLevel ?? "-"} ` +
       `remoteAudioHealth=${params.remoteAudioHealth} ` +
       `playbackActiveAgeMs=${params.playbackActiveAgeMs ?? "-"} hasPc=${params.hasPc} ` +
       `${orphanPc ? "hasPc=false orphanPc=true " : ""}` +

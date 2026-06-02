@@ -6,6 +6,81 @@ export type EffectivePeerState = CallPeerState | "connected_effective";
 
 export const PLAYBACK_EFFECTIVE_CONNECTED_MS = 15_000;
 export const MANUAL_AUDIO_RECONNECT_UNCONFIRMED_MS = 15_000;
+export const RECENT_REMOTE_SIGNAL_MS = 10_000;
+export const REMOTE_AUDIO_PLAY_SUCCESS_RECENT_MS = 15_000;
+export const REMOTE_AUDIO_UNSTABLE_MS = 15_000;
+
+export type RemoteAudioHealthInput = {
+  playSuccess?: boolean;
+  lastPlaySuccessAt?: number | null;
+  currentTimeAdvanced?: boolean;
+  level?: number;
+  trackReady?: string;
+  playFailedAt?: number | null;
+  lastAttachAt?: number | null;
+  verified?: boolean;
+  playbackActive?: boolean;
+  playbackActiveMode?: PlaybackActiveMode;
+  audioActuallyPlaying?: boolean;
+};
+
+export function isRecentPlaySuccess(
+  lastPlaySuccessAt: number | null | undefined,
+  nowMs: number,
+  windowMs = REMOTE_AUDIO_PLAY_SUCCESS_RECENT_MS
+): boolean {
+  return (
+    lastPlaySuccessAt != null && nowMs - lastPlaySuccessAt < windowMs
+  );
+}
+
+export function hasRecentRemoteAudioSignals(params: {
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  nowMs: number;
+  windowMs?: number;
+}): boolean {
+  const windowMs = params.windowMs ?? RECENT_REMOTE_SIGNAL_MS;
+  const anchors = [
+    params.lastOnTrackAt,
+    params.lastUnmuteAt,
+    params.lastPlaySuccessAt,
+  ].filter((value): value is number => value != null);
+
+  return anchors.some((at) => params.nowMs - at < windowMs);
+}
+
+export function isTransportMediaConnected(conn: string, ice: string): boolean {
+  return (
+    conn === "connected" || ice === "connected" || ice === "completed"
+  );
+}
+
+function isRemoteAudioHealthyNow(params: {
+  health?: RemoteAudioHealthInput | null;
+  trackReady: string;
+  hasRemoteStream: boolean;
+  nowMs: number;
+}): boolean {
+  const health = params.health;
+  if (!health) return false;
+
+  const trackLive = (health.trackReady ?? params.trackReady) === "live";
+  if (!trackLive || !params.hasRemoteStream) return false;
+
+  if (health.audioActuallyPlaying === true) return true;
+  if (
+    health.playSuccess &&
+    isRecentPlaySuccess(health.lastPlaySuccessAt, params.nowMs)
+  ) {
+    return true;
+  }
+  if (health.verified === true) return true;
+  if (health.playbackActive === true) return true;
+
+  return false;
+}
 
 export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
 
@@ -235,6 +310,8 @@ export function shouldShowManualAudioReconnect(params: {
   hasRemoteStream: boolean;
   lastPlaybackConfirmedAt: number | null;
   lastPlaybackActiveAt: number | null;
+  remoteAudioHealth?: RemoteAudioHealthInput | null;
+  trackReady?: string;
   p2pDirectFailedHoldActive?: boolean;
   autoHardResetGiveUp?: boolean;
   reconnectRequestPending?: boolean;
@@ -242,14 +319,28 @@ export function shouldShowManualAudioReconnect(params: {
 }): boolean {
   if (params.isMe) return false;
   if (params.reconnectRequestPending) return false;
-  if (params.autoHardResetGiveUp) return true;
 
   const now = params.nowMs ?? Date.now();
+  if (
+    isRemoteAudioHealthyNow({
+      health: params.remoteAudioHealth,
+      trackReady: params.trackReady ?? "-",
+      hasRemoteStream: params.hasRemoteStream,
+      nowMs: now,
+    })
+  ) {
+    return false;
+  }
+
+  if (params.autoHardResetGiveUp) return true;
+
   const failedTransport = params.conn === "failed" || params.ice === "failed";
   const orphanNoPc = !params.hasPc && params.hasRemoteStream;
   const reconnectingLabel =
     params.statusText === "再接続中" ||
     params.statusText === "音声確認中" ||
+    params.statusText === "音声受信中" ||
+    params.statusText === "接続中" ||
     params.statusText === "再接続を試みています";
   const matchingReason =
     params.statusReason === "orphan_remote_audio_provisional" ||
@@ -284,11 +375,80 @@ export function resolveCallMemberStatus(params: {
   hasPc?: boolean;
   orphanRemoteAudio?: boolean;
   p2pDirectFailedHoldActive?: boolean;
+  liveStreamHealHold?: boolean;
   autoHardResetInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
-}) {
+  remoteAudioHealth?: RemoteAudioHealthInput | null;
+  hasRemoteStream?: boolean;
+  trackReady?: string;
+  conn?: string;
+  ice?: string;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  nowMs?: number;
+}): {
+  text: string;
+  color: string;
+  chipBg: string;
+  chipText: string;
+  reason: string;
+  source: string;
+  statusSource?: string;
+} {
+  const nowMs = params.nowMs ?? Date.now();
+  const trackReady = params.trackReady ?? "-";
+  const conn = params.conn ?? "-";
+  const ice = params.ice ?? "-";
+  const hasRemoteStream = params.hasRemoteStream === true;
+  const health = params.remoteAudioHealth ?? null;
+
+  const audioHealthy = isRemoteAudioHealthyNow({
+    health,
+    trackReady,
+    hasRemoteStream,
+    nowMs,
+  });
+  const recentPlaySuccess = isRecentPlaySuccess(
+    health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+    nowMs
+  );
+  const recentSignals = hasRecentRemoteAudioSignals({
+    lastOnTrackAt: params.lastOnTrackAt,
+    lastUnmuteAt: params.lastUnmuteAt,
+    lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+    nowMs,
+  });
+  const trackLive = trackReady === "live";
+  const transportConnected = isTransportMediaConnected(conn, ice);
+
+  const connectedFromRemoteAudio = (): {
+    text: string;
+    color: string;
+    chipBg: string;
+    chipText: string;
+    reason: string;
+    source: string;
+    statusSource: string;
+  } => {
+    const verified =
+      health?.verified === true ||
+      params.remoteAudioVerified === true ||
+      (health?.playSuccess === true && recentPlaySuccess);
+    return {
+      text: verified ? "接続中" : "音声受信中",
+      color: "#065f46",
+      chipBg: "#ecfdf5",
+      chipText: "#047857",
+      reason: verified
+        ? "remote_audio_playback_healthy"
+        : "remote_audio_playback_active",
+      source: "remoteAudioHealth",
+      statusSource: "remote_audio_health",
+    };
+  };
   const screen = String(params.screen ?? "").trim();
   const forceWaiting =
     params.localExitedCall === true ||
@@ -350,21 +510,47 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
-  if (params.autoHardResetGiveUp) {
+  // A. RemoteAudio playback health overrides conn/ice while audio is actually playing.
+  if (
+    trackLive &&
+    hasRemoteStream &&
+    (audioHealthy || (health?.playSuccess === true && recentPlaySuccess))
+  ) {
+    return connectedFromRemoteAudio();
+  }
+
+  // Grace-period heal hold: avoid "接続処理中" while stream/signals are fresh.
+  if (params.liveStreamHealHold === true) {
+    if (recentPlaySuccess || health?.playSuccess === true) {
+      return connectedFromRemoteAudio();
+    }
     return {
-      text: "音声が不安定です",
-      color: "#991b1b",
-      chipBg: "#fef2f2",
-      chipText: "#dc2626",
-      reason: "auto_hard_reset_give_up",
-      source: "autoHardReset",
+      text: "音声確認中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+      reason: "live_stream_heal_hold",
+      source: "remoteAudioHealth",
+      statusSource: "remote_audio_health",
     };
   }
 
-  if (
-    params.activePlaybackConnected &&
-    params.peerState !== "connected"
-  ) {
+  // B. Live track + remote stream + recent ontrack/unmute/play-success.
+  if (trackLive && hasRemoteStream && recentSignals) {
+    return {
+      text: recentPlaySuccess ? "接続中" : "音声確認中",
+      color: recentPlaySuccess ? "#065f46" : "#92400e",
+      chipBg: recentPlaySuccess ? "#ecfdf5" : "#fffbeb",
+      chipText: recentPlaySuccess ? "#047857" : "#b45309",
+      reason: recentPlaySuccess
+        ? "recent_remote_signal_play_success"
+        : "recent_remote_signal_wait_audio",
+      source: "remoteAudioHealth",
+      statusSource: "remote_audio_health",
+    };
+  }
+
+  if (params.activePlaybackConnected && params.peerState !== "connected") {
     const orphanPlayback =
       params.hasPc === false || params.orphanRemoteAudio === true;
 
@@ -393,8 +579,9 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
-  if (params.peerState === "connected") {
-    if (params.remoteAudioVerified === true) {
+  // C. Transport connected (conn/ice), when playback health has not already won.
+  if (params.peerState === "connected" || transportConnected) {
+    if (params.remoteAudioVerified === true || audioHealthy) {
       return {
         text: "接続中",
         color: "#065f46",
@@ -415,6 +602,55 @@ export function resolveCallMemberStatus(params: {
           ? "peer_connected_audio_unverified"
           : "peer_connected_audio_pending",
       source: "peerState",
+    };
+  }
+
+  if (params.autoHardResetGiveUp && !audioHealthy) {
+    return {
+      text: "音声が不安定です",
+      color: "#991b1b",
+      chipBg: "#fef2f2",
+      chipText: "#dc2626",
+      reason: "auto_hard_reset_give_up",
+      source: "autoHardReset",
+    };
+  }
+
+  // D. Playback/track failure or stalled audio.
+  const playFailedRecently =
+    health?.playFailedAt != null &&
+    nowMs - health.playFailedAt < REMOTE_AUDIO_UNSTABLE_MS;
+  const trackEnded = trackReady === "ended";
+  const noLiveStream =
+    !hasRemoteStream || trackReady === "ended" || trackReady === "-";
+  const stalledAudio =
+    hasRemoteStream &&
+    trackLive &&
+    !audioHealthy &&
+    !recentSignals &&
+    (health?.lastAttachAt == null ||
+      nowMs - health.lastAttachAt >= REMOTE_AUDIO_UNSTABLE_MS);
+
+  if (
+    playFailedRecently ||
+    trackEnded ||
+    (noLiveStream && params.wasPeerConnected) ||
+    (stalledAudio && params.wasPeerConnected)
+  ) {
+    return {
+      text: "音声が不安定です",
+      color: "#991b1b",
+      chipBg: "#fef2f2",
+      chipText: "#dc2626",
+      reason: playFailedRecently
+        ? "remote_audio_play_failed"
+        : trackEnded
+          ? "remote_audio_track_ended"
+          : noLiveStream
+            ? "remote_audio_no_live_stream"
+            : "remote_audio_stalled",
+      source: "remoteAudioHealth",
+      statusSource: "remote_audio_health",
     };
   }
 
@@ -453,12 +689,24 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
+  // E. No PC / no stream / offer wait.
+  if (!params.hasPc && !hasRemoteStream) {
+    return {
+      text: "接続待ち",
+      color: "#6b7280",
+      chipBg: "#f3f4f6",
+      chipText: "#6b7280",
+      reason: "peer_idle",
+      source: "peerState",
+    };
+  }
+
   return {
-    text: "接続待ち",
-    color: "#6b7280",
-    chipBg: "#f3f4f6",
-    chipText: "#6b7280",
-    reason: "peer_idle",
+    text: "接続処理中",
+    color: "#92400e",
+    chipBg: "#fffbeb",
+    chipText: "#b45309",
+    reason: "peer_setup_in_progress",
     source: "peerState",
   };
 }

@@ -50,6 +50,7 @@ import {
   resolveEffectivePeerConnection,
   shouldShowManualAudioReconnect,
 } from "@/lib/memberPresenceStatus";
+import type { RemotePlaybackHealth } from "@/app/call/voice/RemoteAudio";
 import {
   clearLocalLeftCall,
   hasLocalLeftCall,
@@ -161,14 +162,7 @@ export default function CallClient() {
     Record<string, PeerStatusDiagnostics>
   >({});
   const [remoteAudioHealth, setRemoteAudioHealth] = useState<
-    Record<
-      string,
-      {
-        verified: boolean;
-        playbackActive?: boolean;
-        playbackActiveMode?: "confirmed" | "provisional" | "none";
-      }
-    >
+    Record<string, RemotePlaybackHealth>
   >({});
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
@@ -292,7 +286,8 @@ export default function CallClient() {
         trackReady: diag?.trackReady ?? "-",
         lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
         lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
-        playbackActive: health?.playbackActive,
+        playbackActive:
+          health?.playbackActive === true || health?.audioActuallyPlaying === true,
         playbackActiveMode: health?.playbackActiveMode,
         nowMs,
       });
@@ -917,7 +912,9 @@ export default function CallClient() {
         trackReady: diag?.trackReady ?? "-",
         lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
         lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
-        playbackActive: audioHealth?.playbackActive,
+        playbackActive:
+          audioHealth?.playbackActive === true ||
+          audioHealth?.audioActuallyPlaying === true,
         playbackActiveMode: audioHealth?.playbackActiveMode,
         nowMs,
       });
@@ -946,10 +943,21 @@ export default function CallClient() {
         hasPc: diag?.hasPc ?? false,
         orphanRemoteAudio: diag?.orphanRemoteAudio === true,
         p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+        liveStreamHealHold: diag?.liveStreamHealHold === true,
         autoHardResetInProgress: diag?.autoHardResetInProgress === true,
         autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
         wasPeerConnected,
         remoteAudioVerified,
+        remoteAudioHealth: audioHealth ?? null,
+        hasRemoteStream: diag?.hasRemoteStream ?? false,
+        trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
+        conn: diag?.conn ?? "-",
+        ice: diag?.ice ?? "-",
+        lastOnTrackAt: diag?.lastOnTrackAt ?? null,
+        lastUnmuteAt: diag?.lastUnmuteAt ?? null,
+        lastPlaySuccessAt:
+          audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
+        nowMs,
       });
 
       const prevText = prevCallStatusRef.current[member.device_id];
@@ -994,27 +1002,35 @@ export default function CallClient() {
         diag?.lastPlaybackActiveAt != null && nowMs > 0
           ? nowMs - diag.lastPlaybackActiveAt
           : null;
-      const remoteAudioHealthStr = !effective.effectiveConnected
-        ? "n/a"
-        : audioHealth == null
+      const playSuccessAgeMs =
+        audioHealth?.lastPlaySuccessAt != null && nowMs > 0
+          ? nowMs - audioHealth.lastPlaySuccessAt
+          : null;
+      const remoteAudioHealthStr =
+        audioHealth == null
           ? "pending"
           : audioHealth.verified
             ? "verified"
-            : audioHealth.playbackActive
-              ? "playback_active"
-              : "unverified";
+            : audioHealth.audioActuallyPlaying
+              ? "playing"
+              : audioHealth.playbackActive
+                ? "playback_active"
+                : "unverified";
       const peerLogSignature = [
         status.text,
         peerState,
         effective.effectivePeerState,
+        status.statusSource ?? "-",
         remoteAudioHealthStr,
+        audioHealth?.audioActuallyPlaying ?? false,
+        playSuccessAgeMs ?? "-",
         diag?.hasPc ?? false,
         diag?.conn ?? "-",
         diag?.ice ?? "-",
         diag?.sig ?? "-",
         diag?.hasRemoteStream ?? false,
         diag?.remoteTracksCount ?? 0,
-        diag?.trackReady ?? "-",
+        audioHealth?.trackReady ?? diag?.trackReady ?? "-",
         diag?.isRemoteInCall ?? isInCall,
         status.reason,
         playbackActiveAgeMs ?? "-",
@@ -1028,7 +1044,11 @@ export default function CallClient() {
           status: isInCall ? "in_call" : "waiting",
           peerState,
           effectivePeerState: effective.effectivePeerState,
+          statusSource: status.statusSource,
           remoteAudioHealth: remoteAudioHealthStr,
+          audioActuallyPlaying: audioHealth?.audioActuallyPlaying === true,
+          playSuccessAgeMs,
+          audioLevel: audioHealth?.level ?? null,
           playbackActiveAgeMs,
           hasPc: diag?.hasPc ?? false,
           conn: diag?.conn ?? "-",
@@ -1036,7 +1056,7 @@ export default function CallClient() {
           sig: diag?.sig ?? "-",
           hasRemoteStream: diag?.hasRemoteStream ?? false,
           remoteTracksCount: diag?.remoteTracksCount ?? 0,
-          trackReady: diag?.trackReady ?? "-",
+          trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
           isRemoteInCall: diag?.isRemoteInCall ?? isInCall,
           reason: status.reason,
         });
@@ -1160,17 +1180,21 @@ export default function CallClient() {
             if (
               current?.verified === health.verified &&
               current?.playbackActive === health.playbackActive &&
-              current?.playbackActiveMode === health.playbackActiveMode
+              current?.playbackActiveMode === health.playbackActiveMode &&
+              current?.audioActuallyPlaying === health.audioActuallyPlaying &&
+              current?.trackReady === health.trackReady &&
+              current?.playSuccess === health.playSuccess &&
+              current?.lastPlaySuccessAt === health.lastPlaySuccessAt &&
+              current?.playFailedAt === health.playFailedAt &&
+              current?.lastAttachAt === health.lastAttachAt &&
+              current?.level === health.level &&
+              current?.currentTimeAdvanced === health.currentTimeAdvanced
             ) {
               return prev;
             }
             return {
               ...prev,
-              [remoteId]: {
-                verified: health.verified,
-                playbackActive: health.playbackActive,
-                playbackActiveMode: health.playbackActiveMode,
-              },
+              [remoteId]: health,
             };
           });
         }}
@@ -1379,6 +1403,13 @@ export default function CallClient() {
                 hasRemoteStream: diag?.hasRemoteStream ?? false,
                 lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
                 lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+                remoteAudioHealth: memberId
+                  ? remoteAudioHealth[memberId] ?? null
+                  : null,
+                trackReady:
+                  (memberId ? remoteAudioHealth[memberId]?.trackReady : null) ??
+                  diag?.trackReady ??
+                  "-",
                 p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
                 autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
                 reconnectRequestPending: diag?.reconnectRequestPending === true,
