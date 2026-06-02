@@ -131,7 +131,8 @@ export default function RemoteAudio({
   ) => void;
 }) {
   const ref = useRef<HTMLAudioElement | null>(null);
-  const lastTrackIdRef = useRef<string | null>(null);
+  const lastAttachedStreamIdRef = useRef<string | null>(null);
+  const lastAttachedTrackIdRef = useRef<string | null>(null);
   const playbackCheckTimersRef = useRef<number[]>([]);
   const levelRef = useRef(0);
   const playSuccessRef = useRef(false);
@@ -371,30 +372,39 @@ export default function RemoteAudio({
     configureAudioElement(el);
 
     const track = stream.getAudioTracks()[0] ?? null;
-    const trackId = track?.id ?? null;
-    const trackChanged = trackId !== lastTrackIdRef.current;
-    const needsAttach =
-      trackChanged || el.srcObject !== stream || track?.readyState === "live";
+    const streamId = stream.id ?? "";
+    const trackId = track?.id ?? "";
 
-    if (!needsAttach && el.srcObject === stream) {
-      if (voicePolicy.aggressivePlayRetry) {
-        void playAudio();
-      }
+    if (
+      streamId &&
+      trackId &&
+      lastAttachedStreamIdRef.current === streamId &&
+      lastAttachedTrackIdRef.current === trackId &&
+      el.srcObject === stream
+    ) {
+      console.log(
+        `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} ` +
+          `streamId=${streamId.slice(-6)} trackId=${trackId.slice(-6)} ${formatVoiceModeSuffix()}`
+      );
       return;
     }
 
-    if (voicePolicy.clearAudioSrcBeforeReattach && el.srcObject) {
+    const trackChanged = trackId !== lastAttachedTrackIdRef.current;
+    const streamChanged = streamId !== lastAttachedStreamIdRef.current;
+
+    if (voicePolicy.clearAudioSrcBeforeReattach && el.srcObject && (streamChanged || trackChanged)) {
       el.srcObject = null;
     }
 
     el.srcObject = stream;
-    lastTrackIdRef.current = trackId;
+    lastAttachedStreamIdRef.current = streamId || null;
+    lastAttachedTrackIdRef.current = trackId || null;
 
     logRemoteAudioCompact(
       remoteId,
       el,
       stream,
-      trackChanged ? "attach-track-changed" : "attach"
+      trackChanged || streamChanged ? "attach-track-changed" : "attach"
     );
 
     if (voicePolicy.aggressivePlayRetry) {
@@ -440,6 +450,8 @@ export default function RemoteAudio({
     return () => {
       if (retryTimer) window.clearTimeout(retryTimer);
       clearPlaybackChecks();
+      lastAttachedStreamIdRef.current = null;
+      lastAttachedTrackIdRef.current = null;
       el.removeEventListener("canplay", onCanPlay);
       el.removeEventListener("loadedmetadata", onCanPlay);
       stream.removeEventListener("addtrack", onAddTrack);
