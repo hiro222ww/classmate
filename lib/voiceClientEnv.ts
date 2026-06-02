@@ -14,8 +14,24 @@ export type VoiceClientEnv = {
   voiceMode: VoiceMode;
 };
 
+function readReleaseMicOnMuteOverride(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const storage = window.localStorage;
+    if (!storage || typeof storage.getItem !== "function") return null;
+    const value = storage.getItem("classmate_release_mic_on_mute");
+    if (value === "1" || value === "true") return true;
+    if (value === "0" || value === "false") return false;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export type VoiceModePolicy = {
   voiceMode: VoiceMode;
+  /** When true, mute stops getUserMedia capture (iOS Safari mic indicator). */
+  releaseMicOnMute: boolean;
   trackEndedReconnectMs: number;
   fastReconnectMs: number;
   healPeerCooldownMs: number;
@@ -36,6 +52,7 @@ const POLICIES: Record<
   Omit<VoiceModePolicy, "voiceMode">
 > = {
   desktop_default: {
+    releaseMicOnMute: false,
     trackEndedReconnectMs: 300,
     fastReconnectMs: 300,
     healPeerCooldownMs: 800,
@@ -51,6 +68,7 @@ const POLICIES: Record<
     preserveRemoteAudioOnReconnect: true,
   },
   ios_conservative: {
+    releaseMicOnMute: true,
     trackEndedReconnectMs: 2000,
     fastReconnectMs: 1500,
     healPeerCooldownMs: 2500,
@@ -66,6 +84,7 @@ const POLICIES: Record<
     preserveRemoteAudioOnReconnect: true,
   },
   windows_audio_safe: {
+    releaseMicOnMute: false,
     trackEndedReconnectMs: 300,
     fastReconnectMs: 300,
     healPeerCooldownMs: 800,
@@ -147,7 +166,13 @@ export function getVoiceMode(): VoiceMode {
 export function getVoiceModePolicy(): VoiceModePolicy {
   if (!cachedPolicy) {
     const env = getVoiceClientEnv();
-    cachedPolicy = { voiceMode: env.voiceMode, ...POLICIES[env.voiceMode] };
+    const base = POLICIES[env.voiceMode];
+    const override = readReleaseMicOnMuteOverride();
+    cachedPolicy = {
+      voiceMode: env.voiceMode,
+      ...base,
+      releaseMicOnMute: override ?? base.releaseMicOnMute,
+    };
   }
   return cachedPolicy;
 }

@@ -100,6 +100,10 @@ export default function CallVoiceLayer({
     userMuted,
   });
 
+  const applyLocalAudioTrackRef = useRef<
+    (track: MediaStreamTrack | null, reason: string) => void
+  >(() => {});
+
   const mic = useLocalMic({
     sessionId,
     deviceId,
@@ -109,6 +113,9 @@ export default function CallVoiceLayer({
     onMicLevelChange,
     onStatusChange,
     onLocalTrackMutedApplied,
+    onLocalMicTrackChange: (track, reason) => {
+      applyLocalAudioTrackRef.current(track, reason);
+    },
   });
 
   const noopSignal = useMemo(() => {
@@ -129,7 +136,7 @@ export default function CallVoiceLayer({
     membersSyncRevision,
     userMuted,
     userMutedRef,
-    micReady: mic.micReady,
+    micReady: mic.micInteractionReady,
     signalReady: signaling.signalReady,
     localStreamRef: mic.localStreamRef,
     localAudioTrackRef: mic.localAudioTrackRef,
@@ -156,6 +163,10 @@ export default function CallVoiceLayer({
   useEffect(() => {
     logVoiceClientEnv("voice-layer-mount");
   }, []);
+
+  useEffect(() => {
+    applyLocalAudioTrackRef.current = peer.applyLocalAudioTrack;
+  }, [peer.applyLocalAudioTrack]);
 
   useEffect(() => {
     signaling.setOnSignal(peer.handleSignal);

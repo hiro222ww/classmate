@@ -101,6 +101,32 @@ function isLocalTrackLive(
   return getLocalAudioTrack(localAudioTrackRef, localStreamRef)?.readyState === "live";
 }
 
+function isReceiveOnlyMutedSession(
+  releaseMicOnMute: boolean,
+  userMutedRef: React.MutableRefObject<boolean>
+): boolean {
+  return releaseMicOnMute && userMutedRef.current;
+}
+
+function canEnsurePeerWithoutLocalTrack(
+  isOfferOwner: boolean,
+  releaseMicOnMute: boolean,
+  userMutedRef: React.MutableRefObject<boolean>
+): boolean {
+  return !isOfferOwner && isReceiveOnlyMutedSession(releaseMicOnMute, userMutedRef);
+}
+
+function logVoicePeerReplaceTrack(
+  remoteId: string,
+  track: MediaStreamTrack | null,
+  reason: string
+) {
+  console.log(
+    `[voice-peer] replace-track remote=${compactDeviceId(remoteId)} ` +
+      `track=${track?.readyState === "live" ? "live" : "null"} reason=${reason}`
+  );
+}
+
 type VoicePeerCleanupReason =
   | "component_unmount"
   | "session_changed"
@@ -4218,7 +4244,14 @@ export function usePeerConnections({
         localAudioTrackRef,
         localStreamRef
       );
-      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+      if (
+        !isLocalTrackLive(localAudioTrackRef, localStreamRef) &&
+        !canEnsurePeerWithoutLocalTrack(
+          isOfferOwner,
+          voicePolicy.releaseMicOnMute,
+          userMutedRef
+        )
+      ) {
         logEnsureSkipped(
           remoteId,
           reason,
@@ -4486,10 +4519,18 @@ export function usePeerConnections({
         localStreamRef
       );
 
-      if (!micReady || !signalReady || !isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+      const receiveOnly = isReceiveOnlyMutedSession(
+        voicePolicy.releaseMicOnMute,
+        userMutedRef
+      );
+      if (
+        !micReady ||
+        !signalReady ||
+        (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly)
+      ) {
         console.log(
           `[voice-peer] recoverMissingPcsFromMesh skipped trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
-            `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState} ${formatVoiceModeSuffix()}`
+            `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState} receiveOnly=${receiveOnly} ${formatVoiceModeSuffix()}`
         );
         return;
       }
@@ -4529,6 +4570,8 @@ export function usePeerConnections({
       logHealSkipP2pTurnDisabledHold,
       micReady,
       signalReady,
+      userMutedRef,
+      voicePolicy.releaseMicOnMute,
     ]
   );
 
@@ -4635,9 +4678,13 @@ export function usePeerConnections({
       return;
     }
 
-    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+    const receiveOnly = isReceiveOnlyMutedSession(
+      voicePolicy.releaseMicOnMute,
+      userMutedRef
+    );
+    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly) {
       console.log(
-        `[voice-peer] healPeerConnections skipped micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} ${formatVoiceModeSuffix()}`
+        `[voice-peer] healPeerConnections skipped micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} receiveOnly=${receiveOnly} ${formatVoiceModeSuffix()}`
       );
       runHealScan("healRun_local_track_not_live");
       return;
@@ -5504,23 +5551,77 @@ export function usePeerConnections({
     };
   }, [notifyStatus]);
 
+  const applyLocalAudioTrack = useCallback(
+    (track: MediaStreamTrack | null, reason: string) => {
+      const sendTrack =
+        track && track.readyState === "live" && !userMutedRef.current
+          ? track
+          : null;
+
+      for (const [remoteId, pc] of pcsRef.current) {
+        const sender = pc
+          .getSenders()
+          .find((s) => s.track?.kind === "audio" || s.track === null);
+
+        if (!sender) continue;
+        void sender.replaceTrack(sendTrack);
+        logVoicePeerReplaceTrack(remoteId, sendTrack, reason);
+      }
+
+      if (sendTrack && micReady && signalReady) {
+        healPeerConnections();
+      }
+    },
+    [
+      healPeerConnections,
+      micReady,
+      signalReady,
+      userMutedRef,
+    ]
+  );
+
   useEffect(() => {
     const track = localAudioTrackRef.current;
+    const muted = userMutedRef.current;
+
+    if (voicePolicy.releaseMicOnMute) {
+      for (const [remoteId, pc] of pcsRef.current) {
+        const sender = pc
+          .getSenders()
+          .find((s) => s.track?.kind === "audio" || s.track === null);
+
+        if (!sender) continue;
+        const next = muted ? null : track;
+        void sender.replaceTrack(next);
+        logVoicePeerReplaceTrack(
+          remoteId,
+          next,
+          muted ? "muted_release_mic" : "unmuted_acquire_mic"
+        );
+      }
+      return;
+    }
+
     if (!track) return;
 
-    const muted = userMutedRef.current;
     applyUserMutedToTrack(track, muted, "userMuted_changed", "usePeerConnections");
 
-    for (const pc of pcsRef.current.values()) {
+    for (const [remoteId, pc] of pcsRef.current) {
       const sender = pc
         .getSenders()
         .find((s) => s.track?.kind === "audio" || s.track === null);
 
       if (sender) {
-        void sender.replaceTrack(muted ? null : track);
+        const next = muted ? null : track;
+        void sender.replaceTrack(next);
+        logVoicePeerReplaceTrack(
+          remoteId,
+          next,
+          muted ? "user_muted" : "user_unmuted"
+        );
       }
     }
-  }, [userMuted, userMutedRef, localAudioTrackRef, micReady]);
+  }, [userMuted, userMutedRef, localAudioTrackRef, micReady, voicePolicy.releaseMicOnMute]);
 
   useEffect(() => {
     const remoteIds = getRemoteIds();
@@ -5550,10 +5651,15 @@ export function usePeerConnections({
       return;
     }
 
-    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+    const receiveOnly = isReceiveOnlyMutedSession(
+      voicePolicy.releaseMicOnMute,
+      userMutedRef
+    );
+    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly) {
       voiceDebugLog("[voice-peer] offer effect stop", {
         reason: "local_track_not_live",
         localTrack: getLocalTrackReadyState(localAudioTrackRef, localStreamRef),
+        receiveOnly,
       });
       return;
     }
@@ -5637,7 +5743,16 @@ export function usePeerConnections({
 
   useEffect(() => {
     if (membersSyncRevision <= 0) return;
-    if (!micReady || !isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
+    const receiveOnly = isReceiveOnlyMutedSession(
+      voicePolicy.releaseMicOnMute,
+      userMutedRef
+    );
+    if (
+      !micReady ||
+      (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly)
+    ) {
+      return;
+    }
     healPeerConnections();
     emitMeshSummary("members_updated", { immediate: true });
   }, [
@@ -5647,6 +5762,8 @@ export function usePeerConnections({
     localAudioTrackRef,
     localStreamRef,
     micReady,
+    userMutedRef,
+    voicePolicy.releaseMicOnMute,
   ]);
 
   const performVoicePeerCleanup = useCallback(
@@ -5875,5 +5992,6 @@ export function usePeerConnections({
     handleRemotePlaybackHealthChange,
     handlePlaybackUnconfirmedTimeout,
     manualPeerHardReset,
+    applyLocalAudioTrack,
   };
 }
