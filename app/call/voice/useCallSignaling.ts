@@ -2,13 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { compactDeviceId } from "@/app/call/voice/voiceDiagnostics";
 
-export type SignalType =
-  | "offer"
-  | "answer"
-  | "ice"
-  | "leave"
-  | "reconnect-request";
+/** Must match `call_signals_signal_type_check` in Supabase (see migration 20260602100000). */
+export const ALLOWED_CALL_SIGNAL_TYPES = [
+  "offer",
+  "answer",
+  "ice",
+  "leave",
+  "reconnect-request",
+] as const;
+
+export type SignalType = (typeof ALLOWED_CALL_SIGNAL_TYPES)[number];
+
+function isSignalTypeConstraintError(error: {
+  code?: string;
+  message?: string;
+}): boolean {
+  return (
+    error.code === "23514" &&
+    String(error.message ?? "").includes("call_signals_signal_type_check")
+  );
+}
 
 export type SignalPayload = {
   connectionId?: string;
@@ -86,7 +101,17 @@ export function useCallSignaling({
         });
 
         if (error) {
-          console.error("[call] signal insert error", error);
+          const remote = compactDeviceId(toDeviceId);
+          console.error(
+            `[voice-signal] insert-failed type=${signalType} remote=${remote} ` +
+              `name=${error.name ?? "unknown"} message=${error.message ?? "unknown"}`
+          );
+          if (isSignalTypeConstraintError(error)) {
+            console.error(
+              `[voice-signal] allowed-types-mismatch type=${signalType} ` +
+                `allowed=${ALLOWED_CALL_SIGNAL_TYPES.join(",")}`
+            );
+          }
           onStatusChange?.(`signal error: ${error.message}`);
           return {
             ok: false,
@@ -98,7 +123,10 @@ export function useCallSignaling({
         return { ok: true };
       } catch (e: unknown) {
         const err = e as { name?: string; message?: string };
-        console.error("[call] signal insert exception", e);
+        console.error(
+          `[voice-signal] insert-failed type=${signalType} remote=${compactDeviceId(toDeviceId)} ` +
+            `name=${err?.name ?? "unknown"} message=${err?.message ?? String(e)}`
+        );
         return {
           ok: false,
           errorName: err?.name ?? "SignalInsertException",
