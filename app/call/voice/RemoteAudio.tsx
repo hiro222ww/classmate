@@ -34,6 +34,17 @@ function compactRemoteId(remoteId: string): string {
   return value.slice(-3);
 }
 
+function compactMediaId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 6) return value;
+  return value.slice(-6);
+}
+
+function createRemoteAudioInstanceId(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
+
 function getSinkId(el: HTMLAudioElement): string {
   return String(
     (el as HTMLMediaElement & { sinkId?: string }).sinkId ?? "-"
@@ -131,6 +142,8 @@ export default function RemoteAudio({
   ) => void;
 }) {
   const ref = useRef<HTMLAudioElement | null>(null);
+  const instanceRef = useRef(createRemoteAudioInstanceId());
+  const instanceId = instanceRef.current;
   const lastAttachedStreamIdRef = useRef<string | null>(null);
   const lastAttachedTrackIdRef = useRef<string | null>(null);
   const playbackCheckTimersRef = useRef<number[]>([]);
@@ -365,6 +378,17 @@ export default function RemoteAudio({
     void playAudio({ fromUnlock: true });
   }, [playAudio]);
 
+  useEffect(() => {
+    console.log(
+      `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
+    );
+    return () => {
+      console.log(
+        `[remote-audio] unmount remote=${compactRemoteId(remoteId)} instance=${instanceId}`
+      );
+    };
+  }, [instanceId, remoteId]);
+
   const attachStream = useCallback(() => {
     const el = ref.current;
     if (!el || !stream) return;
@@ -374,17 +398,26 @@ export default function RemoteAudio({
     const track = stream.getAudioTracks()[0] ?? null;
     const streamId = stream.id ?? "";
     const trackId = track?.id ?? "";
+    const prevStreamId = lastAttachedStreamIdRef.current ?? "";
+    const prevTrackId = lastAttachedTrackIdRef.current ?? "";
+    const sameStream = Boolean(streamId && prevStreamId && streamId === prevStreamId);
+    const sameTrack = Boolean(trackId && prevTrackId && trackId === prevTrackId);
+    const sameSrcObject = el.srcObject === stream;
+    const willSkip = Boolean(
+      streamId && trackId && sameStream && sameTrack && sameSrcObject
+    );
 
-    if (
-      streamId &&
-      trackId &&
-      lastAttachedStreamIdRef.current === streamId &&
-      lastAttachedTrackIdRef.current === trackId &&
-      el.srcObject === stream
-    ) {
+    console.log(
+      `[remote-audio] attach-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+        `streamId=${compactMediaId(streamId)} prevStreamId=${compactMediaId(prevStreamId)} ` +
+        `trackId=${compactMediaId(trackId)} prevTrackId=${compactMediaId(prevTrackId)} ` +
+        `sameStream=${sameStream} sameTrack=${sameTrack} sameSrcObject=${sameSrcObject} willSkip=${willSkip}`
+    );
+
+    if (willSkip) {
       console.log(
-        `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} ` +
-          `streamId=${streamId.slice(-6)} trackId=${trackId.slice(-6)} ${formatVoiceModeSuffix()}`
+        `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+          `streamId=${compactMediaId(streamId)} trackId=${compactMediaId(trackId)} ${formatVoiceModeSuffix()}`
       );
       return;
     }
@@ -410,7 +443,7 @@ export default function RemoteAudio({
     if (voicePolicy.aggressivePlayRetry) {
       void playAudio();
     }
-  }, [configureAudioElement, playAudio, remoteId, stream]);
+  }, [configureAudioElement, instanceId, playAudio, remoteId, stream]);
 
   useEffect(() => {
     const el = ref.current;
