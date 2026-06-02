@@ -484,6 +484,7 @@ function formatVoiceMeshPeerLine(peer: VoiceMeshPeerSummaryEntry): string {
     `answerAt=${compactAgeMs(peer.lastAnswerAt)} ` +
     `iceAt=${compactAgeMs(peer.lastIceCandidateAt)} ` +
     `ontrackAt=${compactAgeMs(peer.lastOnTrackAt)} ` +
+    `playAt=${compactAgeMs(peer.lastPlaySuccessAt)} ` +
     `block=${peer.reconnectBlockReason ?? "-"}`
   );
 }
@@ -561,6 +562,7 @@ export type VoiceMeshPeerSummaryEntry = {
   lastIceCandidateAt: number | null;
   lastOnTrackAt: number | null;
   lastUnmuteAt: number | null;
+  lastPlaySuccessAt: number | null;
   lastWarning: string | null;
   lastHealAction: string | null;
 };

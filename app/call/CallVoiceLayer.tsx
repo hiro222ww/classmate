@@ -146,6 +146,14 @@ export default function CallVoiceLayer({
     signaling.setOnSignal(peer.handleSignal);
   }, [signaling.setOnSignal, peer.handleSignal]);
 
+  const handleRemotePlaybackHealthChange = useCallback(
+    (remoteId: string, health: RemotePlaybackHealth) => {
+      peer.handleRemotePlaybackHealthChange(remoteId, health);
+      onRemotePlaybackHealthChange?.(remoteId, health);
+    },
+    [onRemotePlaybackHealthChange, peer.handleRemotePlaybackHealthChange]
+  );
+
   return (
     <>
       {mic.audioInputs.length > 0 && (
@@ -179,7 +187,7 @@ export default function CallVoiceLayer({
           stream={state.stream}
           remoteId={remoteId}
           onSpeaking={onRemoteSpeakingChange}
-          onPlaybackHealthChange={onRemotePlaybackHealthChange}
+          onPlaybackHealthChange={handleRemotePlaybackHealthChange}
         />
       ))}
     </>

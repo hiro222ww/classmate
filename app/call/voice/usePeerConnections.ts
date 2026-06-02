@@ -28,6 +28,7 @@ import {
   getVoiceModePolicy,
   logVoiceClientEnv,
 } from "@/lib/voiceClientEnv";
+import type { RemotePlaybackHealth } from "./RemoteAudio";
 
 type Member = {
   device_id: string;
@@ -115,6 +116,7 @@ logVoiceClientEnv("peer-connections-init");
 const MESH_SUMMARY_DEBOUNCE_MS = 150;
 const TRACK_ENDED_HOLD_MS = 2000;
 const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
+const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
 
 type TrackEndedHoldCheck = {
   shouldHold: boolean;
@@ -262,6 +264,18 @@ type PeerSignalTimestamps = {
   lastIceCandidateAt: number | null;
   lastOnTrackAt: number | null;
   lastUnmuteAt: number | null;
+  lastPlaySuccessAt: number | null;
+};
+
+type LiveStreamWaitConnectedCheck = {
+  shouldHold: boolean;
+  graceExpired: boolean;
+  isConnectingOrChecking: boolean;
+  ontrackAgeMs: number | null;
+  answerAgeMs: number | null;
+  playAgeMs: number | null;
+  unmuteAgeMs: number | null;
+  activityAgeMs: number | null;
 };
 
 type PeerMeta = {
@@ -276,6 +290,62 @@ function emptyPeerSignalTimestamps(): PeerSignalTimestamps {
     lastIceCandidateAt: null,
     lastOnTrackAt: null,
     lastUnmuteAt: null,
+    lastPlaySuccessAt: null,
+  };
+}
+
+function signalAgeMs(at: number | null): number | null {
+  if (at == null) return null;
+  return Date.now() - at;
+}
+
+function isPcConnectingOrIceChecking(pc: RTCPeerConnection): boolean {
+  return (
+    pc.connectionState === "connecting" ||
+    isIceConnectionStalled(pc.iceConnectionState)
+  );
+}
+
+function evaluateLiveStreamWaitConnectedHold(params: {
+  pc: RTCPeerConnection;
+  timestamps: PeerSignalTimestamps;
+  connectStartedAt: number | null | undefined;
+  graceMs: number;
+}): LiveStreamWaitConnectedCheck {
+  const { pc, timestamps, connectStartedAt, graceMs } = params;
+  const ontrackAgeMs = signalAgeMs(timestamps.lastOnTrackAt);
+  const answerAgeMs = signalAgeMs(timestamps.lastAnswerAt);
+  const playAgeMs = signalAgeMs(timestamps.lastPlaySuccessAt);
+  const unmuteAgeMs = signalAgeMs(timestamps.lastUnmuteAt);
+
+  const activityAnchors = [
+    timestamps.lastOnTrackAt,
+    timestamps.lastAnswerAt,
+    timestamps.lastUnmuteAt,
+    timestamps.lastPlaySuccessAt,
+    connectStartedAt ?? null,
+  ].filter((value): value is number => value != null);
+
+  const latestActivityAt = activityAnchors.length
+    ? Math.max(...activityAnchors)
+    : null;
+  const activityAgeMs = signalAgeMs(latestActivityAt);
+
+  const isConnectingOrChecking = isPcConnectingOrIceChecking(pc);
+  const withinGrace =
+    activityAgeMs != null && activityAgeMs < graceMs;
+  const graceExpired =
+    activityAgeMs != null && activityAgeMs >= graceMs;
+
+  return {
+    shouldHold: isConnectingOrChecking && withinGrace,
+    graceExpired: isConnectingOrChecking && graceExpired,
+    isConnectingOrChecking,
+    ontrackAgeMs,
+    answerAgeMs,
+    playAgeMs,
+    unmuteAgeMs,
+    activityAgeMs,
   };
 }
 
@@ -888,6 +958,7 @@ export function usePeerConnections({
         | "ice_received"
         | "ontrack"
         | "unmute"
+        | "play_success"
     ) => {
       const prev =
         peerSignalTimestampsRef.current.get(remoteId) ??
@@ -911,10 +982,22 @@ export function usePeerConnections({
       if (event === "unmute") {
         next.lastUnmuteAt = now;
       }
+      if (event === "play_success") {
+        next.lastPlaySuccessAt = now;
+      }
 
       peerSignalTimestampsRef.current.set(remoteId, next);
     },
     []
+  );
+
+  const handleRemotePlaybackHealthChange = useCallback(
+    (remoteId: string, health: RemotePlaybackHealth) => {
+      if (health.playSuccess && health.trackReady === "live") {
+        touchPeerSignal(remoteId, "play_success");
+      }
+    },
+    [touchPeerSignal]
   );
 
   const setPeerMeta = useCallback(
@@ -982,6 +1065,7 @@ export function usePeerConnections({
         lastIceCandidateAt: timestamps.lastIceCandidateAt,
         lastOnTrackAt: timestamps.lastOnTrackAt,
         lastUnmuteAt: timestamps.lastUnmuteAt,
+        lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
         lastWarning: meta.lastWarning,
         lastHealAction: meta.lastHealAction,
       };
@@ -2895,6 +2979,49 @@ export function usePeerConnections({
           continue;
         }
 
+        const timestamps =
+          peerSignalTimestampsRef.current.get(remoteId) ??
+          emptyPeerSignalTimestamps();
+        const waitCheck = evaluateLiveStreamWaitConnectedHold({
+          pc,
+          timestamps,
+          connectStartedAt: connectStartedAtRef.current.get(remoteId),
+          graceMs: LIVE_STREAM_WAIT_CONNECTED_MS,
+        });
+
+        if (waitCheck.shouldHold) {
+          console.log(
+            `[voice-peer] heal-hold remote=${compactDeviceId(remoteId)} reason=recent_live_stream_wait_connected ` +
+              `conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +
+              `ontrackAgeMs=${waitCheck.ontrackAgeMs ?? "-"} ` +
+              `answerAgeMs=${waitCheck.answerAgeMs ?? "-"} ` +
+              `playAgeMs=${waitCheck.playAgeMs ?? "-"} ` +
+              `activityAgeMs=${waitCheck.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
+          );
+          continue;
+        }
+
+        if (waitCheck.graceExpired) {
+          console.log(
+            `[voice-peer] heal remote=${compactDeviceId(remoteId)} action=reconnect reason=live_stream_not_connected_timeout ` +
+              `conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +
+              `activityAgeMs=${waitCheck.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
+          );
+          planned.push({
+            remoteId,
+            action: "reconnect",
+            reason: "live_stream_not_connected_timeout",
+            scheduledInMs: voicePolicy.trackEndedReconnectMs,
+            run: () => {
+              scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
+                reason: "heal_live_stream_not_connected_timeout",
+                force: true,
+              });
+            },
+          });
+          continue;
+        }
+
         planned.push({
           remoteId,
           action: "reconnect",
@@ -3707,5 +3834,6 @@ export function usePeerConnections({
   return {
     remoteAudios,
     handleSignal,
+    handleRemotePlaybackHealthChange,
   };
 }
