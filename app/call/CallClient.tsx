@@ -41,6 +41,7 @@ import {
   logParticipationStatusDecision,
   resolveCallMemberStatus,
   resolveEffectivePeerConnection,
+  shouldShowManualAudioReconnect,
 } from "@/lib/memberPresenceStatus";
 import {
   clearLocalLeftCall,
@@ -173,6 +174,9 @@ export default function CallClient() {
   const prevCallStatusRef = useRef<Record<string, string>>({});
   const prevCallStatusPeerLogRef = useRef<Record<string, string>>({});
   const missingRemoteAudioWarnedRef = useRef<Set<string>>(new Set());
+  const manualPeerHardResetRef = useRef<
+    (remoteId: string) => void | Promise<void>
+  >(() => {});
   const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
@@ -741,6 +745,23 @@ export default function CallClient() {
     prevCallStatusPeerLogRef.current = {};
   }, []);
 
+  const handleManualPeerHardResetReady = useCallback(
+    (reset: (remoteId: string) => void | Promise<void>) => {
+      manualPeerHardResetRef.current = reset;
+    },
+    []
+  );
+
+  const handleManualAudioReconnect = useCallback((remoteId: string) => {
+    setRemoteAudioHealth((prev) => {
+      if (!prev[remoteId]) return prev;
+      const next = { ...prev };
+      delete next[remoteId];
+      return next;
+    });
+    void manualPeerHardResetRef.current(remoteId);
+  }, []);
+
   const filled = members.length;
 
   const muteButtonLabel = useMemo(() => {
@@ -905,6 +926,7 @@ export default function CallClient() {
         playbackActiveMode: audioHealth?.playbackActiveMode,
         hasPc: diag?.hasPc ?? false,
         orphanRemoteAudio: diag?.orphanRemoteAudio === true,
+        p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
         wasPeerConnected,
         remoteAudioVerified,
       });
@@ -1136,6 +1158,7 @@ export default function CallClient() {
         onPeerStatesChange={setPeerStates}
         onPeerDiagnosticsChange={setPeerDiagnostics}
         onVoiceCleanup={handleVoiceCleanup}
+        onManualPeerHardResetReady={handleManualPeerHardResetReady}
       />
 
       <div
@@ -1319,6 +1342,24 @@ export default function CallClient() {
             const isFilled = !!member;
             const isMe = member?.device_id === deviceId;
             const status = getMemberStatus(member);
+            const memberId = member?.device_id ?? "";
+            const diag = memberId ? peerDiagnostics[memberId] : undefined;
+            const showManualAudioReconnect =
+              !!member &&
+              !isMe &&
+              shouldShowManualAudioReconnect({
+                isMe: false,
+                statusText: status.text,
+                statusReason: "reason" in status ? String(status.reason ?? "") : "",
+                conn: diag?.conn ?? "-",
+                ice: diag?.ice ?? "-",
+                hasPc: diag?.hasPc ?? false,
+                hasRemoteStream: diag?.hasRemoteStream ?? false,
+                lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
+                lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+                p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+                nowMs,
+              });
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
 
             const isSpeaking =
@@ -1436,17 +1477,49 @@ export default function CallClient() {
                 <div style={{ minWidth: 0 }}>
                   <div
                     style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      padding: "4px 8px",
-                      borderRadius: 999,
-                      background: isSpeaking ? "#dcfce7" : status.chipBg,
-                      color: isSpeaking ? "#166534" : status.chipText,
-                      fontSize: 11,
-                      fontWeight: 800,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
+                      gap: 6,
                     }}
                   >
-                    {isSpeaking ? "発話中" : status.text}
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "4px 8px",
+                        borderRadius: 999,
+                        background: isSpeaking ? "#dcfce7" : status.chipBg,
+                        color: isSpeaking ? "#166534" : status.chipText,
+                        fontSize: 11,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {isSpeaking ? "発話中" : status.text}
+                    </div>
+
+                    {showManualAudioReconnect && memberId ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleManualAudioReconnect(memberId);
+                        }}
+                        style={{
+                          padding: "4px 8px",
+                          borderRadius: 8,
+                          border: "1px solid #f59e0b",
+                          background: "#fffbeb",
+                          color: "#b45309",
+                          fontSize: 10,
+                          fontWeight: 800,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        音声を再接続
+                      </button>
+                    ) : null}
                   </div>
 
                   {isFilled && !isMe && member?.device_id ? (

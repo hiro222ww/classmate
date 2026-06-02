@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-export type SignalType = "offer" | "answer" | "ice" | "leave";
+export type SignalType =
+  | "offer"
+  | "answer"
+  | "ice"
+  | "leave"
+  | "reconnect-request";
 
 export type SignalPayload = {
   connectionId?: string;

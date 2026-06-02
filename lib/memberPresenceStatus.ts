@@ -5,6 +5,7 @@ export type CallPeerState = "idle" | "connecting" | "connected" | "failed";
 export type EffectivePeerState = CallPeerState | "connected_effective";
 
 export const PLAYBACK_EFFECTIVE_CONNECTED_MS = 15_000;
+export const MANUAL_AUDIO_RECONNECT_UNCONFIRMED_MS = 15_000;
 
 export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
 
@@ -224,6 +225,48 @@ export function participationStatusStyle(status: UiParticipationStatus) {
   };
 }
 
+export function shouldShowManualAudioReconnect(params: {
+  isMe: boolean;
+  statusText: string;
+  statusReason: string;
+  conn: string;
+  ice: string;
+  hasPc: boolean;
+  hasRemoteStream: boolean;
+  lastPlaybackConfirmedAt: number | null;
+  lastPlaybackActiveAt: number | null;
+  p2pDirectFailedHoldActive?: boolean;
+  nowMs?: number;
+}): boolean {
+  if (params.isMe) return false;
+
+  const now = params.nowMs ?? Date.now();
+  const failedTransport = params.conn === "failed" || params.ice === "failed";
+  const orphanNoPc = !params.hasPc && params.hasRemoteStream;
+  const reconnectingLabel =
+    params.statusText === "再接続中" ||
+    params.statusText === "音声確認中" ||
+    params.statusText === "再接続を試みています";
+  const matchingReason =
+    params.statusReason === "orphan_remote_audio_provisional" ||
+    params.statusReason === "p2p_direct_failed_turn_disabled" ||
+    params.statusReason === "peer_failed_reconnect" ||
+    params.statusReason === "peer_failed" ||
+    params.statusReason === "peer_connecting_reconnect";
+  const unconfirmedStuck =
+    params.lastPlaybackConfirmedAt == null &&
+    params.lastPlaybackActiveAt != null &&
+    now - params.lastPlaybackActiveAt >= MANUAL_AUDIO_RECONNECT_UNCONFIRMED_MS;
+
+  return (
+    params.p2pDirectFailedHoldActive === true ||
+    failedTransport ||
+    orphanNoPc ||
+    (reconnectingLabel && matchingReason) ||
+    unconfirmedStuck
+  );
+}
+
 export function resolveCallMemberStatus(params: {
   isMe: boolean;
   isMuted: boolean;
@@ -236,6 +279,7 @@ export function resolveCallMemberStatus(params: {
   playbackActiveMode?: PlaybackActiveMode;
   hasPc?: boolean;
   orphanRemoteAudio?: boolean;
+  p2pDirectFailedHoldActive?: boolean;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
 }) {
@@ -360,6 +404,17 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.peerState === "failed") {
+    if (params.p2pDirectFailedHoldActive) {
+      return {
+        text: "再接続中",
+        color: "#991b1b",
+        chipBg: "#fef2f2",
+        chipText: "#dc2626",
+        reason: "p2p_direct_failed_turn_disabled",
+        source: "peerState",
+      };
+    }
+
     return {
       text: params.wasPeerConnected ? "再接続を試みています" : "再接続中",
       color: "#991b1b",

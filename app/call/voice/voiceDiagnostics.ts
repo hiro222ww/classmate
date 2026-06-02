@@ -344,6 +344,8 @@ export type PeerStatusDiagnostics = {
   lastPlaybackConfirmedAt: number | null;
   remoteAudioMounted: boolean;
   orphanRemoteAudio?: boolean;
+  p2pDirectFailedHoldActive?: boolean;
+  p2pDirectFailedHoldRemainingMs?: number | null;
 };
 
 export function logCallStatusPeer(params: {

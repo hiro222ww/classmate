@@ -56,6 +56,9 @@ type CallVoiceLayerProps = {
     diagnostics: Record<string, PeerStatusDiagnostics>
   ) => void;
   onVoiceCleanup?: () => void;
+  onManualPeerHardResetReady?: (
+    reset: (remoteId: string) => void | Promise<void>
+  ) => void;
 };
 
 export default function CallVoiceLayer({
@@ -73,6 +76,7 @@ export default function CallVoiceLayer({
   onPeerStatesChange,
   onPeerDiagnosticsChange,
   onVoiceCleanup,
+  onManualPeerHardResetReady,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
@@ -145,6 +149,10 @@ export default function CallVoiceLayer({
   useEffect(() => {
     signaling.setOnSignal(peer.handleSignal);
   }, [signaling.setOnSignal, peer.handleSignal]);
+
+  useEffect(() => {
+    onManualPeerHardResetReady?.(peer.manualPeerHardReset);
+  }, [onManualPeerHardResetReady, peer.manualPeerHardReset]);
 
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {
