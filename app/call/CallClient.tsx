@@ -686,6 +686,14 @@ export default function CallClient() {
 
   const handleRemoteCountChange = useCallback((_count: number) => {}, []);
 
+  const handleVoiceCleanup = useCallback(() => {
+    setPeerStates({});
+    setPeerDiagnostics({});
+    setRemoteAudioHealth({});
+    prevCallStatusRef.current = {};
+    prevCallStatusPeerLogRef.current = {};
+  }, []);
+
   const filled = members.length;
 
   const muteButtonLabel = useMemo(() => {
@@ -1028,13 +1036,7 @@ export default function CallClient() {
         onStatusChange={setCallInfo}
         onPeerStatesChange={setPeerStates}
         onPeerDiagnosticsChange={setPeerDiagnostics}
-        onVoiceCleanup={() => {
-          setPeerStates({});
-          setPeerDiagnostics({});
-          setRemoteAudioHealth({});
-          prevCallStatusRef.current = {};
-          prevCallStatusPeerLogRef.current = {};
-        }}
+        onVoiceCleanup={handleVoiceCleanup}
       />
 
       <div

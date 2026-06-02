@@ -1,14 +1,29 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import RemoteAudio, {
   type RemotePlaybackHealth,
 } from "./voice/RemoteAudio";
 import { useLocalMic, releaseSessionMic } from "./voice/useLocalMic";
 import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
-import { voiceDebugLog, type PeerStatusDiagnostics } from "./voice/voiceDiagnostics";
+import {
+  compactDeviceId,
+  voiceDebugLog,
+  type PeerStatusDiagnostics,
+} from "./voice/voiceDiagnostics";
 import { logVoiceClientEnv, getVoiceMode } from "@/lib/voiceClientEnv";
+
+function compactSessionId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 8) return value;
+  return value.slice(-8);
+}
+
+function createVoiceLayerInstanceId(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
 
 type Member = {
   device_id: string;
@@ -59,6 +74,9 @@ export default function CallVoiceLayer({
   onPeerDiagnosticsChange,
   onVoiceCleanup,
 }: CallVoiceLayerProps) {
+  const instanceRef = useRef(createVoiceLayerInstanceId());
+  const instanceId = instanceRef.current;
+
   voiceDebugLog("[voice-layer] render", {
     sessionId,
     deviceId,
@@ -109,10 +127,16 @@ export default function CallVoiceLayer({
   });
 
   useEffect(() => {
+    console.log(
+      `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)}`
+    );
     return () => {
+      console.log(
+        `[voice-layer] unmount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)}`
+      );
       releaseSessionMic("voice_layer_unmount", sessionId);
     };
-  }, [sessionId]);
+  }, [deviceId, instanceId, sessionId]);
 
   useEffect(() => {
     logVoiceClientEnv("voice-layer-mount");

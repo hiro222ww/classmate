@@ -73,6 +73,14 @@ function isLocalTrackLive(
   return getLocalAudioTrack(localAudioTrackRef, localStreamRef)?.readyState === "live";
 }
 
+type VoicePeerCleanupReason =
+  | "component_unmount"
+  | "session_changed"
+  | "device_changed"
+  | "deps_changed";
+
+type VoicePeerCleanupLogTag = "cleanup-on-unmount" | "cleanup-effect";
+
 type UsePeerConnectionsArgs = {
   sessionId: string;
   deviceId: string;
@@ -292,6 +300,15 @@ export function usePeerConnections({
   onPeerDiagnosticsChange,
   onVoiceCleanup,
 }: UsePeerConnectionsArgs) {
+  const sessionIdRef = useRef(sessionId);
+  const deviceIdRef = useRef(deviceId);
+  const onVoiceCleanupRef = useRef(onVoiceCleanup);
+  const emitPeerStatesRef = useRef<() => void>(() => {});
+
+  sessionIdRef.current = sessionId;
+  deviceIdRef.current = deviceId;
+  onVoiceCleanupRef.current = onVoiceCleanup;
+
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const processedSignalIdsRef = useRef<Set<number>>(new Set());
@@ -978,6 +995,10 @@ export function usePeerConnections({
     onPeerDiagnosticsChange,
     onPeerStatesChange,
   ]);
+
+  useEffect(() => {
+    emitPeerStatesRef.current = emitPeerStates;
+  }, [emitPeerStates]);
 
   const setPeerState = useCallback(
     (remoteId: string, state: PeerState) => {
@@ -3146,96 +3167,111 @@ export function usePeerConnections({
     micReady,
   ]);
 
-  const cleanupVoicePeersOnUnmount = useCallback(() => {
-    const pcCount = pcsRef.current.size;
-    let timerCount = 0;
+  const performVoicePeerCleanup = useCallback(
+    (reason: VoicePeerCleanupReason, logTag: VoicePeerCleanupLogTag) => {
+      const pcCount = pcsRef.current.size;
+      let timerCount = 0;
 
-    for (const timer of reconnectTimersRef.current.values()) {
-      window.clearTimeout(timer);
-      timerCount += 1;
-    }
-    reconnectTimersRef.current.clear();
-    reconnectPendingRef.current.clear();
+      for (const timer of reconnectTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      reconnectTimersRef.current.clear();
+      reconnectPendingRef.current.clear();
 
-    for (const timer of endedHoldTimersRef.current.values()) {
-      window.clearTimeout(timer);
-      timerCount += 1;
-    }
-    endedHoldTimersRef.current.clear();
+      for (const timer of endedHoldTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      endedHoldTimersRef.current.clear();
 
-    for (const timer of iceCheckingTimersRef.current.values()) {
-      window.clearTimeout(timer);
-      timerCount += 1;
-    }
-    iceCheckingTimersRef.current.clear();
+      for (const timer of iceCheckingTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      iceCheckingTimersRef.current.clear();
 
-    for (const timer of connectingTimersRef.current.values()) {
-      window.clearTimeout(timer);
-      timerCount += 1;
-    }
-    connectingTimersRef.current.clear();
+      for (const timer of connectingTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      connectingTimersRef.current.clear();
 
-    if (meshSummaryTimerRef.current) {
-      window.clearTimeout(meshSummaryTimerRef.current);
-      meshSummaryTimerRef.current = null;
-      timerCount += 1;
-    }
-    if (meshNotConnectedTimerRef.current) {
-      window.clearTimeout(meshNotConnectedTimerRef.current);
-      meshNotConnectedTimerRef.current = null;
-      timerCount += 1;
-    }
+      if (meshSummaryTimerRef.current) {
+        window.clearTimeout(meshSummaryTimerRef.current);
+        meshSummaryTimerRef.current = null;
+        timerCount += 1;
+      }
+      if (meshNotConnectedTimerRef.current) {
+        window.clearTimeout(meshNotConnectedTimerRef.current);
+        meshNotConnectedTimerRef.current = null;
+        timerCount += 1;
+      }
 
-    const remoteAudioCount = remoteStreamsRef.current.size;
+      const remoteAudioCount = remoteStreamsRef.current.size;
 
-    for (const [remoteId, pc] of Array.from(pcsRef.current.entries())) {
-      try {
-        pc.onicecandidate = null;
-        pc.ontrack = null;
-        pc.onconnectionstatechange = null;
-        pc.oniceconnectionstatechange = null;
-        pc.onsignalingstatechange = null;
-        pc.onicegatheringstatechange = null;
-        pc.close();
-      } catch {}
-      pcsRef.current.delete(remoteId);
-    }
+      for (const [, pc] of Array.from(pcsRef.current.entries())) {
+        try {
+          pc.onicecandidate = null;
+          pc.ontrack = null;
+          pc.onconnectionstatechange = null;
+          pc.oniceconnectionstatechange = null;
+          pc.onsignalingstatechange = null;
+          pc.onicegatheringstatechange = null;
+          pc.close();
+        } catch {}
+      }
 
-    pcsRef.current.clear();
-    remoteStreamsRef.current.clear();
-    pendingIceRef.current.clear();
-    connectionIdsRef.current.clear();
-    offeredPeersRef.current.clear();
-    startedPeersRef.current.clear();
-    processedSignalIdsRef.current.clear();
-    connectStartedAtRef.current.clear();
-    loggedConnectedRef.current.clear();
-    peerSnapshotRef.current.clear();
-    peerEverConnectedRef.current.clear();
-    peerLastConnectedAtRef.current.clear();
-    recoveryStartedAtRef.current.clear();
-    attachedTrackIdsRef.current.clear();
-    trackEndedAtRef.current.clear();
-    peerHealActionRef.current.clear();
-    lastHealActionAtRef.current.clear();
-    peerSignalTimestampsRef.current.clear();
-    peerMetaRef.current.clear();
-    peerStatesRef.current.clear();
+      pcsRef.current.clear();
+      remoteStreamsRef.current.clear();
+      pendingIceRef.current.clear();
+      connectionIdsRef.current.clear();
+      offeredPeersRef.current.clear();
+      startedPeersRef.current.clear();
+      processedSignalIdsRef.current.clear();
+      connectStartedAtRef.current.clear();
+      loggedConnectedRef.current.clear();
+      peerSnapshotRef.current.clear();
+      peerEverConnectedRef.current.clear();
+      peerLastConnectedAtRef.current.clear();
+      recoveryStartedAtRef.current.clear();
+      attachedTrackIdsRef.current.clear();
+      trackEndedAtRef.current.clear();
+      peerHealActionRef.current.clear();
+      lastHealActionAtRef.current.clear();
+      peerSignalTimestampsRef.current.clear();
+      peerMetaRef.current.clear();
+      peerStatesRef.current.clear();
 
-    setRemoteAudios({});
-    emitPeerStates();
-    onVoiceCleanup?.();
+      setRemoteAudios({});
+      emitPeerStatesRef.current();
+      onVoiceCleanupRef.current?.();
 
-    console.log(
-      `[voice-peer] cleanup-on-unmount pcs=${pcCount} timers=${timerCount} remoteAudios=${remoteAudioCount} ${formatVoiceModeSuffix()}`
-    );
-  }, [emitPeerStates, onVoiceCleanup]);
+      console.log(
+        `[voice-peer] ${logTag} reason=${reason} pcs=${pcCount} timers=${timerCount} remoteAudios=${remoteAudioCount} ${formatVoiceModeSuffix()}`
+      );
+    },
+    []
+  );
 
   useEffect(() => {
+    const effectSessionId = sessionId;
+    const effectDeviceId = deviceId;
+
     return () => {
-      cleanupVoicePeersOnUnmount();
+      const nextSessionId = sessionIdRef.current;
+      const nextDeviceId = deviceIdRef.current;
+
+      let reason: VoicePeerCleanupReason = "component_unmount";
+      if (nextSessionId !== effectSessionId) {
+        reason = "session_changed";
+      } else if (nextDeviceId !== effectDeviceId) {
+        reason = "device_changed";
+      }
+
+      performVoicePeerCleanup(reason, "cleanup-on-unmount");
     };
-  }, [sessionId, cleanupVoicePeersOnUnmount]);
+  }, [deviceId, performVoicePeerCleanup, sessionId]);
 
   useEffect(() => {
     if (!micReady || !signalReady) return;
