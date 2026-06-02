@@ -7,7 +7,7 @@ import RemoteAudio, {
 import { useLocalMic } from "./voice/useLocalMic";
 import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
-import { voiceDebugLog } from "./voice/voiceDiagnostics";
+import { voiceDebugLog, type PeerStatusDiagnostics } from "./voice/voiceDiagnostics";
 import { logVoiceClientEnv, getVoiceMode } from "@/lib/voiceClientEnv";
 
 type Member = {
@@ -37,6 +37,9 @@ type CallVoiceLayerProps = {
   onRemoteCountChange?: (count: number) => void;
   onStatusChange?: (text: string) => void;
   onPeerStatesChange?: (states: Record<string, PeerState>) => void;
+  onPeerDiagnosticsChange?: (
+    diagnostics: Record<string, PeerStatusDiagnostics>
+  ) => void;
 };
 
 export default function CallVoiceLayer({
@@ -52,6 +55,7 @@ export default function CallVoiceLayer({
   onRemoteCountChange,
   onStatusChange,
   onPeerStatesChange,
+  onPeerDiagnosticsChange,
 }: CallVoiceLayerProps) {
   voiceDebugLog("[voice-layer] render", {
     sessionId,
@@ -98,6 +102,7 @@ export default function CallVoiceLayer({
     onRemoteCountChange,
     onStatusChange,
     onPeerStatesChange,
+    onPeerDiagnosticsChange,
   });
 
   useEffect(() => {

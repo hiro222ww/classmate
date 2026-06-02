@@ -24,7 +24,9 @@ import {
   installCallPageDiagnostics,
   logCallLifecycle,
   logCallNavigationType,
+  logCallStatusPeer,
   voiceDebugLog,
+  type PeerStatusDiagnostics,
 } from "@/app/call/voice/voiceDiagnostics";
 import { consumeCallReloadSnapshot } from "@/lib/callReloadDiagnostics";
 import { requestRemoteAudioUnlock } from "@/lib/remoteAudioUnlock";
@@ -145,6 +147,9 @@ export default function CallClient() {
   const [micLevel, setMicLevel] = useState(0);
   const [callInfo, setCallInfo] = useState("");
   const [peerStates, setPeerStates] = useState<Record<string, PeerState>>({});
+  const [peerDiagnostics, setPeerDiagnostics] = useState<
+    Record<string, PeerStatusDiagnostics>
+  >({});
   const [remoteAudioHealth, setRemoteAudioHealth] = useState<
     Record<string, { verified: boolean }>
   >({});
@@ -158,6 +163,7 @@ export default function CallClient() {
   const lastSpeakerIdRef = useRef<string | null>(null);
   const everConnectedPeersRef = useRef<Set<string>>(new Set());
   const prevCallStatusRef = useRef<Record<string, string>>({});
+  const prevCallStatusPeerLogRef = useRef<Record<string, string>>({});
   const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
@@ -195,6 +201,7 @@ export default function CallClient() {
     return () => {
       logCallLifecycle("unmount", { sessionId, deviceId });
       setPeerStates({});
+      setPeerDiagnostics({});
       cleanupDiagnostics();
     };
   }, [sessionId, deviceId]);
@@ -356,7 +363,9 @@ export default function CallClient() {
     markLocalLeftCall(sessionId, did);
     localExitedPeersRef.current.add(did);
     setPeerStates({});
+    setPeerDiagnostics({});
     prevCallStatusRef.current = {};
+    prevCallStatusPeerLogRef.current = {};
     everConnectedPeersRef.current.clear();
 
     setMembers((prev) =>
@@ -787,9 +796,54 @@ export default function CallClient() {
         prevCallStatusRef.current[memberId] = status.text;
       }
 
+      const diag = peerDiagnostics[memberId];
+      const remoteAudioHealthStr =
+        peerState !== "connected"
+          ? "n/a"
+          : audioHealth == null
+            ? "pending"
+            : audioHealth.verified
+              ? "verified"
+              : "unverified";
+      const peerLogSignature = [
+        status.text,
+        peerState,
+        remoteAudioHealthStr,
+        diag?.hasPc ?? false,
+        diag?.conn ?? "-",
+        diag?.ice ?? "-",
+        diag?.sig ?? "-",
+        diag?.hasRemoteStream ?? false,
+        diag?.remoteTracksCount ?? 0,
+        diag?.trackReady ?? "-",
+        diag?.isRemoteInCall ?? isInCall,
+        status.reason,
+      ].join("|");
+
+      if (prevCallStatusPeerLogRef.current[memberId] !== peerLogSignature) {
+        logCallStatusPeer({
+          localDeviceId: viewerId,
+          remoteDeviceId: memberId,
+          label: status.text,
+          status: isInCall ? "in_call" : "waiting",
+          peerState,
+          remoteAudioHealth: remoteAudioHealthStr,
+          hasPc: diag?.hasPc ?? false,
+          conn: diag?.conn ?? "-",
+          ice: diag?.ice ?? "-",
+          sig: diag?.sig ?? "-",
+          hasRemoteStream: diag?.hasRemoteStream ?? false,
+          remoteTracksCount: diag?.remoteTracksCount ?? 0,
+          trackReady: diag?.trackReady ?? "-",
+          isRemoteInCall: diag?.isRemoteInCall ?? isInCall,
+          reason: status.reason,
+        });
+        prevCallStatusPeerLogRef.current[memberId] = peerLogSignature;
+      }
+
       return status;
     },
-    [deviceId, isMuted, peerStates, remoteAudioHealth, sessionId]
+    [deviceId, isMuted, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
   );
 
   useEffect(() => {
@@ -911,6 +965,7 @@ export default function CallClient() {
         onRemoteCountChange={handleRemoteCountChange}
         onStatusChange={setCallInfo}
         onPeerStatesChange={setPeerStates}
+        onPeerDiagnosticsChange={setPeerDiagnostics}
       />
 
       <div

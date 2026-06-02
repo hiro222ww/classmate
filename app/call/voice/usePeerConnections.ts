@@ -20,6 +20,7 @@ import {
   logVoiceSignalSetRemoteOfferStart,
   voiceDebugLog,
   type VoiceMeshPeerSummaryEntry,
+  type PeerStatusDiagnostics,
 } from "./voiceDiagnostics";
 import { recordCallReloadContext } from "@/lib/callReloadDiagnostics";
 import {
@@ -65,6 +66,9 @@ type UsePeerConnectionsArgs = {
   onRemoteCountChange?: (count: number) => void;
   onStatusChange?: (text: string) => void;
   onPeerStatesChange?: (states: Record<string, PeerState>) => void;
+  onPeerDiagnosticsChange?: (
+    diagnostics: Record<string, PeerStatusDiagnostics>
+  ) => void;
 };
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
@@ -259,6 +263,7 @@ export function usePeerConnections({
   onRemoteCountChange,
   onStatusChange,
   onPeerStatesChange,
+  onPeerDiagnosticsChange,
 }: UsePeerConnectionsArgs) {
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
@@ -905,7 +910,47 @@ export function usePeerConnections({
 
   const emitPeerStates = useCallback(() => {
     onPeerStatesChange?.(Object.fromEntries(peerStatesRef.current.entries()));
-  }, [onPeerStatesChange]);
+    if (!onPeerDiagnosticsChange) return;
+
+    const peerIds = Array.from(
+      new Set([
+        ...getRemoteIds(),
+        ...Array.from(pcsRef.current.keys()),
+        ...members.map((m) => String(m.device_id ?? "").trim()).filter(Boolean),
+      ])
+    );
+
+    const diagnostics: Record<string, PeerStatusDiagnostics> = {};
+    for (const remoteId of peerIds) {
+      if (!remoteId || remoteId === deviceId) continue;
+
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const media = getPeerMedia(remoteId);
+      const stream = remoteStreamsRef.current.get(remoteId);
+      const audioTrack = stream?.getAudioTracks()[0] ?? null;
+
+      diagnostics[remoteId] = {
+        hasPc: isUsablePeerConnection(pc),
+        conn: pc?.connectionState ?? "-",
+        ice: pc?.iceConnectionState ?? "-",
+        sig: pc?.signalingState ?? "-",
+        hasRemoteStream: media.hasRemoteStream,
+        remoteTracksCount: media.remoteTracksCount,
+        trackReady: audioTrack?.readyState ?? "-",
+        isRemoteInCall: isRemoteInCall(remoteId),
+      };
+    }
+
+    onPeerDiagnosticsChange(diagnostics);
+  }, [
+    deviceId,
+    getPeerMedia,
+    getRemoteIds,
+    isRemoteInCall,
+    members,
+    onPeerDiagnosticsChange,
+    onPeerStatesChange,
+  ]);
 
   const setPeerState = useCallback(
     (remoteId: string, state: PeerState) => {

@@ -329,6 +329,44 @@ export function compactDeviceId(id: string | null | undefined): string {
   return value.slice(-3);
 }
 
+export type PeerStatusDiagnostics = {
+  hasPc: boolean;
+  conn: string;
+  ice: string;
+  sig: string;
+  hasRemoteStream: boolean;
+  remoteTracksCount: number;
+  trackReady: string;
+  isRemoteInCall: boolean;
+};
+
+export function logCallStatusPeer(params: {
+  localDeviceId: string;
+  remoteDeviceId: string;
+  label: string;
+  status: string;
+  peerState: string;
+  remoteAudioHealth: string;
+  hasPc: boolean;
+  conn: string;
+  ice: string;
+  sig: string;
+  hasRemoteStream: boolean;
+  remoteTracksCount: number;
+  trackReady: string;
+  isRemoteInCall: boolean;
+  reason: string;
+}) {
+  console.log(
+    `[call-status-peer] local=${compactDeviceId(params.localDeviceId)} remote=${compactDeviceId(params.remoteDeviceId)} ` +
+      `label=${params.label} status=${params.status} peerState=${params.peerState} ` +
+      `remoteAudioHealth=${params.remoteAudioHealth} hasPc=${params.hasPc} ` +
+      `conn=${params.conn} ice=${params.ice} sig=${params.sig} ` +
+      `hasRemoteStream=${params.hasRemoteStream} remoteTracksCount=${params.remoteTracksCount} ` +
+      `trackReady=${params.trackReady} isRemoteInCall=${params.isRemoteInCall} reason=${params.reason}`
+  );
+}
+
 function compactConnectionId(id: string | null | undefined): string {
   const value = String(id ?? "").trim();
   if (!value) return "-";
