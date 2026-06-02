@@ -252,3 +252,143 @@ export function logVoiceIceP2pDirectFailed(params: {
       `remoteTypes=${formatIceTypeSet(params.stats.remoteTypes)}`
   );
 }
+
+export type VoiceIceCandidatePairSnapshot = {
+  selected: boolean;
+  nominated: boolean;
+  state: string;
+  localType: string;
+  remoteType: string;
+  networkType: string;
+  currentRoundTripTime: string;
+  bytesSent: string;
+  bytesReceived: string;
+  route: "p2p" | "turn" | "unknown";
+};
+
+function readCandidateNetworkType(
+  candidate: RTCStats | undefined
+): string {
+  if (!candidate) return "-";
+  const raw = candidate as RTCStats & {
+    networkType?: string;
+    candidateType?: string;
+  };
+  return String(raw.networkType ?? raw.candidateType ?? "-");
+}
+
+function resolvePairRoute(
+  localType: string,
+  remoteType: string
+): "p2p" | "turn" | "unknown" {
+  if (localType === "relay" || remoteType === "relay") return "turn";
+  if (
+    localType === "host" ||
+    localType === "srflx" ||
+    localType === "prflx" ||
+    remoteType === "host" ||
+    remoteType === "srflx" ||
+    remoteType === "prflx"
+  ) {
+    return "p2p";
+  }
+  return "unknown";
+}
+
+function readStatNumber(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.round(value));
+  }
+  return "-";
+}
+
+export async function logVoiceIceCandidatePairFromPc(
+  remoteId: string,
+  pc: RTCPeerConnection
+): Promise<VoiceIceCandidatePairSnapshot> {
+  const empty: VoiceIceCandidatePairSnapshot = {
+    selected: false,
+    nominated: false,
+    state: "-",
+    localType: "-",
+    remoteType: "-",
+    networkType: "-",
+    currentRoundTripTime: "-",
+    bytesSent: "-",
+    bytesReceived: "-",
+    route: "unknown",
+  };
+
+  try {
+    const stats = await pc.getStats();
+    let best: VoiceIceCandidatePairSnapshot | null = null;
+
+    stats.forEach((report) => {
+      if (report.type !== "candidate-pair") return;
+
+      const pair = report as RTCStats & {
+        selected?: boolean;
+        nominated?: boolean;
+        state?: string;
+        localCandidateId?: string;
+        remoteCandidateId?: string;
+        currentRoundTripTime?: number;
+        bytesSent?: number;
+        bytesReceived?: number;
+      };
+
+      const selected = pair.selected === true;
+      const nominated = pair.nominated === true;
+      if (!selected && !nominated) return;
+
+      const local = stats.get(String(pair.localCandidateId ?? ""));
+      const remote = stats.get(String(pair.remoteCandidateId ?? ""));
+      const localType = String(
+        (local as RTCStats & { candidateType?: string })?.candidateType ?? "-"
+      );
+      const remoteType = String(
+        (remote as RTCStats & { candidateType?: string })?.candidateType ?? "-"
+      );
+      const localNetwork = readCandidateNetworkType(local);
+      const remoteNetwork = readCandidateNetworkType(remote);
+      const networkType =
+        localNetwork !== "-" ? localNetwork : remoteNetwork;
+      const snapshot: VoiceIceCandidatePairSnapshot = {
+        selected,
+        nominated,
+        state: String(pair.state ?? "-"),
+        localType,
+        remoteType,
+        networkType,
+        currentRoundTripTime: readStatNumber(pair.currentRoundTripTime),
+        bytesSent: readStatNumber(pair.bytesSent),
+        bytesReceived: readStatNumber(pair.bytesReceived),
+        route: resolvePairRoute(localType, remoteType),
+      };
+
+      if (selected || !best || (!best.selected && nominated)) {
+        best = snapshot;
+      }
+    });
+
+    const result = best ?? empty;
+
+    console.log(
+      `[voice-ice] selected-candidate-pair remote=${compactDeviceId(remoteId)} ` +
+        `selected=${result.selected} nominated=${result.nominated} state=${result.state} ` +
+        `localType=${result.localType} remoteType=${result.remoteType} ` +
+        `networkType=${result.networkType} currentRoundTripTime=${result.currentRoundTripTime} ` +
+        `bytesSent=${result.bytesSent} bytesReceived=${result.bytesReceived} route=${result.route}`
+    );
+
+    return result;
+  } catch (e) {
+    console.log(
+      `[voice-ice] selected-candidate-pair remote=${compactDeviceId(remoteId)} ` +
+        `selected=false nominated=false state=error localType=- remoteType=- ` +
+        `networkType=- currentRoundTripTime=- bytesSent=- bytesReceived=- ` +
+        `route=unknown message=${String(e)}`
+    );
+    return empty;
+  }
+}

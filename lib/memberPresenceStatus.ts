@@ -72,6 +72,31 @@ export function isTransportMediaConnected(conn: string, ice: string): boolean {
 export const TRANSPORT_UNCONFIRMED_MS_DEFAULT = 17_000;
 export const TRANSPORT_UNCONFIRMED_MS_IOS = 10_000;
 
+export function isPeerP2pEstablished(params: {
+  conn: string;
+  ice: string;
+  lastPlaybackConfirmedAt?: number | null;
+  trackReady: string;
+  lastPlaybackActiveAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  audioActuallyPlaying?: boolean;
+  nowMs?: number;
+}): boolean {
+  if (params.trackReady !== "live") return false;
+  if (params.lastPlaybackConfirmedAt == null) return false;
+  if (params.conn !== "connected") return false;
+  if (params.ice !== "connected" && params.ice !== "completed") return false;
+
+  if (params.audioActuallyPlaying === true) return true;
+
+  const now = params.nowMs ?? Date.now();
+  const playbackActive =
+    params.lastPlaybackActiveAt != null &&
+    now - params.lastPlaybackActiveAt < PLAYBACK_EFFECTIVE_CONNECTED_MS;
+  const playSuccess = isRecentPlaySuccess(params.lastPlaySuccessAt, now);
+  return playbackActive || playSuccess;
+}
+
 export function isPeerTransportUnconfirmed(params: {
   conn: string;
   ice: string;
@@ -1061,6 +1086,9 @@ export function resolveCallMemberStatus(params: {
   lastOnTrackAt?: number | null;
   lastUnmuteAt?: number | null;
   lastPlaySuccessAt?: number | null;
+  lastPlaybackConfirmedAt?: number | null;
+  lastPlaybackActiveAt?: number | null;
+  p2pRetryActive?: boolean;
   showReconnectButton?: boolean;
   nowMs?: number;
 }): {
@@ -1207,9 +1235,22 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
+  const p2pEstablished = isPeerP2pEstablished({
+    conn,
+    ice,
+    lastPlaybackConfirmedAt: params.lastPlaybackConfirmedAt,
+    trackReady,
+    lastPlaybackActiveAt: params.lastPlaybackActiveAt,
+    lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+    audioActuallyPlaying: health?.audioActuallyPlaying === true,
+    nowMs,
+  });
+
   const transportRecovering =
+    !p2pEstablished &&
     params.wasPeerConnected &&
     (params.transportUnconfirmed === true ||
+      params.p2pRetryActive === true ||
       (params.p2pDirectFailedHoldActive === true &&
         (!params.hasPc ||
           params.conn === "failed" ||
@@ -1219,12 +1260,16 @@ export function resolveCallMemberStatus(params: {
           params.conn === "connecting")));
 
   if (transportRecovering) {
+    const adjustingConnection =
+      params.ice === "checking" || params.conn === "connecting";
     return {
-      text: "音声を調整中",
+      text: adjustingConnection ? "接続を調整中" : "音声を調整中",
       color: "#92400e",
       chipBg: "#fffbeb",
       chipText: "#b45309",
-      reason: "transport_recovering_p2p_retry",
+      reason: adjustingConnection
+        ? "transport_recovering_p2p_retry_connecting"
+        : "transport_recovering_p2p_retry",
       source: "autoHardReset",
     };
   }

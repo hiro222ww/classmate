@@ -40,6 +40,7 @@ import {
 import type { RemotePlaybackHealth } from "./RemoteAudio";
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
 import {
+  isPeerP2pEstablished,
   isPeerTransportUnconfirmed,
   isTransportMediaConnected,
 } from "@/lib/memberPresenceStatus";
@@ -50,7 +51,9 @@ import {
   logVoiceIceAddCandidateFailed,
   logVoiceIceP2pDirectFailed,
   logVoiceIceAddCandidateSuccess,
+  logVoiceIceCandidatePairFromPc,
   logVoiceIceCheckingStuck,
+  type VoiceIceCandidatePairSnapshot,
   logVoiceIceGatheringComplete,
   logVoiceIceGatheringState,
   logVoiceIceInsufficientCandidates,
@@ -179,7 +182,9 @@ const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
 const PLAYBACK_ACTIVE_HOLD_MS = 15000;
 const ICE_CHECKING_DIAGNOSTICS_MS = 10000;
 const ICE_CHECKING_DIAGNOSTICS_MS_IOS = 6000;
-const IOS_NO_RELAY_GATHERING_PROBE_MS = 3500;
+const MAX_P2P_NO_RELAY_RETRY_ATTEMPTS = 3;
+const P2P_NO_RELAY_RETRY_FOLLOWUP_MS = 3000;
+const P2P_BACKGROUND_RETRY_INTERVAL_MS = 30_000;
 
 function getIceCheckingDiagnosticsMs(): number {
   return voicePolicy.voiceMode === "ios_conservative"
@@ -1456,17 +1461,22 @@ export function usePeerConnections({
       checkingPlaybackStuckAtRef.current.delete(remoteId);
       softIceRestartAttemptsRef.current.delete(remoteId);
 
+      const recordedPair = p2pNoRelaySelectedPairRef.current.get(remoteId);
       const stats = peerIceDiagnosticsRef.current.get(remoteId);
       const route =
-        voiceRouteRef.current === "turn" ||
+        recordedPair?.route ??
+        (voiceRouteRef.current === "turn" ||
         stats?.localTypes.has("relay") ||
         stats?.remoteTypes.has("relay")
           ? "turn"
-          : "p2p";
+          : "p2p");
 
       console.log(
         `[voice-peer] ice-confirmed remote=${compactDeviceId(remoteId)} ` +
-          `route=${route} conn=${conn} ice=${ice} ${formatVoiceModeSuffix()}`
+          `route=${route} conn=${conn} ice=${ice} ` +
+          `localType=${recordedPair?.localType ?? "-"} ` +
+          `remoteType=${recordedPair?.remoteType ?? "-"} ` +
+          `networkType=${recordedPair?.networkType ?? "-"} ${formatVoiceModeSuffix()}`
       );
     },
     [touchPeerSignal]
@@ -1789,6 +1799,10 @@ export function usePeerConnections({
             checkingPlaybackStuckAtRef.current.get(remoteId) ?? null,
           voiceMode: voicePolicy.voiceMode,
         }),
+        p2pRetryActive:
+          (p2pNoRelayRetryAttemptsRef.current.get(remoteId) ?? 0) > 0 ||
+          p2pNoRelayRetryInFlightRef.current.has(remoteId) ||
+          p2pRetryBackgroundTimersRef.current.has(remoteId),
       };
     }
 
@@ -1875,18 +1889,57 @@ export function usePeerConnections({
     return remaining;
   }, []);
 
-  const shouldBlockTurnFallbackOnly = useCallback(
-    (remoteId: string, context: string): boolean => {
-      const holdRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
-      if (holdRemainingMs == null) return false;
-      console.log(
-        `[voice-peer] turn-hold-skip-fallback remote=${compactDeviceId(remoteId)} ` +
-          `reason=turn_disabled context=${context} holdRemainingMs=${holdRemainingMs} ` +
-          `${formatVoiceModeSuffix()}`
-      );
-      return true;
+  const logP2pRetryOnly = useCallback((remoteId: string, context: string) => {
+    console.log(
+      `[voice-peer] p2p-retry-only remote=${compactDeviceId(remoteId)} ` +
+        `reason=turn_disabled context=${context} ${formatVoiceModeSuffix()}`
+    );
+  }, []);
+
+  const getPeerTrackReady = useCallback(
+    (remoteId: string) => {
+      const stream = remoteStreamsRef.current.get(remoteId);
+      const track = stream?.getAudioTracks()[0];
+      return track?.readyState ?? getPeerMedia(remoteId).primaryTrackReadyState ?? "-";
     },
-    [getP2pDirectFailedHoldRemainingMs]
+    [getPeerMedia]
+  );
+
+  const isPeerEstablishedForRecovery = useCallback(
+    (remoteId: string, pc?: RTCPeerConnection | null) => {
+      const activePc = pc ?? pcsRef.current.get(remoteId);
+      if (!activePc) return false;
+
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+
+      return isPeerP2pEstablished({
+        conn: activePc.connectionState,
+        ice: activePc.iceConnectionState,
+        lastPlaybackConfirmedAt: timestamps.lastPlaybackConfirmedAt,
+        trackReady: getPeerTrackReady(remoteId),
+        lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
+        lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
+      });
+    },
+    [getPeerTrackReady]
+  );
+
+  const isPeerEligibleForP2pIceRetry = useCallback(
+    (remoteId: string, pc?: RTCPeerConnection | null) => {
+      const activePc = pc ?? pcsRef.current.get(remoteId);
+      if (!activePc || !isUsablePeerConnection(activePc)) return false;
+      if (isPeerEstablishedForRecovery(remoteId, activePc)) return false;
+      if (!isPcConnectingOrIceChecking(activePc)) return false;
+      if (!hasLiveRemoteAudioStream(remoteId)) return false;
+
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      return timestamps.lastPlaybackConfirmedAt == null;
+    },
+    [hasLiveRemoteAudioStream, isPeerEstablishedForRecovery]
   );
 
   const shouldHoldCloseForReconnectClearEnded = useCallback(
@@ -2373,6 +2426,19 @@ export function usePeerConnections({
       peerMetaRef.current.delete(remoteId);
       peerIceDiagnosticsRef.current.delete(remoteId);
       checkingPlaybackStuckAtRef.current.delete(remoteId);
+      p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+      p2pNoRelayRetryInFlightRef.current.delete(remoteId);
+      p2pNoRelaySelectedPairRef.current.delete(remoteId);
+      const p2pRetryFollowup = p2pNoRelayRetryFollowupTimersRef.current.get(remoteId);
+      if (p2pRetryFollowup) {
+        window.clearTimeout(p2pRetryFollowup);
+        p2pNoRelayRetryFollowupTimersRef.current.delete(remoteId);
+      }
+      const p2pBackgroundRetry = p2pRetryBackgroundTimersRef.current.get(remoteId);
+      if (p2pBackgroundRetry) {
+        window.clearTimeout(p2pBackgroundRetry);
+        p2pRetryBackgroundTimersRef.current.delete(remoteId);
+      }
       const iceRestartPostTimer = iceRestartPostTimersRef.current.get(remoteId);
       if (iceRestartPostTimer) {
         window.clearTimeout(iceRestartPostTimer);
@@ -2434,7 +2500,15 @@ export function usePeerConnections({
   const attemptIceRestartRef = useRef<
     (remoteId: string) => Promise<boolean>
   >(async () => false);
-  const maybeTurnFallbackOnNoRelayRef = useRef<
+  const p2pNoRelayRetryAttemptsRef = useRef<Map<string, number>>(new Map());
+  const p2pNoRelayRetryInFlightRef = useRef<Set<string>>(new Set());
+  const p2pNoRelayRetryFollowupTimersRef = useRef<Map<string, number>>(new Map());
+  const p2pRetryBackgroundTimersRef = useRef<Map<string, number>>(new Map());
+  const p2pNoRelaySelectedPairRef = useRef<
+    Map<string, VoiceIceCandidatePairSnapshot>
+  >(new Map());
+
+  const runP2pNoRelayRetryPhaseRef = useRef<
     (
       remoteId: string,
       pc: RTCPeerConnection,
@@ -2563,6 +2637,15 @@ export function usePeerConnections({
         return false;
       }
 
+      if (isPeerEstablishedForRecovery(remoteId, pcEarly)) {
+        console.log(
+          `[voice-peer] reconnect-skip-p2p-established remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reasonRaw} source=${sourceRaw} conn=${pcEarly?.connectionState ?? "-"} ` +
+            `ice=${pcEarly?.iceConnectionState ?? "-"} ${formatVoiceModeSuffix()}`
+        );
+        return false;
+      }
+
       const source = sourceRaw;
       let reason = reasonRaw;
 
@@ -2621,26 +2704,22 @@ export function usePeerConnections({
             stats,
           });
           p2pDirectFailedSignalAtRef.current.set(remoteId, Date.now());
-          const turnReason = transportFailed
-            ? "failed_with_host_srflx_only"
-            : "host_srflx_checking_stuck";
-          if (turnFallbackEnabledRef.current) {
-            const pcForRelay = pcsRef.current.get(remoteId);
-            if (pcForRelay) {
-              void maybeTurnFallbackOnNoRelayRef.current(
-                remoteId,
-                pcForRelay,
-                `reconnect_${source}`
-              );
-            } else {
-              void attemptTurnFallbackForPeerRef.current(remoteId, turnReason);
-            }
-          } else {
-            p2pDirectFailedHoldUntilRef.current.set(
+          const pcForRetry = pcsRef.current.get(remoteId);
+          if (pcForRetry && isPeerEligibleForP2pIceRetry(remoteId, pcForRetry)) {
+            void runP2pNoRelayRetryPhaseRef.current(
               remoteId,
-              Date.now() + P2P_DIRECT_FAILED_HOLD_MS
+              pcForRetry,
+              `reconnect_${source}`
             );
-            shouldBlockTurnFallbackOnly(remoteId, `reconnect_${source}`);
+          } else if (!turnFallbackEnabledRef.current) {
+            logP2pRetryOnly(remoteId, `reconnect_${source}`);
+          } else if (turnFallbackEnabledRef.current) {
+            void attemptTurnFallbackForPeerRef.current(
+              remoteId,
+              transportFailed
+                ? "failed_with_host_srflx_only"
+                : "host_srflx_checking_stuck"
+            );
           }
         }
       }
@@ -2740,7 +2819,9 @@ export function usePeerConnections({
       markRecoveryStart,
       micReady,
       getPeerMedia,
-      shouldBlockTurnFallbackOnly,
+      isPeerEstablishedForRecovery,
+      isPeerEligibleForP2pIceRetry,
+      logP2pRetryOnly,
     ]
   );
 
@@ -2984,11 +3065,6 @@ export function usePeerConnections({
           stats,
         });
         p2pDirectFailedSignalAtRef.current.set(remoteId, Date.now());
-        void maybeTurnFallbackOnNoRelayRef.current(
-          remoteId,
-          pc,
-          "ice_checking_diagnostics"
-        );
       }
       const insufficient = evaluateInsufficientRemoteCandidates(stats);
       if (insufficient) {
@@ -3021,39 +3097,21 @@ export function usePeerConnections({
 
         logIceCheckingDiagnostics(remoteId, currentPc);
 
-        const stats = getOrCreatePeerIceStats(remoteId);
-        if (hasNoRelayCandidates(stats)) {
-          const turnStarted = await maybeTurnFallbackOnNoRelayRef.current(
+        if (isPeerEstablishedForRecovery(remoteId, currentPc)) {
+          return;
+        }
+
+        if (isPeerEligibleForP2pIceRetry(remoteId, currentPc)) {
+          const retryActive = await runP2pNoRelayRetryPhaseRef.current(
             remoteId,
             currentPc,
             "checking_timeout"
           );
-          if (turnStarted) return;
+          if (retryActive) return;
         } else {
-          const timestamps =
-            peerSignalTimestampsRef.current.get(remoteId) ??
-            emptyPeerSignalTimestamps();
-          const media = getPeerMedia(remoteId);
-          const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
-            pc: currentPc,
-            hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
-            remoteTracksCount: media.remoteTracksCount,
-            hasRemoteStream: media.hasRemoteStream,
-            timestamps,
-            connectStartedAt: connectStartedAtRef.current.get(remoteId),
-          });
-
-          if (
-            waitCheck?.shouldHold &&
-            waitCheck.holdReason === "active_playback_wait_connected"
-          ) {
-            void maybeSoftRenegotiatePeerRef.current(remoteId);
-            return;
-          }
-
-          if (isEligibleForIceRestart(remoteId)) {
-            void maybeSoftRenegotiatePeerRef.current(remoteId);
-            return;
+          const stats = getOrCreatePeerIceStats(remoteId);
+          if (hasNoRelayCandidates(stats) && !turnFallbackEnabledRef.current) {
+            logP2pRetryOnly(remoteId, "checking_timeout");
           }
         }
 
@@ -3090,7 +3148,9 @@ export function usePeerConnections({
       markRecoveryStart,
       sessionId,
       setPeerMeta,
-      shouldBlockTurnFallbackOnly,
+      isPeerEstablishedForRecovery,
+      isPeerEligibleForP2pIceRetry,
+      logP2pRetryOnly,
     ]
   );
 
@@ -3113,32 +3173,26 @@ export function usePeerConnections({
 
         logIceCheckingDiagnostics(remoteId, currentPc);
 
-        const stats = getOrCreatePeerIceStats(remoteId);
-        if (hasNoRelayCandidates(stats)) {
-          void attemptTurnFallbackForPeerRef
-            .current(remoteId, "host_srflx_checking_stuck")
-            .then((started) => {
-            if (started) return;
+        if (isPeerEligibleForP2pIceRetry(remoteId, currentPc)) {
+          void runP2pNoRelayRetryPhaseRef
+            .current(remoteId, currentPc, "ice_restart_checking_stuck")
+            .then((retryActive) => {
+              if (retryActive) return;
 
-            const holdUntil = p2pDirectFailedHoldUntilRef.current.get(remoteId);
-            if (holdUntil != null && Date.now() < holdUntil) {
-              return;
-            }
-
-            logPeerStateWarning({
-              sessionId,
-              localDeviceId: deviceId,
-              remoteDeviceId: remoteId,
-              reason: "checking_timeout",
-              pc: currentPc,
-              media: getPeerMedia(remoteId),
+              logPeerStateWarning({
+                sessionId,
+                localDeviceId: deviceId,
+                remoteDeviceId: remoteId,
+                reason: "checking_timeout",
+                pc: currentPc,
+                media: getPeerMedia(remoteId),
+              });
+              markRecoveryStart(remoteId);
+              scheduleReconnectRef.current?.(remoteId, 1200, {
+                reason: "checking_timeout_after_ice_restart",
+                source: "checking_timeout_after_ice_restart",
+              });
             });
-            markRecoveryStart(remoteId);
-            scheduleReconnectRef.current?.(remoteId, 1200, {
-              reason: "checking_timeout_after_ice_restart",
-              source: "checking_timeout_after_ice_restart",
-            });
-          });
           return;
         }
 
@@ -3288,6 +3342,11 @@ export function usePeerConnections({
 
   const attemptTurnFallbackForPeer = useCallback(
     async (remoteId: string, turnReason = "host_srflx_checking_stuck") => {
+      if (!turnFallbackEnabledRef.current) {
+        logP2pRetryOnly(remoteId, `turn_fallback_${turnReason}`);
+        return false;
+      }
+
       if (turnFallbackAttemptedRef.current.get(remoteId)) {
         return false;
       }
@@ -3301,14 +3360,6 @@ export function usePeerConnections({
         `[voice-peer] turn-fallback-needed remote=${compactDeviceId(remoteId)} ` +
           `reason=${turnReason} enabled=${turnFallbackEnabledRef.current} ${formatVoiceModeSuffix()}`
       );
-
-      if (!turnFallbackEnabledRef.current) {
-        p2pDirectFailedHoldUntilRef.current.set(
-          remoteId,
-          Date.now() + P2P_DIRECT_FAILED_HOLD_MS
-        );
-        return shouldBlockTurnFallbackOnly(remoteId, `turn_fallback_${turnReason}`);
-      }
 
       console.log(
         `[voice-peer] turn-fallback-start remote=${compactDeviceId(remoteId)} ` +
@@ -3354,43 +3405,7 @@ export function usePeerConnections({
       enableTurnFallback,
       getOrCreatePeerIceStats,
       hasLiveRemoteAudioStream,
-      shouldBlockTurnFallbackOnly,
-    ]
-  );
-
-  const maybeTurnFallbackOnNoRelay = useCallback(
-    async (
-      remoteId: string,
-      pc: RTCPeerConnection,
-      context: string
-    ): Promise<boolean> => {
-      const stats = getOrCreatePeerIceStats(remoteId);
-      if (!hasNoRelayCandidates(stats)) return false;
-
-      const transportFailed =
-        pc.connectionState === "failed" || pc.iceConnectionState === "failed";
-      const turnReason =
-        voicePolicy.voiceMode === "ios_conservative"
-          ? "ios_p2p_direct_failed_no_relay_candidate"
-          : transportFailed
-            ? "failed_no_relay_candidate"
-            : "p2p_direct_failed_no_relay_candidate";
-
-      if (turnFallbackEnabledRef.current) {
-        return attemptTurnFallbackForPeer(remoteId, turnReason);
-      }
-
-      p2pDirectFailedHoldUntilRef.current.set(
-        remoteId,
-        Date.now() + P2P_DIRECT_FAILED_HOLD_MS
-      );
-      shouldBlockTurnFallbackOnly(remoteId, context);
-      return false;
-    },
-    [
-      attemptTurnFallbackForPeer,
-      getOrCreatePeerIceStats,
-      shouldBlockTurnFallbackOnly,
+      logP2pRetryOnly,
     ]
   );
 
@@ -3524,19 +3539,6 @@ export function usePeerConnections({
             stats,
           });
 
-          if (voicePolicy.voiceMode === "ios_conservative") {
-            window.setTimeout(() => {
-              const currentPc = pcsRef.current.get(remoteId);
-              if (!currentPc || currentPc !== pc) return;
-              if (!isPcConnectingOrIceChecking(currentPc)) return;
-              if (!hasNoRelayCandidates(stats)) return;
-              void maybeTurnFallbackOnNoRelayRef.current(
-                remoteId,
-                currentPc,
-                "ios_gathering_complete_no_relay"
-              );
-            }, IOS_NO_RELAY_GATHERING_PROBE_MS);
-          }
         }
       };
 
@@ -3576,6 +3578,23 @@ export function usePeerConnections({
         if (iceState === "connected" || iceState === "completed") {
           markPeerLastConnected(remoteId);
           checkingPlaybackStuckAtRef.current.delete(remoteId);
+          p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+          p2pNoRelayRetryInFlightRef.current.delete(remoteId);
+          const p2pRetryFollowup = p2pNoRelayRetryFollowupTimersRef.current.get(remoteId);
+          if (p2pRetryFollowup) {
+            window.clearTimeout(p2pRetryFollowup);
+            p2pNoRelayRetryFollowupTimersRef.current.delete(remoteId);
+          }
+          const p2pBackgroundRetry = p2pRetryBackgroundTimersRef.current.get(remoteId);
+          if (p2pBackgroundRetry) {
+            window.clearTimeout(p2pBackgroundRetry);
+            p2pRetryBackgroundTimersRef.current.delete(remoteId);
+          }
+          void logVoiceIceCandidatePairFromPc(remoteId, pc).then((pair) => {
+            if (pair.route === "p2p") {
+              p2pNoRelaySelectedPairRef.current.set(remoteId, pair);
+            }
+          });
           iceRestartAttemptsRef.current.delete(remoteId);
           softIceRestartAttemptsRef.current.delete(remoteId);
           softRebuildCandidateLoggedRef.current.delete(remoteId);
@@ -3615,6 +3634,11 @@ export function usePeerConnections({
           });
           setPeerState(remoteId, "failed");
           void logVoiceConnection(remoteId, pc, "failed");
+
+          if (isPeerEligibleForP2pIceRetry(remoteId, pc)) {
+            void runP2pNoRelayRetryPhaseRef.current(remoteId, pc, "ice_failed");
+            return;
+          }
 
           if (
             voiceRouteRef.current === "stun" &&
@@ -4697,6 +4721,7 @@ export function usePeerConnections({
     async (remoteId: string) => {
       const pc = pcsRef.current.get(remoteId);
       if (!pc || !isUsablePeerConnection(pc)) return false;
+      if (isPeerEstablishedForRecovery(remoteId, pc)) return false;
       if (!isPcConnectingOrIceChecking(pc)) return false;
 
       const timestamps =
@@ -4767,16 +4792,12 @@ export function usePeerConnections({
         }
       }
 
-      const softAttempts = softIceRestartAttemptsRef.current.get(remoteId) ?? 0;
-      if (softAttempts >= MAX_SOFT_ICE_RESTART_ATTEMPTS) {
-        const stats = getOrCreatePeerIceStats(remoteId);
-        if (hasNoRelayCandidates(stats)) {
-          void maybeTurnFallbackOnNoRelayRef.current(
-            remoteId,
-            pc,
-            "soft_rebuild_ice_unconfirmed"
-          );
-        }
+      if (isPeerEligibleForP2pIceRetry(remoteId, pc)) {
+        void runP2pNoRelayRetryPhaseRef.current(
+          remoteId,
+          pc,
+          "soft_rebuild_ice_unconfirmed"
+        );
       }
 
       return true;
@@ -4785,7 +4806,8 @@ export function usePeerConnections({
       attemptSoftIceRestart,
       deviceId,
       getCurrentConnectionId,
-      getOrCreatePeerIceStats,
+      isPeerEligibleForP2pIceRetry,
+      isPeerEstablishedForRecovery,
       sendReconnectRequest,
     ]
   );
@@ -4915,9 +4937,218 @@ export function usePeerConnections({
     attemptTurnFallbackForPeerRef.current = attemptTurnFallbackForPeer;
   }, [attemptTurnFallbackForPeer]);
 
+  const clearP2pNoRelayRetryFollowup = useCallback((remoteId: string) => {
+    const timer = p2pNoRelayRetryFollowupTimersRef.current.get(remoteId);
+    if (timer) {
+      window.clearTimeout(timer);
+      p2pNoRelayRetryFollowupTimersRef.current.delete(remoteId);
+    }
+  }, []);
+
+  const resolveP2pRetryStartReason = useCallback((_context: string) => {
+    return "ice_unconfirmed";
+  }, []);
+
+  const scheduleP2pBackgroundRetry = useCallback(
+    (remoteId: string) => {
+      const existing = p2pRetryBackgroundTimersRef.current.get(remoteId);
+      if (existing) window.clearTimeout(existing);
+
+      const timer = window.setTimeout(() => {
+        p2pRetryBackgroundTimersRef.current.delete(remoteId);
+        p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+
+        const pc = pcsRef.current.get(remoteId);
+        if (!pc || !isUsablePeerConnection(pc)) return;
+        if (!isPeerEligibleForP2pIceRetry(remoteId, pc)) return;
+
+        void runP2pNoRelayRetryPhaseRef.current(
+          remoteId,
+          pc,
+          "p2p_background_retry"
+        );
+      }, P2P_BACKGROUND_RETRY_INTERVAL_MS);
+
+      p2pRetryBackgroundTimersRef.current.set(remoteId, timer);
+    },
+    [isPeerEligibleForP2pIceRetry]
+  );
+
+  const checkP2pNoRelayRetrySuccess = useCallback(
+    async (remoteId: string, pc: RTCPeerConnection): Promise<boolean> => {
+      const pair = await logVoiceIceCandidatePairFromPc(remoteId, pc);
+      if (!isTransportMediaConnected(pc.connectionState, pc.iceConnectionState)) {
+        return false;
+      }
+      if (pair.route === "turn") return false;
+
+      p2pNoRelaySelectedPairRef.current.set(remoteId, pair);
+      p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+      clearP2pNoRelayRetryFollowup(remoteId);
+
+      console.log(
+        `[voice-peer] p2p-retry-success remote=${compactDeviceId(remoteId)} ` +
+          `route=p2p localType=${pair.localType} remoteType=${pair.remoteType} ` +
+          `networkType=${pair.networkType} ${formatVoiceModeSuffix()}`
+      );
+      return true;
+    },
+    [clearP2pNoRelayRetryFollowup]
+  );
+
+  const runP2pNoRelayRetryPhase = useCallback(
+    async (
+      remoteId: string,
+      pc: RTCPeerConnection,
+      context: string
+    ): Promise<boolean> => {
+      if (!isPeerEligibleForP2pIceRetry(remoteId, pc)) {
+        return false;
+      }
+
+      const stats = getOrCreatePeerIceStats(remoteId);
+      if (hasNoRelayCandidates(stats) && !turnFallbackEnabledRef.current) {
+        logP2pRetryOnly(remoteId, context);
+      }
+
+      if (await checkP2pNoRelayRetrySuccess(remoteId, pc)) {
+        return false;
+      }
+
+      if (p2pNoRelayRetryInFlightRef.current.has(remoteId)) {
+        return true;
+      }
+
+      const attempts = p2pNoRelayRetryAttemptsRef.current.get(remoteId) ?? 0;
+      if (attempts >= MAX_P2P_NO_RELAY_RETRY_ATTEMPTS) {
+        console.log(
+          `[voice-peer] p2p-retry-exhausted remote=${compactDeviceId(remoteId)} ` +
+            `attempts=${attempts} context=${context} turnFallback=false ${formatVoiceModeSuffix()}`
+        );
+        p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
+        clearP2pNoRelayRetryFollowup(remoteId);
+
+        if (turnFallbackEnabledRef.current) {
+          return attemptTurnFallbackForPeer(remoteId, "p2p_retry_exhausted");
+        }
+
+        scheduleP2pBackgroundRetry(remoteId);
+        return true;
+      }
+
+      p2pNoRelayRetryInFlightRef.current.add(remoteId);
+      try {
+        if (attempts === 0) {
+          console.log(
+            `[voice-peer] p2p-retry-start remote=${compactDeviceId(remoteId)} ` +
+              `reason=${resolveP2pRetryStartReason(context)} context=${context} ` +
+              `${formatVoiceModeSuffix()}`
+          );
+        }
+
+        const step = attempts;
+        p2pNoRelayRetryAttemptsRef.current.set(remoteId, attempts + 1);
+
+        await logVoiceIceCandidatePairFromPc(
+          remoteId,
+          pcsRef.current.get(remoteId) ?? pc
+        );
+
+        if (step === 0) {
+          await flushPendingIce(remoteId);
+          await attemptSignalingRecoverRef.current?.(
+            remoteId,
+            "p2p_retry_flush"
+          );
+        } else if (step === 1) {
+          if (deviceId < remoteId) {
+            console.log(
+              `[voice-peer] p2p-retry-ice-restart remote=${compactDeviceId(remoteId)} ` +
+                `attempt=${step + 1} kind=soft ${formatVoiceModeSuffix()}`
+            );
+            await attemptSoftIceRestart(remoteId);
+          } else {
+            await attemptSignalingRecoverRef.current?.(
+              remoteId,
+              "p2p_retry_passive_signaling"
+            );
+            const connectionId = getCurrentConnectionId(remoteId);
+            if (connectionId) {
+              const passiveState = passiveReconnectStateRef.current.get(remoteId);
+              if (!passiveState || passiveState.sentAt == null) {
+                void sendReconnectRequest(
+                  remoteId,
+                  connectionId,
+                  "p2p_retry_passive"
+                );
+              }
+            }
+          }
+        } else {
+          if (deviceId < remoteId) {
+            console.log(
+              `[voice-peer] p2p-retry-ice-restart remote=${compactDeviceId(remoteId)} ` +
+                `attempt=${step + 1} kind=full ${formatVoiceModeSuffix()}`
+            );
+            await attemptIceRestartRef.current?.(remoteId);
+          } else {
+            await flushPendingIce(remoteId);
+            await attemptSignalingRecoverRef.current?.(
+              remoteId,
+              "p2p_retry_passive_ice"
+            );
+          }
+        }
+
+        const currentPc = pcsRef.current.get(remoteId) ?? pc;
+        if (await checkP2pNoRelayRetrySuccess(remoteId, currentPc)) {
+          return false;
+        }
+
+        clearP2pNoRelayRetryFollowup(remoteId);
+        const followupTimer = window.setTimeout(() => {
+          p2pNoRelayRetryFollowupTimersRef.current.delete(remoteId);
+          const nextPc = pcsRef.current.get(remoteId);
+          if (!nextPc || !isUsablePeerConnection(nextPc)) return;
+
+          if (!isPcConnectingOrIceChecking(nextPc)) {
+            void checkP2pNoRelayRetrySuccess(remoteId, nextPc);
+            return;
+          }
+
+          void runP2pNoRelayRetryPhaseRef.current(
+            remoteId,
+            nextPc,
+            "p2p_retry_followup"
+          );
+        }, P2P_NO_RELAY_RETRY_FOLLOWUP_MS);
+        p2pNoRelayRetryFollowupTimersRef.current.set(remoteId, followupTimer);
+
+        return true;
+      } finally {
+        p2pNoRelayRetryInFlightRef.current.delete(remoteId);
+      }
+    },
+    [
+      attemptTurnFallbackForPeer,
+      attemptSoftIceRestart,
+      checkP2pNoRelayRetrySuccess,
+      clearP2pNoRelayRetryFollowup,
+      deviceId,
+      flushPendingIce,
+      getCurrentConnectionId,
+      getOrCreatePeerIceStats,
+      isPeerEligibleForP2pIceRetry,
+      logP2pRetryOnly,
+      resolveP2pRetryStartReason,
+      scheduleP2pBackgroundRetry,
+      sendReconnectRequest,
+    ]
+  );
+
   useEffect(() => {
-    maybeTurnFallbackOnNoRelayRef.current = maybeTurnFallbackOnNoRelay;
-  }, [maybeTurnFallbackOnNoRelay]);
+    runP2pNoRelayRetryPhaseRef.current = runP2pNoRelayRetryPhase;
+  }, [runP2pNoRelayRetryPhase]);
 
   const scanAndEnsureMissingPcs = useCallback(
     (trigger: string, peers: VoiceMeshPeerSummaryEntry[]) => {
@@ -5152,6 +5383,15 @@ export function usePeerConnections({
       }
 
       const pc = pcsRef.current.get(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+
+      if (pc && isPeerEstablishedForRecovery(remoteId, pc)) {
+        setPeerState(remoteId, "connected");
+        logHealSkipHealthy(remoteId, "p2p_established", pc);
+        continue;
+      }
 
       if (hasStaleEndedRemoteAudio(remoteId)) {
         clearEndedRemoteAudio(remoteId);
@@ -5200,6 +5440,22 @@ export function usePeerConnections({
 
       if (hasStream && connected) {
         setPeerState(remoteId, "connected");
+        continue;
+      }
+
+      if (
+        hasStream &&
+        pc &&
+        isPcConnectingOrIceChecking(pc) &&
+        timestamps.lastPlaybackConfirmedAt == null &&
+        isPeerEligibleForP2pIceRetry(remoteId, pc)
+      ) {
+        logHealSkipHealthy(remoteId, "p2p_ice_retry_active", pc);
+        void runP2pNoRelayRetryPhaseRef.current(
+          remoteId,
+          pc,
+          "heal_ice_unconfirmed"
+        );
         continue;
       }
 
@@ -5280,9 +5536,6 @@ export function usePeerConnections({
           continue;
         }
 
-        const timestamps =
-          peerSignalTimestampsRef.current.get(remoteId) ??
-          emptyPeerSignalTimestamps();
         const waitCheck = getLiveStreamWaitConnectedCheckForPeer({
           pc,
           hasLiveRemoteStream: hasStream,
@@ -5299,7 +5552,9 @@ export function usePeerConnections({
               `playbackActiveAgeMs=${waitCheck.playbackActiveAgeMs ?? "-"} playAgeMs=${waitCheck.playAgeMs ?? "-"} ` +
               `ontrackAgeMs=${waitCheck.ontrackAgeMs ?? "-"} activityAgeMs=${waitCheck.activityAgeMs ?? "-"} ${formatVoiceModeSuffix()}`
           );
-          void maybeSoftRenegotiatePeerRef.current(remoteId);
+          if (!isPeerEligibleForP2pIceRetry(remoteId, pc)) {
+            void maybeSoftRenegotiatePeerRef.current(remoteId);
+          }
           continue;
         }
 
@@ -6256,6 +6511,17 @@ export function usePeerConnections({
       autoHardResetGiveUpRef.current.clear();
       autoHardResetInProgressRef.current.clear();
       p2pDirectFailedSignalAtRef.current.clear();
+      p2pNoRelayRetryAttemptsRef.current.clear();
+      p2pNoRelayRetryInFlightRef.current.clear();
+      p2pNoRelaySelectedPairRef.current.clear();
+      for (const timer of p2pNoRelayRetryFollowupTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      p2pNoRelayRetryFollowupTimersRef.current.clear();
+      for (const timer of p2pRetryBackgroundTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      p2pRetryBackgroundTimersRef.current.clear();
       manualHardResetHealPassRef.current.clear();
       for (const state of passiveReconnectStateRef.current.values()) {
         if (state.retryTimerId != null) {
