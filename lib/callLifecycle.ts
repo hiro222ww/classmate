@@ -513,7 +513,7 @@ export function resolveCallEntryUserMuted(
         : "reload_restore"
       : "reload_restore";
 
-    if (resolved.stored === false && isReloadLike) {
+    if (stored === false && isReloadLike) {
       markCallMicEverUnmuted(sessionId, deviceId);
       console.log(
         `[local-mic] prevent-safety-mute-on-reload stored=false reason=${reason}`
