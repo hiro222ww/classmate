@@ -75,6 +75,7 @@ const voicePolicy = getVoiceModePolicy();
 logVoiceClientEnv("peer-connections-init");
 
 const MESH_SUMMARY_DEBOUNCE_MS = 150;
+const TRACK_ENDED_HOLD_MS = 2000;
 const CLOSE_FOR_RECONNECT = {
   clearConnectionId: false,
   preserveRemoteAudio: true,
@@ -290,6 +291,7 @@ export function usePeerConnections({
   const connectingTimersRef = useRef<Map<string, number>>(new Map());
   const attachedTrackIdsRef = useRef<Map<string, Set<string>>>(new Map());
   const trackEndedAtRef = useRef<Map<string, number>>(new Map());
+  const endedHoldTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
     Map<string, { reason: string; scheduledInMs: number; scheduledAt: number }>
   >(new Map());
@@ -342,6 +344,12 @@ export function usePeerConnections({
     if (connectingTimer) {
       window.clearTimeout(connectingTimer);
       connectingTimersRef.current.delete(remoteId);
+    }
+
+    const endedHoldTimer = endedHoldTimersRef.current.get(remoteId);
+    if (endedHoldTimer) {
+      window.clearTimeout(endedHoldTimer);
+      endedHoldTimersRef.current.delete(remoteId);
     }
   }, []);
 
@@ -462,6 +470,12 @@ export function usePeerConnections({
       recoveryStartedAtRef.current.delete(remoteId);
       reconnectPendingRef.current.delete(remoteId);
 
+      const endedHoldTimer = endedHoldTimersRef.current.get(remoteId);
+      if (endedHoldTimer) {
+        window.clearTimeout(endedHoldTimer);
+        endedHoldTimersRef.current.delete(remoteId);
+      }
+
       const reconnectTimer = reconnectTimersRef.current.get(remoteId);
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
@@ -483,6 +497,108 @@ export function usePeerConnections({
       });
     },
     [deviceId, getPeerMedia, sessionId]
+  );
+
+  const clearEndedHoldTimer = useCallback((remoteId: string) => {
+    const timer = endedHoldTimersRef.current.get(remoteId);
+    if (timer) {
+      window.clearTimeout(timer);
+      endedHoldTimersRef.current.delete(remoteId);
+    }
+  }, []);
+
+  const cancelTrackEndedHold = useCallback(
+    (remoteId: string, reason: "ontrack" | "unmute") => {
+      const hadHold = endedHoldTimersRef.current.has(remoteId);
+      clearEndedHoldTimer(remoteId);
+
+      if (!hadHold && !trackEndedAtRef.current.has(remoteId)) {
+        return;
+      }
+
+      console.log(
+        `[voice-peer] track-ended-hold-cancel remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
+      );
+
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      if (
+        isPeerTransportHealthy(pc) ||
+        peerEverConnectedRef.current.has(remoteId)
+      ) {
+        setPeerStateRef.current(remoteId, "connected");
+      }
+
+      const endedAt = trackEndedAtRef.current.get(remoteId);
+      if (endedAt != null) {
+        finalizeRecovery(
+          remoteId,
+          pc,
+          reason,
+          Date.now() - endedAt
+        );
+      }
+    },
+    [clearEndedHoldTimer, finalizeRecovery]
+  );
+
+  const scheduleTrackEndedHold = useCallback(
+    (remoteId: string, pcBefore: RTCPeerConnection | null | undefined) => {
+      clearEndedHoldTimer(remoteId);
+
+      const pc = pcBefore ?? pcsRef.current.get(remoteId) ?? null;
+      console.log(
+        `[voice-peer] track-ended-hold remote=${compactDeviceId(remoteId)} delayMs=${TRACK_ENDED_HOLD_MS} ` +
+          `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"} ` +
+          `sig=${pc?.signalingState ?? "-"} ${formatVoiceModeSuffix()}`
+      );
+
+      if (
+        peerEverConnectedRef.current.has(remoteId) ||
+        isPeerTransportHealthy(pc)
+      ) {
+        setPeerStateRef.current(remoteId, "connected");
+      }
+
+      const timer = window.setTimeout(() => {
+        endedHoldTimersRef.current.delete(remoteId);
+
+        if (hasLiveRemoteStream(remoteId)) {
+          trackEndedAtRef.current.delete(remoteId);
+          recoveryStartedAtRef.current.delete(remoteId);
+          setPeerStateRef.current(remoteId, "connected");
+          return;
+        }
+
+        console.log(
+          `[voice-peer] track-ended-hold-expired remote=${compactDeviceId(remoteId)} action=reconnect ${formatVoiceModeSuffix()}`
+        );
+
+        const reconnectScheduled = Boolean(
+          scheduleReconnectRef.current?.(
+            remoteId,
+            voicePolicy.trackEndedReconnectMs,
+            {
+              reason: "remote_track_ended_hold_expired",
+              force: voicePolicy.trackEndedForceReconnect,
+            }
+          )
+        );
+
+        if (
+          !reconnectScheduled &&
+          voicePolicy.trackEndedImmediateEnsure
+        ) {
+          ensurePeerConnectionRef.current?.(
+            remoteId,
+            "track_ended_hold_expired",
+            { force: true }
+          );
+        }
+      }, TRACK_ENDED_HOLD_MS);
+
+      endedHoldTimersRef.current.set(remoteId, timer);
+    },
+    [clearEndedHoldTimer, hasLiveRemoteStream]
   );
 
   const maybeLogRecoverySuccess = useCallback(
@@ -1186,6 +1302,7 @@ export function usePeerConnections({
       const elapsedOnAttach =
         endedAtOnAttach != null ? Date.now() - endedAtOnAttach : undefined;
       emitTrackEvent("ontrack", { elapsedMsSinceTrackEnded: elapsedOnAttach });
+      cancelTrackEndedHold(remoteId, "ontrack");
       maybeLogTrackRecovery("ontrack", elapsedOnAttach);
 
       track.onmute = () => {
@@ -1202,6 +1319,7 @@ export function usePeerConnections({
         emitTrackEvent("unmute", { elapsedMsSinceTrackEnded });
         touchPeerSignal(remoteId, "unmute");
         emitMeshSummary("unmute", { immediate: true });
+        cancelTrackEndedHold(remoteId, "unmute");
         maybeLogTrackRecovery("unmute", elapsedMsSinceTrackEnded);
 
         const pc = pcsRef.current.get(remoteId);
@@ -1236,17 +1354,23 @@ export function usePeerConnections({
           `[voice-peer] track-ended-chain remote=${compactDeviceId(remoteId)} step=ended pc=${!!pcBefore} conn=${pcBefore?.connectionState ?? "-"} ${formatVoiceModeSuffix()}`
         );
 
+        const transportHealthy = isPeerTransportHealthy(pcBefore);
+
+        if (transportHealthy) {
+          scheduleTrackEndedHold(remoteId, pcBefore);
+          emitTrackEvent("ended", {
+            scheduledReconnectInMs: TRACK_ENDED_HOLD_MS,
+            reconnectScheduled: false,
+            pc: pcBefore,
+          });
+          return;
+        }
+
         if (
           peerEverConnectedRef.current.has(remoteId) &&
-          voicePolicy.trackEndedSetConnecting &&
-          !isPeerTransportHealthy(pcBefore)
+          voicePolicy.trackEndedSetConnecting
         ) {
           setPeerStateRef.current(remoteId, "connecting");
-        } else if (isPeerTransportHealthy(pcBefore)) {
-          console.log(
-            `[voice-peer] track-ended-ui-hold target=${compactDeviceId(remoteId)} ` +
-              `reason=pc_still_connected ${formatVoiceModeSuffix()}`
-          );
         }
 
         const reconnectScheduled = Boolean(
@@ -1294,7 +1418,19 @@ export function usePeerConnections({
         });
       };
     },
-    [deviceId, emitMeshSummary, finalizeRecovery, getPeerMedia, markRecoveryStart, observePeerField, sessionId, syncRemoteAudioFromPc, touchPeerSignal]
+    [
+      cancelTrackEndedHold,
+      deviceId,
+      emitMeshSummary,
+      finalizeRecovery,
+      getPeerMedia,
+      markRecoveryStart,
+      observePeerField,
+      scheduleTrackEndedHold,
+      sessionId,
+      syncRemoteAudioFromPc,
+      touchPeerSignal,
+    ]
   );
 
   useEffect(() => {
@@ -2175,6 +2311,11 @@ export function usePeerConnections({
       }
 
       if (transportHealthy && !hasStream) {
+        if (endedHoldTimersRef.current.has(remoteId)) {
+          logHealSkipHealthy(remoteId, "track_ended_hold_pending", pc);
+          continue;
+        }
+
         logHealSkipHealthy(remoteId, "connected_pc_waiting_stream", pc);
         continue;
       }
@@ -2206,8 +2347,14 @@ export function usePeerConnections({
       }
 
       if (trackEndedAtRef.current.has(remoteId) && !hasStream) {
-        if (transportHealthy) {
-          logHealSkipHealthy(remoteId, "track_ended_pc_still_connected", pc);
+        if (transportHealthy || endedHoldTimersRef.current.has(remoteId)) {
+          logHealSkipHealthy(
+            remoteId,
+            endedHoldTimersRef.current.has(remoteId)
+              ? "track_ended_hold_pending"
+              : "track_ended_pc_still_connected",
+            pc
+          );
           continue;
         }
 
