@@ -23,12 +23,19 @@ import {
 import {
   installCallPageDiagnostics,
   logCallLifecycle,
-  logCallNavigationType,
   logCallStatusPeer,
   voiceDebugLog,
   type PeerStatusDiagnostics,
 } from "@/app/call/voice/voiceDiagnostics";
-import { consumeCallReloadSnapshot, clearCallBfcacheSuspend } from "@/lib/callReloadDiagnostics";
+import {
+  getCurrentPath,
+  logNavigationIntent,
+  logRouteChange,
+  readCallMutePreference,
+  restoreCallSessionAfterReload,
+  writeCallMutePreference,
+} from "@/lib/callLifecycle";
+import { clearCallBfcacheSuspend } from "@/lib/callReloadDiagnostics";
 import { requestRemoteAudioUnlock } from "@/lib/remoteAudioUnlock";
 import {
   LIST_MEMBER_AVATAR_PX,
@@ -46,6 +53,7 @@ import {
 import {
   clearLocalLeftCall,
   hasLocalLeftCall,
+  LOCAL_LEFT_CALL_EXPLICIT_REASON,
   markLocalLeftCall,
 } from "@/lib/localCallExit";
 
@@ -199,16 +207,24 @@ export default function CallClient() {
   useEffect(() => {
     if (!sessionId || !deviceId) return;
 
-    logCallNavigationType({ sessionId, deviceId });
-    consumeCallReloadSnapshot({ sessionId, deviceId });
+    const restored = restoreCallSessionAfterReload({ sessionId, deviceId });
+    if (restored.leftCallSanitized.cleared) {
+      localExitedPeersRef.current.delete(deviceId);
+    } else if (!hasLocalLeftCall(sessionId, deviceId)) {
+      localExitedPeersRef.current.delete(deviceId);
+    }
+
+    const savedMute = readCallMutePreference(sessionId);
+    if (savedMute != null && getCallNavigationType() === "reload") {
+      setIsMuted(savedMute);
+    }
+
     logCallLifecycle("mount", {
       sessionId,
       deviceId,
       extra: { navigationType: getCallNavigationType() },
     });
-    clearLocalLeftCall(sessionId, deviceId);
     clearCallBfcacheSuspend();
-    localExitedPeersRef.current.delete(deviceId);
   }, [sessionId, deviceId]);
 
   useEffect(() => {
@@ -390,7 +406,8 @@ export default function CallClient() {
     const did = String(deviceId ?? "").trim();
     if (!did || !sessionId) return;
 
-    markLocalLeftCall(sessionId, did);
+    logNavigationIntent("explicit_leave", "CallClient.markSelfLeftCall");
+    markLocalLeftCall(sessionId, did, LOCAL_LEFT_CALL_EXPLICIT_REASON);
     localExitedPeersRef.current.add(did);
     setPeerStates({});
     setPeerDiagnostics({});
@@ -519,6 +536,8 @@ export default function CallClient() {
         );
 
         if (deviceId && !stillJoined) {
+          logNavigationIntent("removed_from_session", "CallClient.fetchMembers");
+          logRouteChange(getCurrentPath(), "/", "removed_from_session");
           releaseSessionMic("removed_from_session", sessionId);
           router.replace(withDev("/"));
           return;
@@ -1270,14 +1289,15 @@ export default function CallClient() {
               cursor: "pointer",
             }}
             onClick={() => {
+              const roomHref = withDev(
+                `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
+                  `&sessionId=${encodeURIComponent(sessionId)}`
+              );
+              logNavigationIntent("explicit_leave", "CallClient.exit_button");
+              logRouteChange(getCurrentPath(), roomHref, "explicit_leave");
               markSelfLeftCall();
               releaseSessionMic("call_exit", sessionId);
-              router.push(
-                withDev(
-                  `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
-                    `&sessionId=${encodeURIComponent(sessionId)}`
-                )
-              );
+              router.push(roomHref);
             }}
           >
             退出
@@ -1612,7 +1632,11 @@ export default function CallClient() {
             }}
             onClick={() => {
               requestRemoteAudioUnlock();
-              setIsMuted((prev) => !prev);
+              setIsMuted((prev) => {
+                const next = !prev;
+                writeCallMutePreference(sessionId, next);
+                return next;
+              });
             }}
           >
             {muteButtonLabel}

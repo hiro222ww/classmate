@@ -2,13 +2,8 @@
 
 import { formatVoiceModeSuffix } from "@/lib/voiceClientEnv";
 
-import {
-  consumeCallBfcacheSuspend,
-  isLikelyChunkLoadError,
-  markCallBfcacheSuspend,
-  recordCallReloadContext,
-  saveCallReloadSnapshot,
-} from "@/lib/callReloadDiagnostics";
+import { installCallLifecycleDiagnostics as installCallLifecycleDiagnosticsImpl } from "@/lib/callLifecycle";
+import { recordCallReloadContext } from "@/lib/callReloadDiagnostics";
 
 type PeerMediaSnapshot = {
   remoteTracksCount: number;
@@ -872,122 +867,5 @@ export function installCallPageDiagnostics(params: {
   deviceId: string;
   onBfcacheRestore?: (args: { sessionId: string; deviceId: string }) => void;
 }) {
-  const { sessionId, deviceId, onBfcacheRestore } = params;
-
-  const onError = (event: ErrorEvent) => {
-    const message = event.message ?? "";
-    const chunkError = isLikelyChunkLoadError(message);
-    const compact = `[call-lifecycle] window-error chunk=${chunkError} msg=${message.slice(0, 120)}`;
-
-    recordCallReloadContext({ lastError: compact });
-
-    console.error(compact);
-    console.error("[call-lifecycle] window-error", {
-      message: event.message,
-      chunkError,
-      filename: event.filename ?? null,
-      lineno: event.lineno ?? null,
-      stack: event.error?.stack ?? null,
-      timestamp: Date.now(),
-      sessionId,
-      deviceId,
-    });
-  };
-
-  const onRejection = (event: PromiseRejectionEvent) => {
-    const reason = event.reason;
-    const message = reason instanceof Error ? reason.message : String(reason);
-    const chunkError = isLikelyChunkLoadError(message);
-    const compact =
-      `[call-lifecycle] unhandled-rejection chunk=${chunkError} ` +
-      `name=${reason instanceof Error ? reason.name : typeof reason} msg=${message.slice(0, 120)}`;
-
-    recordCallReloadContext({ lastRejection: compact });
-
-    console.error(compact);
-    console.error("[call-lifecycle] unhandled-rejection", {
-      message,
-      chunkError,
-      stack: reason instanceof Error ? reason.stack : null,
-      reason: reason instanceof Error ? reason.name : typeof reason,
-      timestamp: Date.now(),
-      sessionId,
-      deviceId,
-    });
-  };
-
-  const onPageHide = (event: PageTransitionEvent) => {
-    logCallLifecycle("pagehide", {
-      sessionId,
-      deviceId,
-      persisted: event.persisted,
-    });
-
-    if (event.persisted) {
-      console.log(
-        `[call-lifecycle] pagehide-persisted-skip-leave session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
-      );
-      markCallBfcacheSuspend(sessionId);
-      return;
-    }
-
-    saveCallReloadSnapshot({
-      trigger: "pagehide",
-      sessionId,
-      deviceId,
-      persisted: event.persisted,
-    });
-  };
-
-  const onPageShow = (event: PageTransitionEvent) => {
-    console.log(
-      `[call-lifecycle] pageshow persisted=${event.persisted} session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
-    );
-    logCallLifecycle("pageshow", {
-      sessionId,
-      deviceId,
-      persisted: event.persisted,
-      extra: { navigationType: getNavigationTypeForDiagnostics() },
-    });
-
-    if (event.persisted && consumeCallBfcacheSuspend(sessionId)) {
-      console.log(
-        `[call-lifecycle] bfcache-restore action=resume_call session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
-      );
-      onBfcacheRestore?.({ sessionId, deviceId });
-    }
-  };
-
-  const onVisibilityChange = () => {
-    logCallLifecycle("visibilitychange", {
-      sessionId,
-      deviceId,
-      visibilityState: document.visibilityState,
-    });
-  };
-
-  const onBeforeUnload = () => {
-    logCallLifecycle("beforeunload", { sessionId, deviceId });
-    saveCallReloadSnapshot({
-      trigger: "beforeunload",
-      sessionId,
-      deviceId,
-    });
-  };
-
-  window.addEventListener("error", onError);
-  window.addEventListener("unhandledrejection", onRejection);
-  window.addEventListener("pagehide", onPageHide);
-  window.addEventListener("pageshow", onPageShow);
-  document.addEventListener("visibilitychange", onVisibilityChange);
-  window.addEventListener("beforeunload", onBeforeUnload);
-
-  return () => {
-    window.removeEventListener("error", onError);
-    window.removeEventListener("unhandledrejection", onRejection);
-    window.removeEventListener("pagehide", onPageHide);
-    window.removeEventListener("pageshow", onPageShow);
-    document.removeEventListener("visibilitychange", onVisibilityChange);
-    window.removeEventListener("beforeunload", onBeforeUnload);
-  };
+  return installCallLifecycleDiagnosticsImpl(params);
 }

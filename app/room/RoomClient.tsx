@@ -42,7 +42,16 @@ import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
-import { hasLocalLeftCall } from "@/lib/localCallExit";
+import {
+  hasLocalLeftCall,
+  sanitizeLocalLeftCallAfterReload,
+} from "@/lib/localCallExit";
+import {
+  getCurrentPath,
+  getNavigationType,
+  logNavigationIntent,
+  logRouteChange,
+} from "@/lib/callLifecycle";
 import {
   logParticipationStatusDecision,
   mapPresenceApiRow,
@@ -578,6 +587,19 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const id = String(getDeviceId() ?? "").trim();
     setDeviceId(id);
   }, [dev]);
+
+  useEffect(() => {
+    if (!sessionId || !deviceId) return;
+    if (getNavigationType() === "reload") {
+      const sanitized = sanitizeLocalLeftCallAfterReload(sessionId, deviceId);
+      if (sanitized.cleared) {
+        console.log(
+          `[room-status] reload-cleared-local-exit reason=${sanitized.previousReason ?? "-"} ` +
+            `session=${sessionId.slice(-8)} device=${deviceId.slice(-3)}`
+        );
+      }
+    }
+  }, [sessionId, deviceId]);
 
   useEffect(() => {
     if (!classId || !deviceId) return;
@@ -1376,13 +1398,14 @@ if (!shouldAutoStart) return;
 
     autoMovedRef.current = moveKey;
 
-    router.replace(
-      withDev(
-        `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
-          classId
-        )}`
-      )
+    const callHref = withDev(
+      `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
+        classId
+      )}`
     );
+    logNavigationIntent("room_auto_call", "RoomClient.auto_start");
+    logRouteChange(getCurrentPath(), callHref, "room_auto_call");
+    router.replace(callHref);
   }, [
     status,
     memberCount,
