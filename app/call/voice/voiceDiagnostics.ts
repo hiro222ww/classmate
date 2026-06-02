@@ -329,6 +329,83 @@ export function compactDeviceId(id: string | null | undefined): string {
   return value.slice(-3);
 }
 
+function compactConnectionId(id: string | null | undefined): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 8) return value;
+  return value.slice(-8);
+}
+
+export function logVoiceSignalIgnored(params: {
+  reason: string;
+  type: string;
+  remote: string;
+}) {
+  console.log(
+    `[voice-signal] ignored reason=${params.reason} type=${params.type} remote=${compactDeviceId(params.remote)}`
+  );
+}
+
+export function logVoiceSignalOfferReceived(params: {
+  from: string;
+  to: string;
+  connectionId: string;
+  currentConnectionId: string | null;
+  sig: string;
+}) {
+  console.log(
+    `[voice-signal] offer-received from=${compactDeviceId(params.from)} to=${compactDeviceId(params.to)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} ` +
+      `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
+  );
+}
+
+export function logVoiceSignalSetRemoteOfferStart(
+  remoteId: string,
+  sig: string
+) {
+  console.log(
+    `[voice-signal] set-remote-offer-start remote=${compactDeviceId(remoteId)} sig=${sig}`
+  );
+}
+
+export function logVoiceSignalSetRemoteOfferDone(
+  remoteId: string,
+  sig: string
+) {
+  console.log(
+    `[voice-signal] set-remote-offer-done remote=${compactDeviceId(remoteId)} sig=${sig}`
+  );
+}
+
+export function logVoiceSignalAnswerCreateStart(remoteId: string) {
+  console.log(
+    `[voice-signal] answer-create-start remote=${compactDeviceId(remoteId)}`
+  );
+}
+
+export function logVoiceSignalAnswerSent(
+  remoteId: string,
+  connectionId: string
+) {
+  console.log(
+    `[voice-signal] answer-sent remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}`
+  );
+}
+
+export function logVoiceSignalAnswerReceived(params: {
+  remoteId: string;
+  connectionId: string;
+  currentConnectionId: string | null;
+  sig: string;
+}) {
+  console.log(
+    `[voice-signal] answer-received remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} ` +
+      `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
+  );
+}
+
 function compactSessionId(id: string | null | undefined): string {
   const value = String(id ?? "").trim();
   if (!value) return "-";

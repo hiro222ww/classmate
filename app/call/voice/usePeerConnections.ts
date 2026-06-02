@@ -11,6 +11,13 @@ import {
   logPeerStateWarning,
   logRemoteTrackEvent,
   logVoiceMeshPeerSummary,
+  logVoiceSignalAnswerCreateStart,
+  logVoiceSignalAnswerReceived,
+  logVoiceSignalAnswerSent,
+  logVoiceSignalIgnored,
+  logVoiceSignalOfferReceived,
+  logVoiceSignalSetRemoteOfferDone,
+  logVoiceSignalSetRemoteOfferStart,
   voiceDebugLog,
   type VoiceMeshPeerSummaryEntry,
 } from "./voiceDiagnostics";
@@ -2443,14 +2450,46 @@ export function usePeerConnections({
 
   const handleSignal = useCallback(
     async (row: SignalRow) => {
-      if (!row || processedSignalIdsRef.current.has(row.id)) return;
+      const signalType = row?.signal_type ?? "unknown";
+      const remoteId = row?.from_device_id ?? "";
+
+      if (!row || processedSignalIdsRef.current.has(row.id)) {
+        if (row) {
+          logVoiceSignalIgnored({
+            reason: "duplicate_signal_id",
+            type: signalType,
+            remote: remoteId,
+          });
+        }
+        return;
+      }
       processedSignalIdsRef.current.add(row.id);
 
-      if (row.from_device_id === deviceId) return;
-      if (row.to_device_id && row.to_device_id !== deviceId) return;
-      if (row.session_id !== sessionId) return;
+      if (row.from_device_id === deviceId) {
+        logVoiceSignalIgnored({
+          reason: "self_signal",
+          type: signalType,
+          remote: remoteId,
+        });
+        return;
+      }
+      if (row.to_device_id && row.to_device_id !== deviceId) {
+        logVoiceSignalIgnored({
+          reason: "wrong_target",
+          type: signalType,
+          remote: remoteId,
+        });
+        return;
+      }
+      if (row.session_id !== sessionId) {
+        logVoiceSignalIgnored({
+          reason: "wrong_session",
+          type: signalType,
+          remote: remoteId,
+        });
+        return;
+      }
 
-      const remoteId = row.from_device_id;
       const payload = row.payload ?? {};
       const incomingConnectionId = payload.connectionId;
 
@@ -2459,7 +2498,14 @@ export function usePeerConnections({
         return;
       }
 
-      if (!incomingConnectionId) return;
+      if (!incomingConnectionId) {
+        logVoiceSignalIgnored({
+          reason: "missing_connection_id",
+          type: signalType,
+          remote: remoteId,
+        });
+        return;
+      }
 
       let currentConnectionId = getCurrentConnectionId(remoteId);
 
@@ -2476,6 +2522,11 @@ export function usePeerConnections({
         !currentConnectionId ||
         currentConnectionId !== incomingConnectionId
       ) {
+        logVoiceSignalIgnored({
+          reason: "stale_connection_id",
+          type: signalType,
+          remote: remoteId,
+        });
         return;
       }
 
@@ -2484,15 +2535,41 @@ export function usePeerConnections({
       try {
         if (row.signal_type === "offer") {
           const sdp = payload.sdp;
-          if (!sdp) return;
-          if (pc.signalingState !== "stable") return;
+          if (!sdp) {
+            logVoiceSignalIgnored({
+              reason: "missing_sdp",
+              type: "offer",
+              remote: remoteId,
+            });
+            return;
+          }
 
+          logVoiceSignalOfferReceived({
+            from: row.from_device_id,
+            to: row.to_device_id ?? deviceId,
+            connectionId: incomingConnectionId,
+            currentConnectionId,
+            sig: pc.signalingState,
+          });
+
+          if (pc.signalingState !== "stable") {
+            logVoiceSignalIgnored({
+              reason: "invalid_signaling_state",
+              type: "offer",
+              remote: remoteId,
+            });
+            return;
+          }
+
+          logVoiceSignalSetRemoteOfferStart(remoteId, pc.signalingState);
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          logVoiceSignalSetRemoteOfferDone(remoteId, pc.signalingState);
           await flushPendingIce(remoteId, incomingConnectionId);
           touchPeerSignal(remoteId, "offer_received");
 
           setPeerState(remoteId, "connecting");
 
+          logVoiceSignalAnswerCreateStart(remoteId);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
@@ -2500,6 +2577,7 @@ export function usePeerConnections({
             connectionId: incomingConnectionId,
             sdp: pc.localDescription,
           });
+          logVoiceSignalAnswerSent(remoteId, incomingConnectionId);
           touchPeerSignal(remoteId, "answer_sent");
           emitMeshSummary("answer_sent", { immediate: true });
 
@@ -2508,8 +2586,30 @@ export function usePeerConnections({
 
         if (row.signal_type === "answer") {
           const sdp = payload.sdp;
-          if (!sdp) return;
-          if (pc.signalingState !== "have-local-offer") return;
+          if (!sdp) {
+            logVoiceSignalIgnored({
+              reason: "missing_sdp",
+              type: "answer",
+              remote: remoteId,
+            });
+            return;
+          }
+
+          logVoiceSignalAnswerReceived({
+            remoteId,
+            connectionId: incomingConnectionId,
+            currentConnectionId,
+            sig: pc.signalingState,
+          });
+
+          if (pc.signalingState !== "have-local-offer") {
+            logVoiceSignalIgnored({
+              reason: "invalid_signaling_state",
+              type: "answer",
+              remote: remoteId,
+            });
+            return;
+          }
 
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
