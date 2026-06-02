@@ -145,6 +145,15 @@ const ICE_RESTART_POST_TIMEOUT_MS = 10000;
 const MAX_ICE_RESTART_ATTEMPTS = 1;
 const P2P_DIRECT_FAILED_HOLD_MS = 60_000;
 const ORPHAN_REMOTE_AUDIO_MS = 15000;
+const AUTO_HARD_RESET_MIN_INTERVAL_MS = 30_000;
+const AUTO_HARD_RESET_MAX_ATTEMPTS = 3;
+const AUTO_HARD_RESET_CONFIRMED_HOLD_MS = 10_000;
+const AUTO_HARD_RESET_STUCK_MS = 15_000;
+const AUTO_HARD_RESET_ORPHAN_MS = 5_000;
+const AUTO_HARD_RESET_P2P_FAILED_WINDOW_MS = 5_000;
+const AUTO_HARD_RESET_EVAL_INTERVAL_MS = 2_000;
+
+type PeerHardResetMode = "manual" | "auto";
 
 type ScheduleReconnectOpts = {
   reason: string;
@@ -172,6 +181,87 @@ function isSelfInitiatedHealEnsureReason(reason: string): boolean {
     reason.includes("mesh_missing") ||
     reason.includes("safety_net") ||
     reason.includes("no_stream_no_offer")
+  );
+}
+
+function evaluateAutoHardResetTrigger(params: {
+  pc: RTCPeerConnection | null;
+  timestamps: PeerSignalTimestamps;
+  hasRemoteStream: boolean;
+  hasPc: boolean;
+  isOrphan: boolean;
+  orphanSince: number | null;
+  connectStartedAt: number | null;
+  p2pDirectFailedAt: number | null;
+  nowMs: number;
+}): string | null {
+  const { timestamps, nowMs } = params;
+  const conn = params.pc?.connectionState ?? "-";
+  const ice = params.pc?.iceConnectionState ?? "-";
+
+  if (conn === "failed" || ice === "failed") {
+    return "transport_failed";
+  }
+
+  if (
+    params.p2pDirectFailedAt != null &&
+    nowMs - params.p2pDirectFailedAt <= AUTO_HARD_RESET_P2P_FAILED_WINDOW_MS
+  ) {
+    return "p2p_direct_failed";
+  }
+
+  if (
+    params.isOrphan ||
+    (!params.hasPc && params.hasRemoteStream)
+  ) {
+    if (
+      params.orphanSince != null &&
+      nowMs - params.orphanSince >= AUTO_HARD_RESET_ORPHAN_MS
+    ) {
+      return "orphan_remote_audio_provisional";
+    }
+  }
+
+  const connectAgeMs =
+    params.connectStartedAt != null
+      ? nowMs - params.connectStartedAt
+      : null;
+  const isConnectingChecking =
+    conn === "connecting" || ice === "checking" || ice === "new";
+  if (
+    isConnectingChecking &&
+    connectAgeMs != null &&
+    connectAgeMs >= AUTO_HARD_RESET_STUCK_MS
+  ) {
+    return "connecting_checking_stuck";
+  }
+
+  if (timestamps.lastPlaybackConfirmedAt == null) {
+    const anchor =
+      params.connectStartedAt ??
+      timestamps.lastOnTrackAt ??
+      timestamps.lastPlaybackActiveAt;
+    if (anchor != null && nowMs - anchor >= AUTO_HARD_RESET_STUCK_MS) {
+      return "confirmed_at_missing";
+    }
+  }
+
+  if (
+    timestamps.lastPlaybackActiveAt != null &&
+    timestamps.lastPlaybackConfirmedAt == null &&
+    nowMs - timestamps.lastPlaybackActiveAt >= AUTO_HARD_RESET_STUCK_MS
+  ) {
+    return "playback_provisional_unconfirmed";
+  }
+
+  return null;
+}
+
+function isAutoHardResetConfirmedHold(timestamps: PeerSignalTimestamps): boolean {
+  const confirmedAt = timestamps.lastPlaybackConfirmedAt;
+  return (
+    confirmedAt != null &&
+    Date.now() - confirmedAt < AUTO_HARD_RESET_CONFIRMED_HOLD_MS
   );
 }
 
@@ -767,6 +857,11 @@ export function usePeerConnections({
   const turnFallbackAttemptedRef = useRef<Map<string, boolean>>(new Map());
   const p2pDirectFailedHoldUntilRef = useRef<Map<string, number>>(new Map());
   const manualHardResetHealPassRef = useRef<Set<string>>(new Set());
+  const autoHardResetLastAtRef = useRef<Map<string, number>>(new Map());
+  const autoHardResetAttemptCountRef = useRef<Map<string, number>>(new Map());
+  const autoHardResetGiveUpRef = useRef<Set<string>>(new Set());
+  const autoHardResetInProgressRef = useRef<Set<string>>(new Set());
+  const p2pDirectFailedSignalAtRef = useRef<Map<string, number>>(new Map());
   const orphanRemoteAudioAtRef = useRef<Map<string, number>>(new Map());
   const orphanRemoteAudioRef = useRef<Set<string>>(new Set());
   const orphanRemoteAudioLoggedRef = useRef<Set<string>>(new Set());
@@ -1224,6 +1319,9 @@ export function usePeerConnections({
         next.lastPlaybackConfirmedAt = now;
         next.lastPlaybackActiveAt = now;
         audioUnconfirmedTimeoutNotifiedRef.current.delete(remoteId);
+        autoHardResetAttemptCountRef.current.delete(remoteId);
+        autoHardResetGiveUpRef.current.delete(remoteId);
+        p2pDirectFailedSignalAtRef.current.delete(remoteId);
       }
 
       peerSignalTimestampsRef.current.set(remoteId, next);
@@ -1503,6 +1601,10 @@ export function usePeerConnections({
         orphanRemoteAudio: orphanRemoteAudioRef.current.has(remoteId),
         p2pDirectFailedHoldActive: p2pDirectFailedHoldRemainingMs != null,
         p2pDirectFailedHoldRemainingMs,
+        autoHardResetInProgress: autoHardResetInProgressRef.current.has(remoteId),
+        autoHardResetGiveUp: autoHardResetGiveUpRef.current.has(remoteId),
+        autoHardResetAttempts:
+          autoHardResetAttemptCountRef.current.get(remoteId) ?? 0,
       };
     }
 
@@ -2333,6 +2435,7 @@ export function usePeerConnections({
               : "no_relay_candidate",
             stats,
           });
+          p2pDirectFailedSignalAtRef.current.set(remoteId, Date.now());
           const turnReason = transportFailed
             ? "failed_with_host_srflx_only"
             : "host_srflx_checking_stuck";
@@ -2678,6 +2781,7 @@ export function usePeerConnections({
             : "no_relay_candidate",
           stats,
         });
+        p2pDirectFailedSignalAtRef.current.set(remoteId, Date.now());
       }
       const insufficient = evaluateInsufficientRemoteCandidates(stats);
       if (insufficient) {
@@ -3529,9 +3633,12 @@ export function usePeerConnections({
         touchPeerSignal(remoteId, "offer_sent");
         emitMeshSummary("offer_sent", { immediate: true });
 
-        if (reason === "manual_reconnect") {
+        if (
+          reason === "manual_reconnect" ||
+          reason === "auto_hard_reset"
+        ) {
           console.log(
-            `[voice-signal] offer-sent remote=${compactDeviceId(remoteId)} reason=manual_reconnect ` +
+            `[voice-signal] offer-sent remote=${compactDeviceId(remoteId)} reason=${reason} ` +
               `connectionId=${compactConnectionId(connectionId)} ${formatVoiceModeSuffix()}`
           );
         }
@@ -3664,21 +3771,14 @@ export function usePeerConnections({
     ]
   );
 
-  const hardResetPeerForManualReconnect = useCallback(
-    async (
-      remoteId: string,
-      opts: {
-        resetLogReason: string;
-        logManualHardReset?: boolean;
-      }
-    ) => {
+  const runPeerHardReset = useCallback(
+    async (remoteId: string, reason: string, mode: PeerHardResetMode) => {
       if (!remoteId || remoteId === deviceId) return;
 
-      if (opts.logManualHardReset) {
-        console.log(
-          `[voice-peer] manual-hard-reset remote=${compactDeviceId(remoteId)} reason=${opts.resetLogReason} ${formatVoiceModeSuffix()}`
-        );
-      }
+      const logPrefix = mode === "manual" ? "manual-hard-reset" : "auto-hard-reset";
+      console.log(
+        `[voice-peer] ${logPrefix} remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
+      );
 
       clearPeerWatchdogTimers(remoteId);
       clearReconnectTimer(remoteId);
@@ -3705,6 +3805,7 @@ export function usePeerConnections({
       orphanRemoteAudioAtRef.current.delete(remoteId);
       orphanRemoteAudioRef.current.delete(remoteId);
       orphanRemoteAudioLoggedRef.current.delete(remoteId);
+      p2pDirectFailedSignalAtRef.current.delete(remoteId);
       clearEndedRemoteAudio(remoteId);
 
       manualHardResetHealPassRef.current.add(remoteId);
@@ -3712,11 +3813,13 @@ export function usePeerConnections({
       closePeer(remoteId, {
         clearConnectionId: true,
         preserveRemoteAudio: false,
-        reason: `hard_reset_${opts.resetLogReason}`,
+        reason: `hard_reset_${reason}`,
       });
 
+      const connectionIdReason =
+        mode === "manual" ? "manual_hard_reset" : "auto_hard_reset";
       const newConnectionId = makeConnectionId(deviceId, remoteId);
-      assignConnectionId(remoteId, newConnectionId, "manual_hard_reset");
+      assignConnectionId(remoteId, newConnectionId, connectionIdReason);
       connectStartedAtRef.current.set(remoteId, Date.now());
       offeredPeersRef.current.delete(remoteId);
       startedPeersRef.current.delete(remoteId);
@@ -3725,7 +3828,7 @@ export function usePeerConnections({
       emitPeerStates();
 
       console.log(
-        `[voice-peer] manual-hard-reset-done remote=${compactDeviceId(remoteId)} reason=${opts.resetLogReason} ${formatVoiceModeSuffix()}`
+        `[voice-peer] ${logPrefix}-done remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
       );
     },
     [
@@ -3740,31 +3843,43 @@ export function usePeerConnections({
     ]
   );
 
-  const beginManualReconnectAfterHardReset = useCallback(
+  const beginReconnectAfterHardReset = useCallback(
     async (
       remoteId: string,
-      opts?: { skipReconnectRequest?: boolean; forceOffer?: boolean }
+      opts?: {
+        skipReconnectRequest?: boolean;
+        forceOffer?: boolean;
+        reconnectReason?: "manual_reconnect" | "auto_hard_reset";
+      }
     ) => {
       const isOfferOwner = deviceId < remoteId;
       const connectionId = getCurrentConnectionId(remoteId);
       if (!connectionId) return;
 
+      const reconnectReason = opts?.reconnectReason ?? "manual_reconnect";
+
       if (isOfferOwner || opts?.forceOffer) {
-        await startPeerOffer(remoteId, { force: true, reason: "manual_reconnect" });
+        await startPeerOffer(remoteId, {
+          force: true,
+          reason: reconnectReason,
+        });
         return;
       }
 
       if (!opts?.skipReconnectRequest) {
-        await sendSignal(remoteId, "reconnect-request", { connectionId });
+        await sendSignal(remoteId, "reconnect-request", {
+          connectionId,
+          resetReason: reconnectReason,
+        });
         console.log(
           `[voice-signal] reconnect-request-sent remote=${compactDeviceId(remoteId)} ` +
-            `connectionId=${compactConnectionId(connectionId)} ${formatVoiceModeSuffix()}`
+            `reason=${reconnectReason} connectionId=${compactConnectionId(connectionId)} ${formatVoiceModeSuffix()}`
         );
       }
 
       createPeerConnection(remoteId, connectionId);
       setPeerState(remoteId, "connecting");
-      scheduleNoStreamNoOfferTimeout(remoteId, "manual_hard_reset");
+      scheduleNoStreamNoOfferTimeout(remoteId, reconnectReason);
     },
     [
       createPeerConnection,
@@ -3777,15 +3892,117 @@ export function usePeerConnections({
     ]
   );
 
+  const tryRunPeerAutoHardReset = useCallback(
+    async (remoteId: string, triggerReason: string) => {
+      if (!remoteId || remoteId === deviceId) return;
+      if (!micReady || !signalReady) return;
+      if (!isRemoteInCall(remoteId)) return;
+      if (autoHardResetGiveUpRef.current.has(remoteId)) return;
+      if (autoHardResetInProgressRef.current.has(remoteId)) return;
+
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      if (isAutoHardResetConfirmedHold(timestamps)) {
+        return;
+      }
+
+      const lastAt = autoHardResetLastAtRef.current.get(remoteId);
+      if (
+        lastAt != null &&
+        Date.now() - lastAt < AUTO_HARD_RESET_MIN_INTERVAL_MS
+      ) {
+        console.log(
+          `[voice-peer] auto-hard-reset-skip remote=${compactDeviceId(remoteId)} reason=rate_limited ` +
+            `trigger=${triggerReason} ${formatVoiceModeSuffix()}`
+        );
+        return;
+      }
+
+      const attempts = autoHardResetAttemptCountRef.current.get(remoteId) ?? 0;
+      if (attempts >= AUTO_HARD_RESET_MAX_ATTEMPTS) {
+        if (!autoHardResetGiveUpRef.current.has(remoteId)) {
+          autoHardResetGiveUpRef.current.add(remoteId);
+          console.log(
+            `[voice-peer] auto-hard-reset-give-up remote=${compactDeviceId(remoteId)} attempts=${AUTO_HARD_RESET_MAX_ATTEMPTS} ` +
+              `${formatVoiceModeSuffix()}`
+          );
+          emitPeerStates();
+        }
+        return;
+      }
+
+      autoHardResetInProgressRef.current.add(remoteId);
+      autoHardResetLastAtRef.current.set(remoteId, Date.now());
+      autoHardResetAttemptCountRef.current.set(remoteId, attempts + 1);
+      emitPeerStates();
+
+      try {
+        await runPeerHardReset(remoteId, triggerReason, "auto");
+        await beginReconnectAfterHardReset(remoteId, {
+          reconnectReason: "auto_hard_reset",
+        });
+      } finally {
+        autoHardResetInProgressRef.current.delete(remoteId);
+        emitPeerStates();
+      }
+    },
+    [
+      beginReconnectAfterHardReset,
+      deviceId,
+      emitPeerStates,
+      isRemoteInCall,
+      micReady,
+      runPeerHardReset,
+      signalReady,
+    ]
+  );
+
+  const evaluateAndRunAutoHardResetForPeer = useCallback(
+    (remoteId: string) => {
+      if (autoHardResetGiveUpRef.current.has(remoteId)) return;
+      if (autoHardResetInProgressRef.current.has(remoteId)) return;
+
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      if (isAutoHardResetConfirmedHold(timestamps)) {
+        return;
+      }
+
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const media = getPeerMedia(remoteId);
+      const trigger = evaluateAutoHardResetTrigger({
+        pc,
+        timestamps,
+        hasRemoteStream: media.hasRemoteStream,
+        hasPc: isUsablePeerConnection(pc),
+        isOrphan: orphanRemoteAudioRef.current.has(remoteId),
+        orphanSince: orphanRemoteAudioAtRef.current.get(remoteId) ?? null,
+        connectStartedAt: connectStartedAtRef.current.get(remoteId) ?? null,
+        p2pDirectFailedAt: p2pDirectFailedSignalAtRef.current.get(remoteId) ?? null,
+        nowMs: Date.now(),
+      });
+
+      if (!trigger) return;
+
+      void tryRunPeerAutoHardReset(remoteId, trigger);
+    },
+    [getPeerMedia, tryRunPeerAutoHardReset]
+  );
+
   const manualPeerHardReset = useCallback(
     async (remoteId: string) => {
-      await hardResetPeerForManualReconnect(remoteId, {
-        resetLogReason: "user_requested_audio_reconnect",
-        logManualHardReset: true,
+      autoHardResetAttemptCountRef.current.delete(remoteId);
+      autoHardResetGiveUpRef.current.delete(remoteId);
+      autoHardResetInProgressRef.current.delete(remoteId);
+      await runPeerHardReset(remoteId, "user_requested_audio_reconnect", "manual");
+      await beginReconnectAfterHardReset(remoteId, {
+        reconnectReason: "manual_reconnect",
       });
-      await beginManualReconnectAfterHardReset(remoteId);
+      emitPeerStates();
     },
-    [beginManualReconnectAfterHardReset, hardResetPeerForManualReconnect]
+    [beginReconnectAfterHardReset, emitPeerStates, runPeerHardReset]
   );
 
   const ensurePeerConnection = useCallback(
@@ -4758,22 +4975,23 @@ export function usePeerConnections({
           return;
         }
 
-        console.log(
-          `[voice-signal] reconnect-request-received remote=${compactDeviceId(remoteId)} ` +
-            `connectionId=${compactConnectionId(incomingConnectionId)} ${formatVoiceModeSuffix()}`
-        );
+        const requestReason =
+          String(payload.resetReason ?? "").trim() || "reconnect_request_received";
 
-        await hardResetPeerForManualReconnect(remoteId, {
-          resetLogReason: "reconnect_request_received",
-        });
+        await runPeerHardReset(remoteId, requestReason, "auto");
         assignConnectionId(
           remoteId,
           incomingConnectionId,
           "reconnect_request_received"
         );
-        await beginManualReconnectAfterHardReset(remoteId, {
+        console.log(
+          `[voice-signal] reconnect-request-received remote=${compactDeviceId(remoteId)} ` +
+            `reason=${requestReason} connectionId=${compactConnectionId(incomingConnectionId)} ${formatVoiceModeSuffix()}`
+        );
+        await beginReconnectAfterHardReset(remoteId, {
           skipReconnectRequest: true,
           forceOffer: true,
+          reconnectReason: "auto_hard_reset",
         });
         return;
       }
@@ -5026,7 +5244,7 @@ export function usePeerConnections({
     [
       addRemoteIceCandidate,
       assignConnectionId,
-      beginManualReconnectAfterHardReset,
+      beginReconnectAfterHardReset,
       closePeer,
       createPeerConnection,
       deviceId,
@@ -5035,7 +5253,7 @@ export function usePeerConnections({
       getCurrentConnectionId,
       getOrCreatePeerIceStats,
       getPeerMedia,
-      hardResetPeerForManualReconnect,
+      runPeerHardReset,
       scheduleReconnect,
       sendSignal,
       sessionId,
@@ -5190,6 +5408,25 @@ export function usePeerConnections({
   }, [micReady, signalReady, healPeerConnections]);
 
   useEffect(() => {
+    if (!micReady || !signalReady) return;
+
+    const timer = window.setInterval(() => {
+      for (const remoteId of getRemoteIds()) {
+        evaluateAndRunAutoHardResetForPeer(remoteId);
+      }
+    }, AUTO_HARD_RESET_EVAL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [
+    evaluateAndRunAutoHardResetForPeer,
+    getRemoteIds,
+    micReady,
+    signalReady,
+  ]);
+
+  useEffect(() => {
     if (membersSyncRevision <= 0) return;
     if (!micReady || !isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
     healPeerConnections();
@@ -5290,6 +5527,12 @@ export function usePeerConnections({
       peerSignalTimestampsRef.current.clear();
       peerMetaRef.current.clear();
       peerStatesRef.current.clear();
+      autoHardResetLastAtRef.current.clear();
+      autoHardResetAttemptCountRef.current.clear();
+      autoHardResetGiveUpRef.current.clear();
+      autoHardResetInProgressRef.current.clear();
+      p2pDirectFailedSignalAtRef.current.clear();
+      manualHardResetHealPassRef.current.clear();
 
       setRemoteAudios({});
       emitPeerStatesRef.current();

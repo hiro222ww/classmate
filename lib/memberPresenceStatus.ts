@@ -236,9 +236,11 @@ export function shouldShowManualAudioReconnect(params: {
   lastPlaybackConfirmedAt: number | null;
   lastPlaybackActiveAt: number | null;
   p2pDirectFailedHoldActive?: boolean;
+  autoHardResetGiveUp?: boolean;
   nowMs?: number;
 }): boolean {
   if (params.isMe) return false;
+  if (params.autoHardResetGiveUp) return true;
 
   const now = params.nowMs ?? Date.now();
   const failedTransport = params.conn === "failed" || params.ice === "failed";
@@ -280,6 +282,8 @@ export function resolveCallMemberStatus(params: {
   hasPc?: boolean;
   orphanRemoteAudio?: boolean;
   p2pDirectFailedHoldActive?: boolean;
+  autoHardResetInProgress?: boolean;
+  autoHardResetGiveUp?: boolean;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
 }) {
@@ -330,6 +334,28 @@ export function resolveCallMemberStatus(params: {
             ? "screen_home"
             : "is_in_call_false",
       source: "participation",
+    };
+  }
+
+  if (params.autoHardResetInProgress) {
+    return {
+      text: "音声を調整中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+      reason: "auto_hard_reset_in_progress",
+      source: "autoHardReset",
+    };
+  }
+
+  if (params.autoHardResetGiveUp) {
+    return {
+      text: "音声が不安定です",
+      color: "#991b1b",
+      chipBg: "#fef2f2",
+      chipText: "#dc2626",
+      reason: "auto_hard_reset_give_up",
+      source: "autoHardReset",
     };
   }
 

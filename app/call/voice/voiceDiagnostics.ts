@@ -346,6 +346,9 @@ export type PeerStatusDiagnostics = {
   orphanRemoteAudio?: boolean;
   p2pDirectFailedHoldActive?: boolean;
   p2pDirectFailedHoldRemainingMs?: number | null;
+  autoHardResetInProgress?: boolean;
+  autoHardResetGiveUp?: boolean;
+  autoHardResetAttempts?: number;
 };
 
 export function logCallStatusPeer(params: {

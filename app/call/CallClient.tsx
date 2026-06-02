@@ -927,6 +927,8 @@ export default function CallClient() {
         hasPc: diag?.hasPc ?? false,
         orphanRemoteAudio: diag?.orphanRemoteAudio === true,
         p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+        autoHardResetInProgress: diag?.autoHardResetInProgress === true,
+        autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
         wasPeerConnected,
         remoteAudioVerified,
       });
@@ -1358,6 +1360,7 @@ export default function CallClient() {
                 lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
                 lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
                 p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+                autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
                 nowMs,
               });
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";

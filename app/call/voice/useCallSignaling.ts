@@ -14,6 +14,7 @@ export type SignalPayload = {
   connectionId?: string;
   sdp?: RTCSessionDescriptionInit | null;
   candidate?: RTCIceCandidateInit | null;
+  resetReason?: string;
 };
 
 export type SignalRow = {
