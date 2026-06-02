@@ -1847,17 +1847,14 @@ export function usePeerConnections({
     return remaining;
   }, []);
 
-  const logHealSkipP2pTurnDisabledHold = useCallback(
-    (remoteId: string): boolean => {
-      if (manualHardResetHealPassRef.current.delete(remoteId)) {
-        return false;
-      }
-
+  const shouldBlockTurnFallbackOnly = useCallback(
+    (remoteId: string, context: string): boolean => {
       const holdRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
       if (holdRemainingMs == null) return false;
       console.log(
-        `[voice-peer] heal-skip remote=${compactDeviceId(remoteId)} reason=p2p_direct_failed_turn_disabled_hold ` +
-          `holdRemainingMs=${holdRemainingMs} ${formatVoiceModeSuffix()}`
+        `[voice-peer] turn-hold-skip-fallback remote=${compactDeviceId(remoteId)} ` +
+          `reason=turn_disabled context=${context} holdRemainingMs=${holdRemainingMs} ` +
+          `${formatVoiceModeSuffix()}`
       );
       return true;
     },
@@ -2533,15 +2530,6 @@ export function usePeerConnections({
       const source = sourceRaw;
       let reason = reasonRaw;
 
-      const p2pHoldRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
-      if (p2pHoldRemainingMs != null && opts?.force !== true) {
-        console.log(
-          `[voice-peer] reconnect-hold remote=${compactDeviceId(remoteId)} reason=p2p_direct_failed_turn_disabled ` +
-            `holdRemainingMs=${p2pHoldRemainingMs} source=${source} ${formatVoiceModeSuffix()}`
-        );
-        return false;
-      }
-
       const pc = pcsRef.current.get(remoteId);
       const media = getPeerMedia(remoteId);
       const timestamps =
@@ -2600,12 +2588,19 @@ export function usePeerConnections({
           const turnReason = transportFailed
             ? "failed_with_host_srflx_only"
             : "host_srflx_checking_stuck";
-          console.log(
-            `[voice-peer] turn-fallback-needed remote=${compactDeviceId(remoteId)} ` +
-              `reason=${turnReason} enabled=${turnFallbackEnabledRef.current} source=${source} ${formatVoiceModeSuffix()}`
-          );
-          void attemptTurnFallbackForPeerRef.current(remoteId, turnReason);
-          return false;
+          if (turnFallbackEnabledRef.current) {
+            console.log(
+              `[voice-peer] turn-fallback-needed remote=${compactDeviceId(remoteId)} ` +
+                `reason=${turnReason} enabled=true source=${source} ${formatVoiceModeSuffix()}`
+            );
+            void attemptTurnFallbackForPeerRef.current(remoteId, turnReason);
+          } else {
+            p2pDirectFailedHoldUntilRef.current.set(
+              remoteId,
+              Date.now() + P2P_DIRECT_FAILED_HOLD_MS
+            );
+            shouldBlockTurnFallbackOnly(remoteId, `reconnect_${source}`);
+          }
         }
       }
 
@@ -2697,7 +2692,6 @@ export function usePeerConnections({
       closePeer,
       deviceId,
       getOrCreatePeerIceStats,
-      getP2pDirectFailedHoldRemainingMs,
       hasLiveRemoteAudioStream,
       localAudioTrackRef,
       localStreamRef,
@@ -2705,6 +2699,7 @@ export function usePeerConnections({
       markRecoveryStart,
       micReady,
       getPeerMedia,
+      shouldBlockTurnFallbackOnly,
     ]
   );
 
@@ -3011,11 +3006,7 @@ export function usePeerConnections({
             remoteId,
             Date.now() + P2P_DIRECT_FAILED_HOLD_MS
           );
-          console.log(
-            `[voice-peer] reconnect-hold remote=${compactDeviceId(remoteId)} reason=p2p_direct_failed_turn_disabled ` +
-              `source=checking_timeout ${formatVoiceModeSuffix()}`
-          );
-          return;
+          shouldBlockTurnFallbackOnly(remoteId, "checking_timeout");
         }
 
         logPeerStateWarning({
@@ -3043,12 +3034,14 @@ export function usePeerConnections({
       emitMeshSummary,
       getCurrentConnectionId,
       getPeerMedia,
+      hasLiveRemoteAudioStream,
       isEligibleForIceRestart,
       logIceCheckingDiagnostics,
       getOrCreatePeerIceStats,
       markRecoveryStart,
       sessionId,
       setPeerMeta,
+      shouldBlockTurnFallbackOnly,
     ]
   );
 
@@ -3265,11 +3258,7 @@ export function usePeerConnections({
           remoteId,
           Date.now() + P2P_DIRECT_FAILED_HOLD_MS
         );
-        console.log(
-          `[voice-peer] reconnect-hold remote=${compactDeviceId(remoteId)} ` +
-            `reason=p2p_direct_failed_turn_disabled ${formatVoiceModeSuffix()}`
-        );
-        return false;
+        return shouldBlockTurnFallbackOnly(remoteId, `turn_fallback_${turnReason}`);
       }
 
       turnFallbackAttemptedRef.current.set(remoteId, true);
@@ -3311,6 +3300,7 @@ export function usePeerConnections({
       enableTurnFallback,
       getOrCreatePeerIceStats,
       hasLiveRemoteAudioStream,
+      shouldBlockTurnFallbackOnly,
     ]
   );
 
@@ -4425,21 +4415,6 @@ export function usePeerConnections({
         return isUsablePeerConnection(awaitingPc);
       }
 
-      if (isSelfInitiatedHealEnsureReason(reason)) {
-        if (!manualHardResetHealPassRef.current.delete(remoteId)) {
-          const holdRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
-          if (holdRemainingMs != null) {
-            logEnsureSkipped(
-              remoteId,
-              reason,
-              "p2p_direct_failed_turn_disabled_hold",
-              `holdRemainingMs=${holdRemainingMs}`
-            );
-            return false;
-          }
-        }
-      }
-
       const existing = pcsRef.current.get(remoteId) ?? null;
       const hasUsablePc = isUsablePeerConnection(existing);
 
@@ -4532,6 +4507,27 @@ export function usePeerConnections({
   );
 
   ensurePeerConnectionRef.current = ensurePeerConnection;
+
+  const recoverMissingPc = useCallback(
+    (remoteId: string, reason: string) => {
+      const holdRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
+      if (holdRemainingMs != null) {
+        console.log(
+          `[voice-peer] p2p-retry-allowed-during-turn-hold remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} holdRemainingMs=${holdRemainingMs} ${formatVoiceModeSuffix()}`
+        );
+      }
+
+      console.log(
+        `[voice-peer] recover-missing-pc remote=${compactDeviceId(remoteId)} reason=${reason} ` +
+          `inCall=${isRemoteInCall(remoteId)} hasPc=${isUsablePeerConnection(pcsRef.current.get(remoteId))} ` +
+          `${formatVoiceModeSuffix()}`
+      );
+
+      return ensurePeerConnection(remoteId, reason, { force: true });
+    },
+    [ensurePeerConnection, getP2pDirectFailedHoldRemainingMs, isRemoteInCall]
+  );
 
   const attemptSoftIceRestart = useCallback(
     async (remoteId: string) => {
@@ -4855,25 +4851,17 @@ export function usePeerConnections({
       }
 
       for (const peer of missing) {
-        if (logHealSkipP2pTurnDisabledHold(peer.remoteDeviceId)) {
-          continue;
-        }
-
-        console.log(
-          `[voice-peer] recoverMissingPcsFromMesh missing remote=${compactDeviceId(peer.remoteDeviceId)} ` +
-            `inCall=${peer.isInCall !== false} pc=false force=true`
+        recoverMissingPc(
+          peer.remoteDeviceId,
+          "mesh_missing_pc_after_transport_failed"
         );
-        ensurePeerConnection(peer.remoteDeviceId, "mesh_missing_pc", {
-          force: true,
-        });
       }
     },
     [
-      ensurePeerConnection,
       localAudioTrackRef,
       localStreamRef,
-      logHealSkipP2pTurnDisabledHold,
       micReady,
+      recoverMissingPc,
       signalReady,
       userMutedRef,
       voicePolicy.releaseMicOnMute,
@@ -5050,10 +5038,6 @@ export function usePeerConnections({
     };
 
     for (const remoteId of remoteIds) {
-      if (logHealSkipP2pTurnDisabledHold(remoteId)) {
-        continue;
-      }
-
       if (!isRemoteInCall(remoteId)) {
         continue;
       }
@@ -5130,7 +5114,7 @@ export function usePeerConnections({
           action: "create",
           reason: "missing_pc",
           run: () => {
-            ensurePeerConnection(remoteId, "heal_missing_pc", { force: true });
+            recoverMissingPc(remoteId, "heal_missing_pc_after_transport_failed");
           },
         });
         continue;
@@ -5356,10 +5340,9 @@ export function usePeerConnections({
 
     const runMissingPcSafetyNet = () => {
       for (const remoteId of remoteIds) {
-        if (logHealSkipP2pTurnDisabledHold(remoteId)) continue;
         if (!isRemoteInCall(remoteId)) continue;
         if (!peerNeedsPc(remoteId)) continue;
-        ensurePeerConnection(remoteId, "heal_safety_net", { force: true });
+        recoverMissingPc(remoteId, "heal_safety_net_missing_pc");
       }
     };
 
@@ -5458,7 +5441,7 @@ export function usePeerConnections({
     localAudioTrackRef,
     localStreamRef,
     logHealPeerAction,
-    logHealSkipP2pTurnDisabledHold,
+    recoverMissingPc,
     markConnectStart,
     maybeStartOffer,
     micReady,

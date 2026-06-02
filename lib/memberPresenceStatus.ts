@@ -432,6 +432,7 @@ export function resolveDisplayManualAudioReconnect(params: {
   lastPlaybackActiveAt?: number | null;
   liveStreamHealHold?: boolean;
   p2pDirectFailedHoldActive?: boolean;
+  autoHardResetInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   reconnectRequestPending?: boolean;
   wasPeerConnected?: boolean;
@@ -620,6 +621,7 @@ export function resolveManualAudioReconnect(params: {
   lastPlaybackActiveAt?: number | null;
   liveStreamHealHold?: boolean;
   p2pDirectFailedHoldActive?: boolean;
+  autoHardResetInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   reconnectRequestPending?: boolean;
   wasPeerConnected?: boolean;
@@ -628,6 +630,9 @@ export function resolveManualAudioReconnect(params: {
   if (params.isMe) return { show: false, reason: "is_me" };
   if (params.reconnectRequestPending) {
     return { show: false, reason: "reconnect_request_pending" };
+  }
+  if (params.autoHardResetInProgress) {
+    return { show: false, reason: "auto_hard_reset_in_progress" };
   }
 
   const now = params.nowMs ?? Date.now();
@@ -718,13 +723,20 @@ export function resolveManualAudioReconnect(params: {
     return { show: true, reason: "auto_hard_reset_give_up" };
   }
 
-  if (params.p2pDirectFailedHoldActive && !params.hasPc) {
-    return { show: false, reason: "p2p_direct_failed_hold" };
+  if (
+    params.p2pDirectFailedHoldActive &&
+    (params.wasPeerConnected || !params.hasPc)
+  ) {
+    return { show: false, reason: "p2p_direct_failed_hold_recovering" };
+  }
+
+  if (params.autoHardResetInProgress) {
+    return { show: false, reason: "auto_hard_reset_in_progress" };
   }
 
   const failedTransport = params.conn === "failed" || params.ice === "failed";
   if (failedTransport && params.wasPeerConnected) {
-    return { show: true, reason: "transport_failed" };
+    return { show: false, reason: "transport_failed_recovering" };
   }
 
   const orphanNoPc = !params.hasPc && params.hasRemoteStream;
@@ -1149,6 +1161,25 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
+  const transportRecovering =
+    params.wasPeerConnected &&
+    params.p2pDirectFailedHoldActive === true &&
+    (!params.hasPc ||
+      params.conn === "failed" ||
+      params.ice === "failed" ||
+      params.peerState === "failed");
+
+  if (transportRecovering) {
+    return {
+      text: "音声を調整中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+      reason: "transport_recovering_p2p_retry",
+      source: "autoHardReset",
+    };
+  }
+
   // A. RemoteAudio playback health overrides conn/ice while audio is actually playing.
   if (
     trackLive &&
@@ -1280,7 +1311,7 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
-  if (params.autoHardResetGiveUp && !audioHealthy) {
+  if (params.autoHardResetGiveUp && !audioHealthy && !transportRecovering) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
       text: "音声が不安定です",
@@ -1303,10 +1334,11 @@ export function resolveCallMemberStatus(params: {
       nowMs - health.lastAttachAt >= REMOTE_AUDIO_UNSTABLE_MS);
 
   if (
-    playFailedRecently ||
-    trackEnded ||
-    (noLiveStream && params.wasPeerConnected) ||
-    (stalledAudio && params.wasPeerConnected)
+    !transportRecovering &&
+    (playFailedRecently ||
+      trackEnded ||
+      (noLiveStream && params.wasPeerConnected) ||
+      (stalledAudio && params.wasPeerConnected))
   ) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
@@ -1337,12 +1369,12 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.peerState === "failed") {
-    if (params.p2pDirectFailedHoldActive) {
+    if (params.p2pDirectFailedHoldActive || transportRecovering) {
       return {
-        text: "再接続中",
-        color: "#991b1b",
-        chipBg: "#fef2f2",
-        chipText: "#dc2626",
+        text: "音声を調整中",
+        color: "#92400e",
+        chipBg: "#fffbeb",
+        chipText: "#b45309",
         reason: "p2p_direct_failed_turn_disabled",
         source: "peerState",
       };
