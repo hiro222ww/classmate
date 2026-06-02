@@ -1454,7 +1454,7 @@ export function usePeerConnections({
       return {
         remoteDeviceId: remoteId,
         memberExists: !!member,
-        isInCall: member ? member.is_in_call !== false : null,
+        isInCall: member?.is_in_call === true,
         isOfferOwner: deviceId < remoteId,
         pcExists: isUsablePeerConnection(pc),
         signalingState: pc?.signalingState ?? null,
@@ -1492,8 +1492,7 @@ export function usePeerConnections({
   const isRemoteInCall = useCallback(
     (remoteId: string) => {
       const member = members.find((m) => m.device_id === remoteId);
-      if (!member) return true;
-      return member.is_in_call !== false;
+      return member?.is_in_call === true;
     },
     [members]
   );
@@ -4480,7 +4479,7 @@ export function usePeerConnections({
   const scanAndEnsureMissingPcs = useCallback(
     (trigger: string, peers: VoiceMeshPeerSummaryEntry[]) => {
       const missing = peers.filter(
-        (peer) => !peer.pcExists && peer.isInCall !== false
+        (peer) => !peer.pcExists && peer.isInCall === true
       );
       const localTrackState = getLocalTrackReadyState(
         localAudioTrackRef,
@@ -4703,6 +4702,10 @@ export function usePeerConnections({
         continue;
       }
 
+      if (!isRemoteInCall(remoteId)) {
+        continue;
+      }
+
       const pc = pcsRef.current.get(remoteId);
 
       if (hasStaleEndedRemoteAudio(remoteId)) {
@@ -4746,7 +4749,6 @@ export function usePeerConnections({
         blockReason = null;
       }
 
-      const inCall = isRemoteInCall(remoteId);
       const needsPc = peerNeedsPc(remoteId);
       const transportHealthy = isPeerTransportHealthy(pc);
       const holdCheck = getTrackEndedHoldCheck(remoteId, pc);
@@ -4774,13 +4776,9 @@ export function usePeerConnections({
         planned.push({
           remoteId,
           action: "create",
-          reason: inCall ? "missing_pc_in_call" : "missing_pc",
+          reason: "missing_pc",
           run: () => {
-            ensurePeerConnection(
-              remoteId,
-              inCall ? "heal_missing_pc_in_call" : "heal_missing_pc",
-              { force: true }
-            );
+            ensurePeerConnection(remoteId, "heal_missing_pc", { force: true });
           },
         });
         continue;
@@ -5006,6 +5004,7 @@ export function usePeerConnections({
     const runMissingPcSafetyNet = () => {
       for (const remoteId of remoteIds) {
         if (logHealSkipP2pTurnDisabledHold(remoteId)) continue;
+        if (!isRemoteInCall(remoteId)) continue;
         if (!peerNeedsPc(remoteId)) continue;
         ensurePeerConnection(remoteId, "heal_safety_net", { force: true });
       }

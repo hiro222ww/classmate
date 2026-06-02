@@ -553,8 +553,9 @@ function formatVoiceMeshPeerLine(peer: VoiceMeshPeerSummaryEntry): string {
   const remote = compactDeviceId(peer.remoteDeviceId);
 
   if (!peer.pcExists) {
-    const reason = peer.isInCall === true ? "missing_pc" : "no_pc";
-    return `[voice-mesh] peer remote=${remote} pc=false inCall=${compactBool(peer.isInCall === true)} reason=${reason}`;
+    const inCall = peer.isInCall === true;
+    const reason = inCall ? "missing_pc" : "no_pc";
+    return `[voice-mesh] peer remote=${remote} pc=false inCall=${compactBool(inCall)} reason=${reason}`;
   }
 
   const confirmedAgeMs =
@@ -633,7 +634,7 @@ function formatVoiceMeshWarningLine(
 export type VoiceMeshPeerSummaryEntry = {
   remoteDeviceId: string;
   memberExists: boolean;
-  isInCall: boolean | null;
+  isInCall: boolean;
   isOfferOwner: boolean;
   pcExists: boolean;
   signalingState: RTCSignalingState | null;

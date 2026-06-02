@@ -39,7 +39,7 @@ import {
   logNavigationIntent,
   logRouteChange,
   readCallMutePreference,
-  readInitialUserMuted,
+  resolveCallEntryUserMuted,
   restoreCallSessionAfterReload,
   writeCallMutePreference,
 } from "@/lib/callLifecycle";
@@ -61,6 +61,7 @@ import {
   resolveManualAudioReconnect,
 } from "@/lib/memberPresenceStatus";
 import {
+  logInitialSafetyMute,
   logMuteStateSet,
   logRestoreMutedState,
 } from "@/lib/localMicMuteState";
@@ -167,9 +168,10 @@ export default function CallClient() {
   }, []);
 
   const [members, setMembers] = useState<Member[]>([]);
-  const userMutedRef = useRef(false);
-  const [userMuted, setUserMuted] = useState(false);
+  const userMutedRef = useRef(true);
+  const [userMuted, setUserMuted] = useState(true);
   const localTrackEnabledRef = useRef<boolean | null>(null);
+  const muteInitReasonRef = useRef("pending");
   const [micReady, setMicReady] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [callInfo, setCallInfo] = useState("");
@@ -221,19 +223,28 @@ export default function CallClient() {
   useLayoutEffect(() => {
     if (!sessionId || !deviceId) return;
 
-    const nextMuted = readInitialUserMuted(sessionId);
-    const savedMute = readCallMutePreference(sessionId);
+    const resolved = resolveCallEntryUserMuted(sessionId, deviceId);
     const prevMuted = userMutedRef.current;
-    userMutedRef.current = nextMuted;
-    setUserMuted(nextMuted);
+    userMutedRef.current = resolved.userMuted;
+    muteInitReasonRef.current = resolved.reason;
+    setUserMuted(resolved.userMuted);
+
+    if (resolved.reason === "initial_call_entry_safety_mute") {
+      logInitialSafetyMute({ sessionId, deviceId });
+    }
+
+    const restoreReason =
+      resolved.reason === "reload_restore"
+        ? "reload_restore"
+        : resolved.reason;
+
     logRestoreMutedState({
-      stored: savedMute,
+      stored: resolved.stored,
       userMutedBefore: prevMuted,
-      userMutedAfter: nextMuted,
+      userMutedAfter: resolved.userMuted,
       trackEnabledBefore: localTrackEnabledRef.current,
-      trackEnabledAfter: localTrackEnabledRef.current,
-      reason:
-        savedMute != null ? "reload_restore_stored" : "reload_default_unmuted",
+      trackEnabledAfter: resolved.userMuted ? false : localTrackEnabledRef.current,
+      reason: restoreReason,
     });
   }, [sessionId, deviceId]);
 
@@ -644,18 +655,26 @@ export default function CallClient() {
         if (restoredSessionId !== sessionId || restoredDeviceId !== deviceId) return;
         clearLocalLeftCall(sessionId, deviceId);
         localExitedPeersRef.current.delete(deviceId);
-        const savedMute = readCallMutePreference(sessionId);
-        const nextMuted = savedMute ?? false;
-        userMutedRef.current = nextMuted;
-        logRestoreMutedState({
-          stored: savedMute,
-          userMutedBefore: userMutedRef.current,
-          userMutedAfter: nextMuted,
-          trackEnabledBefore: localTrackEnabledRef.current,
-          trackEnabledAfter: localTrackEnabledRef.current,
-          reason: "bfcache_restore",
+        const resolved = resolveCallEntryUserMuted(sessionId, deviceId, {
+          navigationContext: "bfcache",
         });
-        setUserMuted(nextMuted);
+        const prevMuted = userMutedRef.current;
+        userMutedRef.current = resolved.userMuted;
+        muteInitReasonRef.current = resolved.reason;
+        logRestoreMutedState({
+          stored: resolved.stored,
+          userMutedBefore: prevMuted,
+          userMutedAfter: resolved.userMuted,
+          trackEnabledBefore: localTrackEnabledRef.current,
+          trackEnabledAfter: resolved.userMuted
+            ? false
+            : localTrackEnabledRef.current,
+          reason:
+            resolved.reason === "reload_restore"
+              ? "reload_restore"
+              : "bfcache_restore",
+        });
+        setUserMuted(resolved.userMuted);
         setMembersSyncRevision((revision) => revision + 1);
         void fetchMembers("bfcache_restore");
         requestRemoteAudioUnlock();
@@ -984,6 +1003,28 @@ export default function CallClient() {
                 : null
           : null;
 
+      const manualReconnect = resolveManualAudioReconnect({
+        isMe: false,
+        hasRemoteStream: diag?.hasRemoteStream ?? false,
+        trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
+        conn: diag?.conn ?? "-",
+        ice: diag?.ice ?? "-",
+        hasPc: diag?.hasPc ?? false,
+        remoteAudioHealth: audioHealth ?? null,
+        lastOnTrackAt: diag?.lastOnTrackAt ?? null,
+        lastUnmuteAt: diag?.lastUnmuteAt ?? null,
+        lastPlaySuccessAt:
+          audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
+        lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
+        lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
+        liveStreamHealHold: diag?.liveStreamHealHold === true,
+        p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
+        autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
+        reconnectRequestPending: diag?.reconnectRequestPending === true,
+        wasPeerConnected,
+        nowMs,
+      });
+
       const status = resolveCallMemberStatus({
         isMe,
         isMuted: userMuted,
@@ -1011,6 +1052,7 @@ export default function CallClient() {
         lastUnmuteAt: diag?.lastUnmuteAt ?? null,
         lastPlaySuccessAt:
           audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
+        showReconnectButton: manualReconnect.show,
         nowMs,
       });
 
@@ -1064,27 +1106,6 @@ export default function CallClient() {
         audioHealth?.playFailedAt != null && nowMs > 0
           ? nowMs - audioHealth.playFailedAt
           : null;
-      const manualReconnect = resolveManualAudioReconnect({
-        isMe,
-        hasRemoteStream: diag?.hasRemoteStream ?? false,
-        trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
-        conn: diag?.conn ?? "-",
-        ice: diag?.ice ?? "-",
-        hasPc: diag?.hasPc ?? false,
-        remoteAudioHealth: audioHealth ?? null,
-        lastOnTrackAt: diag?.lastOnTrackAt ?? null,
-        lastUnmuteAt: diag?.lastUnmuteAt ?? null,
-        lastPlaySuccessAt:
-          audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
-        lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
-        lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
-        liveStreamHealHold: diag?.liveStreamHealHold === true,
-        p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
-        autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
-        reconnectRequestPending: diag?.reconnectRequestPending === true,
-        wasPeerConnected,
-        nowMs,
-      });
       const remoteAudioHealthStr =
         audioHealth == null
           ? "pending"
@@ -1157,7 +1178,7 @@ export default function CallClient() {
     if (!sessionId || !deviceId) return;
     console.log(
       `[call-status] self-muted-debug userMuted=${userMuted} trackEnabled=${localTrackEnabledRef.current ?? "-"} ` +
-        `micReady=${micReady} label=${userMuted ? "自分 / ミュート中" : "自分 / 発話可能"} reason=state_sync`
+        `micReady=${micReady} label=${userMuted ? "自分 / ミュート中" : "自分 / 発話可能"} reason=${muteInitReasonRef.current}`
     );
   }, [deviceId, micReady, sessionId, userMuted]);
 
@@ -1248,7 +1269,7 @@ export default function CallClient() {
         onLocalTrackMutedApplied={({ userMuted: muted, trackEnabled, reason }) => {
           localTrackEnabledRef.current = trackEnabled;
           logRestoreMutedState({
-            stored: readCallMutePreference(sessionId),
+            stored: readCallMutePreference(sessionId, deviceId),
             userMutedBefore: userMutedRef.current,
             userMutedAfter: muted,
             trackEnabledBefore: localTrackEnabledRef.current,
@@ -1787,10 +1808,10 @@ export default function CallClient() {
                 logMuteStateSet({
                   userMuted: next,
                   prev,
-                  reason: "mute_button_click",
-                  source: "CallClient",
+                  reason: next ? "user_click_mute" : "user_click_unmute",
+                  source: "user_click",
                 });
-                writeCallMutePreference(sessionId, next, {
+                writeCallMutePreference(sessionId, deviceId, next, {
                   source: "user_click",
                 });
                 return next;

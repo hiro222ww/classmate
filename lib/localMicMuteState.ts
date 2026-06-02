@@ -1,3 +1,20 @@
+function compactCallScopeId(id: string | null | undefined, tail = 8): string {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= tail) return value;
+  return value.slice(-tail);
+}
+
+export function logInitialSafetyMute(params: {
+  sessionId: string;
+  deviceId: string;
+}) {
+  console.log(
+    `[local-mic] initial-safety-mute session=${compactCallScopeId(params.sessionId)} ` +
+      `device=${compactCallScopeId(params.deviceId, 4)} userMuted=true trackEnabled=false`
+  );
+}
+
 export function compactMicTrackId(id: string | null | undefined): string {
   const value = String(id ?? "").trim();
   if (!value) return "-";

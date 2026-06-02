@@ -73,6 +73,156 @@ export function isStalePlayFailure(
   return nowMs - health.playFailedAt < REMOTE_AUDIO_UNSTABLE_MS;
 }
 
+const REMOTE_AUDIO_LABEL_STYLE = {
+  connected: {
+    color: "#065f46",
+    chipBg: "#ecfdf5",
+    chipText: "#047857",
+  },
+  receiving: {
+    color: "#065f46",
+    chipBg: "#ecfdf5",
+    chipText: "#047857",
+  },
+  confirming: {
+    color: "#92400e",
+    chipBg: "#fffbeb",
+    chipText: "#b45309",
+  },
+  processing: {
+    color: "#92400e",
+    chipBg: "#fffbeb",
+    chipText: "#b45309",
+  },
+  unstable: {
+    color: "#991b1b",
+    chipBg: "#fef2f2",
+    chipText: "#dc2626",
+  },
+  waiting: {
+    color: "#6b7280",
+    chipBg: "#f3f4f6",
+    chipText: "#6b7280",
+  },
+} as const;
+
+/** ontrack/unmute 後、play-success 前の短い確認ウィンドウ */
+export function isPrePlaySuccessConfirming(params: {
+  hasRemoteStream: boolean;
+  trackReady: string;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  nowMs: number;
+}): boolean {
+  if (!params.hasRemoteStream || params.trackReady !== "live") return false;
+  if (isRecentPlaySuccess(params.lastPlaySuccessAt, params.nowMs)) return false;
+
+  const anchors = [params.lastOnTrackAt, params.lastUnmuteAt].filter(
+    (value): value is number => value != null
+  );
+  if (!anchors.length) return false;
+
+  const latest = Math.max(...anchors);
+  return params.nowMs - latest < RECENT_REMOTE_SIGNAL_MS;
+}
+
+export function resolveUserFacingRemoteAudioLabel(params: {
+  health: RemoteAudioHealthInput | null;
+  showReconnectButton: boolean;
+  trackLive: boolean;
+  hasRemoteStream: boolean;
+  recentPlaySuccess: boolean;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  nowMs: number;
+}): {
+  text: string;
+  color: string;
+  chipBg: string;
+  chipText: string;
+  reason: string;
+  source: string;
+  statusSource: string;
+} {
+  const health = params.health;
+  const verified = health?.verified === true;
+  const actuallyPlaying = health?.audioActuallyPlaying === true;
+  const provisional =
+    health?.playbackActiveMode === "provisional" ||
+    (health?.playbackActive === true && !verified && !actuallyPlaying);
+
+  const base = {
+    source: "remoteAudioHealth",
+    statusSource: "remote_audio_health",
+  };
+
+  if (
+    (verified || actuallyPlaying) &&
+    params.showReconnectButton === false
+  ) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.connected,
+      text: "接続済み",
+      reason: verified
+        ? "remote_audio_verified_connected"
+        : "remote_audio_playing_connected",
+    };
+  }
+
+  if (
+    provisional ||
+    params.recentPlaySuccess ||
+    health?.playbackActive === true ||
+    actuallyPlaying
+  ) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.receiving,
+      text: "音声受信中",
+      reason: provisional
+        ? "remote_audio_provisional_receiving"
+        : "remote_audio_playback_receiving",
+    };
+  }
+
+  if (
+    isPrePlaySuccessConfirming({
+      hasRemoteStream: params.hasRemoteStream,
+      trackReady: params.trackLive ? "live" : "-",
+      lastOnTrackAt: params.lastOnTrackAt,
+      lastUnmuteAt: params.lastUnmuteAt,
+      lastPlaySuccessAt: params.lastPlaySuccessAt,
+      nowMs: params.nowMs,
+    })
+  ) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+      text: "音声確認中",
+      reason: "remote_audio_pre_play_confirming",
+    };
+  }
+
+  if (params.trackLive && params.hasRemoteStream) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.receiving,
+      text: "音声受信中",
+      reason: "remote_audio_stream_live",
+    };
+  }
+
+  return {
+    ...base,
+    ...REMOTE_AUDIO_LABEL_STYLE.processing,
+    text: "接続処理中",
+    reason: "remote_audio_setup_in_progress",
+  };
+}
+
 export function mergeRemoteAudioHealthInput(params: {
   health?: RemoteAudioHealthInput | null;
   trackReady?: string;
@@ -527,6 +677,7 @@ export function resolveCallMemberStatus(params: {
   lastOnTrackAt?: number | null;
   lastUnmuteAt?: number | null;
   lastPlaySuccessAt?: number | null;
+  showReconnectButton?: boolean;
   nowMs?: number;
 }): {
   text: string;
@@ -542,13 +693,40 @@ export function resolveCallMemberStatus(params: {
   const conn = params.conn ?? "-";
   const ice = params.ice ?? "-";
   const hasRemoteStream = params.hasRemoteStream === true;
-  const health = params.remoteAudioHealth ?? null;
+  const health = mergeRemoteAudioHealthInput({
+    health: params.remoteAudioHealth,
+    trackReady,
+    lastPlaySuccessAt: params.lastPlaySuccessAt,
+    lastOnTrackAt: params.lastOnTrackAt,
+    lastUnmuteAt: params.lastUnmuteAt,
+  });
+
+  const showReconnectButton =
+    params.showReconnectButton ??
+    resolveManualAudioReconnect({
+      isMe: false,
+      hasRemoteStream,
+      trackReady,
+      conn,
+      ice,
+      hasPc: params.hasPc ?? false,
+      remoteAudioHealth: health,
+      lastOnTrackAt: params.lastOnTrackAt,
+      lastUnmuteAt: params.lastUnmuteAt,
+      lastPlaySuccessAt: params.lastPlaySuccessAt,
+      liveStreamHealHold: params.liveStreamHealHold,
+      p2pDirectFailedHoldActive: params.p2pDirectFailedHoldActive,
+      autoHardResetGiveUp: params.autoHardResetGiveUp,
+      wasPeerConnected: params.wasPeerConnected,
+      nowMs,
+    }).show;
 
   const audioHealthy = isRemoteAudioHealthyNow({
     health,
     trackReady,
     hasRemoteStream,
     nowMs,
+    lastPlaySuccessAt: params.lastPlaySuccessAt,
   });
   const recentPlaySuccess = isRecentPlaySuccess(
     health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
@@ -562,33 +740,27 @@ export function resolveCallMemberStatus(params: {
   });
   const trackLive = trackReady === "live";
   const transportConnected = isTransportMediaConnected(conn, ice);
+  const prePlayConfirming = isPrePlaySuccessConfirming({
+    hasRemoteStream,
+    trackReady,
+    lastOnTrackAt: params.lastOnTrackAt,
+    lastUnmuteAt: params.lastUnmuteAt,
+    lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+    nowMs,
+  });
 
-  const connectedFromRemoteAudio = (): {
-    text: string;
-    color: string;
-    chipBg: string;
-    chipText: string;
-    reason: string;
-    source: string;
-    statusSource: string;
-  } => {
-    const connectedLabel =
-      recentPlaySuccess ||
-      health?.audioActuallyPlaying === true ||
-      health?.verified === true ||
-      params.remoteAudioVerified === true;
-    return {
-      text: connectedLabel ? "接続中" : "音声受信中",
-      color: "#065f46",
-      chipBg: "#ecfdf5",
-      chipText: "#047857",
-      reason: connectedLabel
-        ? "remote_audio_playback_healthy"
-        : "remote_audio_playback_active",
-      source: "remoteAudioHealth",
-      statusSource: "remote_audio_health",
-    };
-  };
+  const remoteAudioUserLabel = () =>
+    resolveUserFacingRemoteAudioLabel({
+      health,
+      showReconnectButton,
+      trackLive,
+      hasRemoteStream,
+      recentPlaySuccess,
+      lastOnTrackAt: params.lastOnTrackAt,
+      lastUnmuteAt: params.lastUnmuteAt,
+      lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+      nowMs,
+    });
   const screen = String(params.screen ?? "").trim();
   const forceWaiting =
     params.localExitedCall === true ||
@@ -656,28 +828,38 @@ export function resolveCallMemberStatus(params: {
     hasRemoteStream &&
     (audioHealthy || (health?.playSuccess === true && recentPlaySuccess))
   ) {
-    return connectedFromRemoteAudio();
+    return remoteAudioUserLabel();
   }
 
   // Grace-period heal hold: avoid "接続処理中" while stream/signals are fresh.
   if (params.liveStreamHealHold === true) {
     if (recentPlaySuccess || health?.playSuccess === true) {
-      return connectedFromRemoteAudio();
+      return remoteAudioUserLabel();
     }
-    return {
-      text: "音声確認中",
-      color: "#92400e",
-      chipBg: "#fffbeb",
-      chipText: "#b45309",
-      reason: "live_stream_heal_hold",
-      source: "remoteAudioHealth",
-      statusSource: "remote_audio_health",
-    };
+    if (prePlayConfirming) {
+      return {
+        ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+        text: "音声確認中",
+        reason: "live_stream_heal_hold",
+        source: "remoteAudioHealth",
+        statusSource: "remote_audio_health",
+      };
+    }
+    return remoteAudioUserLabel();
   }
 
-  // B. Live track + remote stream + recent ontrack/unmute/play-success.
+  // B. Live track + remote stream + recent ontrack/unmute (play-success 前は音声確認中).
   if (trackLive && hasRemoteStream && recentSignals) {
-    return connectedFromRemoteAudio();
+    if (prePlayConfirming) {
+      return {
+        ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+        text: "音声確認中",
+        reason: "recent_remote_signal_pre_play",
+        source: "remoteAudioHealth",
+        statusSource: "remote_audio_health",
+      };
+    }
+    return remoteAudioUserLabel();
   }
 
   if (params.activePlaybackConnected && params.peerState !== "connected") {
@@ -686,30 +868,25 @@ export function resolveCallMemberStatus(params: {
 
     if (orphanPlayback) {
       if (audioHealthy || recentPlaySuccess) {
-        return connectedFromRemoteAudio();
+        return remoteAudioUserLabel();
+      }
+      if (prePlayConfirming) {
+        return {
+          ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+          text: "音声確認中",
+          reason: "orphan_remote_audio_provisional",
+          source: "effectivePeerState",
+        };
       }
       return {
-        text: params.wasPeerConnected ? "再接続中" : "音声確認中",
-        color: "#92400e",
-        chipBg: "#fffbeb",
-        chipText: "#b45309",
-        reason: "orphan_remote_audio_provisional",
+        ...REMOTE_AUDIO_LABEL_STYLE.processing,
+        text: params.wasPeerConnected ? "再接続中" : "接続処理中",
+        reason: "orphan_remote_audio_setup",
         source: "effectivePeerState",
       };
     }
 
-    const playbackReason =
-      params.playbackActiveMode === "confirmed"
-        ? "active_playback_confirmed"
-        : "active_playback_provisional";
-    return {
-      text: "通話中",
-      color: "#065f46",
-      chipBg: "#ecfdf5",
-      chipText: "#047857",
-      reason: playbackReason,
-      source: "effectivePeerState",
-    };
+    return remoteAudioUserLabel();
   }
 
   // C. Transport connected (conn/ice), when playback health has not already won.
@@ -718,27 +895,32 @@ export function resolveCallMemberStatus(params: {
       audioHealthy ||
       recentPlaySuccess ||
       params.remoteAudioVerified === true ||
-      recentSignals
+      (recentSignals && !prePlayConfirming)
     ) {
-      return connectedFromRemoteAudio();
+      return remoteAudioUserLabel();
+    }
+
+    if (prePlayConfirming) {
+      return {
+        ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+        text: "音声確認中",
+        reason: "peer_connected_audio_pending",
+        source: "peerState",
+      };
     }
 
     return {
-      text: "音声確認中",
-      color: "#92400e",
-      chipBg: "#fffbeb",
-      chipText: "#b45309",
-      reason: "peer_connected_audio_pending",
+      ...REMOTE_AUDIO_LABEL_STYLE.processing,
+      text: "接続処理中",
+      reason: "peer_connected_wait_stream",
       source: "peerState",
     };
   }
 
   if (params.autoHardResetGiveUp && !audioHealthy) {
     return {
+      ...REMOTE_AUDIO_LABEL_STYLE.unstable,
       text: "音声が不安定です",
-      color: "#991b1b",
-      chipBg: "#fef2f2",
-      chipText: "#dc2626",
       reason: "auto_hard_reset_give_up",
       source: "autoHardReset",
     };
@@ -764,10 +946,8 @@ export function resolveCallMemberStatus(params: {
     (stalledAudio && params.wasPeerConnected)
   ) {
     return {
+      ...REMOTE_AUDIO_LABEL_STYLE.unstable,
       text: "音声が不安定です",
-      color: "#991b1b",
-      chipBg: "#fef2f2",
-      chipText: "#dc2626",
       reason: playFailedRecently
         ? "remote_audio_play_failed"
         : trackEnded
@@ -818,20 +998,16 @@ export function resolveCallMemberStatus(params: {
   // E. No PC / no stream / offer wait.
   if (!params.hasPc && !hasRemoteStream) {
     return {
-      text: "接続待ち",
-      color: "#6b7280",
-      chipBg: "#f3f4f6",
-      chipText: "#6b7280",
-      reason: "peer_idle",
+      ...REMOTE_AUDIO_LABEL_STYLE.processing,
+      text: "接続処理中",
+      reason: "peer_idle_wait_offer",
       source: "peerState",
     };
   }
 
   return {
+    ...REMOTE_AUDIO_LABEL_STYLE.processing,
     text: "接続処理中",
-    color: "#92400e",
-    chipBg: "#fffbeb",
-    chipText: "#b45309",
     reason: "peer_setup_in_progress",
     source: "peerState",
   };

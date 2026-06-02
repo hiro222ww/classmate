@@ -337,51 +337,114 @@ export function installCallLifecycleDiagnostics(params: {
 
 export { consumeCallReloadSnapshot } from "@/lib/callReloadDiagnostics";
 
-const CALL_MUTE_KEY_PREFIX = "classmate_call_muted";
+const CALL_MUTE_PREFERENCE_PREFIX = "classmate_call_mute_preference";
+const LEGACY_CALL_MUTE_KEY_PREFIX = "classmate_call_muted";
 
-export function callMuteStorageKey(sessionId: string): string {
-  return `${CALL_MUTE_KEY_PREFIX}:${sessionId}`;
+export function callMuteStorageKey(sessionId: string, deviceId: string): string {
+  const sid = String(sessionId ?? "").trim();
+  const did = String(deviceId ?? "").trim();
+  return `${CALL_MUTE_PREFERENCE_PREFIX}:${sid}:${did}`;
 }
 
-export function readCallMutePreference(sessionId: string): boolean | null {
+function legacyCallMuteStorageKey(sessionId: string): string {
+  return `${LEGACY_CALL_MUTE_KEY_PREFIX}:${String(sessionId ?? "").trim()}`;
+}
+
+function parseMutePreferenceRaw(raw: string | null): boolean | null {
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  return null;
+}
+
+export function readCallMutePreference(
+  sessionId: string,
+  deviceId: string
+): boolean | null {
   if (typeof window === "undefined") return null;
   const sid = String(sessionId ?? "").trim();
-  if (!sid) return null;
+  const did = String(deviceId ?? "").trim();
+  if (!sid || !did) return null;
+
   try {
-    const raw = sessionStorage.getItem(callMuteStorageKey(sid));
-    if (raw === "1") return true;
-    if (raw === "0") return false;
-    return null;
+    const current = parseMutePreferenceRaw(
+      sessionStorage.getItem(callMuteStorageKey(sid, did))
+    );
+    if (current != null) return current;
+
+    return parseMutePreferenceRaw(
+      sessionStorage.getItem(legacyCallMuteStorageKey(sid))
+    );
   } catch {
     return null;
   }
 }
 
-/** Initial userMuted on reload/bfcache; default unmuted when nothing stored. */
-export function readInitialUserMuted(sessionId: string): boolean {
-  if (typeof window === "undefined") return false;
-  const sid = String(sessionId ?? "").trim();
-  if (!sid) return false;
+export type CallMuteInitReason =
+  | "initial_call_entry_safety_mute"
+  | "reload_restore"
+  | "reload_restore_default_muted"
+  | "bfcache_restore"
+  | "bfcache_restore_default_muted";
 
-  const nav = getNavigationType();
-  if (nav !== "reload" && nav !== "back_forward") {
-    return false;
+export function resolveCallEntryUserMuted(
+  sessionId: string,
+  deviceId: string,
+  options?: { navigationContext?: "default" | "bfcache" }
+): {
+  userMuted: boolean;
+  reason: CallMuteInitReason;
+  stored: boolean | null;
+} {
+  const stored = readCallMutePreference(sessionId, deviceId);
+
+  if (stored !== null) {
+    return {
+      userMuted: stored,
+      stored,
+      reason: "reload_restore",
+    };
   }
 
-  return readCallMutePreference(sid) ?? false;
+  if (options?.navigationContext === "bfcache") {
+    return {
+      userMuted: true,
+      stored: null,
+      reason: "bfcache_restore_default_muted",
+    };
+  }
+
+  const nav = getNavigationType();
+  if (nav === "reload" || nav === "back_forward") {
+    return {
+      userMuted: true,
+      stored: null,
+      reason: "reload_restore_default_muted",
+    };
+  }
+
+  return {
+    userMuted: true,
+    stored: null,
+    reason: "initial_call_entry_safety_mute",
+  };
 }
 
 export function writeCallMutePreference(
   sessionId: string,
+  deviceId: string,
   isMuted: boolean,
   options?: { source?: "user_click" }
 ) {
   if (options?.source !== "user_click") return;
   if (typeof window === "undefined") return;
   const sid = String(sessionId ?? "").trim();
-  if (!sid) return;
+  const did = String(deviceId ?? "").trim();
+  if (!sid || !did) return;
   try {
-    sessionStorage.setItem(callMuteStorageKey(sid), isMuted ? "1" : "0");
+    sessionStorage.setItem(
+      callMuteStorageKey(sid, did),
+      isMuted ? "1" : "0"
+    );
   } catch {
     // ignore
   }
