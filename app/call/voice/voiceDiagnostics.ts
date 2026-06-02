@@ -375,7 +375,7 @@ export function logCallStatusPeer(params: {
   );
 }
 
-function compactConnectionId(id: string | null | undefined): string {
+export function compactConnectionId(id: string | null | undefined): string {
   const value = String(id ?? "").trim();
   if (!value) return "-";
   if (value.length <= 8) return value;
@@ -386,9 +386,67 @@ export function logVoiceSignalIgnored(params: {
   reason: string;
   type: string;
   remote: string;
+  incomingConnectionId?: string | null;
+  currentConnectionId?: string | null;
+  pcExists?: boolean;
+  sig?: string;
+  conn?: string;
+  ice?: string;
+  hasRemoteStream?: boolean;
+  tracks?: number;
+}) {
+  const parts = [
+    `[voice-signal] ignored reason=${params.reason} type=${params.type} remote=${compactDeviceId(params.remote)}`,
+  ];
+
+  if (params.incomingConnectionId !== undefined) {
+    parts.push(
+      `incomingConnectionId=${compactConnectionId(params.incomingConnectionId)}`,
+      `currentConnectionId=${compactConnectionId(params.currentConnectionId)}`,
+      `pcExists=${params.pcExists === true}`,
+      `sig=${params.sig ?? "-"}`,
+      `conn=${params.conn ?? "-"}`,
+      `ice=${params.ice ?? "-"}`,
+      `hasRemoteStream=${params.hasRemoteStream === true}`,
+      `tracks=${params.tracks ?? 0}`
+    );
+  }
+
+  console.log(parts.join(" "));
+}
+
+export function logVoiceSignalStaleAnswerRecover(params: {
+  remote: string;
+  incomingConnectionId: string;
+  currentConnectionId: string | null;
+  action: string;
 }) {
   console.log(
-    `[voice-signal] ignored reason=${params.reason} type=${params.type} remote=${compactDeviceId(params.remote)}`
+    `[voice-signal] stale-answer-recover remote=${compactDeviceId(params.remote)} ` +
+      `incomingConnectionId=${compactConnectionId(params.incomingConnectionId)} ` +
+      `currentConnectionId=${compactConnectionId(params.currentConnectionId)} ` +
+      `action=${params.action}`
+  );
+}
+
+export function logVoiceSignalStaleWarning(params: {
+  type: string;
+  remote: string;
+  incomingConnectionId: string;
+  currentConnectionId: string | null;
+  pcExists: boolean;
+  sig: string;
+  conn: string;
+  ice: string;
+  hasRemoteStream: boolean;
+  tracks: number;
+}) {
+  console.log(
+    `[voice-signal] stale-signal-warning type=${params.type} remote=${compactDeviceId(params.remote)} ` +
+      `incomingConnectionId=${compactConnectionId(params.incomingConnectionId)} ` +
+      `currentConnectionId=${compactConnectionId(params.currentConnectionId)} ` +
+      `pcExists=${params.pcExists} sig=${params.sig} conn=${params.conn} ice=${params.ice} ` +
+      `hasRemoteStream=${params.hasRemoteStream} tracks=${params.tracks} action=accept_with_sync`
   );
 }
 
