@@ -13,11 +13,15 @@ import {
 
 const voicePolicy = getVoiceModePolicy();
 const ATTACH_LOG_THROTTLE_MS = 5000;
+const PROVISIONAL_PLAYBACK_MS = 15000;
+
+export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
 
 export type RemotePlaybackHealth = {
   playSuccess: boolean;
   playSuccessEvent?: boolean;
   playbackActive: boolean;
+  playbackActiveMode: PlaybackActiveMode;
   currentTimeAdvanced: boolean;
   trackMuted: boolean;
   trackReady: string;
@@ -107,34 +111,67 @@ function logRemoteAudioCompact(
   console.log(parts.join(" "));
 }
 
-function buildPlaybackHealth(params: {
+function evaluateRemotePlaybackHealth(params: {
+  el: HTMLAudioElement;
+  stream: MediaStream;
   playSuccess: boolean;
   playSuccessEvent?: boolean;
-  currentTimeAdvanced: boolean;
-  trackMuted: boolean;
-  trackReady: string;
+  currentTime: number;
+  previousCurrentTime?: number;
   level: number;
   webAudioFallback: boolean;
-  elPaused: boolean;
+  provisionalStartedAt: number | null;
   afterMs?: number;
 }): RemotePlaybackHealth {
   const {
+    el,
+    stream,
     playSuccess,
     playSuccessEvent = false,
-    currentTimeAdvanced,
-    trackMuted,
-    trackReady,
+    currentTime,
+    previousCurrentTime,
     level,
     webAudioFallback,
-    elPaused,
+    provisionalStartedAt,
     afterMs = 0,
   } = params;
 
-  const playbackActive =
+  const track = getPlaybackTrack(el, stream);
+  const trackReady = track?.readyState ?? "-";
+  const trackMuted = track?.muted ?? false;
+  const elPaused = el.paused;
+  const readyState = el.readyState;
+  const srcObjectSet = el.srcObject === stream;
+  const audioTracks = stream.getAudioTracks().length;
+
+  const currentTimeAdvanced =
+    previousCurrentTime != null && currentTime > previousCurrentTime + 0.01;
+
+  const confirmedActive =
     playSuccess &&
     trackReady === "live" &&
     !elPaused &&
     (currentTimeAdvanced || level > 0);
+
+  const provisionalEligible =
+    playSuccess &&
+    trackReady === "live" &&
+    !elPaused &&
+    readyState >= 2 &&
+    srcObjectSet &&
+    audioTracks >= 1;
+
+  const provisionalActive =
+    provisionalEligible &&
+    provisionalStartedAt != null &&
+    Date.now() - provisionalStartedAt < PROVISIONAL_PLAYBACK_MS;
+
+  const playbackActive = confirmedActive || provisionalActive;
+  const playbackActiveMode: PlaybackActiveMode = confirmedActive
+    ? "confirmed"
+    : provisionalActive
+      ? "provisional"
+      : "none";
 
   const verified =
     playSuccess &&
@@ -150,6 +187,7 @@ function buildPlaybackHealth(params: {
     playSuccess,
     playSuccessEvent,
     playbackActive,
+    playbackActiveMode,
     currentTimeAdvanced,
     trackMuted,
     trackReady,
@@ -181,6 +219,7 @@ export default function RemoteAudio({
   const playbackCheckTimersRef = useRef<number[]>([]);
   const levelRef = useRef(0);
   const playSuccessRef = useRef(false);
+  const provisionalPlaybackStartedAtRef = useRef<number | null>(null);
   const attachLogThrottleRef = useRef(
     new Map<
       string,
@@ -202,6 +241,48 @@ export default function RemoteAudio({
       onPlaybackHealthChange?.(remoteId, health);
     },
     [onPlaybackHealthChange, remoteId]
+  );
+
+  const logRemotePlaybackActive = useCallback(
+    (health: RemotePlaybackHealth, reason: string) => {
+      if (!health.playbackActive) return;
+      const mode = health.playbackActiveMode;
+      console.log(
+        `[remote-audio] playback-active remote=${compactRemoteId(remoteId)} mode=${mode} reason=${reason} ` +
+          `trackReady=${health.trackReady} paused=${health.playSuccess ? "false" : "true"} ` +
+          `advanced=${health.currentTimeAdvanced} level=${health.level.toFixed(3)} ${formatVoiceModeSuffix()}`
+      );
+    },
+    [remoteId]
+  );
+
+  const publishPlaybackHealth = useCallback(
+    (
+      el: HTMLAudioElement,
+      params: {
+        playSuccess: boolean;
+        playSuccessEvent?: boolean;
+        currentTime: number;
+        previousCurrentTime?: number;
+        afterMs?: number;
+      }
+    ): RemotePlaybackHealth => {
+      const health = evaluateRemotePlaybackHealth({
+        el,
+        stream,
+        playSuccess: params.playSuccess,
+        playSuccessEvent: params.playSuccessEvent,
+        currentTime: params.currentTime,
+        previousCurrentTime: params.previousCurrentTime,
+        level: levelRef.current,
+        webAudioFallback: fallbackActiveRef.current,
+        provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
+        afterMs: params.afterMs,
+      });
+      emitPlaybackHealth(health);
+      return health;
+    },
+    [emitPlaybackHealth, stream]
   );
 
   const clearPlaybackChecks = useCallback(() => {
@@ -261,17 +342,14 @@ export default function RemoteAudio({
         active: true,
       });
 
-      emitPlaybackHealth(
-        buildPlaybackHealth({
+      const el = ref.current;
+      if (el) {
+        const health = publishPlaybackHealth(el, {
           playSuccess: playSuccessRef.current,
-          currentTimeAdvanced: false,
-          trackMuted: stream.getAudioTracks()[0]?.muted ?? false,
-          trackReady: stream.getAudioTracks()[0]?.readyState ?? "-",
-          level: levelRef.current,
-          webAudioFallback: true,
-          elPaused: ref.current?.paused ?? true,
-        })
-      );
+          currentTime: el.currentTime,
+        });
+        logRemotePlaybackActive(health, "webaudio_fallback");
+      }
 
       return ctx.state === "running";
     } catch (e: unknown) {
@@ -282,7 +360,7 @@ export default function RemoteAudio({
       );
       return false;
     }
-  }, [emitPlaybackHealth, remoteId, stream]);
+  }, [emitPlaybackHealth, publishPlaybackHealth, remoteId, stream]);
 
   const schedulePlaybackChecks = useCallback(
     (el: HTMLAudioElement, baselineTime: number) => {
@@ -296,27 +374,44 @@ export default function RemoteAudio({
 
           const track = getPlaybackTrack(el, stream);
           const currentTime = el.currentTime;
-          const advanced = currentTime > baselineTime + 0.01;
           const level = levelRef.current;
 
-          logRemoteAudioCompact(remoteId, el, stream, "playback-check", {
-            afterMs,
-            advanced,
-            level: level.toFixed(3),
-          });
-
-          const health = buildPlaybackHealth({
+          const health = evaluateRemotePlaybackHealth({
+            el,
+            stream,
             playSuccess: playSuccessRef.current,
-            currentTimeAdvanced: advanced,
-            trackMuted: track?.muted ?? false,
-            trackReady: track?.readyState ?? "-",
+            currentTime,
+            previousCurrentTime: baselineTime,
             level,
             webAudioFallback: fallbackActiveRef.current,
-            elPaused: el.paused,
+            provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
             afterMs,
           });
 
-          emitPlaybackHealth(health);
+          const emitted = health.playbackActive;
+          logRemoteAudioCompact(remoteId, el, stream, "playback-check", {
+            afterMs,
+            currentTime: currentTime.toFixed(2),
+            previousCurrentTime: baselineTime.toFixed(2),
+            advanced: health.currentTimeAdvanced,
+            level: level.toFixed(3),
+            paused: el.paused,
+            readyState: el.readyState,
+            trackReady: track?.readyState ?? "-",
+            playbackActive: health.playbackActive,
+            playbackActiveMode: health.playbackActiveMode,
+            emitted,
+          });
+
+          if (emitted) {
+            emitPlaybackHealth(health);
+            logRemotePlaybackActive(
+              health,
+              health.playbackActiveMode === "provisional"
+                ? "live_track_playing_no_meter"
+                : "playback_check"
+            );
+          }
 
           if (
             voicePolicy.voiceMode === "ios_conservative" &&
@@ -326,7 +421,7 @@ export default function RemoteAudio({
           ) {
             console.log(
               `[remote-audio] playback-stalled remote=${compactRemoteId(remoteId)} ` +
-                `ios=true hint=tap_screen_for_webaudio advanced=${advanced} level=${level.toFixed(3)}`
+                `ios=true hint=tap_screen_for_webaudio advanced=${health.currentTimeAdvanced} level=${level.toFixed(3)}`
             );
           }
         }, afterMs);
@@ -334,7 +429,7 @@ export default function RemoteAudio({
         playbackCheckTimersRef.current.push(timer);
       }
     },
-    [clearPlaybackChecks, emitPlaybackHealth, remoteId, stream]
+    [clearPlaybackChecks, emitPlaybackHealth, logRemotePlaybackActive, remoteId, stream]
   );
 
   const configureAudioElement = useCallback((el: HTMLAudioElement) => {
@@ -360,17 +455,21 @@ export default function RemoteAudio({
   const emitEndedTrackHealth = useCallback(() => {
     const track = getPlaybackTrack(ref.current, stream);
     playSuccessRef.current = false;
-    emitPlaybackHealth(
-      buildPlaybackHealth({
-        playSuccess: false,
-        currentTimeAdvanced: false,
-        trackMuted: track?.muted ?? false,
-        trackReady: "ended",
-        level: levelRef.current,
-        webAudioFallback: fallbackActiveRef.current,
-        elPaused: ref.current?.paused ?? true,
-      })
-    );
+    provisionalPlaybackStartedAtRef.current = null;
+    const el = ref.current;
+    if (el) {
+      emitPlaybackHealth(
+        evaluateRemotePlaybackHealth({
+          el,
+          stream,
+          playSuccess: false,
+          currentTime: el.currentTime,
+          level: levelRef.current,
+          webAudioFallback: fallbackActiveRef.current,
+          provisionalStartedAt: null,
+        })
+      );
+    }
   }, [emitPlaybackHealth, stream]);
 
   const playAudio = useCallback(
@@ -408,21 +507,16 @@ export default function RemoteAudio({
 
         setBlocked(false);
         playSuccessRef.current = true;
+        provisionalPlaybackStartedAtRef.current = Date.now();
 
         logRemoteAudioCompact(remoteId, el, stream, "play-success");
 
-        emitPlaybackHealth(
-          buildPlaybackHealth({
-            playSuccess: true,
-            playSuccessEvent: true,
-            currentTimeAdvanced: false,
-            trackMuted: playbackTrack.muted ?? false,
-            trackReady: playbackTrack.readyState ?? "-",
-            level: levelRef.current,
-            webAudioFallback: fallbackActiveRef.current,
-            elPaused: el.paused,
-          })
-        );
+        const health = publishPlaybackHealth(el, {
+          playSuccess: true,
+          playSuccessEvent: true,
+          currentTime: el.currentTime,
+        });
+        logRemotePlaybackActive(health, "live_track_playing_no_meter");
 
         schedulePlaybackChecks(el, el.currentTime);
 
@@ -435,6 +529,7 @@ export default function RemoteAudio({
         }
 
         playSuccessRef.current = false;
+        provisionalPlaybackStartedAtRef.current = null;
         const err = e as { name?: string; message?: string };
         logRemoteAudioCompact(remoteId, el, stream, "play-failed", {
           err: err?.name ?? "unknown",
@@ -459,7 +554,8 @@ export default function RemoteAudio({
       activateIOSWebAudioFallback,
       applyOutputDevice,
       configureAudioElement,
-      emitPlaybackHealth,
+      logRemotePlaybackActive,
+      publishPlaybackHealth,
       remoteId,
       schedulePlaybackChecks,
       stream,
@@ -683,31 +779,48 @@ export default function RemoteAudio({
       if (!track || track.readyState !== "live") return;
 
       const currentTime = el.currentTime;
-      const advanced = currentTime > lastSampledTime + 0.01;
-      if (advanced) {
+      const previousCurrentTime = lastSampledTime;
+      const level = levelRef.current;
+
+      const health = evaluateRemotePlaybackHealth({
+        el,
+        stream,
+        playSuccess: true,
+        currentTime,
+        previousCurrentTime,
+        level,
+        webAudioFallback: fallbackActiveRef.current,
+        provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
+      });
+
+      const emitted = health.playbackActive;
+      console.log(
+        `[remote-audio] playback-active-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+          `afterMs=2000 currentTime=${currentTime.toFixed(2)} previousCurrentTime=${previousCurrentTime.toFixed(2)} ` +
+          `advanced=${health.currentTimeAdvanced} level=${level.toFixed(3)} paused=${el.paused} ` +
+          `readyState=${el.readyState} trackReady=${track.readyState} playbackActive=${health.playbackActive} ` +
+          `playbackActiveMode=${health.playbackActiveMode} emitted=${emitted} ${formatVoiceModeSuffix()}`
+      );
+
+      if (health.currentTimeAdvanced) {
         lastSampledTime = currentTime;
       }
 
-      const level = levelRef.current;
-      if (!advanced && level <= 0) return;
-
-      emitPlaybackHealth(
-        buildPlaybackHealth({
-          playSuccess: true,
-          currentTimeAdvanced: advanced,
-          trackMuted: track.muted ?? false,
-          trackReady: track.readyState,
-          level,
-          webAudioFallback: fallbackActiveRef.current,
-          elPaused: el.paused,
-        })
-      );
+      if (emitted) {
+        emitPlaybackHealth(health);
+        logRemotePlaybackActive(
+          health,
+          health.playbackActiveMode === "provisional"
+            ? "live_track_playing_no_meter"
+            : "interval_check"
+        );
+      }
     }, 2000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [emitPlaybackHealth, stream]);
+  }, [emitPlaybackHealth, instanceId, logRemotePlaybackActive, remoteId, stream]);
 
   useEffect(() => {
     if (voicePolicy.disableRemoteAudioMeter) {
@@ -764,17 +877,16 @@ export default function RemoteAudio({
           }
 
           if (level > 0.02 && playSuccessRef.current) {
-            emitPlaybackHealth(
-              buildPlaybackHealth({
+            const el = ref.current;
+            if (el) {
+              const health = publishPlaybackHealth(el, {
                 playSuccess: true,
-                currentTimeAdvanced: false,
-                trackMuted: stream.getAudioTracks()[0]?.muted ?? false,
-                trackReady: stream.getAudioTracks()[0]?.readyState ?? "live",
-                level,
-                webAudioFallback: fallbackActiveRef.current,
-                elPaused: ref.current?.paused ?? true,
-              })
-            );
+                currentTime: el.currentTime,
+              });
+              if (health.playbackActive) {
+                logRemotePlaybackActive(health, "meter");
+              }
+            }
           }
 
           raf = requestAnimationFrame(tick);
@@ -793,7 +905,7 @@ export default function RemoteAudio({
       if (raf) cancelAnimationFrame(raf);
       if (ctx) void ctx.close().catch(() => {});
     };
-  }, [emitPlaybackHealth, onSpeaking, remoteId, stream]);
+  }, [logRemotePlaybackActive, onSpeaking, publishPlaybackHealth, remoteId, stream]);
 
   return (
     <>

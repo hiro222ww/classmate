@@ -117,6 +117,7 @@ const MESH_SUMMARY_DEBOUNCE_MS = 150;
 const TRACK_ENDED_HOLD_MS = 2000;
 const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
 const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
+const PLAYBACK_ACTIVE_HOLD_MS = 15000;
 
 type TrackEndedHoldCheck = {
   shouldHold: boolean;
@@ -342,7 +343,7 @@ function evaluateLiveStreamWaitConnectedHold(params: {
   const withinSignalGrace =
     activityAgeMs != null && activityAgeMs < graceMs;
   const playbackRecentlyActive =
-    playbackActiveAgeMs != null && playbackActiveAgeMs < graceMs;
+    playbackActiveAgeMs != null && playbackActiveAgeMs < PLAYBACK_ACTIVE_HOLD_MS;
 
   let holdReason: LiveStreamWaitHoldReason | null = null;
   if (isConnectingOrChecking && playbackRecentlyActive) {
@@ -1074,6 +1075,10 @@ export function usePeerConnections({
       }
       if (health.playbackActive) {
         touchPeerSignal(remoteId, "playback_active");
+        console.log(
+          `[voice-peer] playback-active remote=${compactDeviceId(remoteId)} ageMs=0 source=remote_audio ` +
+            `mode=${health.playbackActiveMode} ${formatVoiceModeSuffix()}`
+        );
       }
     },
     [touchPeerSignal]
@@ -1640,7 +1645,9 @@ export function usePeerConnections({
         connectStartedAt: connectStartedAtRef.current.get(remoteId),
       });
 
-      if (waitCheck?.shouldHold && !opts?.force) {
+      const holdBlocksForce =
+        waitCheck?.holdReason === "active_playback_wait_connected";
+      if (waitCheck?.shouldHold && (!opts?.force || holdBlocksForce)) {
         if (pc) {
           console.log(
             formatReconnectHoldLog(
