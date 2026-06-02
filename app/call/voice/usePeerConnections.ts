@@ -176,6 +176,39 @@ const CLOSE_FOR_RECONNECT = {
 } as const;
 
 const PASSIVE_WAIT_OFFER_TIMEOUT_MS = 8000;
+const NO_STREAM_NO_OFFER_FORCE_MS = 6000;
+
+function isIceConnectionStalled(ice: string): boolean {
+  return ice === "new" || ice === "checking";
+}
+
+function isNoStreamNoOfferDeadlock(params: {
+  pc: RTCPeerConnection | null | undefined;
+  hasLiveRemoteStream: boolean;
+  offered: boolean;
+  hasRemoteStream: boolean;
+  remoteTracksCount: number;
+}): boolean {
+  const {
+    pc,
+    hasLiveRemoteStream,
+    offered,
+    hasRemoteStream,
+    remoteTracksCount,
+  } = params;
+
+  if (!pc || !isUsablePeerConnection(pc)) return false;
+  if (hasLiveRemoteStream) return false;
+  if (offered) return false;
+
+  return (
+    pc.connectionState === "new" &&
+    isIceConnectionStalled(pc.iceConnectionState) &&
+    pc.signalingState === "stable" &&
+    !hasRemoteStream &&
+    remoteTracksCount === 0
+  );
+}
 
 function compactStreamId(id: string | null | undefined): string {
   const value = String(id ?? "").trim();
@@ -348,9 +381,9 @@ export function usePeerConnections({
   const offeredPeersRef = useRef<Set<string>>(new Set());
   const startedPeersRef = useRef<Set<string>>(new Set());
 
-  const maybeStartOfferRef = useRef<((remoteId: string) => Promise<void>) | null>(
-    null
-  );
+  const maybeStartOfferRef = useRef<
+    ((remoteId: string, opts?: { force?: boolean; reason?: string }) => Promise<void>) | null
+  >(null);
   const createPeerConnectionRef = useRef<
     ((remoteId: string, connectionId: string) => RTCPeerConnection) | null
   >(null);
@@ -426,6 +459,7 @@ export function usePeerConnections({
   const trackEndedAtRef = useRef<Map<string, number>>(new Map());
   const endedHoldTimersRef = useRef<Map<string, number>>(new Map());
   const passiveWaitOfferTimersRef = useRef<Map<string, number>>(new Map());
+  const noStreamNoOfferTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
     Map<string, { reason: string; scheduledInMs: number; scheduledAt: number }>
   >(new Map());
@@ -523,6 +557,14 @@ export function usePeerConnections({
     [getPeerMedia]
   );
 
+  const clearNoStreamNoOfferTimer = useCallback((remoteId: string) => {
+    const timer = noStreamNoOfferTimersRef.current.get(remoteId);
+    if (timer) {
+      window.clearTimeout(timer);
+      noStreamNoOfferTimersRef.current.delete(remoteId);
+    }
+  }, []);
+
   const clearPassiveWaitOfferTimer = useCallback((remoteId: string) => {
     const timer = passiveWaitOfferTimersRef.current.get(remoteId);
     if (timer) {
@@ -533,6 +575,7 @@ export function usePeerConnections({
 
   const clearPeerWatchdogTimers = useCallback((remoteId: string) => {
     clearPassiveWaitOfferTimer(remoteId);
+    clearNoStreamNoOfferTimer(remoteId);
 
     const checkingTimer = iceCheckingTimersRef.current.get(remoteId);
     if (checkingTimer) {
@@ -551,7 +594,7 @@ export function usePeerConnections({
       window.clearTimeout(endedHoldTimer);
       endedHoldTimersRef.current.delete(remoteId);
     }
-  }, [clearPassiveWaitOfferTimer]);
+  }, [clearNoStreamNoOfferTimer, clearPassiveWaitOfferTimer]);
 
   const observePeerField = useCallback(
     (
@@ -2146,10 +2189,16 @@ export function usePeerConnections({
     ]
   );
 
-  const maybeStartOffer = useCallback(
-    async (remoteId: string) => {
+  const startPeerOffer = useCallback(
+    async (
+      remoteId: string,
+      opts?: { force?: boolean; reason?: string }
+    ) => {
       const isOfferOwner = deviceId < remoteId;
-      if (!isOfferOwner) return;
+      const force = opts?.force === true;
+      const reason = opts?.reason ?? "unspecified";
+
+      if (!isOfferOwner && !force) return;
 
       if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
 
@@ -2159,6 +2208,7 @@ export function usePeerConnections({
       if (hasRemoteStream) return;
 
       if (
+        !force &&
         existingPc &&
         (existingPc.connectionState === "connected" ||
           existingPc.signalingState === "have-local-offer" ||
@@ -2176,15 +2226,38 @@ export function usePeerConnections({
       }
 
       markConnectStart(remoteId);
+      clearNoStreamNoOfferTimer(remoteId);
+      clearPassiveWaitOfferTimer(remoteId);
 
-      const pc = createPeerConnection(remoteId, connectionId);
+      let pc = existingPc;
+      if (!isUsablePeerConnection(pc)) {
+        pc = createPeerConnection(remoteId, connectionId);
+      }
 
-      if (offeredPeersRef.current.has(remoteId)) return;
+      if (!pc) return;
+
+      if (offeredPeersRef.current.has(remoteId) && !force) return;
+      if (pc.signalingState !== "stable") {
+        if (!force) return;
+        closePeer(remoteId, {
+          clearConnectionId: false,
+          preserveRemoteAudio: hasLiveRemoteAudioStream(remoteId),
+          reason: `force_offer_reset_${reason}`,
+        });
+        setCurrentConnectionId(remoteId, connectionId);
+        pc = createPeerConnection(remoteId, connectionId);
+      }
+
       if (pc.signalingState !== "stable") return;
 
       offeredPeersRef.current.add(remoteId);
       clearReconnectTimer(remoteId);
       setPeerState(remoteId, "connecting");
+
+      console.log(
+        `[voice-peer] offer-create-start remote=${compactDeviceId(remoteId)} reason=${reason} ` +
+          `force=${force} owner=${isOfferOwner} ${formatVoiceModeSuffix()}`
+      );
 
       try {
         const offer = await pc.createOffer({ offerToReceiveAudio: true });
@@ -2209,13 +2282,25 @@ export function usePeerConnections({
         });
         touchPeerSignal(remoteId, "offer_sent");
         emitMeshSummary("offer_sent", { immediate: true });
+
+        console.log(
+          `[voice-peer] offer-sent remote=${compactDeviceId(remoteId)} reason=${reason} ` +
+            `force=${force} owner=${isOfferOwner} conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +
+            `sig=${pc.signalingState} ${formatVoiceModeSuffix()}`
+        );
       } catch (e) {
         offeredPeersRef.current.delete(remoteId);
-        console.error("[call] create offer error", remoteId, connectionId, e);
+        console.error(
+          `[voice-peer] offer-create-failed remote=${compactDeviceId(remoteId)} reason=${reason} force=${force}`,
+          e
+        );
       }
     },
     [
+      clearNoStreamNoOfferTimer,
+      clearPassiveWaitOfferTimer,
       clearReconnectTimer,
+      closePeer,
       createPeerConnection,
       deviceId,
       emitMeshSummary,
@@ -2231,9 +2316,16 @@ export function usePeerConnections({
     ]
   );
 
+  const maybeStartOffer = useCallback(
+    async (remoteId: string) => {
+      await startPeerOffer(remoteId, { reason: "maybe_start_offer" });
+    },
+    [startPeerOffer]
+  );
+
   useEffect(() => {
-    maybeStartOfferRef.current = maybeStartOffer;
-  }, [maybeStartOffer]);
+    maybeStartOfferRef.current = startPeerOffer;
+  }, [startPeerOffer]);
 
   const schedulePassiveWaitOfferTimeout = useCallback(
     (remoteId: string, triggerReason: string) => {
@@ -2256,19 +2348,67 @@ export function usePeerConnections({
           `[voice-peer] passive-wait-offer-timeout remote=${compactDeviceId(remoteId)} action=force_offer reason=ended_stream_reconnect_timeout trigger=${triggerReason} ${formatVoiceModeSuffix()}`
         );
 
-        if (deviceId < remoteId) {
-          void maybeStartOfferRef.current?.(remoteId);
-        } else {
-          scheduleReconnectRef.current?.(remoteId, 500, {
-            reason: "ended_stream_reconnect_timeout",
-            force: true,
-          });
-        }
+        void startPeerOffer(remoteId, {
+          force: true,
+          reason: "ended_stream_reconnect_timeout",
+        });
       }, PASSIVE_WAIT_OFFER_TIMEOUT_MS);
 
       passiveWaitOfferTimersRef.current.set(remoteId, timer);
     },
-    [clearPassiveWaitOfferTimer, deviceId, hasLiveRemoteAudioStream]
+    [clearPassiveWaitOfferTimer, deviceId, hasLiveRemoteAudioStream, startPeerOffer]
+  );
+
+  const scheduleNoStreamNoOfferTimeout = useCallback(
+    (remoteId: string, triggerReason: string) => {
+      clearNoStreamNoOfferTimer(remoteId);
+
+      const selfMember = members.find((m) => m.device_id === deviceId);
+      const localInCall = selfMember?.is_in_call !== false;
+      const remoteInCall = isRemoteInCall(remoteId);
+      if (!localInCall || !remoteInCall) return;
+
+      const timer = window.setTimeout(() => {
+        noStreamNoOfferTimersRef.current.delete(remoteId);
+
+        const pc = pcsRef.current.get(remoteId);
+        if (!pc || hasLiveRemoteAudioStream(remoteId)) return;
+
+        const media = getPeerMedia(remoteId);
+        const offered = offeredPeersRef.current.has(remoteId);
+        const deadlock = isNoStreamNoOfferDeadlock({
+          pc,
+          hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
+          offered,
+          hasRemoteStream: media.hasRemoteStream,
+          remoteTracksCount: media.remoteTracksCount,
+        });
+
+        if (!deadlock) return;
+
+        console.log(
+          `[voice-peer] no-stream-no-offer-timeout remote=${compactDeviceId(remoteId)} action=force_offer ` +
+            `conn=${pc.connectionState} ice=${pc.iceConnectionState} sig=${pc.signalingState} ` +
+            `owner=${deviceId < remoteId} trigger=${triggerReason} ${formatVoiceModeSuffix()}`
+        );
+
+        void startPeerOffer(remoteId, {
+          force: true,
+          reason: "no_stream_no_offer_timeout",
+        });
+      }, NO_STREAM_NO_OFFER_FORCE_MS);
+
+      noStreamNoOfferTimersRef.current.set(remoteId, timer);
+    },
+    [
+      clearNoStreamNoOfferTimer,
+      deviceId,
+      getPeerMedia,
+      hasLiveRemoteAudioStream,
+      isRemoteInCall,
+      members,
+      startPeerOffer,
+    ]
   );
 
   const ensurePeerConnection = useCallback(
@@ -2371,6 +2511,7 @@ export function usePeerConnections({
         if (isEndedStreamReconnectReason(reason)) {
           schedulePassiveWaitOfferTimeout(remoteId, reason);
         }
+        scheduleNoStreamNoOfferTimeout(remoteId, reason);
       }
 
       const createdPc = pcsRef.current.get(remoteId) ?? null;
@@ -2396,6 +2537,7 @@ export function usePeerConnections({
       maybeStartOffer,
       micReady,
       schedulePassiveWaitOfferTimeout,
+      scheduleNoStreamNoOfferTimeout,
       setCurrentConnectionId,
       setPeerState,
       signalReady,
@@ -2645,7 +2787,24 @@ export function usePeerConnections({
 
       const hasStream = hasLiveRemoteAudioStream(remoteId);
       const connected = pc?.connectionState === "connected";
-      const blockReason = getReconnectBlockReason(remoteId);
+      let blockReason = getReconnectBlockReason(remoteId);
+      const media = getPeerMedia(remoteId);
+      const offered = offeredPeersRef.current.has(remoteId);
+      const noStreamDeadlock = isNoStreamNoOfferDeadlock({
+        pc,
+        hasLiveRemoteStream: hasStream,
+        offered,
+        hasRemoteStream: media.hasRemoteStream,
+        remoteTracksCount: media.remoteTracksCount,
+      });
+
+      if (blockReason === "heal_cooldown" && noStreamDeadlock) {
+        console.log(
+          `[voice-peer] heal-cooldown-bypass remote=${compactDeviceId(remoteId)} reason=no_stream_no_offer_deadlock ${formatVoiceModeSuffix()}`
+        );
+        blockReason = null;
+      }
+
       const inCall = isRemoteInCall(remoteId);
       const needsPc = peerNeedsPc(remoteId);
       const transportHealthy = isPeerTransportHealthy(pc);
@@ -2804,10 +2963,14 @@ export function usePeerConnections({
       }
 
       if (!hasStream && !offeredPeersRef.current.has(remoteId)) {
-        if (transportHealthy) {
+        if (transportHealthy && !noStreamDeadlock) {
           logHealSkipHealthy(remoteId, "no_stream_no_offer_pc_connected", pc);
           continue;
         }
+
+        console.log(
+          `[voice-peer] heal remote=${compactDeviceId(remoteId)} action=retry-offer reason=no_stream_no_offer ${formatVoiceModeSuffix()}`
+        );
 
         planned.push({
           remoteId,
@@ -2822,7 +2985,20 @@ export function usePeerConnections({
             }
             markConnectStart(remoteId);
             lastHealActionAtRef.current.set(remoteId, Date.now());
-            void maybeStartOffer(remoteId);
+            scheduleNoStreamNoOfferTimeout(remoteId, "no_stream_no_offer_heal");
+
+            if (deviceId < remoteId) {
+              void startPeerOffer(remoteId, { reason: "no_stream_no_offer" });
+            } else if (!isUsablePeerConnection(pcsRef.current.get(remoteId))) {
+              ensurePeerConnection(remoteId, "no_stream_no_offer_passive", {
+                force: true,
+              });
+            } else {
+              void startPeerOffer(remoteId, {
+                force: true,
+                reason: "no_stream_no_offer_passive_immediate",
+              });
+            }
           },
         });
       }
@@ -2943,11 +3119,13 @@ export function usePeerConnections({
     maybeStartOffer,
     micReady,
     peerNeedsPc,
+    scheduleNoStreamNoOfferTimeout,
     scheduleReconnect,
     sessionId,
     setCurrentConnectionId,
     setPeerState,
     signalReady,
+    startPeerOffer,
   ]);
 
   const handleSignal = useCallback(
@@ -3338,6 +3516,12 @@ export function usePeerConnections({
         timerCount += 1;
       }
       endedHoldTimersRef.current.clear();
+
+      for (const timer of noStreamNoOfferTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      noStreamNoOfferTimersRef.current.clear();
 
       for (const timer of passiveWaitOfferTimersRef.current.values()) {
         window.clearTimeout(timer);

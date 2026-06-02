@@ -1,6 +1,7 @@
 "use client";
 
 const SNAPSHOT_KEY = "classmate_call_reload_snapshot";
+const BFCACHE_SUSPEND_KEY = "classmate_call_bfcache_suspend";
 
 export type CallReloadSnapshot = {
   savedAt: number;
@@ -147,6 +148,41 @@ export function consumeCallReloadSnapshot(params: {
   deviceId: string;
 }): CallReloadSnapshot | null {
   return logReloadSnapshotOnMount(params);
+}
+
+export function clearCallBfcacheSuspend(): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(BFCACHE_SUSPEND_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function markCallBfcacheSuspend(sessionId: string): void {
+  if (typeof window === "undefined") return;
+  const sid = String(sessionId ?? "").trim();
+  if (!sid) return;
+  try {
+    sessionStorage.setItem(BFCACHE_SUSPEND_KEY, sid);
+  } catch {
+    // ignore
+  }
+}
+
+export function consumeCallBfcacheSuspend(
+  expectedSessionId: string
+): boolean {
+  if (typeof window === "undefined") return false;
+  const sid = String(expectedSessionId ?? "").trim();
+  if (!sid) return false;
+  try {
+    const value = sessionStorage.getItem(BFCACHE_SUSPEND_KEY);
+    sessionStorage.removeItem(BFCACHE_SUSPEND_KEY);
+    return value === sid;
+  } catch {
+    return false;
+  }
 }
 
 export function isLikelyChunkLoadError(message: string): boolean {

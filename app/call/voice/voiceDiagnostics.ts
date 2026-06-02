@@ -3,7 +3,9 @@
 import { formatVoiceModeSuffix } from "@/lib/voiceClientEnv";
 
 import {
+  consumeCallBfcacheSuspend,
   isLikelyChunkLoadError,
+  markCallBfcacheSuspend,
   recordCallReloadContext,
   saveCallReloadSnapshot,
 } from "@/lib/callReloadDiagnostics";
@@ -780,8 +782,9 @@ export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
 export function installCallPageDiagnostics(params: {
   sessionId: string;
   deviceId: string;
+  onBfcacheRestore?: (args: { sessionId: string; deviceId: string }) => void;
 }) {
-  const { sessionId, deviceId } = params;
+  const { sessionId, deviceId, onBfcacheRestore } = params;
 
   const onError = (event: ErrorEvent) => {
     const message = event.message ?? "";
@@ -831,6 +834,15 @@ export function installCallPageDiagnostics(params: {
       deviceId,
       persisted: event.persisted,
     });
+
+    if (event.persisted) {
+      console.log(
+        `[call-lifecycle] pagehide-persisted-skip-leave session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
+      );
+      markCallBfcacheSuspend(sessionId);
+      return;
+    }
+
     saveCallReloadSnapshot({
       trigger: "pagehide",
       sessionId,
@@ -840,23 +852,30 @@ export function installCallPageDiagnostics(params: {
   };
 
   const onPageShow = (event: PageTransitionEvent) => {
+    console.log(
+      `[call-lifecycle] pageshow persisted=${event.persisted} session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
+    );
     logCallLifecycle("pageshow", {
       sessionId,
       deviceId,
       persisted: event.persisted,
       extra: { navigationType: getNavigationTypeForDiagnostics() },
     });
+
+    if (event.persisted && consumeCallBfcacheSuspend(sessionId)) {
+      console.log(
+        `[call-lifecycle] bfcache-restore action=resume_call session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
+      );
+      onBfcacheRestore?.({ sessionId, deviceId });
+    }
   };
 
   const onVisibilityChange = () => {
-    logCallLifecycle("visibilitychange", { sessionId, deviceId });
-    if (document.visibilityState === "hidden") {
-      saveCallReloadSnapshot({
-        trigger: "visibility_hidden",
-        sessionId,
-        deviceId,
-      });
-    }
+    logCallLifecycle("visibilitychange", {
+      sessionId,
+      deviceId,
+      visibilityState: document.visibilityState,
+    });
   };
 
   const onBeforeUnload = () => {

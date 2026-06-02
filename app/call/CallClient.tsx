@@ -28,7 +28,7 @@ import {
   voiceDebugLog,
   type PeerStatusDiagnostics,
 } from "@/app/call/voice/voiceDiagnostics";
-import { consumeCallReloadSnapshot } from "@/lib/callReloadDiagnostics";
+import { consumeCallReloadSnapshot, clearCallBfcacheSuspend } from "@/lib/callReloadDiagnostics";
 import { requestRemoteAudioUnlock } from "@/lib/remoteAudioUnlock";
 import {
   LIST_MEMBER_AVATAR_PX,
@@ -194,15 +194,15 @@ export default function CallClient() {
       extra: { navigationType: getCallNavigationType() },
     });
     clearLocalLeftCall(sessionId, deviceId);
+    clearCallBfcacheSuspend();
     localExitedPeersRef.current.delete(deviceId);
+  }, [sessionId, deviceId]);
 
-    const cleanupDiagnostics = installCallPageDiagnostics({ sessionId, deviceId });
-
+  useEffect(() => {
     return () => {
       logCallLifecycle("unmount", { sessionId, deviceId });
       setPeerStates({});
       setPeerDiagnostics({});
-      cleanupDiagnostics();
     };
   }, [sessionId, deviceId]);
 
@@ -555,6 +555,27 @@ export default function CallClient() {
       window.clearTimeout(sync5s);
     };
   }, [fetchMembers, clearRetryTimer]);
+
+  useEffect(() => {
+    if (!sessionId || !deviceId) return;
+
+    const cleanupDiagnostics = installCallPageDiagnostics({
+      sessionId,
+      deviceId,
+      onBfcacheRestore: ({ sessionId: restoredSessionId, deviceId: restoredDeviceId }) => {
+        if (restoredSessionId !== sessionId || restoredDeviceId !== deviceId) return;
+        clearLocalLeftCall(sessionId, deviceId);
+        localExitedPeersRef.current.delete(deviceId);
+        setMembersSyncRevision((revision) => revision + 1);
+        void fetchMembers("bfcache_restore");
+        requestRemoteAudioUnlock();
+      },
+    });
+
+    return () => {
+      cleanupDiagnostics();
+    };
+  }, [deviceId, fetchMembers, sessionId]);
 
   useEffect(() => {
     const onVisibilityChange = () => {
