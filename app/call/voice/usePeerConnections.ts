@@ -32,6 +32,21 @@ import {
   logVoiceClientEnv,
 } from "@/lib/voiceClientEnv";
 import type { RemotePlaybackHealth } from "./RemoteAudio";
+import {
+  createEmptyPeerIceDiagnostics,
+  evaluateInsufficientRemoteCandidates,
+  logVoiceIceAddCandidateFailed,
+  logVoiceIceAddCandidateSuccess,
+  logVoiceIceCheckingStuck,
+  logVoiceIceGatheringComplete,
+  logVoiceIceGatheringState,
+  logVoiceIceInsufficientCandidates,
+  logVoiceIceLocalCandidate,
+  logVoiceIceRemoteCandidateReceived,
+  recordLocalIceCandidate,
+  recordRemoteIceCandidate,
+  type PeerIceDiagnostics,
+} from "./voiceIceDiagnostics";
 
 type Member = {
   device_id: string;
@@ -122,6 +137,10 @@ const TRACK_ENDED_HOLD_MS = 2000;
 const TRACK_ENDED_RECENT_CONNECTED_MS = 5000;
 const LIVE_STREAM_WAIT_CONNECTED_MS = 10000;
 const PLAYBACK_ACTIVE_HOLD_MS = 15000;
+const ICE_CHECKING_DIAGNOSTICS_MS = 10000;
+const ICE_RESTART_STUCK_MS = 15000;
+const ICE_RESTART_POST_TIMEOUT_MS = 10000;
+const MAX_ICE_RESTART_ATTEMPTS = 1;
 
 type TrackEndedHoldCheck = {
   shouldHold: boolean;
@@ -700,6 +719,10 @@ export function usePeerConnections({
   >(() => {});
   const audioReplayAtRef = useRef<Map<string, number>>(new Map());
   const audioUnconfirmedTimeoutNotifiedRef = useRef<Set<string>>(new Set());
+  const peerIceDiagnosticsRef = useRef<Map<string, PeerIceDiagnostics>>(new Map());
+  const iceRestartAttemptsRef = useRef<Map<string, number>>(new Map());
+  const checkingPlaybackStuckAtRef = useRef<Map<string, number>>(new Map());
+  const iceRestartPostTimersRef = useRef<Map<string, number>>(new Map());
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
 
@@ -1834,6 +1857,19 @@ export function usePeerConnections({
                 "watchdog_unconfirmed_playback"
               );
             }
+
+            const stuckAt = checkingPlaybackStuckAtRef.current.get(remoteId);
+            const stuckAgeMs = stuckAt ? Date.now() - stuckAt : null;
+            if (
+              stalled &&
+              media.remoteTracksCount > 0 &&
+              stuckAgeMs != null &&
+              stuckAgeMs >= ICE_RESTART_STUCK_MS &&
+              (iceRestartAttemptsRef.current.get(remoteId) ?? 0) <
+                MAX_ICE_RESTART_ATTEMPTS
+            ) {
+              void attemptIceRestartRef.current(remoteId);
+            }
           }
         }
       }
@@ -1924,6 +1960,14 @@ export function usePeerConnections({
       lastHealActionAtRef.current.delete(remoteId);
       peerSignalTimestampsRef.current.delete(remoteId);
       peerMetaRef.current.delete(remoteId);
+      peerIceDiagnosticsRef.current.delete(remoteId);
+      checkingPlaybackStuckAtRef.current.delete(remoteId);
+      const iceRestartPostTimer = iceRestartPostTimersRef.current.get(remoteId);
+      if (iceRestartPostTimer) {
+        window.clearTimeout(iceRestartPostTimer);
+        iceRestartPostTimersRef.current.delete(remoteId);
+      }
+      iceRestartAttemptsRef.current.delete(remoteId);
 
       if (preserveRemoteAudio && prevPeerState === "connected") {
         peerStatesRef.current.set(remoteId, "connected");
@@ -1967,29 +2011,91 @@ export function usePeerConnections({
   const attemptSignalingRecoverRef = useRef<
     (remoteId: string, source: string) => Promise<boolean>
   >(async () => false);
+  const attemptIceRestartRef = useRef<
+    (remoteId: string) => Promise<boolean>
+  >(async () => false);
+
+  const getOrCreatePeerIceStats = useCallback((remoteId: string) => {
+    let stats = peerIceDiagnosticsRef.current.get(remoteId);
+    if (!stats) {
+      stats = createEmptyPeerIceDiagnostics();
+      peerIceDiagnosticsRef.current.set(remoteId, stats);
+    }
+    return stats;
+  }, []);
+
+  const clearPeerIceDiagnostics = useCallback((remoteId: string) => {
+    peerIceDiagnosticsRef.current.delete(remoteId);
+    checkingPlaybackStuckAtRef.current.delete(remoteId);
+    const postTimer = iceRestartPostTimersRef.current.get(remoteId);
+    if (postTimer) {
+      window.clearTimeout(postTimer);
+      iceRestartPostTimersRef.current.delete(remoteId);
+    }
+  }, []);
+
+  const addRemoteIceCandidate = useCallback(
+    async (
+      remoteId: string,
+      pc: RTCPeerConnection,
+      candidate: RTCIceCandidateInit,
+      connectionId: string | null
+    ): Promise<boolean> => {
+      const stats = getOrCreatePeerIceStats(remoteId);
+      recordRemoteIceCandidate(stats, candidate);
+
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        logVoiceIceAddCandidateSuccess({ remoteId, connectionId, candidate });
+        return true;
+      } catch (e: unknown) {
+        const err = e as { name?: string; message?: string };
+        logVoiceIceAddCandidateFailed({
+          remoteId,
+          connectionId,
+          candidate,
+          name: err?.name ?? "unknown",
+          message: String(err?.message ?? "").slice(0, 120),
+        });
+        return false;
+      }
+    },
+    [getOrCreatePeerIceStats]
+  );
 
   const flushPendingIce = useCallback(
-    async (remoteId: string, connectionId?: string) => {
+    async (
+      remoteId: string,
+      connectionId?: string
+    ): Promise<{ pending: number; flushed: number; failed: number }> => {
       const pc = pcsRef.current.get(remoteId);
-      if (!pc || !pc.remoteDescription) return;
+      if (!pc || !pc.remoteDescription) {
+        return { pending: 0, flushed: 0, failed: 0 };
+      }
 
       const current = connectionId ?? getCurrentConnectionId(remoteId);
-      if (!current) return;
+      if (!current) {
+        return { pending: 0, flushed: 0, failed: 0 };
+      }
 
       const queued = pendingIceRef.current.get(remoteId) ?? [];
-      if (!queued.length) return;
+      if (!queued.length) {
+        return { pending: 0, flushed: 0, failed: 0 };
+      }
+
+      let flushed = 0;
+      let failed = 0;
 
       for (const candidate of queued) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (e) {
-          console.warn("[call] flush ice ignored", remoteId, e);
-        }
+        const ok = await addRemoteIceCandidate(remoteId, pc, candidate, current);
+        if (ok) flushed += 1;
+        else failed += 1;
       }
 
       pendingIceRef.current.delete(remoteId);
+      return { pending: queued.length, flushed, failed };
     },
-    [getCurrentConnectionId]
+    [addRemoteIceCandidate, getCurrentConnectionId]
   );
 
   const scheduleReconnect = useCallback(
@@ -2325,6 +2431,43 @@ export function usePeerConnections({
     attachRemoteTrackDiagnosticsRef.current = attachRemoteTrackDiagnostics;
   }, [attachRemoteTrackDiagnostics]);
 
+  const isEligibleForIceRestart = useCallback(
+    (remoteId: string) => {
+      const media = getPeerMedia(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      return (
+        media.remoteTracksCount > 0 &&
+        timestamps.lastPlaySuccessAt != null &&
+        timestamps.lastPlaybackConfirmedAt == null &&
+        (iceRestartAttemptsRef.current.get(remoteId) ?? 0) < MAX_ICE_RESTART_ATTEMPTS
+      );
+    },
+    [getPeerMedia]
+  );
+
+  const logIceCheckingDiagnostics = useCallback(
+    (remoteId: string, pc: RTCPeerConnection) => {
+      const stats = getOrCreatePeerIceStats(remoteId);
+      logVoiceIceCheckingStuck({
+        remoteId,
+        stats,
+        conn: pc.connectionState,
+        ice: pc.iceConnectionState,
+      });
+      const insufficient = evaluateInsufficientRemoteCandidates(stats);
+      if (insufficient) {
+        logVoiceIceInsufficientCandidates({
+          remoteId,
+          reason: insufficient,
+          stats,
+        });
+      }
+    },
+    [getOrCreatePeerIceStats]
+  );
+
   const scheduleIceCheckingTimeout = useCallback(
     (remoteId: string, connectionId: string, pc: RTCPeerConnection) => {
       const existing = iceCheckingTimersRef.current.get(remoteId);
@@ -2340,6 +2483,12 @@ export function usePeerConnections({
         if (!currentPc || currentPc !== pc) return;
 
         if (currentPc.iceConnectionState !== "checking") return;
+
+        logIceCheckingDiagnostics(remoteId, currentPc);
+
+        if (isEligibleForIceRestart(remoteId)) {
+          return;
+        }
 
         logPeerStateWarning({
           sessionId,
@@ -2357,11 +2506,65 @@ export function usePeerConnections({
           reason: "checking_timeout",
           source: "checking_timeout",
         });
-      }, 10000);
+      }, ICE_CHECKING_DIAGNOSTICS_MS);
 
       iceCheckingTimersRef.current.set(remoteId, timer);
     },
-    [deviceId, emitMeshSummary, getCurrentConnectionId, getPeerMedia, markRecoveryStart, sessionId, setPeerMeta]
+    [
+      deviceId,
+      emitMeshSummary,
+      getCurrentConnectionId,
+      getPeerMedia,
+      isEligibleForIceRestart,
+      logIceCheckingDiagnostics,
+      markRecoveryStart,
+      sessionId,
+      setPeerMeta,
+    ]
+  );
+
+  const schedulePostIceRestartReconnect = useCallback(
+    (remoteId: string, connectionId: string, pc: RTCPeerConnection) => {
+      const existing = iceRestartPostTimersRef.current.get(remoteId);
+      if (existing) window.clearTimeout(existing);
+
+      const timer = window.setTimeout(() => {
+        iceRestartPostTimersRef.current.delete(remoteId);
+
+        const currentPc = pcsRef.current.get(remoteId);
+        if (!currentPc || currentPc !== pc) return;
+        if (
+          currentPc.iceConnectionState !== "checking" &&
+          currentPc.connectionState !== "connecting"
+        ) {
+          return;
+        }
+
+        logIceCheckingDiagnostics(remoteId, currentPc);
+        logPeerStateWarning({
+          sessionId,
+          localDeviceId: deviceId,
+          remoteDeviceId: remoteId,
+          reason: "checking_timeout",
+          pc: currentPc,
+          media: getPeerMedia(remoteId),
+        });
+        markRecoveryStart(remoteId);
+        scheduleReconnectRef.current?.(remoteId, 1200, {
+          reason: "checking_timeout_after_ice_restart",
+          source: "checking_timeout_after_ice_restart",
+        });
+      }, ICE_RESTART_POST_TIMEOUT_MS);
+
+      iceRestartPostTimersRef.current.set(remoteId, timer);
+    },
+    [
+      deviceId,
+      getPeerMedia,
+      logIceCheckingDiagnostics,
+      markRecoveryStart,
+      sessionId,
+    ]
   );
 
   const scheduleConnectingTimeout = useCallback(
@@ -2511,17 +2714,36 @@ export function usePeerConnections({
       }
 
       pc.onicecandidate = (event) => {
-        if (!event.candidate) return;
         if (pcsRef.current.get(remoteId) !== pc) return;
 
         const activeConnectionId = getCurrentConnectionId(remoteId);
         if (!activeConnectionId) return;
 
+        const stats = getOrCreatePeerIceStats(remoteId);
+
+        if (!event.candidate) {
+          logVoiceIceGatheringComplete({
+            remoteId,
+            connectionId: activeConnectionId,
+            stats,
+          });
+          return;
+        }
+
+        const candidateJson = event.candidate.toJSON
+          ? event.candidate.toJSON()
+          : event.candidate;
+
+        recordLocalIceCandidate(stats, candidateJson);
+        logVoiceIceLocalCandidate({
+          remoteId,
+          connectionId: activeConnectionId,
+          candidate: candidateJson,
+        });
+
         void sendSignal(remoteId, "ice", {
           connectionId: activeConnectionId,
-          candidate: event.candidate.toJSON
-            ? event.candidate.toJSON()
-            : event.candidate,
+          candidate: candidateJson,
         });
         touchPeerSignal(remoteId, "ice_sent");
         emitMeshSummary("ice_sent");
@@ -2550,6 +2772,19 @@ export function usePeerConnections({
 
       pc.onicegatheringstatechange = () => {
         syncPeerObservedStates(remoteId, pc);
+        const stats = getOrCreatePeerIceStats(remoteId);
+        stats.gatheringState = pc.iceGatheringState;
+        logVoiceIceGatheringState({
+          remoteId,
+          state: pc.iceGatheringState,
+        });
+        if (pc.iceGatheringState === "complete") {
+          logVoiceIceGatheringComplete({
+            remoteId,
+            connectionId: getCurrentConnectionId(remoteId),
+            stats,
+          });
+        }
       };
 
       pc.onsignalingstatechange = () => {
@@ -2565,6 +2800,18 @@ export function usePeerConnections({
 
         if (iceState === "checking") {
           scheduleIceCheckingTimeout(remoteId, connectionId, pc);
+          const timestamps =
+            peerSignalTimestampsRef.current.get(remoteId) ??
+            emptyPeerSignalTimestamps();
+          const media = getPeerMedia(remoteId);
+          if (
+            timestamps.lastPlaySuccessAt != null &&
+            timestamps.lastPlaybackConfirmedAt == null &&
+            media.remoteTracksCount > 0 &&
+            !checkingPlaybackStuckAtRef.current.has(remoteId)
+          ) {
+            checkingPlaybackStuckAtRef.current.set(remoteId, Date.now());
+          }
         } else {
           const checkingTimer = iceCheckingTimersRef.current.get(remoteId);
           if (checkingTimer) {
@@ -2575,6 +2822,8 @@ export function usePeerConnections({
 
         if (iceState === "connected" || iceState === "completed") {
           markPeerLastConnected(remoteId);
+          checkingPlaybackStuckAtRef.current.delete(remoteId);
+          iceRestartAttemptsRef.current.delete(remoteId);
         }
 
         if (iceState === "disconnected") {
@@ -2636,6 +2885,19 @@ export function usePeerConnections({
         if (state === "connecting") {
           setPeerState(remoteId, "connecting");
           scheduleConnectingTimeout(remoteId, connectionId, pc);
+
+          const timestamps =
+            peerSignalTimestampsRef.current.get(remoteId) ??
+            emptyPeerSignalTimestamps();
+          const media = getPeerMedia(remoteId);
+          if (
+            timestamps.lastPlaySuccessAt != null &&
+            timestamps.lastPlaybackConfirmedAt == null &&
+            media.remoteTracksCount > 0 &&
+            !checkingPlaybackStuckAtRef.current.has(remoteId)
+          ) {
+            checkingPlaybackStuckAtRef.current.set(remoteId, Date.now());
+          }
 
           if (
             voiceRouteRef.current === "stun" &&
@@ -2780,6 +3042,7 @@ export function usePeerConnections({
       deviceId,
       enableTurnFallback,
       getCurrentConnectionId,
+      getOrCreatePeerIceStats,
       getPeerMedia,
       isMuted,
       localAudioTrackRef,
@@ -3159,6 +3422,70 @@ export function usePeerConnections({
 
   ensurePeerConnectionRef.current = ensurePeerConnection;
 
+  const attemptIceRestart = useCallback(
+    async (remoteId: string) => {
+      if (deviceId >= remoteId) return false;
+      if (
+        (iceRestartAttemptsRef.current.get(remoteId) ?? 0) >=
+        MAX_ICE_RESTART_ATTEMPTS
+      ) {
+        return false;
+      }
+
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc || !isUsablePeerConnection(pc)) return false;
+
+      const connectionId = getCurrentConnectionId(remoteId);
+      if (!connectionId) return false;
+
+      if (pc.signalingState !== "stable") return false;
+
+      iceRestartAttemptsRef.current.set(remoteId, MAX_ICE_RESTART_ATTEMPTS);
+
+      console.log(
+        `[voice-peer] ice-restart remote=${compactDeviceId(remoteId)} ` +
+          `reason=checking_stuck_with_live_stream connectionId=${compactConnectionId(connectionId)} ` +
+          `conn=${pc.connectionState} ice=${pc.iceConnectionState} ${formatVoiceModeSuffix()}`
+      );
+
+      const stats = getOrCreatePeerIceStats(remoteId);
+      stats.localTypes.clear();
+      stats.localCount = 0;
+      stats.gatheringState = "new";
+
+      try {
+        const offer = await pc.createOffer({ iceRestart: true });
+        const activeConnectionId = getCurrentConnectionId(remoteId);
+        if (!activeConnectionId || activeConnectionId !== connectionId) {
+          return false;
+        }
+
+        await pc.setLocalDescription(offer);
+        await sendSignal(remoteId, "offer", {
+          connectionId: activeConnectionId,
+          sdp: pc.localDescription,
+        });
+        offeredPeersRef.current.add(remoteId);
+        touchPeerSignal(remoteId, "offer_sent");
+        schedulePostIceRestartReconnect(remoteId, connectionId, pc);
+        scheduleIceCheckingTimeout(remoteId, connectionId, pc);
+        return true;
+      } catch (e) {
+        console.warn("[call] ice-restart failed", remoteId, e);
+        return false;
+      }
+    },
+    [
+      deviceId,
+      getCurrentConnectionId,
+      getOrCreatePeerIceStats,
+      scheduleIceCheckingTimeout,
+      schedulePostIceRestartReconnect,
+      sendSignal,
+      touchPeerSignal,
+    ]
+  );
+
   const attemptSignalingRecover = useCallback(
     async (remoteId: string, source: string) => {
       const pc = pcsRef.current.get(remoteId);
@@ -3176,14 +3503,16 @@ export function usePeerConnections({
       if (!stalled) return false;
 
       const connectionId = getCurrentConnectionId(remoteId);
+      const pendingBefore = pendingIceRef.current.get(remoteId)?.length ?? 0;
+      const flushResult = await flushPendingIce(remoteId);
+
       console.log(
         `[voice-peer] signaling-recover remote=${compactDeviceId(remoteId)} source=${source} ` +
           `sig=${pc.signalingState} conn=${conn} ice=${ice} ` +
           `connectionId=${compactConnectionId(connectionId)} ` +
+          `pendingIce=${pendingBefore} flushed=${flushResult.flushed} failed=${flushResult.failed} ` +
           `tracks=${media.remoteTracksCount} hasStream=${media.hasRemoteStream} ${formatVoiceModeSuffix()}`
       );
-
-      await flushPendingIce(remoteId);
 
       if (
         pc.signalingState === "have-local-offer" &&
@@ -3205,6 +3534,10 @@ export function usePeerConnections({
   useEffect(() => {
     attemptSignalingRecoverRef.current = attemptSignalingRecover;
   }, [attemptSignalingRecover]);
+
+  useEffect(() => {
+    attemptIceRestartRef.current = attemptIceRestart;
+  }, [attemptIceRestart]);
 
   const scanAndEnsureMissingPcs = useCallback(
     (trigger: string, peers: VoiceMeshPeerSummaryEntry[]) => {
@@ -3989,13 +4322,31 @@ export function usePeerConnections({
             sig: pc.signalingState,
           });
 
-          if (pc.signalingState !== "stable") {
-            logVoiceSignalIgnored({
-              reason: "invalid_signaling_state",
-              type: "offer",
-              remote: remoteId,
-            });
-            return;
+          const isRenegotiation =
+            pc.connectionState === "connected" ||
+            (pc.connectionState === "connecting" &&
+              (pc.iceConnectionState === "checking" ||
+                pc.iceConnectionState === "new"));
+
+          if (pc.signalingState !== "stable" && !isRenegotiation) {
+            if (pc.signalingState === "have-local-offer") {
+              try {
+                await pc.setLocalDescription({ type: "rollback" });
+              } catch (rollbackErr) {
+                console.warn(
+                  "[call] offer rollback failed",
+                  remoteId,
+                  rollbackErr
+                );
+              }
+            } else {
+              logVoiceSignalIgnored({
+                reason: "invalid_signaling_state",
+                type: "offer",
+                remote: remoteId,
+              });
+              return;
+            }
           }
 
           logVoiceSignalSetRemoteOfferStart(remoteId, pc.signalingState);
@@ -4059,21 +4410,35 @@ export function usePeerConnections({
           const candidate = payload.candidate;
           if (!candidate) return;
 
-          if (!pc.remoteDescription) {
-            const queued = pendingIceRef.current.get(remoteId) ?? [];
-            queued.push(candidate);
-            pendingIceRef.current.set(remoteId, queued);
+          const stats = getOrCreatePeerIceStats(remoteId);
+          const queued = !pc.remoteDescription;
+
+          logVoiceIceRemoteCandidateReceived({
+            remoteId,
+            connectionId: incomingConnectionId,
+            candidate,
+            queued,
+          });
+
+          if (queued) {
+            recordRemoteIceCandidate(stats, candidate, { queued: true });
+            const queue = pendingIceRef.current.get(remoteId) ?? [];
+            queue.push(candidate);
+            pendingIceRef.current.set(remoteId, queue);
             touchPeerSignal(remoteId, "ice_received");
             emitMeshSummary("ice_received");
             return;
           }
 
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          const added = await addRemoteIceCandidate(
+            remoteId,
+            pc,
+            candidate,
+            incomingConnectionId
+          );
+          if (added) {
             touchPeerSignal(remoteId, "ice_received");
             emitMeshSummary("ice_received");
-          } catch (e) {
-            console.warn("[call] addIceCandidate ignored", remoteId, e);
           }
         }
       } catch (e) {
@@ -4086,6 +4451,7 @@ export function usePeerConnections({
       }
     },
     [
+      addRemoteIceCandidate,
       assignConnectionId,
       closePeer,
       createPeerConnection,
@@ -4093,6 +4459,7 @@ export function usePeerConnections({
       emitMeshSummary,
       flushPendingIce,
       getCurrentConnectionId,
+      getOrCreatePeerIceStats,
       getPeerMedia,
       scheduleReconnect,
       sendSignal,
