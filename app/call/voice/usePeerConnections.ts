@@ -146,6 +146,26 @@ const MAX_ICE_RESTART_ATTEMPTS = 1;
 const P2P_DIRECT_FAILED_HOLD_MS = 60_000;
 const ORPHAN_REMOTE_AUDIO_MS = 15000;
 
+type ScheduleReconnectOpts = {
+  reason: string;
+  source: string;
+  force?: boolean;
+  callerHint?: string;
+};
+
+const UNSPECIFIED_RECONNECT_VALUES = new Set(["", "unspecified", "-"]);
+
+function isUnspecifiedReconnectLabel(value: string | null | undefined): boolean {
+  return UNSPECIFIED_RECONNECT_VALUES.has(String(value ?? "").trim());
+}
+
+function getReconnectCallerHint(explicit?: string): string {
+  if (explicit) return explicit;
+  const stack = new Error().stack;
+  if (!stack) return "-";
+  return stack.split("\n").slice(2, 5).join(" <- ").trim() || "-";
+}
+
 type TrackEndedHoldCheck = {
   shouldHold: boolean;
   reason: string;
@@ -652,8 +672,8 @@ export function usePeerConnections({
   const scheduleReconnectRef = useRef<
     ((
       remoteId: string,
-      delay?: number,
-      opts?: { reason?: string; force?: boolean; source?: string }
+      delay: number | undefined,
+      opts: ScheduleReconnectOpts
     ) => boolean) | null
   >(null);
   const setPeerStateRef = useRef<(remoteId: string, state: PeerState) => void>(
@@ -699,7 +719,15 @@ export function usePeerConnections({
   const passiveWaitOfferTimersRef = useRef<Map<string, number>>(new Map());
   const noStreamNoOfferTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
-    Map<string, { reason: string; scheduledInMs: number; scheduledAt: number }>
+    Map<
+      string,
+      {
+        reason: string;
+        source: string;
+        scheduledInMs: number;
+        scheduledAt: number;
+      }
+    >
   >(new Map());
   const lastHealActionAtRef = useRef<Map<string, number>>(new Map());
   const lastHealRunCompletedAtRef = useRef(0);
@@ -1084,6 +1112,7 @@ export function usePeerConnections({
             voicePolicy.trackEndedReconnectMs,
             {
               reason: "remote_track_ended_hold_expired",
+              source: "track_ended_hold_timer",
               force: voicePolicy.trackEndedForceReconnect,
             }
           )
@@ -2067,7 +2096,7 @@ export function usePeerConnections({
     (remoteId: string) => Promise<boolean>
   >(async () => false);
   const attemptTurnFallbackForPeerRef = useRef<
-    (remoteId: string) => Promise<boolean>
+    (remoteId: string, turnReason?: string) => Promise<boolean>
   >(async () => false);
 
   const getOrCreatePeerIceStats = useCallback((remoteId: string) => {
@@ -2157,18 +2186,38 @@ export function usePeerConnections({
     (
       remoteId: string,
       delay = 2000,
-      opts?: { reason?: string; force?: boolean; source?: string }
+      opts: ScheduleReconnectOpts
     ): boolean => {
-      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+      const callerHint = getReconnectCallerHint(opts.callerHint);
+      const reasonRaw = String(opts.reason ?? "").trim();
+      const sourceRaw = String(opts.source ?? "").trim();
+
+      const pcEarly = pcsRef.current.get(remoteId);
+      const mediaEarly = getPeerMedia(remoteId);
+
+      if (
+        isUnspecifiedReconnectLabel(reasonRaw) ||
+        isUnspecifiedReconnectLabel(sourceRaw)
+      ) {
         console.warn(
-          `[voice-peer] reconnect-skip remote=${compactDeviceId(remoteId)} reason=${opts?.reason ?? "unspecified"} ` +
-            `micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)}`
+          `[voice-peer] reconnect-blocked remote=${compactDeviceId(remoteId)} reason=missing_reconnect_reason ` +
+            `source=${sourceRaw || "-"} requestedReason=${reasonRaw || "-"} callerHint=${callerHint} ` +
+            `conn=${pcEarly?.connectionState ?? "-"} ice=${pcEarly?.iceConnectionState ?? "-"} ` +
+            `tracks=${mediaEarly.remoteTracksCount} ${formatVoiceModeSuffix()}`
         );
         return false;
       }
 
-      const source = opts?.source ?? opts?.reason ?? "unspecified";
-      let reason = opts?.reason ?? "unspecified";
+      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
+        console.warn(
+          `[voice-peer] reconnect-skip remote=${compactDeviceId(remoteId)} reason=${reasonRaw} source=${sourceRaw} ` +
+            `micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} callerHint=${callerHint}`
+        );
+        return false;
+      }
+
+      const source = sourceRaw;
+      let reason = reasonRaw;
 
       const p2pHoldUntil = p2pDirectFailedHoldUntilRef.current.get(remoteId);
       if (
@@ -2199,7 +2248,7 @@ export function usePeerConnections({
 
       const holdBlocksForce =
         waitCheck?.holdReason === "active_playback_wait_connected";
-      if (waitCheck?.shouldHold && (!opts?.force || holdBlocksForce)) {
+      if (waitCheck?.shouldHold && (!opts.force || holdBlocksForce)) {
         if (pc) {
           console.log(
             formatReconnectHoldLog(
@@ -2218,20 +2267,63 @@ export function usePeerConnections({
         reason = resolveGraceExpiredReconnectReason(reason);
       }
 
-      if (!opts?.force && reconnectPendingRef.current.has(remoteId)) {
-        console.log(
-          `[voice-peer] reconnect-deduped remote=${compactDeviceId(remoteId)} reason=${reason} existing=${reconnectPendingRef.current.get(remoteId)?.reason ?? "-"}`
-        );
-        voiceDebugLog("[voice-peer] reconnect-deduped", {
-          sessionId,
-          localDeviceId: deviceId,
-          remoteDeviceId: remoteId,
-          reason,
-          existingReason: reconnectPendingRef.current.get(remoteId)?.reason,
-          existingScheduledInMs: reconnectPendingRef.current.get(remoteId)
-            ?.scheduledInMs,
-        });
-        return false;
+      const hasPlaybackProtection =
+        (media.remoteTracksCount > 0 || media.hasRemoteStream) &&
+        timestamps.lastPlaybackConfirmedAt == null &&
+        (timestamps.lastPlaySuccessAt != null ||
+          timestamps.lastPlaybackActiveAt != null);
+
+      if (hasPlaybackProtection) {
+        const stats = getOrCreatePeerIceStats(remoteId);
+        if (hasNoRelayCandidates(stats)) {
+          const transportFailed =
+            pc?.connectionState === "failed" ||
+            pc?.iceConnectionState === "failed";
+          logVoiceIceP2pDirectFailed({
+            remoteId,
+            reason: transportFailed
+              ? "failed_no_relay_candidate"
+              : "no_relay_candidate",
+            stats,
+          });
+          const turnReason = transportFailed
+            ? "failed_with_host_srflx_only"
+            : "host_srflx_checking_stuck";
+          console.log(
+            `[voice-peer] turn-fallback-needed remote=${compactDeviceId(remoteId)} ` +
+              `reason=${turnReason} enabled=${turnFallbackEnabledRef.current} source=${source} ${formatVoiceModeSuffix()}`
+          );
+          void attemptTurnFallbackForPeerRef.current(remoteId, turnReason);
+          return false;
+        }
+      }
+
+      if (!opts.force && reconnectPendingRef.current.has(remoteId)) {
+        const existing = reconnectPendingRef.current.get(remoteId)!;
+        if (isUnspecifiedReconnectLabel(existing.reason)) {
+          console.log(
+            `[voice-peer] reconnect-cancel-unspecified remote=${compactDeviceId(remoteId)} ` +
+              `newReason=${reason} newSource=${source} existingReason=${existing.reason} ${formatVoiceModeSuffix()}`
+          );
+          clearReconnectTimer(remoteId);
+          reconnectPendingRef.current.delete(remoteId);
+        } else {
+          console.log(
+            `[voice-peer] reconnect-deduped remote=${compactDeviceId(remoteId)} reason=${reason} source=${source} ` +
+              `existing=${existing.reason} existingSource=${existing.source} ${formatVoiceModeSuffix()}`
+          );
+          voiceDebugLog("[voice-peer] reconnect-deduped", {
+            sessionId,
+            localDeviceId: deviceId,
+            remoteDeviceId: remoteId,
+            reason,
+            source,
+            existingReason: existing.reason,
+            existingSource: existing.source,
+            existingScheduledInMs: existing.scheduledInMs,
+          });
+          return false;
+        }
       }
 
       clearReconnectTimer(remoteId);
@@ -2240,6 +2332,7 @@ export function usePeerConnections({
 
       reconnectPendingRef.current.set(remoteId, {
         reason,
+        source,
         scheduledInMs: delay,
         scheduledAt: Date.now(),
       });
@@ -2287,6 +2380,7 @@ export function usePeerConnections({
       clearReconnectTimer,
       closePeer,
       deviceId,
+      getOrCreatePeerIceStats,
       hasLiveRemoteAudioStream,
       localAudioTrackRef,
       localStreamRef,
@@ -2440,6 +2534,7 @@ export function usePeerConnections({
             voicePolicy.trackEndedReconnectMs,
             {
               reason: "remote_track_ended",
+              source: "track_ended_handler",
               force: voicePolicy.trackEndedForceReconnect,
             }
           )
@@ -2526,9 +2621,13 @@ export function usePeerConnections({
         ice: pc.iceConnectionState,
       });
       if (hasNoRelayCandidates(stats)) {
+        const transportFailed =
+          pc.connectionState === "failed" || pc.iceConnectionState === "failed";
         logVoiceIceP2pDirectFailed({
           remoteId,
-          reason: "no_relay_candidate",
+          reason: transportFailed
+            ? "failed_no_relay_candidate"
+            : "no_relay_candidate",
           stats,
         });
       }
@@ -2634,7 +2733,9 @@ export function usePeerConnections({
 
         const stats = getOrCreatePeerIceStats(remoteId);
         if (hasNoRelayCandidates(stats)) {
-          void attemptTurnFallbackForPeerRef.current(remoteId).then((started) => {
+          void attemptTurnFallbackForPeerRef
+            .current(remoteId, "host_srflx_checking_stuck")
+            .then((started) => {
             if (started) return;
 
             const holdUntil = p2pDirectFailedHoldUntilRef.current.get(remoteId);
@@ -2775,7 +2876,7 @@ export function usePeerConnections({
   }, []);
 
   const attemptTurnFallbackForPeer = useCallback(
-    async (remoteId: string) => {
+    async (remoteId: string, turnReason = "host_srflx_checking_stuck") => {
       if (turnFallbackAttemptedRef.current.get(remoteId)) {
         return false;
       }
@@ -2787,7 +2888,7 @@ export function usePeerConnections({
 
       console.log(
         `[voice-peer] turn-fallback-needed remote=${compactDeviceId(remoteId)} ` +
-          `reason=host_srflx_checking_stuck ${formatVoiceModeSuffix()}`
+          `reason=${turnReason} enabled=${turnFallbackEnabledRef.current} ${formatVoiceModeSuffix()}`
       );
 
       if (!turnFallbackEnabledRef.current) {
@@ -3031,7 +3132,10 @@ export function usePeerConnections({
             media: getPeerMedia(remoteId),
           });
           setPeerState(remoteId, "connecting");
-          scheduleReconnect(remoteId, 1200);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "ice_disconnected",
+            source: "pc_oniceconnectionstatechange",
+          });
         }
 
         if (iceState === "failed") {
@@ -3052,7 +3156,10 @@ export function usePeerConnections({
           ) {
             void enableTurnFallback().then((ok) => {
               if (!ok) {
-                scheduleReconnect(remoteId, 1200);
+                scheduleReconnect(remoteId, 1200, {
+                  reason: "ice_failed",
+                  source: "pc_oniceconnectionstatechange",
+                });
                 return;
               }
 
@@ -3060,13 +3167,19 @@ export function usePeerConnections({
               closePeer(remoteId, CLOSE_FOR_RECONNECT);
               assignConnectionId(remoteId, nextConnectionId, "ice_failed_turn_fallback");
               connectStartedAtRef.current.set(remoteId, Date.now());
-              scheduleReconnect(remoteId, voicePolicy.fastReconnectMs);
+              scheduleReconnect(remoteId, voicePolicy.fastReconnectMs, {
+                reason: "ice_failed",
+                source: "pc_oniceconnectionstatechange",
+              });
             });
 
             return;
           }
 
-          scheduleReconnect(remoteId, 1200);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "ice_failed",
+            source: "pc_oniceconnectionstatechange",
+          });
         }
       };
 
@@ -3121,7 +3234,10 @@ export function usePeerConnections({
                   "connecting_turn_fallback"
                 );
                 connectStartedAtRef.current.set(remoteId, Date.now());
-                scheduleReconnect(remoteId, voicePolicy.fastReconnectMs);
+                scheduleReconnect(remoteId, voicePolicy.fastReconnectMs, {
+                  reason: "connecting_stuck",
+                  source: "pc_onconnectionstatechange_turn_probe",
+                });
               });
             }, 5000);
           }
@@ -3167,7 +3283,10 @@ export function usePeerConnections({
             media: getPeerMedia(remoteId),
           });
           setPeerState(remoteId, "connecting");
-          scheduleReconnect(remoteId, 1200);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "pc_disconnected",
+            source: "pc_onconnectionstatechange",
+          });
         }
 
         if (state === "failed") {
@@ -3189,7 +3308,10 @@ export function usePeerConnections({
             void enableTurnFallback().then((ok) => {
               if (!ok) {
                 closePeer(remoteId, CLOSE_FOR_RECONNECT);
-                scheduleReconnect(remoteId, 1200);
+                scheduleReconnect(remoteId, 1200, {
+                  reason: "pc_failed",
+                  source: "pc_onconnectionstatechange",
+                });
                 return;
               }
 
@@ -3201,14 +3323,19 @@ export function usePeerConnections({
                 "conn_failed_turn_fallback"
               );
               connectStartedAtRef.current.set(remoteId, Date.now());
-              scheduleReconnect(remoteId, voicePolicy.fastReconnectMs);
+              scheduleReconnect(remoteId, voicePolicy.fastReconnectMs, {
+                reason: "pc_failed",
+                source: "pc_onconnectionstatechange",
+              });
             });
 
             return;
           }
 
-          closePeer(remoteId, CLOSE_FOR_RECONNECT);
-          scheduleReconnect(remoteId, 1200);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "pc_failed",
+            source: "pc_onconnectionstatechange",
+          });
         }
 
         if (state === "closed") {
@@ -3970,6 +4097,7 @@ export function usePeerConnections({
           run: () => {
             scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
               reason: "ended_stream_without_live_track",
+              source: "heal_peer_connections",
               force: true,
             });
           },
@@ -4067,6 +4195,7 @@ export function usePeerConnections({
           run: () => {
             scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
               reason: "heal_remote_track_ended",
+              source: "heal_peer_connections",
             });
           },
         });
@@ -4123,6 +4252,7 @@ export function usePeerConnections({
             run: () => {
               scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
                 reason: "heal_live_stream_not_connected_timeout",
+                source: "heal_peer_connections",
                 force: true,
               });
             },
@@ -4138,6 +4268,7 @@ export function usePeerConnections({
           run: () => {
             scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
               reason: "heal_stream_without_connected_pc",
+              source: "heal_peer_connections",
             });
           },
         });
@@ -4166,6 +4297,7 @@ export function usePeerConnections({
           run: () => {
             scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
               reason: "heal_pc_failed_or_closed",
+              source: "heal_peer_connections",
               force: true,
             });
           },
@@ -4190,6 +4322,7 @@ export function usePeerConnections({
               offeredPeersRef.current.delete(remoteId);
               scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
                 reason: "heal_stuck_have_local_offer",
+                source: "heal_peer_connections",
               });
             },
           });
@@ -4645,7 +4778,10 @@ export function usePeerConnections({
 
         if (row.signal_type === "offer" || row.signal_type === "answer") {
           closePeer(remoteId, CLOSE_FOR_RECONNECT);
-          scheduleReconnect(remoteId, 1200);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "signal_handle_error",
+            source: "handle_signal",
+          });
         }
       }
     },
@@ -5022,7 +5158,10 @@ export function usePeerConnections({
           pc.iceConnectionState === "disconnected";
 
         if (badState) {
-          scheduleReconnect(remoteId, 1200);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "transport_bad_state",
+            source: "peer_transport_watchdog",
+          });
         }
       }
     }, 4000);
