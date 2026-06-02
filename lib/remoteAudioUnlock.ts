@@ -1,8 +1,10 @@
 "use client";
 
 type UnlockListener = () => void;
+type PlayAllListener = () => void;
 
 const listeners = new Set<UnlockListener>();
+const playAllListeners = new Set<PlayAllListener>();
 let sharedAudioContext: AudioContext | null = null;
 
 function getSharedAudioContext(): AudioContext | null {
@@ -42,9 +44,29 @@ function unlockDomAudioElements() {
   });
 }
 
+export function registerRemoteAudioPlayAll(listener: PlayAllListener) {
+  playAllListeners.add(listener);
+  return () => {
+    playAllListeners.delete(listener);
+  };
+}
+
 export function requestRemoteAudioUnlock() {
   unlockDomAudioElements();
   void resumeSharedAudioContext();
+
+  const remoteIds = Array.from(playAllListeners).length;
+  console.log(
+    `[remote-audio] play-attempt-all reason=user_unlock remotes=${remoteIds}`
+  );
+
+  for (const listener of playAllListeners) {
+    try {
+      listener();
+    } catch {
+      // ignore per-element failures
+    }
+  }
 
   for (const listener of listeners) {
     try {

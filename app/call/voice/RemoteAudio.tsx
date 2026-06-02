@@ -6,10 +6,15 @@ import {
   getVoiceModePolicy,
 } from "@/lib/voiceClientEnv";
 import {
+  registerRemoteAudioPlayAll,
   requestRemoteAudioUnlock,
   resumeSharedAudioContext,
   subscribeRemoteAudioUnlock,
 } from "@/lib/remoteAudioUnlock";
+import {
+  logRemoteAudioPipeline,
+  logVoicePeerAutoRecover,
+} from "./voiceDiagnostics";
 
 const voicePolicy = getVoiceModePolicy();
 const ATTACH_LOG_THROTTLE_MS = 5000;
@@ -434,9 +439,36 @@ export default function RemoteAudio({
         silentReattachAttemptsRef.current = 0;
       }
       emitPlaybackHealth(health);
+
+      const now = Date.now();
+      logRemoteAudioPipeline({
+        remoteDeviceId: remoteId,
+        hasPc: true,
+        conn: "-",
+        ice: "-",
+        hasStream: !!stream,
+        trackReady: health.trackReady,
+        ontrackAgeMs: lastAttachAtRef.current
+          ? now - lastAttachAtRef.current
+          : null,
+        attached: el.srcObject === stream,
+        audioPaused: el.paused,
+        audioMuted: el.muted,
+        volume: el.volume,
+        readyState: el.readyState,
+        playSuccessAgeMs: playSuccessAtRef.current
+          ? now - playSuccessAtRef.current
+          : null,
+        currentTime: el.currentTime,
+        advanced: health.currentTimeAdvanced,
+        level: health.level,
+        audioActuallyPlaying: health.audioActuallyPlaying,
+        outputState: getSinkId(el),
+      });
+
       return health;
     },
-    [emitPlaybackHealth, stream]
+    [emitPlaybackHealth, remoteId, stream]
   );
 
   const playAudioRef = useRef<
@@ -737,6 +769,11 @@ export default function RemoteAudio({
       console.log(
         `[remote-audio] reattach remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason} attempt=${attempt}/${MAX_SILENT_REATTACH_ATTEMPTS} ${formatVoiceModeSuffix()}`
       );
+      logVoicePeerAutoRecover({
+        remoteId,
+        action: "reattach",
+        reason,
+      });
 
       try {
         el.pause();
@@ -901,6 +938,11 @@ export default function RemoteAudio({
             lastAttachedStreamIdRef.current = null;
             lastAttachedTrackIdRef.current = null;
             attachStreamRef.current?.();
+            logVoicePeerAutoRecover({
+              remoteId,
+              action: "play_retry",
+              reason: "play_missing_retry",
+            });
             void playAudioRef.current({ reason: "play_missing_retry" });
           }
           return;
@@ -925,6 +967,12 @@ export default function RemoteAudio({
 
   const unlockRemoteAudio = useCallback(() => {
     void playAudio({ fromUnlock: true, reason: "user_unlock" });
+  }, [playAudio]);
+
+  useEffect(() => {
+    return registerRemoteAudioPlayAll(() => {
+      void playAudio({ fromUnlock: true, reason: "user_unlock" });
+    });
   }, [playAudio]);
 
   const logStreamProps = useCallback(

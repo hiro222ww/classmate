@@ -11,6 +11,7 @@ import {
   checkVoiceMeshExpectations,
   compactDeviceId,
   logHealPeerAction as emitHealPeerAction,
+  logVoicePeerAutoRecover,
   logHealRecoverySuccess,
   logPeerStateChange,
   logPeerStateWarning,
@@ -2568,6 +2569,11 @@ export function usePeerConnections({
         `[voice-peer] reconnect-scheduled target=${compactDeviceId(remoteId)} reason=${reason} source=${source} delayMs=${delay} owner=${deviceId < remoteId} ` +
           `otherPeers=${buildPeerScopeSnapshot(pcsRef.current, getPeerMedia, remoteId)} ${formatVoiceModeSuffix()}`
       );
+      logVoicePeerAutoRecover({
+        remoteId,
+        action: "reconnect",
+        reason,
+      });
 
       const timer = window.setTimeout(() => {
         reconnectTimersRef.current.delete(remoteId);

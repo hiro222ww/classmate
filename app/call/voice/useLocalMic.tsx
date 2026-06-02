@@ -732,6 +732,12 @@ export function useLocalMic({
         return;
       }
 
+      if (releaseMicOnMute && !getUserMuted()) {
+        console.log(
+          `[local-mic] session_mount acquire reason=reload_restore_unmuted ${formatVoiceModeSuffix()}`
+        );
+      }
+
       const showHint =
         !initialHintShownRef.current && !getCachedMic(sessionId).cache;
       if (showHint) {

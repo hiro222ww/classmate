@@ -10,7 +10,17 @@ export const RECENT_REMOTE_SIGNAL_MS = 10_000;
 export const REMOTE_AUDIO_PLAY_SUCCESS_RECENT_MS = 15_000;
 export const REMOTE_AUDIO_UNSTABLE_MS = 15_000;
 export const RECONNECT_BUTTON_STALL_MS = 15_000;
+export const UI_RECONNECT_BUTTON_MIN_UNHEALTHY_MS = 17_000;
+export const UI_LABEL_CONFIRMING_DELAY_MS = 2500;
+export const UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS = 5000;
 export const REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD = 0.02;
+
+const STABLE_CONNECTED_LABELS = new Set(["接続済み", "音声受信中"]);
+const SOFTER_DOWNGRADE_LABELS = new Set([
+  "音声確認中",
+  "接続処理中",
+  "再接続中",
+]);
 
 export type RemoteAudioHealthInput = {
   playSuccess?: boolean;
@@ -106,7 +116,7 @@ const REMOTE_AUDIO_LABEL_STYLE = {
   },
 } as const;
 
-/** ontrack/unmute 後、play-success 前の短い確認ウィンドウ */
+/** ontrack/unmute 後、play-success 前の短い確認ウィンドウ（内部判定） */
 export function isPrePlaySuccessConfirming(params: {
   hasRemoteStream: boolean;
   trackReady: string;
@@ -125,6 +135,323 @@ export function isPrePlaySuccessConfirming(params: {
 
   const latest = Math.max(...anchors);
   return params.nowMs - latest < RECENT_REMOTE_SIGNAL_MS;
+}
+
+/** UI に「音声確認中」を出すか（短い揺れは抑止） */
+export function shouldShowPrePlayConfirmingLabel(params: {
+  hasRemoteStream: boolean;
+  trackReady: string;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  nowMs: number;
+}): boolean {
+  if (!isPrePlaySuccessConfirming(params)) return false;
+  const anchors = [params.lastOnTrackAt, params.lastUnmuteAt].filter(
+    (value): value is number => value != null
+  );
+  if (!anchors.length) return false;
+  const latest = Math.max(...anchors);
+  return params.nowMs - latest >= UI_LABEL_CONFIRMING_DELAY_MS;
+}
+
+export type PeerLabelHysteresisState = {
+  displayedText: string;
+  displayedReason: string;
+  stableConnectedSinceMs: number | null;
+  pendingDowngradeText: string | null;
+  pendingDowngradeSinceMs: number | null;
+};
+
+export function logUiLabelHold(params: {
+  remoteDeviceId: string;
+  previous: string;
+  candidate: string;
+  reason: string;
+}) {
+  console.log(
+    `[call-status-peer] ui-label-hold remote=${params.remoteDeviceId.slice(-4)} ` +
+      `previous=${params.previous} candidate=${params.candidate} reason=${params.reason}`
+  );
+}
+
+export function applyCallMemberStatusHysteresis(params: {
+  remoteDeviceId: string;
+  candidate: {
+    text: string;
+    color: string;
+    chipBg: string;
+    chipText: string;
+    reason: string;
+    source: string;
+    statusSource?: string;
+  };
+  previous: PeerLabelHysteresisState | null;
+  nowMs: number;
+  isMe: boolean;
+  recentPlaySuccess: boolean;
+  audioActuallyPlaying: boolean;
+  playbackActive: boolean;
+}): {
+  status: typeof params.candidate;
+  state: PeerLabelHysteresisState;
+} {
+  if (params.isMe) {
+    return {
+      status: params.candidate,
+      state: {
+        displayedText: params.candidate.text,
+        displayedReason: params.candidate.reason,
+        stableConnectedSinceMs: null,
+        pendingDowngradeText: null,
+        pendingDowngradeSinceMs: null,
+      },
+    };
+  }
+
+  const candidate = params.candidate;
+  const prev = params.previous;
+  const previousText = prev?.displayedText ?? candidate.text;
+  const hadStableConnected =
+    prev?.stableConnectedSinceMs != null ||
+    STABLE_CONNECTED_LABELS.has(previousText);
+
+  if (STABLE_CONNECTED_LABELS.has(candidate.text)) {
+    return {
+      status: candidate,
+      state: {
+        displayedText: candidate.text,
+        displayedReason: candidate.reason,
+        stableConnectedSinceMs: params.nowMs,
+        pendingDowngradeText: null,
+        pendingDowngradeSinceMs: null,
+      },
+    };
+  }
+
+  const keepConnectedEvidence =
+    params.recentPlaySuccess ||
+    params.audioActuallyPlaying ||
+    params.playbackActive;
+
+  if (
+    hadStableConnected &&
+    STABLE_CONNECTED_LABELS.has(previousText) &&
+    SOFTER_DOWNGRADE_LABELS.has(candidate.text)
+  ) {
+    if (keepConnectedEvidence) {
+      logUiLabelHold({
+        remoteDeviceId: params.remoteDeviceId,
+        previous: previousText,
+        candidate: candidate.text,
+        reason: "recent_playback_active",
+      });
+      return {
+        status: {
+          ...candidate,
+          ...REMOTE_AUDIO_LABEL_STYLE.connected,
+          text: previousText,
+          reason: "hysteresis_hold_connected",
+        },
+        state: {
+          displayedText: previousText,
+          displayedReason: prev?.displayedReason ?? candidate.reason,
+          stableConnectedSinceMs:
+            prev?.stableConnectedSinceMs ?? params.nowMs,
+          pendingDowngradeText: null,
+          pendingDowngradeSinceMs: null,
+        },
+      };
+    }
+
+    if (candidate.text === "音声確認中") {
+      logUiLabelHold({
+        remoteDeviceId: params.remoteDeviceId,
+        previous: previousText,
+        candidate: candidate.text,
+        reason: "short_transient",
+      });
+      return {
+        status: {
+          ...candidate,
+          ...REMOTE_AUDIO_LABEL_STYLE.connected,
+          text: previousText,
+          reason: "hysteresis_hold_short_transient",
+        },
+        state: {
+          displayedText: previousText,
+          displayedReason: prev?.displayedReason ?? candidate.reason,
+          stableConnectedSinceMs:
+            prev?.stableConnectedSinceMs ?? params.nowMs,
+          pendingDowngradeText: candidate.text,
+          pendingDowngradeSinceMs:
+            prev?.pendingDowngradeSinceMs ?? params.nowMs,
+        },
+      };
+    }
+
+    const pendingSince =
+      prev?.pendingDowngradeText === candidate.text &&
+      prev.pendingDowngradeSinceMs != null
+        ? prev.pendingDowngradeSinceMs
+        : params.nowMs;
+    const pendingMs = params.nowMs - pendingSince;
+
+    if (pendingMs < UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS) {
+      logUiLabelHold({
+        remoteDeviceId: params.remoteDeviceId,
+        previous: previousText,
+        candidate: candidate.text,
+        reason: `downgrade_pending_${pendingMs}ms`,
+      });
+      return {
+        status: {
+          ...candidate,
+          ...REMOTE_AUDIO_LABEL_STYLE.connected,
+          text: previousText,
+          reason: "hysteresis_hold_downgrade_pending",
+        },
+        state: {
+          displayedText: previousText,
+          displayedReason: prev?.displayedReason ?? candidate.reason,
+          stableConnectedSinceMs:
+            prev?.stableConnectedSinceMs ?? params.nowMs,
+          pendingDowngradeText: candidate.text,
+          pendingDowngradeSinceMs: pendingSince,
+        },
+      };
+    }
+  }
+
+  if (
+    hadStableConnected &&
+    candidate.text === "音声が不安定です" &&
+    !keepConnectedEvidence
+  ) {
+    const pendingSince = prev?.pendingDowngradeSinceMs ?? params.nowMs;
+    if (params.nowMs - pendingSince < UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS) {
+      logUiLabelHold({
+        remoteDeviceId: params.remoteDeviceId,
+        previous: previousText,
+        candidate: candidate.text,
+        reason: "unstable_not_sustained",
+      });
+      return {
+        status: {
+          ...candidate,
+          ...REMOTE_AUDIO_LABEL_STYLE.connected,
+          text: previousText,
+          reason: "hysteresis_hold_unstable_pending",
+        },
+        state: {
+          displayedText: previousText,
+          displayedReason: prev?.displayedReason ?? candidate.reason,
+          stableConnectedSinceMs:
+            prev?.stableConnectedSinceMs ?? params.nowMs,
+          pendingDowngradeText: candidate.text,
+          pendingDowngradeSinceMs: pendingSince,
+        },
+      };
+    }
+  }
+
+  return {
+    status: candidate,
+    state: {
+      displayedText: candidate.text,
+      displayedReason: candidate.reason,
+      stableConnectedSinceMs: STABLE_CONNECTED_LABELS.has(candidate.text)
+        ? params.nowMs
+        : prev?.stableConnectedSinceMs ?? null,
+      pendingDowngradeText: null,
+      pendingDowngradeSinceMs: null,
+    },
+  };
+}
+
+export function computeAudioUnhealthySinceMs(params: {
+  nowMs: number;
+  remoteAudioHealth?: RemoteAudioHealthInput | null;
+  hasRemoteStream: boolean;
+  trackReady?: string;
+  wasPeerConnected: boolean;
+}): number | null {
+  if (!params.wasPeerConnected) return null;
+  const health = params.remoteAudioHealth;
+  const trackReady = params.trackReady ?? "-";
+  const now = params.nowMs;
+
+  if (trackReady === "ended") {
+    return health?.playFailedAt ?? now;
+  }
+
+  if (
+    isStalePlayFailure(health, now) &&
+    health?.playFailedAt != null
+  ) {
+    return health.playFailedAt;
+  }
+
+  if (
+    !params.hasRemoteStream ||
+    trackReady === "-" ||
+    trackReady === "ended"
+  ) {
+    return health?.lastAttachAt ?? now;
+  }
+
+  if (
+    params.hasRemoteStream &&
+    trackReady === "live" &&
+    health?.audioActuallyPlaying !== true &&
+    (health?.lastPlaySuccessAt == null ||
+      now - health.lastPlaySuccessAt >= RECONNECT_BUTTON_STALL_MS)
+  ) {
+    return (
+      health?.lastAttachAt ??
+      health?.playFailedAt ??
+      now - RECONNECT_BUTTON_STALL_MS
+    );
+  }
+
+  return null;
+}
+
+export function resolveDisplayManualAudioReconnect(params: {
+  isMe: boolean;
+  hasRemoteStream: boolean;
+  trackReady?: string;
+  conn: string;
+  ice: string;
+  hasPc: boolean;
+  remoteAudioHealth?: RemoteAudioHealthInput | null;
+  lastOnTrackAt?: number | null;
+  lastUnmuteAt?: number | null;
+  lastPlaySuccessAt?: number | null;
+  lastPlaybackConfirmedAt?: number | null;
+  lastPlaybackActiveAt?: number | null;
+  liveStreamHealHold?: boolean;
+  p2pDirectFailedHoldActive?: boolean;
+  autoHardResetGiveUp?: boolean;
+  reconnectRequestPending?: boolean;
+  wasPeerConnected?: boolean;
+  nowMs?: number;
+  debugUi?: boolean;
+  audioUnhealthySinceMs?: number | null;
+}): { show: boolean; reason: string } {
+  const base = resolveManualAudioReconnect(params);
+  if (!base.show) return base;
+  if (params.debugUi === true) return base;
+
+  const now = params.nowMs ?? Date.now();
+  const since = params.audioUnhealthySinceMs;
+  if (since == null) {
+    return { show: false, reason: "unhealthy_since_unknown" };
+  }
+  if (now - since < UI_RECONNECT_BUTTON_MIN_UNHEALTHY_MS) {
+    return { show: false, reason: `unhealthy_too_short_${now - since}ms` };
+  }
+  return base;
 }
 
 export function resolveUserFacingRemoteAudioLabel(params: {
@@ -189,7 +516,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   }
 
   if (
-    isPrePlaySuccessConfirming({
+    shouldShowPrePlayConfirmingLabel({
       hasRemoteStream: params.hasRemoteStream,
       trackReady: params.trackLive ? "live" : "-",
       lastOnTrackAt: params.lastOnTrackAt,
@@ -836,7 +1163,16 @@ export function resolveCallMemberStatus(params: {
     if (recentPlaySuccess || health?.playSuccess === true) {
       return remoteAudioUserLabel();
     }
-    if (prePlayConfirming) {
+    if (
+      shouldShowPrePlayConfirmingLabel({
+        hasRemoteStream,
+        trackReady,
+        lastOnTrackAt: params.lastOnTrackAt,
+        lastUnmuteAt: params.lastUnmuteAt,
+        lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+        nowMs,
+      })
+    ) {
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.confirming,
         text: "音声確認中",
@@ -850,7 +1186,16 @@ export function resolveCallMemberStatus(params: {
 
   // B. Live track + remote stream + recent ontrack/unmute (play-success 前は音声確認中).
   if (trackLive && hasRemoteStream && recentSignals) {
-    if (prePlayConfirming) {
+    if (
+      shouldShowPrePlayConfirmingLabel({
+        hasRemoteStream,
+        trackReady,
+        lastOnTrackAt: params.lastOnTrackAt,
+        lastUnmuteAt: params.lastUnmuteAt,
+        lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+        nowMs,
+      })
+    ) {
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.confirming,
         text: "音声確認中",
@@ -870,7 +1215,16 @@ export function resolveCallMemberStatus(params: {
       if (audioHealthy || recentPlaySuccess) {
         return remoteAudioUserLabel();
       }
-      if (prePlayConfirming) {
+      if (
+        shouldShowPrePlayConfirmingLabel({
+          hasRemoteStream,
+          trackReady,
+          lastOnTrackAt: params.lastOnTrackAt,
+          lastUnmuteAt: params.lastUnmuteAt,
+          lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+          nowMs,
+        })
+      ) {
         return {
           ...REMOTE_AUDIO_LABEL_STYLE.confirming,
           text: "音声確認中",
@@ -900,7 +1254,16 @@ export function resolveCallMemberStatus(params: {
       return remoteAudioUserLabel();
     }
 
-    if (prePlayConfirming) {
+    if (
+      shouldShowPrePlayConfirmingLabel({
+        hasRemoteStream,
+        trackReady,
+        lastOnTrackAt: params.lastOnTrackAt,
+        lastUnmuteAt: params.lastUnmuteAt,
+        lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
+        nowMs,
+      })
+    ) {
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.confirming,
         text: "音声確認中",

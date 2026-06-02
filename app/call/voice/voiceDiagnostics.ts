@@ -352,6 +352,91 @@ export type PeerStatusDiagnostics = {
   reconnectRequestPending?: boolean;
 };
 
+const remoteAudioPipelineLogAt = new Map<string, number>();
+const REMOTE_AUDIO_PIPELINE_LOG_THROTTLE_MS = 4000;
+
+type RemoteAudioPipelinePeerContext = {
+  hasPc: boolean;
+  conn: string;
+  ice: string;
+};
+
+const remoteAudioPipelinePeerContext = new Map<
+  string,
+  RemoteAudioPipelinePeerContext
+>();
+
+export function setRemoteAudioPipelinePeerContext(
+  remoteDeviceId: string,
+  context: RemoteAudioPipelinePeerContext
+) {
+  remoteAudioPipelinePeerContext.set(remoteDeviceId, context);
+}
+
+function getRemoteAudioPipelinePeerContext(
+  remoteDeviceId: string
+): RemoteAudioPipelinePeerContext {
+  return (
+    remoteAudioPipelinePeerContext.get(remoteDeviceId) ?? {
+      hasPc: false,
+      conn: "-",
+      ice: "-",
+    }
+  );
+}
+
+export function logRemoteAudioPipeline(params: {
+  remoteDeviceId: string;
+  hasPc: boolean;
+  conn: string;
+  ice: string;
+  hasStream: boolean;
+  trackReady: string;
+  ontrackAgeMs: number | null;
+  attached: boolean;
+  audioPaused: boolean | null;
+  audioMuted: boolean | null;
+  volume: number | null;
+  readyState: number | null;
+  playSuccessAgeMs: number | null;
+  currentTime: number | null;
+  advanced: boolean | null;
+  level: number | null;
+  audioActuallyPlaying: boolean;
+  outputState: string;
+}) {
+  const key = params.remoteDeviceId;
+  const now = Date.now();
+  const prev = remoteAudioPipelineLogAt.get(key) ?? 0;
+  if (now - prev < REMOTE_AUDIO_PIPELINE_LOG_THROTTLE_MS) return;
+  remoteAudioPipelineLogAt.set(key, now);
+
+  const peerCtx = getRemoteAudioPipelinePeerContext(params.remoteDeviceId);
+
+  console.log(
+    `[remote-audio-pipeline] remote=${compactDeviceId(params.remoteDeviceId)} ` +
+      `hasPc=${params.hasPc || peerCtx.hasPc} conn=${params.conn !== "-" ? params.conn : peerCtx.conn} ice=${params.ice !== "-" ? params.ice : peerCtx.ice} ` +
+      `hasStream=${params.hasStream} trackReady=${params.trackReady} ` +
+      `ontrackAgeMs=${params.ontrackAgeMs ?? "-"} attached=${params.attached} ` +
+      `audioPaused=${params.audioPaused ?? "-"} audioMuted=${params.audioMuted ?? "-"} ` +
+      `volume=${params.volume ?? "-"} readyState=${params.readyState ?? "-"} ` +
+      `playSuccessAgeMs=${params.playSuccessAgeMs ?? "-"} currentTime=${params.currentTime ?? "-"} ` +
+      `advanced=${params.advanced ?? "-"} level=${params.level ?? "-"} ` +
+      `audioActuallyPlaying=${params.audioActuallyPlaying} outputState=${params.outputState}`
+  );
+}
+
+export function logVoicePeerAutoRecover(params: {
+  remoteId: string;
+  action: "play_retry" | "reattach" | "reconnect";
+  reason: string;
+}) {
+  console.log(
+    `[voice-peer] auto-recover remote=${compactDeviceId(params.remoteId)} ` +
+      `action=${params.action} reason=${params.reason}`
+  );
+}
+
 export function logCallStatusPeer(params: {
   localDeviceId: string;
   remoteDeviceId: string;

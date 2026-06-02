@@ -32,6 +32,8 @@ import {
   logCallLifecycle,
   logCallStatusPeer,
   voiceDebugLog,
+  isVoiceLayerDebugEnabled,
+  setRemoteAudioPipelinePeerContext,
   type PeerStatusDiagnostics,
 } from "@/app/call/voice/voiceDiagnostics";
 import {
@@ -56,9 +58,12 @@ import {
   logParticipationStatusDecision,
   isRecentPlaySuccess,
   isRemoteAudioHealthyNow,
+  applyCallMemberStatusHysteresis,
+  computeAudioUnhealthySinceMs,
   resolveCallMemberStatus,
+  resolveDisplayManualAudioReconnect,
   resolveEffectivePeerConnection,
-  resolveManualAudioReconnect,
+  type PeerLabelHysteresisState,
 } from "@/lib/memberPresenceStatus";
 import {
   logInitialSafetyMute,
@@ -193,6 +198,7 @@ export default function CallClient() {
   const everConnectedPeersRef = useRef<Set<string>>(new Set());
   const prevCallStatusRef = useRef<Record<string, string>>({});
   const prevCallStatusPeerLogRef = useRef<Record<string, string>>({});
+  const peerLabelHysteresisRef = useRef<Record<string, PeerLabelHysteresisState>>({});
   const missingRemoteAudioWarnedRef = useRef<Set<string>>(new Set());
   const manualPeerHardResetRef = useRef<
     (remoteId: string) => void | Promise<void>
@@ -1003,7 +1009,15 @@ export default function CallClient() {
                 : null
           : null;
 
-      const manualReconnect = resolveManualAudioReconnect({
+      const audioUnhealthySinceMs = computeAudioUnhealthySinceMs({
+        nowMs,
+        remoteAudioHealth: audioHealth ?? null,
+        hasRemoteStream: diag?.hasRemoteStream ?? false,
+        trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
+        wasPeerConnected,
+      });
+
+      const manualReconnect = resolveDisplayManualAudioReconnect({
         isMe: false,
         hasRemoteStream: diag?.hasRemoteStream ?? false,
         trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
@@ -1023,9 +1037,11 @@ export default function CallClient() {
         reconnectRequestPending: diag?.reconnectRequestPending === true,
         wasPeerConnected,
         nowMs,
+        debugUi: isVoiceLayerDebugEnabled(),
+        audioUnhealthySinceMs,
       });
 
-      const status = resolveCallMemberStatus({
+      const rawStatus = resolveCallMemberStatus({
         isMe,
         isMuted: userMuted,
         isInCall,
@@ -1055,6 +1071,29 @@ export default function CallClient() {
         showReconnectButton: manualReconnect.show,
         nowMs,
       });
+
+      const { status, state: labelState } = applyCallMemberStatusHysteresis({
+        remoteDeviceId: memberId,
+        candidate: rawStatus,
+        previous: peerLabelHysteresisRef.current[memberId] ?? null,
+        nowMs,
+        isMe,
+        recentPlaySuccess: isRecentPlaySuccess(
+          audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt,
+          nowMs
+        ),
+        audioActuallyPlaying: audioHealth?.audioActuallyPlaying === true,
+        playbackActive: audioHealth?.playbackActive === true,
+      });
+      peerLabelHysteresisRef.current[memberId] = labelState;
+
+      if (!isMe && diag) {
+        setRemoteAudioPipelinePeerContext(memberId, {
+          hasPc: diag.hasPc ?? false,
+          conn: diag.conn ?? "-",
+          ice: diag.ice ?? "-",
+        });
+      }
 
       const prevText = prevCallStatusRef.current[member.device_id];
       if (prevText !== status.text) {
@@ -1523,10 +1562,13 @@ export default function CallClient() {
             const status = getMemberStatus(member);
             const memberId = member?.device_id ?? "";
             const diag = memberId ? peerDiagnostics[memberId] : undefined;
+            const memberAudioHealth = memberId
+              ? remoteAudioHealth[memberId] ?? null
+              : null;
             const showManualAudioReconnect =
               !!member &&
               !isMe &&
-              resolveManualAudioReconnect({
+              resolveDisplayManualAudioReconnect({
                 isMe: false,
                 conn: diag?.conn ?? "-",
                 ice: diag?.ice ?? "-",
@@ -1537,22 +1579,27 @@ export default function CallClient() {
                 lastOnTrackAt: diag?.lastOnTrackAt ?? null,
                 lastUnmuteAt: diag?.lastUnmuteAt ?? null,
                 lastPlaySuccessAt:
-                  (memberId ? remoteAudioHealth[memberId]?.lastPlaySuccessAt : null) ??
+                  memberAudioHealth?.lastPlaySuccessAt ??
                   diag?.lastPlaySuccessAt ??
                   null,
-                remoteAudioHealth: memberId
-                  ? remoteAudioHealth[memberId] ?? null
-                  : null,
+                remoteAudioHealth: memberAudioHealth,
                 trackReady:
-                  (memberId ? remoteAudioHealth[memberId]?.trackReady : null) ??
-                  diag?.trackReady ??
-                  "-",
+                  memberAudioHealth?.trackReady ?? diag?.trackReady ?? "-",
                 liveStreamHealHold: diag?.liveStreamHealHold === true,
                 p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
                 autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
                 reconnectRequestPending: diag?.reconnectRequestPending === true,
                 wasPeerConnected: everConnectedPeersRef.current.has(memberId),
                 nowMs,
+                debugUi: isVoiceLayerDebugEnabled(),
+                audioUnhealthySinceMs: computeAudioUnhealthySinceMs({
+                  nowMs,
+                  remoteAudioHealth: memberAudioHealth,
+                  hasRemoteStream: diag?.hasRemoteStream ?? false,
+                  trackReady:
+                    memberAudioHealth?.trackReady ?? diag?.trackReady ?? "-",
+                  wasPeerConnected: everConnectedPeersRef.current.has(memberId),
+                }),
               }).show;
             const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
 
