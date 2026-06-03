@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminAuth";
+import { getTurnProviderInfo } from "@/lib/turnProvider";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,9 +28,13 @@ export async function GET(req: Request) {
     );
   }
 
+  const turnProvider = getTurnProviderInfo();
+
   return NextResponse.json({
     ok: true,
     settings: data,
+    turn_provider: turnProvider.provider,
+    turn_provider_enabled: turnProvider.enabled,
   });
 }
 

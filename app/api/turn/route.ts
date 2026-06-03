@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  buildStaticTurnIceServers,
+  logTurnProviderConfig,
+  resolveTurnProvider,
+  type TurnProvider,
+} from "@/lib/turnProvider";
 
 export const dynamic = "force-dynamic";
 
@@ -18,14 +24,7 @@ async function isTurnFallbackExplicitlyEnabled() {
   return data?.turn_fallback_enabled === true;
 }
 
-export async function GET() {
-  if (!(await isTurnFallbackExplicitlyEnabled())) {
-    return NextResponse.json(
-      { ok: false, error: "turn_fallback_disabled" },
-      { status: 403 }
-    );
-  }
-
+async function fetchTwilioIceServers() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const apiKey = process.env.TWILIO_API_KEY;
   const apiSecret = process.env.TWILIO_API_SECRET;
@@ -60,5 +59,76 @@ export async function GET() {
     );
   }
 
-  return NextResponse.json(data);
+  const iceServers = Array.isArray(data?.ice_servers)
+    ? data.ice_servers
+    : Array.isArray(data?.iceServers)
+      ? data.iceServers
+      : [];
+
+  console.log(
+    `[turn] api-response provider=twilio iceServersCount=${iceServers.length}`
+  );
+
+  return NextResponse.json({
+    ...data,
+    provider: "twilio" satisfies TurnProvider,
+    iceServers,
+    ice_servers: iceServers.length > 0 ? iceServers : data?.ice_servers,
+  });
+}
+
+function staticTurnResponse(provider: TurnProvider) {
+  const built = buildStaticTurnIceServers();
+
+  if (!built.ok) {
+    console.warn(
+      `[turn] static-config invalid missing=${built.missing.join(",")}`
+    );
+    return NextResponse.json(
+      {
+        ok: false,
+        error: built.error,
+        missing: built.missing,
+      },
+      { status: 500 }
+    );
+  }
+
+  const iceServers = built.iceServers;
+
+  console.log(
+    `[turn] api-response provider=${provider} iceServersCount=${iceServers.length}`
+  );
+
+  return NextResponse.json({
+    ok: true,
+    provider,
+    iceServers,
+    ice_servers: iceServers,
+  });
+}
+
+export async function GET() {
+  if (!(await isTurnFallbackExplicitlyEnabled())) {
+    return NextResponse.json(
+      { ok: false, error: "turn_fallback_disabled" },
+      { status: 403 }
+    );
+  }
+
+  const provider = resolveTurnProvider();
+  logTurnProviderConfig(provider);
+
+  if (provider === "disabled") {
+    return NextResponse.json(
+      { ok: false, error: "turn_disabled" },
+      { status: 403 }
+    );
+  }
+
+  if (provider === "static") {
+    return staticTurnResponse(provider);
+  }
+
+  return fetchTwilioIceServers();
 }

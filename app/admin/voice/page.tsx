@@ -79,6 +79,7 @@ export default function AdminVoicePage() {
     useState(true);
 
   const [saving, setSaving] = useState(false);
+  const [turnProvider, setTurnProvider] = useState("disabled");
 
   async function load() {
     setLoading(true);
@@ -100,6 +101,10 @@ export default function AdminVoicePage() {
           emergency_message:
             data.settings.emergency_message ?? "",
         });
+      }
+
+      if (typeof data?.turn_provider === "string") {
+        setTurnProvider(data.turn_provider);
       }
     } finally {
       setLoading(false);
@@ -192,6 +197,10 @@ export default function AdminVoicePage() {
           emergency_message:
             data.settings.emergency_message ?? "",
         });
+      }
+
+      if (typeof data?.turn_provider === "string") {
+        setTurnProvider(data.turn_provider);
       }
     } finally {
       setSaving(false);
@@ -317,9 +326,18 @@ export default function AdminVoicePage() {
             {turnFallbackModeLabel(settings.turn_fallback_enabled)}
           </span>
           <span style={{ fontSize: 12, color: "#6b7280" }}>
-            {settings.turn_fallback_enabled
-              ? "ICE 失敗時に Twilio TURN へ fallback します（従量課金あり）"
-              : "Twilio TURN は使いません（P2P / STUN のみ）"}
+            provider: {turnProvider}
+            {" · "}
+            fallback: {settings.turn_fallback_enabled ? "ON" : "OFF"}
+          </span>
+          <span style={{ fontSize: 12, color: "#6b7280", width: "100%" }}>
+            {!settings.turn_fallback_enabled
+              ? "/api/turn → 403 turn_fallback_disabled（DBでTURN fallback OFF）"
+              : turnProvider === "disabled"
+                ? "/api/turn → 403 turn_disabled（TURN_PROVIDER未設定/disabled）"
+                : turnProvider === "static"
+                  ? "/api/turn → static iceServers（P2P失敗peerのみ利用）"
+                  : "/api/turn → Twilio token（P2P失敗peerのみ利用）"}
           </span>
         </div>
 
@@ -584,6 +602,8 @@ export default function AdminVoicePage() {
             <strong>
               {turnFallbackModeLabel(settings.turn_fallback_enabled)}
             </strong>
+            <br />
+            provider: <strong>{turnProvider}</strong>
           </div>
         </section>
 

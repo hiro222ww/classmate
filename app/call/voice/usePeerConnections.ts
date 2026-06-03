@@ -976,6 +976,7 @@ export function usePeerConnections({
   const orphanRemoteAudioLoggedRef = useRef<Set<string>>(new Set());
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
+  const turnProviderRef = useRef<string | null>(null);
 
   useEffect(() => {
     remoteAudiosRef.current = remoteAudios;
@@ -3322,7 +3323,20 @@ export function usePeerConnections({
         cache: "no-store",
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const apiError =
+          typeof data?.error === "string" ? data.error : `http_${res.status}`;
+        console.warn(
+          `[turn] api-error status=${res.status} error=${apiError} ${formatVoiceModeSuffix()}`
+        );
+        return false;
+      }
+
+      const provider =
+        typeof data?.provider === "string" ? data.provider : "twilio";
+      turnProviderRef.current = provider;
 
       const nextIceServers = Array.isArray(data?.ice_servers)
         ? data.ice_servers
@@ -3331,13 +3345,19 @@ export function usePeerConnections({
           : null;
 
       if (nextIceServers && nextIceServers.length > 0) {
+        console.log(
+          `[turn] api-response provider=${provider} iceServersCount=${nextIceServers.length}`
+        );
         turnIceServersRef.current = nextIceServers;
         voiceRouteRef.current = "turn";
         iceServersRef.current = nextIceServers;
         return true;
       }
 
-      console.warn("[call] TURN response has no ice_servers", data);
+      console.warn(
+        `[call] TURN response has no ice_servers provider=${provider}`,
+        data
+      );
       return false;
     } catch (e) {
       console.warn("[call] TURN load failed", e);
@@ -3368,22 +3388,25 @@ export function usePeerConnections({
           `reason=${turnReason} enabled=${turnFallbackEnabledRef.current} ${formatVoiceModeSuffix()}`
       );
 
-      console.log(
-        `[voice-peer] turn-fallback-start remote=${compactDeviceId(remoteId)} ` +
-          `reason=${turnReason} ${formatVoiceModeSuffix()}`
-      );
-
       turnFallbackAttemptedRef.current.set(remoteId, true);
       const ok = await enableTurnFallback();
+      const turnProvider = turnProviderRef.current ?? "unknown";
       if (!ok) {
         console.warn(
-          `[voice-peer] turn-fallback-failed remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
+          `[voice-peer] turn-fallback-failed remote=${compactDeviceId(remoteId)} ` +
+            `provider=${turnProvider} ${formatVoiceModeSuffix()}`
         );
         return false;
       }
 
       console.log(
-        `[voice-peer] turn-fallback-enabled remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
+        `[voice-peer] turn-fallback-start remote=${compactDeviceId(remoteId)} ` +
+          `reason=${turnReason} provider=${turnProvider} ${formatVoiceModeSuffix()}`
+      );
+
+      console.log(
+        `[voice-peer] turn-fallback-enabled remote=${compactDeviceId(remoteId)} ` +
+          `provider=${turnProvider} ${formatVoiceModeSuffix()}`
       );
 
       peerIceDiagnosticsRef.current.delete(remoteId);

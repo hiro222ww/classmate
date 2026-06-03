@@ -15,7 +15,8 @@
     "test:e2e:zombie": "node scripts/e2e-zombie-stale.mjs",
     "test:e2e:growth": "node scripts/e2e-growth.mjs",
     "test:e2e:entitlements": "node scripts/e2e-entitlements.mjs",
-    "test:e2e:webrtc": "node scripts/e2e-webrtc-call.mjs"
+    "test:e2e:webrtc": "node scripts/e2e-webrtc-call.mjs",
+    "test:turn-provider": "node scripts/verify-turn-provider.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.93.1",
