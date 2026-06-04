@@ -3,11 +3,20 @@
 export const dynamic = "force-dynamic";
 
 import { useState } from "react";
+import ClassRepairPanel from "./ClassRepairPanel";
 
 type RoomMember = {
   device_id: string;
   display_name: string | null;
   joined_at: string | null;
+};
+
+type RoomRepairSummary = {
+  class_memberships: number;
+  session_members: number;
+  class_presence: number;
+  members_missing_membership: number;
+  possible_split_sessions: number;
 };
 
 type RoomRow = {
@@ -19,6 +28,7 @@ type RoomRow = {
   status: string;
   member_count: number;
   members: RoomMember[];
+  repair_summary: RoomRepairSummary | null;
   started_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -101,6 +111,9 @@ export default function AdminRoomsPage() {
     active_user_count: 0,
     dangerous_room_count: 0,
   });
+  const [repairClassId, setRepairClassId] = useState("");
+  const [repairSessionId, setRepairSessionId] = useState("");
+  const [repairDeviceId, setRepairDeviceId] = useState("");
 
   const emptySummary: Summary = {
     active_room_count: 0,
@@ -409,11 +422,62 @@ export default function AdminRoomsPage() {
                             <div style={{ marginTop: 2, fontSize: 10, color: "#888" }}>
                               入室: {fmtDateTime(m.joined_at)}
                             </div>
+
+                            {room.class_id ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRepairClassId(room.class_id ?? "");
+                                  setRepairSessionId(room.session_id);
+                                  setRepairDeviceId(m.device_id);
+                                }}
+                                style={{
+                                  marginTop: 6,
+                                  padding: "4px 8px",
+                                  borderRadius: 8,
+                                  border: "1px solid #ccc",
+                                  background: "#fff",
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                修復対象にする
+                              </button>
+                            ) : null}
                           </div>
                         ))}
                       </div>
                     ) : (
                       <span style={{ color: "#999" }}>なし</span>
+                    )}
+                  </td>
+
+                  <td style={{ padding: "8px 6px", minWidth: 140 }}>
+                    {room.repair_summary ? (
+                      <div style={{ lineHeight: 1.5 }}>
+                        <div>
+                          m: {room.repair_summary.class_memberships} / sm:{" "}
+                          {room.repair_summary.session_members} / p:{" "}
+                          {room.repair_summary.class_presence}
+                        </div>
+                        {room.repair_summary.members_missing_membership > 0 ? (
+                          <div style={{ color: "#b45309", fontWeight: 800 }}>
+                            membership欠落:{" "}
+                            {room.repair_summary.members_missing_membership}
+                          </div>
+                        ) : null}
+                        {room.repair_summary.possible_split_sessions > 1 ? (
+                          <div style={{ color: "#92400e", fontWeight: 800 }}>
+                            session分裂の可能性:{" "}
+                            {room.repair_summary.possible_split_sessions}
+                          </div>
+                        ) : (
+                          <div style={{ color: "#666" }}>分裂: なし</div>
+                        )}
+                      </div>
+                    ) : (
+                      <span style={{ color: "#999" }}>-</span>
                     )}
                   </td>
 
@@ -440,7 +504,7 @@ export default function AdminRoomsPage() {
 
               {rooms.length === 0 ? (
                 <tr>
-                  <td colSpan={14} style={{ padding: 10, color: "#666" }}>
+                  <td colSpan={15} style={{ padding: 10, color: "#666" }}>
                     {emptyTableMessage}
                   </td>
                 </tr>
@@ -449,6 +513,13 @@ export default function AdminRoomsPage() {
           </table>
         </div>
       </section>
+
+      <ClassRepairPanel
+        key={`${repairClassId}:${repairSessionId}:${repairDeviceId}`}
+        initialClassId={repairClassId}
+        initialSessionId={repairSessionId}
+        initialDeviceId={repairDeviceId}
+      />
 
       <div style={{ height: 24 }} />
     </main>

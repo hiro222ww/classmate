@@ -13,6 +13,14 @@ type RoomMemberDto = {
   joined_at: string | null;
 };
 
+type RoomRepairSummary = {
+  class_memberships: number;
+  session_members: number;
+  class_presence: number;
+  members_missing_membership: number;
+  possible_split_sessions: number;
+};
+
 type RoomDto = {
   session_id: string;
   class_id: string | null;
@@ -22,6 +30,7 @@ type RoomDto = {
   status: string;
   member_count: number;
   members: RoomMemberDto[];
+  repair_summary: RoomRepairSummary | null;
   started_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -243,6 +252,69 @@ export async function GET(req: Request) {
       membersBySession.set(sessionId, list);
     }
 
+    const membershipCountByClass = new Map<string, number>();
+    const presenceCountByClass = new Map<string, number>();
+    const membershipDeviceByClass = new Map<string, Set<string>>();
+
+    if (classIds.length > 0) {
+      const { data: membershipRows } = await supabaseAdmin
+        .from("class_memberships")
+        .select("class_id, device_id")
+        .in("class_id", classIds);
+
+      for (const row of membershipRows ?? []) {
+        const cid = String(row.class_id ?? "").trim();
+        const did = String(row.device_id ?? "").trim();
+        if (!cid || !did) continue;
+
+        membershipCountByClass.set(cid, (membershipCountByClass.get(cid) ?? 0) + 1);
+        const set = membershipDeviceByClass.get(cid) ?? new Set<string>();
+        set.add(did);
+        membershipDeviceByClass.set(cid, set);
+      }
+
+      const { data: presenceRows } = await supabaseAdmin
+        .from("class_presence")
+        .select("class_id")
+        .in("class_id", classIds);
+
+      for (const row of presenceRows ?? []) {
+        const cid = String(row.class_id ?? "").trim();
+        if (!cid) continue;
+        presenceCountByClass.set(cid, (presenceCountByClass.get(cid) ?? 0) + 1);
+      }
+    }
+
+    const splitCountByClass = new Map<string, number>();
+
+    if (classIds.length > 0) {
+      const { data: classSessions } = await supabaseAdmin
+        .from("sessions")
+        .select("id, class_id, status")
+        .in("class_id", classIds);
+
+      const activeSessionIdsByClass = new Map<string, string[]>();
+
+      for (const row of classSessions ?? []) {
+        const cid = String(row.class_id ?? "").trim();
+        const sid = String(row.id ?? "").trim();
+        if (!cid || !sid || isClosedStatus(row.status)) continue;
+
+        const count = memberCountBySessionId.get(sid) ?? 0;
+        if (count <= 0) continue;
+
+        const list = activeSessionIdsByClass.get(cid) ?? [];
+        list.push(sid);
+        activeSessionIdsByClass.set(cid, list);
+      }
+
+      for (const [cid, sessionList] of activeSessionIdsByClass) {
+        if (sessionList.length > 1) {
+          splitCountByClass.set(cid, sessionList.length);
+        }
+      }
+    }
+
     const rooms: RoomDto[] = sessionsWithMembers.map((session) => {
       const sid = String(session.id);
       const cls = session.class_id
@@ -260,6 +332,24 @@ export async function GET(req: Request) {
 
       const roomMembers = Array.from(uniqueMembersMap.values());
       const member_count = memberCountBySessionId.get(sid) ?? roomMembers.length;
+
+      const classId = session.class_id ? String(session.class_id) : "";
+      let repair_summary: RoomRepairSummary | null = null;
+
+      if (classId) {
+        const membershipDevices = membershipDeviceByClass.get(classId) ?? new Set();
+        const members_missing_membership = roomMembers.filter(
+          (m) => !membershipDevices.has(m.device_id)
+        ).length;
+
+        repair_summary = {
+          class_memberships: membershipCountByClass.get(classId) ?? 0,
+          session_members: member_count,
+          class_presence: presenceCountByClass.get(classId) ?? 0,
+          members_missing_membership,
+          possible_split_sessions: splitCountByClass.get(classId) ?? 0,
+        };
+      }
 
       const report_count = 0;
       const short_leave_count = 0;
@@ -288,6 +378,7 @@ export async function GET(req: Request) {
         status: session.status?.trim() || "unknown",
         member_count,
         members: roomMembers,
+        repair_summary,
         started_at: created_at,
         created_at,
         updated_at,
