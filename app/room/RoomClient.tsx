@@ -41,6 +41,7 @@ import {
 import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
 import { HelpTip } from "@/components/HelpTip";
+import { fetchWithRetry } from "@/lib/retryableFetch";
 import {
   compactMemberDeviceIds,
   diffMemberDeviceIds,
@@ -520,8 +521,11 @@ function MemberAvatar({
     <img
       src={src || "/default-avatar.jpg"}
       alt={label}
+      loading="lazy"
+      decoding="async"
       onError={(e) => {
         if (e.currentTarget.src.includes("default-avatar")) return;
+        console.warn(`[avatar] load-failed label=${label.slice(0, 24)}`);
         e.currentTarget.onerror = null;
         e.currentTarget.src = "/default-avatar.jpg";
       }}
@@ -579,8 +583,14 @@ export default function RoomClient() {
   const [status, setStatus] = useState("forming");
   const [capacity, setCapacity] = useState(5);
 
-  const [deviceId, setDeviceId] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [deviceId, setDeviceId] = useState(() => getDeviceId());
+  const [displayName, setDisplayName] = useState(() => {
+    const id = getDeviceId();
+    if (!id) return "";
+    const stored = readStoredDisplayName(id);
+    if (!stored || stored === "You") return "";
+    return stored;
+  });
 
   const joinedSessionKeyRef = useRef<string | null>(null);
   const autoMovedRef = useRef<string | null>(null);
@@ -752,12 +762,16 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       }
     }
 
-    void loadMeetingPlan();
-    const timer = window.setInterval(loadMeetingPlan, 30000);
+    let timer: number | null = null;
+    const startTimer = window.setTimeout(() => {
+      void loadMeetingPlan();
+      timer = window.setInterval(loadMeetingPlan, 30000);
+    }, 4000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(startTimer);
+      if (timer) window.clearInterval(timer);
     };
   }, [classId, deviceId]);
 
@@ -784,12 +798,16 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       }
     }
 
-    void loadCallRequest();
-    const timer = window.setInterval(loadCallRequest, 15000);
+    let timer: number | null = null;
+    const startTimer = window.setTimeout(() => {
+      void loadCallRequest();
+      timer = window.setInterval(loadCallRequest, 15000);
+    }, 4000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(startTimer);
+      if (timer) window.clearInterval(timer);
     };
   }, [classId, deviceId]);
 
@@ -975,7 +993,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [visibleMembers, presenceMap, sessionId, deviceId]);
 
   const fetchStatus = useCallback(
-    async (opts?: { force?: boolean }) => {
+    async (opts?: { force?: boolean; fast?: boolean }) => {
       if (!sessionId || !classId) return;
       if (pathname !== "/room") return;
       if (!opts?.force && typeof document !== "undefined" && document.hidden) {
@@ -986,15 +1004,22 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       const timer = window.setTimeout(() => controller.abort(), 8000);
 
       try {
-        const qs = new URLSearchParams({ sessionId, classId });
+        const qs = new URLSearchParams({ sessionId, classId, lite: "1" });
+        if (opts?.fast) {
+          qs.set("fast", "1");
+        }
         if (deviceId) {
           qs.set("viewerDeviceId", deviceId);
         }
 
-        const res = await fetch(`/api/session/status?${qs.toString()}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const res = await fetchWithRetry(
+          `/api/session/status?${qs.toString()}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+          { kind: "members", maxAttempts: 3 }
+        );
 
         const rawText = await res.text().catch(() => "");
         let json: SessionStatusResponse | null = null;
@@ -1568,7 +1593,8 @@ setMemberCount((prev) => Math.max(prev, 1));
 
 // エラークリアして最新取得
 setErr("");
-await fetchStatus({ force: true });
+await fetchStatus({ force: true, fast: true });
+void fetchStatus({ force: true });
     } catch (e: any) {
       if (cancelled) return;
 
@@ -1600,7 +1626,11 @@ await fetchStatus({ force: true });
     if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
 
-    void fetchStatus({ force: true });
+    void fetchStatus({ force: true, fast: true });
+
+    const presenceSync = window.setTimeout(() => {
+      void fetchStatus({ force: true });
+    }, 1500);
 
     const interval = window.setInterval(() => {
       if (window.location.pathname !== "/room") return;
@@ -1615,6 +1645,7 @@ await fetchStatus({ force: true });
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
+      window.clearTimeout(presenceSync);
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };

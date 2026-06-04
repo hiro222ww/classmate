@@ -1,3 +1,5 @@
+import { debugConsoleLog } from "@/lib/debugVoiceLog";
+
 export type UiParticipationStatus = "in_call" | "waiting" | "offline";
 
 export type CallPeerState = "idle" | "connecting" | "connected" | "failed";
@@ -226,7 +228,7 @@ export function logUiLabelHold(params: {
   candidate: string;
   reason: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[call-status-peer] ui-label-hold remote=${params.remoteDeviceId.slice(-4)} ` +
       `previous=${params.previous} candidate=${params.candidate} reason=${params.reason}`
   );
@@ -1513,13 +1515,13 @@ export function logParticipationStatusDecision(params: {
   reason?: string;
   sources: Record<string, unknown>;
 }) {
-  console.log(`[${params.context}-status]`, {
+  debugConsoleLog(`[${params.context}-status]`, {
     deviceId: params.deviceId,
     label: params.label,
     status: params.status,
     used: params.used,
     reason: params.reason ?? null,
-    ...params.sources,
+    sources: params.sources,
     timestamp: Date.now(),
   });
 }

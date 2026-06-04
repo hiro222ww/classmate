@@ -65,6 +65,21 @@ type PresenceInfo = {
   is_in_call: boolean;
 };
 
+function buildAvatarPublicUrl(photoPath: string | null | undefined) {
+  const normalized = normalizePhotoPath(photoPath);
+  if (!normalized) return null;
+
+  const base = (
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    ""
+  ).replace(/\/$/, "");
+
+  if (!base) return null;
+
+  return `${base}/storage/v1/object/public/profile-photos/${encodeURIComponent(normalized)}?v=${encodeURIComponent(normalized)}`;
+}
+
 function normalizePhotoPath(v: string | null | undefined) {
   let s = String(v ?? "").trim();
   if (!s) return null;
@@ -252,17 +267,56 @@ function buildMembers(
         is_in_call: false,
       };
 
+      const photo_path = normalizePhotoPath(profile?.photo_path);
+
       return {
         device_id: deviceId,
         display_name: resolved.displayName,
         display_name_source: resolved.source,
-        photo_path: normalizePhotoPath(profile?.photo_path),
-        avatar_url: null,
+        photo_path,
+        avatar_url: buildAvatarPublicUrl(photo_path),
         joined_at: joinedAt,
         screen: presence.screen,
         presence_session_id: presence.session_id,
         last_seen_at: presence.last_seen_at,
         is_in_call: presence.is_in_call,
+      };
+    }
+  );
+
+  return members.sort((a, b) => a.joined_at.localeCompare(b.joined_at));
+}
+
+function buildMembersFast(
+  rawMembers: SessionMemberRow[],
+  profileMap: Map<string, UserProfileRow>
+) {
+  const latestByDevice = pickLatestSessionMemberByDevice(rawMembers);
+
+  const members = Array.from(latestByDevice.entries()).map(
+    ([deviceId, row]) => {
+      const joinedAt =
+        String(row.joined_at ?? "").trim() || new Date(0).toISOString();
+      const profile = profileMap.get(deviceId);
+
+      const resolved = resolveDisplayName({
+        profileDisplayName: profile?.display_name,
+        sessionMemberDisplayName: row.display_name,
+      });
+
+      const photo_path = normalizePhotoPath(profile?.photo_path);
+
+      return {
+        device_id: deviceId,
+        display_name: resolved.displayName,
+        display_name_source: resolved.source,
+        photo_path,
+        avatar_url: buildAvatarPublicUrl(photo_path),
+        joined_at: joinedAt,
+        screen: null,
+        presence_session_id: null,
+        last_seen_at: null,
+        is_in_call: true,
       };
     }
   );
@@ -280,6 +334,12 @@ export async function GET(req: Request) {
       searchParams.get("deviceId") ??
       ""
     ).trim();
+    const lite =
+      searchParams.get("lite") === "1" ||
+      searchParams.get("lite") === "true";
+    const fast =
+      searchParams.get("fast") === "1" ||
+      searchParams.get("fast") === "true";
 
     if (!sessionIdRaw) {
       return NextResponse.json(
@@ -370,24 +430,33 @@ export async function GET(req: Request) {
       );
     }
 
-    const presenceMapRes = await getPresenceMap(
-      sb,
-      deviceIds,
-      sessionIdRaw,
-      classIdRaw
-    );
-    if (!presenceMapRes.ok) {
-      return NextResponse.json(
-        { ok: false, error: presenceMapRes.error.message },
-        { status: 500 }
+    let members;
+
+    if (fast) {
+      members = buildMembersFast(
+        rawMembersRes.members,
+        profileMapRes.profileMap
+      );
+    } else {
+      const presenceMapRes = await getPresenceMap(
+        sb,
+        deviceIds,
+        sessionIdRaw,
+        classIdRaw
+      );
+      if (!presenceMapRes.ok) {
+        return NextResponse.json(
+          { ok: false, error: presenceMapRes.error.message },
+          { status: 500 }
+        );
+      }
+
+      members = buildMembers(
+        rawMembersRes.members,
+        profileMapRes.profileMap,
+        presenceMapRes.presenceMap
       );
     }
-
-    const members = buildMembers(
-      rawMembersRes.members,
-      profileMapRes.profileMap,
-      presenceMapRes.presenceMap
-    );
 
     const inCallCount = members.filter((m) => m.is_in_call === true).length;
     const withPresenceCount = members.filter((m) => m.last_seen_at).length;
@@ -401,57 +470,70 @@ export async function GET(req: Request) {
       | undefined;
 
     if (viewerDeviceId) {
-      const { data: membershipRow } = await sb
-        .from("class_memberships")
-        .select("class_id")
-        .eq("class_id", classIdRaw)
-        .eq("device_id", viewerDeviceId)
-        .maybeSingle();
-
-      const { data: viewerSessionMember } = await sb
-        .from("session_members")
-        .select("device_id")
-        .eq("session_id", sessionIdRaw)
-        .eq("device_id", viewerDeviceId)
-        .maybeSingle();
-
       const inMemberList = members.some(
         (m) => String(m.device_id ?? "").trim() === viewerDeviceId
       );
 
-      viewerState = {
-        hasClassMembership: Boolean(membershipRow),
-        inSessionMembers: Boolean(viewerSessionMember),
-        inMemberList,
-      };
+      if (fast) {
+        viewerState = {
+          hasClassMembership: true,
+          inSessionMembers: inMemberList,
+          inMemberList,
+        };
+      } else {
+        const { data: membershipRow } = await sb
+          .from("class_memberships")
+          .select("class_id")
+          .eq("class_id", classIdRaw)
+          .eq("device_id", viewerDeviceId)
+          .maybeSingle();
 
-      console.log(
-        `[session-status] membership exists=${viewerState.hasClassMembership} ` +
-          `viewerInSessionMembers=${viewerState.inSessionMembers} ` +
-          `viewerInMemberList=${viewerState.inMemberList} device=${viewerDeviceId.slice(-4)} ` +
-          `session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
-      );
+        const { data: viewerSessionMember } = await sb
+          .from("session_members")
+          .select("device_id")
+          .eq("session_id", sessionIdRaw)
+          .eq("device_id", viewerDeviceId)
+          .maybeSingle();
 
-      await auditJoinStateInvariants(sb, {
-        classId: classIdRaw,
-        sessionId: sessionIdRaw,
-        deviceId: viewerDeviceId,
-        sessionClassId,
-        requestedClassId: classIdRaw,
-      });
+        viewerState = {
+          hasClassMembership: Boolean(membershipRow),
+          inSessionMembers: Boolean(viewerSessionMember),
+          inMemberList,
+        };
+
+        console.log(
+          `[session-status] membership exists=${viewerState.hasClassMembership} ` +
+            `viewerInSessionMembers=${viewerState.inSessionMembers} ` +
+            `viewerInMemberList=${viewerState.inMemberList} device=${viewerDeviceId.slice(-4)} ` +
+            `session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
+        );
+
+        if (!lite) {
+          await auditJoinStateInvariants(sb, {
+            classId: classIdRaw,
+            sessionId: sessionIdRaw,
+            deviceId: viewerDeviceId,
+            sessionClassId,
+            requestedClassId: classIdRaw,
+          });
+        }
+      }
     }
 
-    for (const deviceId of deviceIds.slice(0, 20)) {
-      await auditJoinStateInvariants(sb, {
-        classId: classIdRaw,
-        sessionId: sessionIdRaw,
-        deviceId,
-        sessionClassId,
-      });
+    if (!lite && !fast) {
+      for (const deviceId of deviceIds.slice(0, 20)) {
+        await auditJoinStateInvariants(sb, {
+          classId: classIdRaw,
+          sessionId: sessionIdRaw,
+          deviceId,
+          sessionClassId,
+        });
+      }
     }
 
     console.log(
-      `[session-status] members count=${members.length} ids=${members.map((m) => String(m.device_id ?? "").slice(-4)).join(",")} ` +
+      `[session-status] members count=${members.length} fast=${fast} lite=${lite} ` +
+        `ids=${members.map((m) => String(m.device_id ?? "").slice(-4)).join(",")} ` +
         `session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
     );
     console.log(
@@ -480,6 +562,7 @@ export async function GET(req: Request) {
         memberCount: members.length,
         inCallMemberCount: members.filter((m) => m.is_in_call).length,
         viewerState,
+        fast,
       },
       {
         headers: {

@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   hasCallMicEverUnmuted,
@@ -148,7 +149,7 @@ function compactMediaId(id: string | null | undefined): string {
 }
 
 function logLocalMicReady(stream: MediaStream, track: MediaStreamTrack) {
-  console.log(
+  debugConsoleLog(
     `[local-mic] ready streamId=${compactMediaId(stream.id)} trackId=${compactMediaId(track.id)} ` +
       `trackReady=${track.readyState} enabled=${track.enabled} muted=${track.muted} ${formatVoiceModeSuffix()}`
   );
@@ -169,7 +170,7 @@ async function logLocalMicFailed(error: unknown) {
     // permissions API may be unavailable
   }
 
-  console.log(
+  debugConsoleLog(
     `[local-mic] failed errName=${err?.name ?? "unknown"} ` +
       `errMessage=${String(err?.message ?? error).slice(0, 120)} permissionState=${permissionState}`
   );
@@ -190,7 +191,7 @@ function logGetUserMediaAttempt(params: {
 }) {
   const navigationType = getNavigationType();
 
-  console.log(
+  debugConsoleLog(
     formatGetUserMediaAttemptLine({
       reason: params.reason,
       sessionId: params.sessionId,
@@ -204,7 +205,7 @@ function logGetUserMediaAttempt(params: {
     })
   );
 
-  console.log("[local-mic] getUserMedia attempt", {
+  debugConsoleLog("[local-mic] getUserMedia attempt", {
     reason: params.reason,
     cacheHit: params.cacheHit,
     cacheMissReason: params.cacheMissReason,
@@ -233,7 +234,7 @@ function logGetUserMediaResult(params: {
   cacheHit?: boolean;
 }) {
   if (params.ok) {
-    console.log("[local-mic] getUserMedia success", {
+    debugConsoleLog("[local-mic] getUserMedia success", {
       reason: params.reason,
       sessionId: params.sessionId,
       deviceId: params.deviceId,
@@ -268,7 +269,7 @@ function logEffectRun(params: {
   hasCache: boolean;
   trackReadyState: MediaStreamTrackState | null;
 }) {
-  console.log("[local-mic] effect", {
+  debugConsoleLog("[local-mic] effect", {
     ...params,
     navigationType: getNavigationType(),
     cachedSessionId: activeMicCache?.sessionId ?? null,
@@ -296,7 +297,7 @@ export function releaseLocalMicCapture(params: {
   releaseSessionMic(`release_capture_${params.reason}`, params.sessionId);
 
   if (policy.releaseMicOnMute) {
-    console.log(
+    debugConsoleLog(
       `[local-mic] ios-release-mic-on-mute reason=${params.reason} ${formatVoiceModeSuffix()}`
     );
   }
@@ -307,7 +308,7 @@ export function releaseSessionMic(reason: string, sessionId?: string) {
   const trackReadyState = activeMicCache?.track.readyState ?? null;
 
   if (!activeMicCache) {
-    console.log("[local-mic] release skipped (no cache)", {
+    debugConsoleLog("[local-mic] release skipped (no cache)", {
       reason,
       sessionId: sessionId ?? null,
       cachedSessionId,
@@ -320,7 +321,7 @@ export function releaseSessionMic(reason: string, sessionId?: string) {
   }
 
   if (sessionId && activeMicCache.sessionId !== sessionId) {
-    console.log("[local-mic] release skipped (session mismatch)", {
+    debugConsoleLog("[local-mic] release skipped (session mismatch)", {
       reason,
       sessionId,
       cachedSessionId,
@@ -332,7 +333,7 @@ export function releaseSessionMic(reason: string, sessionId?: string) {
     return;
   }
 
-  console.log("[local-mic] release", {
+  debugConsoleLog("[local-mic] release", {
     reason,
     sessionId: cachedSessionId,
     cachedSessionId,
@@ -411,7 +412,7 @@ async function ensureLocalMicStream(params: {
   showInitialPermissionHint?: boolean;
 }): Promise<boolean> {
   if (acquirePromise) {
-    console.log("[local-mic] ensure deduped (in-flight acquire)", {
+    debugConsoleLog("[local-mic] ensure deduped (in-flight acquire)", {
       reason: params.reason,
       sessionId: params.sessionId,
       timestamp: Date.now(),
@@ -535,7 +536,7 @@ async function ensureLocalMicStream(params: {
       willCallGetUserMedia: true,
     });
 
-    console.log("[local-mic] permission-before-getUserMedia", {
+    debugConsoleLog("[local-mic] permission-before-getUserMedia", {
       reason,
       navigationType,
       permissionState: permissionBefore,
@@ -760,7 +761,7 @@ export function useLocalMic({
         userMuted: getUserMuted(),
       });
 
-      console.log("[local-mic] session_mount context", {
+      debugConsoleLog("[local-mic] session_mount context", {
         navigationType,
         storedMute,
         releaseMicOnMutePolicy,
@@ -781,7 +782,7 @@ export function useLocalMic({
         });
         bindMicCaptureState({ hasTrack: false, mutedWithoutTrack: true });
         onStatusChangeRef.current?.("");
-        console.log(
+        debugConsoleLog(
           `[local-mic] session_mount skipped getUserMedia reason=release_mic_on_mute_muted ${formatVoiceModeSuffix()}`
         );
         return;
@@ -796,7 +797,7 @@ export function useLocalMic({
 
       if (mountReason === "reload_restore_unmuted") {
         markCallMicEverUnmuted(sessionId, deviceId);
-        console.log(
+        debugConsoleLog(
           `[local-mic] session_mount acquire reason=reload_restore_unmuted ` +
             `stored=${storedMute ?? "-"} releaseMicOnMute=${releaseMicOnMutePolicy} ` +
             `effectiveReleaseMicOnMute=${effectiveReleaseMicOnMute} everUnmuted=${everUnmuted} ` +
@@ -1024,7 +1025,7 @@ export function useLocalMic({
     const onEnded = () => {
       if (localAudioTrackRef.current !== track) return;
 
-      console.log(
+      debugConsoleLog(
         `[local-mic] track-ended trackId=${compactMediaId(track.id)} ${formatVoiceModeSuffix()}`
       );
       bindMicCaptureState({ hasTrack: false, mutedWithoutTrack: false });
@@ -1119,7 +1120,7 @@ export function useLocalMic({
         return;
       }
 
-      console.log(
+      debugConsoleLog(
         `[local-mic] ios-acquire-mic-on-unmute reason=user_unmute ${formatVoiceModeSuffix()}`
       );
 

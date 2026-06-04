@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import RemoteAudio, {
   type RemotePlaybackHealth,
@@ -149,11 +150,11 @@ export default function CallVoiceLayer({
   });
 
   useEffect(() => {
-    console.log(
+    debugConsoleLog(
       `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)}`
     );
     return () => {
-      console.log(
+      debugConsoleLog(
         `[voice-layer] unmount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)}`
       );
       releaseSessionMic("voice_layer_unmount", sessionId);

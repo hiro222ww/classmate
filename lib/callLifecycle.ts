@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import {
   consumeCallBfcacheSuspend,
   consumeCallReloadSnapshot,
@@ -60,14 +61,14 @@ export function getNavigationType(): string {
 }
 
 export function logNavigationIntent(reason: string, source: string) {
-  console.log(
+  debugConsoleLog(
     `[call-lifecycle] navigation-intent reason=${reason} source=${source} ` +
       `path=${getCurrentPath()} nav=${getNavigationType()}`
   );
 }
 
 export function logRouteChange(from: string, to: string, reason: string) {
-  console.log(
+  debugConsoleLog(
     `[call-lifecycle] route-change from=${from} to=${to} reason=${reason} nav=${getNavigationType()}`
   );
 }
@@ -77,7 +78,7 @@ export function logCallNavigationOnMount(params: {
   deviceId: string;
 }) {
   const nav = getNavigationType();
-  console.log(
+  debugConsoleLog(
     `[call-lifecycle] navigation type=${nav} ` +
       `session=${compactSessionId(params.sessionId)} device=${compactDeviceId(params.deviceId)}`
   );
@@ -128,7 +129,7 @@ export function consumeReloadErrorContext(params: {
   try {
     const raw = sessionStorage.getItem(LAST_FATAL_ERROR_KEY);
     if (!raw) {
-      console.log(
+      debugConsoleLog(
         `[call-lifecycle] reload-error-context present=false nav=${nav} ` +
           `session=${compactSessionId(params.sessionId)} device=${compactDeviceId(params.deviceId)}`
       );
@@ -137,14 +138,14 @@ export function consumeReloadErrorContext(params: {
 
     sessionStorage.removeItem(LAST_FATAL_ERROR_KEY);
     const snapshot = JSON.parse(raw) as FatalErrorSnapshot;
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] reload-error-context present=true kind=${snapshot.kind} ` +
         `name=${snapshot.name} chunk=${snapshot.chunkError} ` +
         `msg=${snapshot.message.slice(0, 120)} path=${snapshot.path}`
     );
     return snapshot;
   } catch {
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] reload-error-context present=false nav=${nav} parseError=true`
     );
     return null;
@@ -167,7 +168,7 @@ export function restoreCallSessionAfterReload(params: {
   );
 
   if (leftCallSanitized.cleared && leftCallSanitized.previousReason) {
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] reload-restore-ignore-local-exit ` +
         `previousReason=${leftCallSanitized.previousReason}`
     );
@@ -239,13 +240,13 @@ export function installCallLifecycleDiagnostics(params: {
   const onPageHide = (event: PageTransitionEvent) => {
     if (shouldSkipCallLifecycleExit()) {
       if (event.persisted) {
-        console.log(
+        debugConsoleLog(
           `[call-lifecycle] pagehide-skip-exit persisted=true ` +
             `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
         );
         markCallBfcacheSuspend(sessionId);
       } else {
-        console.log(
+        debugConsoleLog(
           `[call-lifecycle] pagehide-skip-exit persisted=false ` +
             `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
         );
@@ -254,7 +255,7 @@ export function installCallLifecycleDiagnostics(params: {
     }
 
     if (event.persisted) {
-      console.log(
+      debugConsoleLog(
         `[call-lifecycle] pagehide-skip-exit persisted=true ` +
           `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
       );
@@ -271,13 +272,13 @@ export function installCallLifecycleDiagnostics(params: {
   };
 
   const onPageShow = (event: PageTransitionEvent) => {
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] pageshow persisted=${event.persisted} ` +
         `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
     );
 
     if (event.persisted && consumeCallBfcacheSuspend(sessionId)) {
-      console.log(
+      debugConsoleLog(
         `[call-lifecycle] bfcache-restore action=resume_call ` +
           `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
       );
@@ -288,7 +289,7 @@ export function installCallLifecycleDiagnostics(params: {
   const onVisibilityChange = () => {
     const visibilityState = document.visibilityState;
     if (visibilityState === "hidden" && shouldSkipCallLifecycleExit()) {
-      console.log(
+      debugConsoleLog(
         `[call-lifecycle] hidden-skip-exit vis=hidden ` +
           `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)} ` +
           `path=${getCurrentPath()}`
@@ -296,7 +297,7 @@ export function installCallLifecycleDiagnostics(params: {
       return;
     }
 
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] visibilitychange vis=${visibilityState} ` +
         `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
     );
@@ -304,7 +305,7 @@ export function installCallLifecycleDiagnostics(params: {
 
   const onBeforeUnload = () => {
     if (shouldSkipCallLifecycleExit()) {
-      console.log(
+      debugConsoleLog(
         `[call-lifecycle] beforeunload-skip-snapshot ` +
           `session=${compactSessionId(sessionId)} device=${compactDeviceId(deviceId)}`
       );
@@ -479,7 +480,7 @@ export function logCallMuteDecision(params: {
   decision: boolean;
   reason: CallMuteInitReason;
 }) {
-  console.log(
+  debugConsoleLog(
     `[local-mic] mute-decision session=${compactCallScopeId(params.sessionId)} ` +
       `device=${compactCallScopeId(params.deviceId, 4)} nav=${params.nav} ` +
       `stored=${params.stored ?? "-"} isFirstCallEntry=${params.isFirstCallEntry} ` +
@@ -515,7 +516,7 @@ export function resolveCallEntryUserMuted(
 
     if (storedPreference === false && isReloadLike) {
       markCallMicEverUnmuted(sessionId, deviceId);
-      console.log(
+      debugConsoleLog(
         `[local-mic] prevent-safety-mute-on-reload stored=false reason=${reason}`
       );
     }

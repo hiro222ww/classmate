@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 export type VoiceMode =
   | "desktop_default"
   | "ios_conservative"
@@ -183,7 +184,7 @@ export function formatVoiceModeSuffix(): string {
 
 export function logVoiceClientEnv(context: string) {
   const env = getVoiceClientEnv();
-  console.log(
+  debugConsoleLog(
     `[voice-env] ${context} voiceMode=${env.voiceMode} ios=${env.isIOS} ` +
       `ipados=${env.isIPadOS} windows=${env.isWindows} safari=${env.isSafari} ` +
       `pwa=${env.isStandalonePWA}`

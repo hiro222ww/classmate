@@ -1,6 +1,11 @@
 "use client";
 
 import { formatVoiceModeSuffix } from "@/lib/voiceClientEnv";
+import {
+  debugConsoleLog,
+  debugVoiceLog,
+  isDebugVoiceEnabled,
+} from "@/lib/debugVoiceLog";
 
 import { installCallLifecycleDiagnostics as installCallLifecycleDiagnosticsImpl } from "@/lib/callLifecycle";
 import { recordCallReloadContext } from "@/lib/callReloadDiagnostics";
@@ -18,22 +23,14 @@ type PeerConnectionSnapshot = PeerMediaSnapshot & {
 };
 
 export function isVoiceLayerDebugEnabled() {
-  if (typeof window === "undefined") return false;
-  if (process.env.NEXT_PUBLIC_VOICE_DEBUG === "true") return true;
-
-  try {
-    return localStorage.getItem("voice_debug") === "1";
-  } catch {
-    return false;
-  }
+  return isDebugVoiceEnabled();
 }
 
 export function voiceDebugLog(
   tag: string,
   payload: Record<string, unknown>
 ) {
-  if (!isVoiceLayerDebugEnabled()) return;
-  console.log(tag, { ...payload, timestamp: Date.now() });
+  debugVoiceLog("voice", tag, { ...payload, timestamp: Date.now() });
 }
 
 function withBase(
@@ -81,7 +78,7 @@ export function logPeerStateChange(params: {
   pc?: RTCPeerConnection | null;
   media?: PeerMediaSnapshot;
 }) {
-  console.log("[voice-peer] state-change", {
+  debugConsoleLog("[voice-peer] state-change", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     field: params.field,
     previous: params.previous,
@@ -111,7 +108,7 @@ export function logPeerStateWarning(params: {
   recordCallReloadContext({ lastPeerWarning: compact });
 
   console.warn(compact);
-  console.warn("[voice-peer] state-warning", {
+  debugConsoleLog("[voice-peer] state-warning", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     reason: params.reason,
     ...snap,
@@ -149,8 +146,8 @@ export function logRemoteTrackEvent(params: {
 
   recordCallReloadContext({ lastRemoteTrackEvent: compact });
 
-  console.log(compact);
-  console.log("[voice-peer] remote-track", {
+  debugConsoleLog(compact);
+  debugConsoleLog("[voice-peer] remote-track", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     event: params.event,
     trackKind: params.trackKind,
@@ -219,10 +216,10 @@ export function logHealPeerAction(params: {
 
   if (params.repeatWarning) {
     console.warn(compact);
-    console.warn("[voice-peer] healRun", payload);
+    debugConsoleLog("[voice-peer] healRun", payload);
   } else {
-    console.log(compact);
-    console.log("[voice-peer] healRun", payload);
+    debugConsoleLog(compact);
+    debugConsoleLog("[voice-peer] healRun", payload);
   }
 }
 
@@ -237,7 +234,7 @@ export function logHealRecoverySuccess(params: {
   recoveryVia?: "connected" | "ontrack" | "unmute";
   elapsedMsSinceTrackEnded?: number;
 }) {
-  console.log("[voice-peer] heal-recovered", {
+  debugConsoleLog("[voice-peer] heal-recovered", {
     ...withBase(params.sessionId, params.localDeviceId, params.remoteDeviceId),
     remoteDeviceId: params.remoteDeviceId,
     connectionState: params.connectionState,
@@ -265,14 +262,14 @@ export function logCallLifecycle(
     params.visibilityState ??
     (typeof document !== "undefined" ? document.visibilityState : undefined);
 
-  console.log(
+  debugConsoleLog(
     `[call-lifecycle] event=${event} vis=${visibilityState ?? "-"} ` +
       `session=${compactSessionId(params.sessionId)} ` +
       `device=${compactDeviceId(params.deviceId)}` +
       (params.persisted != null ? ` persisted=${params.persisted}` : "")
   );
 
-  console.log("[call-lifecycle]", {
+  debugConsoleLog("[call-lifecycle]", {
     event,
     sessionId: params.sessionId,
     deviceId: params.deviceId,
@@ -297,14 +294,14 @@ export function logCallNavigationType(params: {
     | PerformanceNavigationTiming
     | undefined;
 
-  console.log("[call-lifecycle] navigation", {
+  debugConsoleLog("[call-lifecycle] navigation", {
     type: entry?.type ?? "unknown",
     sessionId: params.sessionId,
     deviceId: params.deviceId,
     timestamp: Date.now(),
   });
 
-  console.log(
+  debugConsoleLog(
     `[call-lifecycle] navigation type=${entry?.type ?? "unknown"} ` +
       `session=${compactSessionId(params.sessionId)} ` +
       `device=${compactDeviceId(params.deviceId)}`
@@ -416,7 +413,7 @@ export function logRemoteAudioPipeline(params: {
 
   const peerCtx = getRemoteAudioPipelinePeerContext(params.remoteDeviceId);
 
-  console.log(
+  debugConsoleLog(
     `[remote-audio-pipeline] remote=${compactDeviceId(params.remoteDeviceId)} ` +
       `hasPc=${params.hasPc || peerCtx.hasPc} conn=${params.conn !== "-" ? params.conn : peerCtx.conn} ice=${params.ice !== "-" ? params.ice : peerCtx.ice} ` +
       `hasStream=${params.hasStream} trackReady=${params.trackReady} ` +
@@ -434,7 +431,7 @@ export function logVoicePeerAutoRecover(params: {
   action: "play_retry" | "reattach" | "reconnect";
   reason: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-peer] auto-recover remote=${compactDeviceId(params.remoteId)} ` +
       `action=${params.action} reason=${params.reason}`
   );
@@ -469,7 +466,7 @@ export function logCallStatusPeer(params: {
   const orphanPc =
     !params.hasPc && params.hasRemoteStream && params.remoteTracksCount > 0;
 
-  console.log(
+  debugConsoleLog(
     `[call-status-peer] local=${compactDeviceId(params.localDeviceId)} remote=${compactDeviceId(params.remoteDeviceId)} ` +
       `label=${params.label} status=${params.status} peerState=${params.effectivePeerState ?? params.peerState} ` +
       `statusSource=${params.statusSource ?? "-"} ` +
@@ -522,7 +519,7 @@ export function logVoiceSignalIgnored(params: {
     );
   }
 
-  console.log(parts.join(" "));
+  debugConsoleLog(parts.join(" "));
 }
 
 export function logVoiceSignalStaleAnswerRecover(params: {
@@ -531,7 +528,7 @@ export function logVoiceSignalStaleAnswerRecover(params: {
   currentConnectionId: string | null;
   action: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] stale-answer-recover remote=${compactDeviceId(params.remote)} ` +
       `incomingConnectionId=${compactConnectionId(params.incomingConnectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} ` +
@@ -551,7 +548,7 @@ export function logVoiceSignalStaleWarning(params: {
   hasRemoteStream: boolean;
   tracks: number;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] stale-signal-warning type=${params.type} remote=${compactDeviceId(params.remote)} ` +
       `incomingConnectionId=${compactConnectionId(params.incomingConnectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} ` +
@@ -567,7 +564,7 @@ export function logVoiceSignalOfferReceived(params: {
   currentConnectionId: string | null;
   sig: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] offer-received from=${compactDeviceId(params.from)} to=${compactDeviceId(params.to)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
@@ -578,7 +575,7 @@ export function logVoiceSignalSetRemoteOfferStart(
   remoteId: string,
   sig: string
 ) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] set-remote-offer-start remote=${compactDeviceId(remoteId)} sig=${sig}`
   );
 }
@@ -587,13 +584,13 @@ export function logVoiceSignalSetRemoteOfferDone(
   remoteId: string,
   sig: string
 ) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] set-remote-offer-done remote=${compactDeviceId(remoteId)} sig=${sig}`
   );
 }
 
 export function logVoiceSignalAnswerCreateStart(remoteId: string) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] answer-create-start remote=${compactDeviceId(remoteId)}`
   );
 }
@@ -602,7 +599,7 @@ export function logVoiceSignalAnswerSent(
   remoteId: string,
   connectionId: string
 ) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] answer-sent remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}`
   );
 }
@@ -613,7 +610,7 @@ export function logVoiceSignalAnswerReceived(params: {
   currentConnectionId: string | null;
   sig: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] answer-received remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
@@ -768,14 +765,14 @@ export function logVoiceMeshPeerSummary(
   const header = formatVoiceMeshSummaryHeader(params);
   recordCallReloadContext({ lastMeshSummary: header });
 
-  console.log(header);
+  debugConsoleLog(header);
   for (const peer of params.peers) {
-    console.log(formatVoiceMeshPeerLine(peer));
+    debugConsoleLog(formatVoiceMeshPeerLine(peer));
   }
 
   onAfterPeerLines?.(params.peers);
 
-  console.log("[voice-mesh] peer-summary", {
+  debugConsoleLog("[voice-mesh] peer-summary", {
     ...params,
     membersCount: params.memberDeviceIds.length,
     inCallMembersCount: params.inCallMemberDeviceIds.length,
@@ -803,8 +800,10 @@ export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
   const now = Date.now();
 
   const warn = (reason: string, extra?: Record<string, unknown>) => {
-    console.warn(formatVoiceMeshWarningLine(reason, trigger, sessionId, localDeviceId, extra));
-    console.warn("[voice-mesh] mesh-warning", {
+    console.warn(
+      formatVoiceMeshWarningLine(reason, trigger, sessionId, localDeviceId, extra)
+    );
+    debugConsoleLog("[voice-mesh] mesh-warning", {
       reason,
       trigger,
       sessionId,

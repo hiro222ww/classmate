@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 type UnlockListener = () => void;
 type PlayAllListener = () => void;
 
@@ -56,7 +57,7 @@ export function requestRemoteAudioUnlock() {
   void resumeSharedAudioContext();
 
   const remoteIds = Array.from(playAllListeners).length;
-  console.log(
+  debugConsoleLog(
     `[remote-audio] play-attempt-all reason=user_unlock remotes=${remoteIds}`
   );
 

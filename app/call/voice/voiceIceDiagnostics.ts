@@ -1,3 +1,4 @@
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import { compactConnectionId, compactDeviceId } from "./voiceDiagnostics";
 
 export type IceCandidateTypeLabel =
@@ -126,7 +127,7 @@ export function logVoiceIceLocalCandidate(params: {
   candidate: RTCIceCandidateInit;
 }): void {
   const details = getIceCandidateDetails(params.candidate);
-  console.log(
+  debugConsoleLog(
     `[voice-ice] local-candidate remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `type=${details.type} protocol=${details.protocol} address=${details.address} ` +
@@ -141,7 +142,7 @@ export function logVoiceIceRemoteCandidateReceived(params: {
   queued: boolean;
 }): void {
   const details = getIceCandidateDetails(params.candidate);
-  console.log(
+  debugConsoleLog(
     `[voice-ice] remote-candidate-received remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `type=${details.type} protocol=${details.protocol} address=${details.address} ` +
@@ -155,7 +156,7 @@ export function logVoiceIceAddCandidateSuccess(params: {
   candidate: RTCIceCandidateInit;
 }): void {
   const details = getIceCandidateDetails(params.candidate);
-  console.log(
+  debugConsoleLog(
     `[voice-ice] addIceCandidate-success remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} type=${details.type}`
   );
@@ -169,7 +170,7 @@ export function logVoiceIceAddCandidateFailed(params: {
   message: string;
 }): void {
   const details = getIceCandidateDetails(params.candidate);
-  console.log(
+  debugConsoleLog(
     `[voice-ice] addIceCandidate-failed remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} type=${details.type} ` +
       `name=${params.name} message=${params.message}`
@@ -180,7 +181,7 @@ export function logVoiceIceGatheringState(params: {
   remoteId: string;
   state: string;
 }): void {
-  console.log(
+  debugConsoleLog(
     `[voice-ice] gathering-state remote=${compactDeviceId(params.remoteId)} state=${params.state}`
   );
 }
@@ -190,7 +191,7 @@ export function logVoiceIceGatheringComplete(params: {
   connectionId: string | null;
   stats: PeerIceDiagnostics;
 }): void {
-  console.log(
+  debugConsoleLog(
     `[voice-ice] gathering-complete remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `localCandidateTypes=${formatIceTypeSet(params.stats.localTypes)} count=${params.stats.localCount}`
@@ -203,7 +204,7 @@ export function logVoiceIceCheckingStuck(params: {
   conn: string;
   ice: string;
 }): void {
-  console.log(
+  debugConsoleLog(
     `[voice-ice] checking-stuck remote=${compactDeviceId(params.remoteId)} ` +
       `localTypes=${formatIceTypeSet(params.stats.localTypes)} ` +
       `remoteTypes=${formatIceTypeSet(params.stats.remoteTypes)} ` +
@@ -218,7 +219,7 @@ export function logVoiceIceInsufficientCandidates(params: {
   reason: "no_remote_candidates" | "host_only";
   stats: PeerIceDiagnostics;
 }): void {
-  console.log(
+  debugConsoleLog(
     `[voice-ice] insufficient-candidates remote=${compactDeviceId(params.remoteId)} ` +
       `reason=${params.reason} remoteTypes=${formatIceTypeSet(params.stats.remoteTypes)} ` +
       `addedRemoteCandidates=${params.stats.remoteAddedCount}`
@@ -246,7 +247,7 @@ export function logVoiceIceP2pDirectFailed(params: {
   reason: string;
   stats: PeerIceDiagnostics;
 }): void {
-  console.log(
+  debugConsoleLog(
     `[voice-ice] p2p-direct-failed remote=${compactDeviceId(params.remoteId)} ` +
       `reason=${params.reason} localTypes=${formatIceTypeSet(params.stats.localTypes)} ` +
       `remoteTypes=${formatIceTypeSet(params.stats.remoteTypes)}`
@@ -354,7 +355,7 @@ export function logVoiceIceStatsDiagnostic(params: {
         }
       });
 
-      console.log(
+      debugConsoleLog(
         `[voice-ice] ice-stats-diagnostic remote=${compactDeviceId(remoteId)} ` +
           `conn=${conn} ice=${ice} gathering=${gathering} sig=${sig} ` +
           `pairTotal=${pairTotal} inProgress=${pairInProgress} succeeded=${pairSucceeded} failed=${pairFailed} ` +
@@ -368,7 +369,7 @@ export function logVoiceIceStatsDiagnostic(params: {
       );
     });
   } catch (e) {
-    console.log(
+    debugConsoleLog(
       `[voice-ice] ice-stats-diagnostic remote=${compactDeviceId(remoteId)} ` +
         `error=${String(e)} conn=${conn} ice=${ice}`
     );
@@ -447,7 +448,7 @@ export async function logVoiceIceCandidatePairFromPc(
 
     const result = best ?? empty;
 
-    console.log(
+    debugConsoleLog(
       `[voice-ice] selected-candidate-pair remote=${compactDeviceId(remoteId)} ` +
         `selected=${result.selected} nominated=${result.nominated} state=${result.state} ` +
         `localType=${result.localType} remoteType=${result.remoteType} ` +
@@ -466,7 +467,7 @@ export async function logVoiceIceCandidatePairFromPc(
 
     return result;
   } catch (e) {
-    console.log(
+    debugConsoleLog(
       `[voice-ice] selected-candidate-pair remote=${compactDeviceId(remoteId)} ` +
         `selected=false nominated=false state=error localType=- remoteType=- ` +
         `networkType=- currentRoundTripTime=- bytesSent=- bytesReceived=- ` +

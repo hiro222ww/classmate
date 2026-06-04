@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 const SNAPSHOT_KEY = "classmate_call_reload_snapshot";
 const BFCACHE_SUSPEND_KEY = "classmate_call_bfcache_suspend";
 
@@ -94,7 +95,7 @@ export function saveCallReloadSnapshot(params: {
     ...reloadContext,
   };
 
-  console.log(formatSnapshotLine(snapshot));
+  debugConsoleLog(formatSnapshotLine(snapshot));
 
   try {
     sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
@@ -112,7 +113,7 @@ export function logReloadSnapshotOnMount(params: {
   try {
     const raw = sessionStorage.getItem(SNAPSHOT_KEY);
     if (!raw) {
-      console.log(
+      debugConsoleLog(
         `[call-lifecycle] reload-snapshot-restored present=false nav=${nav} ` +
           `trigger=- vis=- close=- track=- heal=- err=- reject=- chunk=-`
       );
@@ -126,7 +127,7 @@ export function logReloadSnapshotOnMount(params: {
       isLikelyChunkLoadError(snapshot.lastError ?? "") ||
       isLikelyChunkLoadError(snapshot.lastRejection ?? "");
 
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] reload-snapshot-restored present=true age=${ageSec}s nav=${nav} ` +
         `trigger=${snapshot.trigger} vis=${snapshot.visibilityState} prevNav=${snapshot.navigationType} ` +
         `close=${snapshot.lastClosePeer ?? "-"} track=${snapshot.lastRemoteTrackEvent ?? "-"} ` +
@@ -136,7 +137,7 @@ export function logReloadSnapshotOnMount(params: {
 
     return snapshot;
   } catch {
-    console.log(
+    debugConsoleLog(
       `[call-lifecycle] reload-snapshot-restored present=false nav=${nav} parseError=true`
     );
     return null;

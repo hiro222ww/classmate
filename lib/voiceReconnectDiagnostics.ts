@@ -1,3 +1,4 @@
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import type { RemotePlaybackHealth } from "@/app/call/voice/RemoteAudio";
 
 export type VoiceReconnectDecisionInput = {
@@ -92,7 +93,7 @@ export function logVoiceReconnectDecision(
   const nowMs = Date.now();
   const remote = compactRemoteId(input.remoteId);
 
-  console.log(
+  debugConsoleLog(
     `[${tag}] remote=${remote} allow=${input.allow}` +
       (input.blockReason ? ` block=${input.blockReason}` : "") +
       (input.action ? ` action=${input.action}` : "") +

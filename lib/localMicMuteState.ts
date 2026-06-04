@@ -1,3 +1,4 @@
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 function compactCallScopeId(id: string | null | undefined, tail = 8): string {
   const value = String(id ?? "").trim();
   if (!value) return "-";
@@ -9,7 +10,7 @@ export function logInitialSafetyMute(params: {
   sessionId: string;
   deviceId: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[local-mic] initial-safety-mute session=${compactCallScopeId(params.sessionId)} ` +
       `device=${compactCallScopeId(params.deviceId, 4)} userMuted=true trackEnabled=false`
   );
@@ -28,7 +29,7 @@ export function logMuteStateSet(params: {
   reason: string;
   source: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[local-mic] mute-state-set userMuted=${params.userMuted} prev=${params.prev} ` +
       `reason=${params.reason} source=${params.source}`
   );
@@ -40,7 +41,7 @@ export function logTrackEnabledSet(params: {
   reason: string;
   trackId?: string | null;
 }) {
-  console.log(
+  debugConsoleLog(
     `[local-mic] track-enabled-set enabled=${params.enabled} prev=${params.prev} ` +
       `reason=${params.reason} trackId=${compactMicTrackId(params.trackId)}`
   );
@@ -54,7 +55,7 @@ export function logRestoreMutedState(params: {
   trackEnabledAfter: boolean | null;
   reason: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[local-mic] restore-muted-state stored=${params.stored ?? "-"} ` +
       `userMutedBefore=${params.userMutedBefore} userMutedAfter=${params.userMutedAfter} ` +
       `trackEnabledBefore=${params.trackEnabledBefore ?? "-"} ` +

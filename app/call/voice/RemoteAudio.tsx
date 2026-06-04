@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   formatVoiceModeSuffix,
@@ -15,6 +16,7 @@ import {
   logRemoteAudioPipeline,
   logVoicePeerAutoRecover,
 } from "./voiceDiagnostics";
+import { markVoicePerf } from "@/lib/voicePerf";
 
 const voicePolicy = getVoiceModePolicy();
 const ATTACH_LOG_THROTTLE_MS = 5000;
@@ -138,7 +140,7 @@ function logPlaybackCheck(params: {
   const confirmed =
     health.playbackActiveMode === "confirmed" || health.currentTimeAdvanced;
 
-  console.log(
+  debugConsoleLog(
     `[remote-audio] playback-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
       `afterMs=${afterMs} currentTime=${el.currentTime.toFixed(2)} previousCurrentTime=${previousCurrentTime.toFixed(2)} ` +
       `advanced=${health.currentTimeAdvanced} level=${level.toFixed(3)} paused=${el.paused} muted=${el.muted} volume=${el.volume} ` +
@@ -180,7 +182,7 @@ function logRemoteAudioCompact(
     }
   }
 
-  console.log(parts.join(" "));
+  debugConsoleLog(parts.join(" "));
 }
 
 function evaluateRemotePlaybackHealth(params: {
@@ -340,8 +342,18 @@ export default function RemoteAudio({
   const playSuccessRef = useRef(false);
   const provisionalPlaybackStartedAtRef = useRef<number | null>(null);
   const mountedAtRef = useRef<number>(Date.now());
+  const attachPerfLoggedRef = useRef(false);
   const lastPlayAttemptAtRef = useRef<number | null>(null);
   const firstConfirmedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!stream?.id || attachPerfLoggedRef.current) return;
+    attachPerfLoggedRef.current = true;
+    markVoicePerf("remote_audio_attached", {
+      remoteId,
+      extra: `stream=${compactMediaId(stream.id)}`,
+    });
+  }, [remoteId, stream]);
   const playSuccessAtRef = useRef<number | null>(null);
   const playFailedAtRef = useRef<number | null>(null);
   const lastAttachAtRef = useRef<number | null>(null);
@@ -380,7 +392,7 @@ export default function RemoteAudio({
           health.lastPlaySuccessAt != null
             ? now - health.lastPlaySuccessAt
             : null;
-        console.log(
+        debugConsoleLog(
           `[remote-audio] playback-health remote=${compactRemoteId(remoteId)} ` +
             `playing=${health.audioActuallyPlaying} advanced=${health.currentTimeAdvanced} ` +
             `level=${health.level.toFixed(3)} trackReady=${health.trackReady} ` +
@@ -396,7 +408,7 @@ export default function RemoteAudio({
     (health: RemotePlaybackHealth, reason: string) => {
       if (!health.playbackActive) return;
       const mode = health.playbackActiveMode;
-      console.log(
+      debugConsoleLog(
         `[remote-audio] playback-active remote=${compactRemoteId(remoteId)} mode=${mode} reason=${reason} ` +
           `trackReady=${health.trackReady} paused=${health.playSuccess ? "false" : "true"} ` +
           `advanced=${health.currentTimeAdvanced} level=${health.level.toFixed(3)} ${formatVoiceModeSuffix()}`
@@ -499,7 +511,7 @@ export default function RemoteAudio({
 
     if (shouldLog) {
       audioOutputConfigLogRef.current = { at: now, signature };
-      console.log(
+      debugConsoleLog(
         `[remote-audio] audio-output-config remote=${compactRemoteId(remoteId)} instance=${instanceId} muted=false volume=1 autoplay=true playsInline=true ${formatVoiceModeSuffix()}`
       );
     }
@@ -528,7 +540,7 @@ export default function RemoteAudio({
         await (el as HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }).setSinkId?.(
           sinkId
         );
-        console.log("[call] output device applied", { remoteId, sinkId });
+        debugConsoleLog("[call] output device applied", { remoteId, sinkId });
       } catch (e) {
         callWarn("[call] setSinkId failed", { remoteId, sinkId, e });
       }
@@ -578,7 +590,7 @@ export default function RemoteAudio({
       return ctx.state === "running";
     } catch (e: unknown) {
       const err = e as { name?: string; message?: string };
-      console.log(
+      debugConsoleLog(
         `[remote-audio] webaudio-fallback-failed remote=${compactRemoteId(remoteId)} ` +
           `err=${err?.name ?? "unknown"} msg=${String(err?.message ?? "").slice(0, 80)}`
       );
@@ -593,7 +605,7 @@ export default function RemoteAudio({
 
   const logAttachSkipEndedTrack = useCallback(
     (track: MediaStreamTrack | null) => {
-      console.log(
+      debugConsoleLog(
         `[remote-audio] attach-skip-ended-track remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
           `streamId=${compactMediaId(stream.id)} trackId=${compactMediaId(track?.id)} ${formatVoiceModeSuffix()}`
       );
@@ -666,7 +678,7 @@ export default function RemoteAudio({
         opts?.attempt != null && opts?.maxAttempts != null
           ? ` attempt=${opts.attempt}/${opts.maxAttempts}`
           : "";
-      console.log(
+      debugConsoleLog(
         `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason}${attemptLabel} ` +
           `paused=${el.paused} muted=${el.muted} volume=${el.volume} readyState=${el.readyState} ` +
           `srcObjectSet=${el.srcObject === stream} ${formatVoiceModeSuffix()}`
@@ -719,7 +731,7 @@ export default function RemoteAudio({
         const err = e as { name?: string; message?: string };
         const errName = err?.name ?? "unknown";
         const errMessage = String(err?.message ?? "").slice(0, 120);
-        console.log(
+        debugConsoleLog(
           `[remote-audio] play-failed remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
             `name=${errName} message=${errMessage} ${formatVoiceModeSuffix()}`
         );
@@ -766,7 +778,7 @@ export default function RemoteAudio({
       lastAttachedStreamIdRef.current = null;
       lastAttachedTrackIdRef.current = null;
 
-      console.log(
+      debugConsoleLog(
         `[remote-audio] reattach remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason} attempt=${attempt}/${MAX_SILENT_REATTACH_ATTEMPTS} ${formatVoiceModeSuffix()}`
       );
       logVoicePeerAutoRecover({
@@ -824,7 +836,7 @@ export default function RemoteAudio({
       lastSilentSuspectLogAtRef.current = now;
 
       const safari = getSafariAudioDebug(el);
-      console.log(
+      debugConsoleLog(
         `[remote-audio] silent-playback-suspect remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
           `reason=play_success_but_unconfirmed elapsedMs=${elapsedMs} currentTime=${el.currentTime.toFixed(2)} ` +
           `level=${level.toFixed(3)} advanced=${health.currentTimeAdvanced} decodedBytes=${safari.webkitAudioDecodedByteCount ?? "-"} ${formatVoiceModeSuffix()}`
@@ -909,7 +921,7 @@ export default function RemoteAudio({
           !health.verified &&
           playSuccessRef.current
         ) {
-          console.log(
+          debugConsoleLog(
             `[remote-audio] playback-stalled remote=${compactRemoteId(remoteId)} ` +
               `ios=true hint=tap_screen_for_webaudio advanced=${health.currentTimeAdvanced} level=${level.toFixed(3)}`
           );
@@ -978,7 +990,7 @@ export default function RemoteAudio({
   const logStreamProps = useCallback(
     (tag: string) => {
       const track = stream?.getAudioTracks?.()[0] ?? null;
-      console.log(
+      debugConsoleLog(
         `[remote-audio] props remote=${compactRemoteId(remoteId)} instance=${instanceId} tag=${tag} ` +
           `hasStream=${!!stream} streamId=${compactMediaId(stream?.id)} tracks=${stream?.getAudioTracks?.().length ?? 0} ` +
           `trackId=${compactMediaId(track?.id)} trackReady=${track?.readyState ?? "-"} replayReason=${replayReason ?? "-"} ${formatVoiceModeSuffix()}`
@@ -990,13 +1002,13 @@ export default function RemoteAudio({
   useEffect(() => {
     mountedAtRef.current = Date.now();
     const track = stream?.getAudioTracks?.()[0] ?? null;
-    console.log(
+    debugConsoleLog(
       `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
         `streamId=${compactMediaId(stream?.id)} trackId=${compactMediaId(track?.id)} trackReady=${track?.readyState ?? "-"} ${formatVoiceModeSuffix()}`
     );
     logStreamProps("mount");
     return () => {
-      console.log(
+      debugConsoleLog(
         `[remote-audio] unmount remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${replayReason ?? "component_unmount"} ${formatVoiceModeSuffix()}`
       );
       lastAttachedStreamIdRef.current = null;
@@ -1059,7 +1071,7 @@ export default function RemoteAudio({
         streamId,
         trackId,
       });
-      console.log(
+      debugConsoleLog(
         `[remote-audio] attach-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
           `streamId=${compactMediaId(streamId)} prevStreamId=${compactMediaId(prevStreamId)} ` +
           `trackId=${compactMediaId(trackId)} prevTrackId=${compactMediaId(prevTrackId)} ` +
@@ -1074,7 +1086,7 @@ export default function RemoteAudio({
         return;
       }
       if (shouldLogAttach) {
-        console.log(
+        debugConsoleLog(
           `[remote-audio] attach-skip-same-stream remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
             `streamId=${compactMediaId(streamId)} trackId=${compactMediaId(trackId)} ${formatVoiceModeSuffix()}`
         );

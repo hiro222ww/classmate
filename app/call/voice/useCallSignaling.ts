@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { compactDeviceId } from "@/app/call/voice/voiceDiagnostics";
+import {
+  classifySignalInsertError,
+  logSignalInsertFailure,
+  logSignalTransport,
+  sleepMs,
+} from "@/lib/signalTransportLog";
 
 /** Must match `call_signals_signal_type_check` in Supabase (see migration 20260602100000). */
 export const ALLOWED_CALL_SIGNAL_TYPES = [
@@ -46,6 +52,7 @@ export type SendSignalResult = {
   ok: boolean;
   errorName?: string;
   errorMessage?: string;
+  retryCount?: number;
 };
 
 type UseCallSignalingArgs = {
@@ -54,6 +61,9 @@ type UseCallSignalingArgs = {
   onSignal: (row: SignalRow) => Promise<void> | void;
   onStatusChange?: (text: string) => void;
 };
+
+const SIGNAL_INSERT_MAX_ATTEMPTS = 3;
+const SIGNAL_INSERT_BACKOFF_MS = [200, 450];
 
 export function useCallSignaling({
   sessionId,
@@ -65,6 +75,8 @@ export function useCallSignaling({
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const onSignalRef = useRef<(row: SignalRow) => Promise<void> | void>(() => {});
+  const aliveRef = useRef(true);
+  const channelResubscribeAttemptsRef = useRef(0);
 
   useEffect(() => {
     onSignalRef.current = onSignal;
@@ -91,119 +103,272 @@ export function useCallSignaling({
         };
       }
 
-      try {
-        const { error } = await supabase.from("call_signals").insert({
-          session_id: sessionId,
-          from_device_id: deviceId,
-          to_device_id: toDeviceId,
-          signal_type: signalType,
-          payload,
-        });
+      const startedAt =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+      const remote = compactDeviceId(toDeviceId);
+      let lastErrorName = "SignalInsertError";
+      let lastErrorMessage = "insert_failed";
 
-        if (error) {
-          const remote = compactDeviceId(toDeviceId);
-          console.error(
-            `[voice-signal] insert-failed type=${signalType} remote=${remote} ` +
-              `name=${error.name ?? "unknown"} message=${error.message ?? "unknown"}`
-          );
+      for (let attempt = 0; attempt < SIGNAL_INSERT_MAX_ATTEMPTS; attempt++) {
+        if (!aliveRef.current) {
+          return {
+            ok: false,
+            errorName: "Aborted",
+            errorMessage: "signaling_unmounted",
+            retryCount: attempt,
+          };
+        }
+
+        try {
+          const { error } = await supabase.from("call_signals").insert({
+            session_id: sessionId,
+            from_device_id: deviceId,
+            to_device_id: toDeviceId,
+            signal_type: signalType,
+            payload,
+          });
+
+          if (!error) {
+            if (attempt > 0) {
+              logSignalTransport({
+                kind: "send",
+                signalType,
+                remoteDeviceId: toDeviceId,
+                retryCount: attempt,
+                retryable: true,
+                elapsedMs: Math.round(
+                  (typeof performance !== "undefined"
+                    ? performance.now()
+                    : Date.now()) - startedAt
+                ),
+                extra: "recovered_after_retry",
+              });
+            }
+            return { ok: true, retryCount: attempt };
+          }
+
+          lastErrorName = error.name ?? "SignalInsertError";
+          lastErrorMessage = error.message ?? "insert_failed";
+
+          const retryable =
+            classifySignalInsertError(error).retryable &&
+            attempt < SIGNAL_INSERT_MAX_ATTEMPTS - 1;
+
+          logSignalInsertFailure({
+            signalType,
+            remoteDeviceId: toDeviceId,
+            error,
+            retryCount: attempt + 1,
+            retryable,
+            elapsedMs: Math.round(
+              (typeof performance !== "undefined"
+                ? performance.now()
+                : Date.now()) - startedAt
+            ),
+          });
+
           if (isSignalTypeConstraintError(error)) {
             console.error(
               `[voice-signal] allowed-types-mismatch type=${signalType} ` +
                 `allowed=${ALLOWED_CALL_SIGNAL_TYPES.join(",")}`
             );
           }
-          onStatusChange?.(`signal error: ${error.message}`);
-          return {
-            ok: false,
-            errorName: error.name ?? "SignalInsertError",
-            errorMessage: error.message ?? "insert_failed",
-          };
-        }
 
-        return { ok: true };
-      } catch (e: unknown) {
-        const err = e as { name?: string; message?: string };
-        console.error(
-          `[voice-signal] insert-failed type=${signalType} remote=${compactDeviceId(toDeviceId)} ` +
-            `name=${err?.name ?? "unknown"} message=${err?.message ?? String(e)}`
-        );
-        return {
-          ok: false,
-          errorName: err?.name ?? "SignalInsertException",
-          errorMessage: err?.message ?? String(e),
-        };
+          if (!retryable) {
+            if (!isSignalTypeConstraintError(error)) {
+              onStatusChange?.(`signal error: ${error.message}`);
+            }
+            return {
+              ok: false,
+              errorName: lastErrorName,
+              errorMessage: lastErrorMessage,
+              retryCount: attempt + 1,
+            };
+          }
+
+          await sleepMs(
+            SIGNAL_INSERT_BACKOFF_MS[
+              Math.min(attempt, SIGNAL_INSERT_BACKOFF_MS.length - 1)
+            ] ?? 450
+          );
+          continue;
+        } catch (e: unknown) {
+          const classified = classifySignalInsertError(e);
+          const err = e as { name?: string; message?: string };
+          lastErrorName = err?.name ?? "SignalInsertException";
+          lastErrorMessage = err?.message ?? String(e);
+
+          if (classified.intentionalAbort) {
+            logSignalTransport({
+              kind: "cleanup",
+              signalType,
+              remoteDeviceId: toDeviceId,
+              error: e,
+              retryable: false,
+              extra: "intentional_abort",
+            });
+            return {
+              ok: false,
+              errorName: lastErrorName,
+              errorMessage: lastErrorMessage,
+              retryCount: attempt,
+            };
+          }
+
+          const retryable =
+            classified.retryable && attempt < SIGNAL_INSERT_MAX_ATTEMPTS - 1;
+
+          logSignalInsertFailure({
+            signalType,
+            remoteDeviceId: toDeviceId,
+            error: e,
+            retryCount: attempt + 1,
+            retryable,
+            elapsedMs: Math.round(
+              (typeof performance !== "undefined"
+                ? performance.now()
+                : Date.now()) - startedAt
+            ),
+          });
+
+          if (!retryable) {
+            if (classified.retryable) {
+              onStatusChange?.(`signal error: ${lastErrorMessage}`);
+            }
+            return {
+              ok: false,
+              errorName: lastErrorName,
+              errorMessage: lastErrorMessage,
+              retryCount: attempt + 1,
+            };
+          }
+
+          await sleepMs(
+            SIGNAL_INSERT_BACKOFF_MS[
+              Math.min(attempt, SIGNAL_INSERT_BACKOFF_MS.length - 1)
+            ] ?? 450
+          );
+        }
       }
+
+      return {
+        ok: false,
+        errorName: lastErrorName,
+        errorMessage: lastErrorMessage,
+        retryCount: SIGNAL_INSERT_MAX_ATTEMPTS,
+      };
     },
     [sessionId, deviceId, onStatusChange]
   );
 
   useEffect(() => {
-    console.log("[voice-signaling] effect check", {
-      sessionId,
-      deviceId,
-    });
+    aliveRef.current = true;
+    channelResubscribeAttemptsRef.current = 0;
 
-    if (!sessionId || !deviceId) return;
-
-    let alive = true;
-
-    setSignalReady(false);
-
-    if (channelRef.current) {
-      void supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
+    if (!sessionId || !deviceId) {
+      setSignalReady(false);
+      return;
     }
 
-    const channel = supabase
-      .channel(`call-signals-${sessionId}-${deviceId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "call_signals",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        async (payload) => {
-          if (!alive) return;
+    let disposed = false;
 
-          const row = payload.new as SignalRow;
-          await onSignalRef.current(row);
-        }
-      )
-      .subscribe((status) => {
-        if (!alive) return;
-
-        console.log("[voice-signaling] subscribe status", {
-          sessionId,
-          deviceId,
-          status,
-        });
-
-        if (status === "SUBSCRIBED") {
-          setSignalReady(true);
-          return;
-        }
-
-        if (
-          status === "CLOSED" ||
-          status === "CHANNEL_ERROR" ||
-          status === "TIMED_OUT"
-        ) {
-          setSignalReady(false);
-        }
-      });
-
-    channelRef.current = channel;
-
-    return () => {
-      alive = false;
-      setSignalReady(false);
-
+    const removeCurrentChannel = () => {
       if (channelRef.current) {
         void supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
+    };
+
+    const subscribeChannel = () => {
+      if (disposed) return;
+
+      removeCurrentChannel();
+      setSignalReady(false);
+
+      const channel = supabase
+        .channel(`call-signals-${sessionId}-${deviceId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "call_signals",
+            filter: `session_id=eq.${sessionId}`,
+          },
+          async (payload) => {
+            if (!aliveRef.current || disposed) return;
+
+            const row = payload.new as SignalRow;
+            try {
+              await onSignalRef.current(row);
+            } catch (e) {
+              logSignalTransport({
+                kind: "receive",
+                signalType: row.signal_type,
+                remoteDeviceId: row.from_device_id,
+                error: e,
+                retryable: false,
+                extra: "handler_exception",
+              });
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (!aliveRef.current || disposed) return;
+
+          logSignalTransport({
+            kind: "subscribe",
+            method: "realtime.subscribe",
+            extra: `status=${status}`,
+          });
+
+          if (status === "SUBSCRIBED") {
+            channelResubscribeAttemptsRef.current = 0;
+            setSignalReady(true);
+            return;
+          }
+
+          if (
+            status === "CLOSED" ||
+            status === "CHANNEL_ERROR" ||
+            status === "TIMED_OUT"
+          ) {
+            setSignalReady(false);
+
+            if (
+              !disposed &&
+              channelResubscribeAttemptsRef.current <
+                2
+            ) {
+              channelResubscribeAttemptsRef.current += 1;
+              const attempt = channelResubscribeAttemptsRef.current;
+              logSignalTransport({
+                kind: "reconnect",
+                method: "realtime.resubscribe",
+                retryCount: attempt,
+                retryable: true,
+                extra: `status=${status}`,
+              });
+              void sleepMs(300 * attempt).then(() => {
+                if (!disposed && aliveRef.current) {
+                  subscribeChannel();
+                }
+              });
+            }
+          }
+        });
+
+      channelRef.current = channel;
+    };
+
+    subscribeChannel();
+
+    return () => {
+      disposed = true;
+      aliveRef.current = false;
+      setSignalReady(false);
+      logSignalTransport({ kind: "cleanup", extra: "signaling_effect_dispose" });
+      removeCurrentChannel();
     };
   }, [sessionId, deviceId]);
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 import {
   useCallback,
   useEffect,
@@ -62,6 +63,15 @@ import {
   normalizeMemberDeviceId,
   type MemberProfileTarget,
 } from "@/lib/memberProfileView";
+import MemberListAvatar from "@/components/MemberListAvatar";
+import { debugVoiceRetryable } from "@/lib/debugVoiceLog";
+import { fetchWithRetry, isIntentionalAbortError } from "@/lib/retryableFetch";
+import {
+  logVoicePerfPipeline,
+  markVoicePerf,
+  resetVoicePerfSession,
+} from "@/lib/voicePerf";
+import { resetSessionVoiceCache } from "@/lib/sessionVoiceCache";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -92,6 +102,7 @@ type Member = {
   device_id: string;
   display_name: string;
   photo_path: string | null;
+  avatar_url?: string | null;
   lastSpokeAt?: number;
   is_in_call?: boolean;
   screen?: string | null;
@@ -114,6 +125,7 @@ type SessionStatusResponse = {
     display_name?: string | null;
     display_name_source?: string | null;
     photo_path?: string | null;
+    avatar_url?: string | null;
     joined_at?: string | null;
     is_in_call?: boolean | null;
     screen?: string | null;
@@ -127,33 +139,6 @@ type SessionStatusResponse = {
   };
   error?: string;
 };
-
-function getAvatarUrl(photoPath?: string | null) {
-  let normalized = String(photoPath ?? "").trim();
-
-  if (!normalized) return "/default-avatar.jpg";
-
-  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
-    return normalized;
-  }
-
-  if (normalized.startsWith("profile-photos/")) {
-    normalized = normalized.replace(/^profile-photos\//, "");
-  }
-
-  if (normalized.startsWith("avatars/")) {
-    normalized = normalized.replace(/^avatars\//, "");
-  }
-
-  const { data } = supabase.storage
-    .from("profile-photos")
-    .getPublicUrl(normalized);
-
-  const publicUrl = data?.publicUrl?.trim();
-  if (!publicUrl) return "/default-avatar.jpg";
-
-  return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
-}
 
 function getCallNavigationType(): string {
   if (typeof performance === "undefined") return "unknown";
@@ -177,6 +162,13 @@ export default function CallClient() {
     if (!deviceId) return;
     logDeviceIdStability(deviceId, "call");
   }, [deviceId, sessionId, classId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    resetVoicePerfSession(sessionId);
+    resetSessionVoiceCache(sessionId);
+    markVoicePerf("call_screen_mounted");
+  }, [sessionId]);
 
   const profileEditHref = useMemo(
     () =>
@@ -329,7 +321,7 @@ export default function CallClient() {
   useEffect(() => {
     const prev = prevSessionIdRef.current;
     if (prev && prev !== sessionId) {
-      console.log("[call] sessionId changed", {
+      debugConsoleLog("[call] sessionId changed", {
         from: prev,
         to: sessionId,
         navigationType: getCallNavigationType(),
@@ -374,6 +366,7 @@ export default function CallClient() {
     if (!classId || !deviceId) return;
 
     let cancelled = false;
+    const deferMs = 4000;
 
     async function loadMeetingPlan() {
       try {
@@ -393,12 +386,16 @@ export default function CallClient() {
       }
     }
 
-    void loadMeetingPlan();
-    const timer = window.setInterval(loadMeetingPlan, 60000);
+    let timer: number | null = null;
+    const startTimer = window.setTimeout(() => {
+      void loadMeetingPlan();
+      timer = window.setInterval(loadMeetingPlan, 60000);
+    }, deferMs);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(startTimer);
+      if (timer) window.clearInterval(timer);
     };
   }, [classId, deviceId]);
 
@@ -406,6 +403,7 @@ export default function CallClient() {
     if (!classId || !deviceId) return;
 
     let cancelled = false;
+    const deferMs = 4000;
 
     async function loadCallRequest() {
       try {
@@ -425,14 +423,20 @@ export default function CallClient() {
       }
     }
 
-    void loadCallRequest();
-    const timer = window.setInterval(loadCallRequest, 60000);
+    let timer: number | null = null;
+    const startTimer = window.setTimeout(() => {
+      void loadCallRequest();
+      timer = window.setInterval(loadCallRequest, 60000);
+    }, deferMs);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearTimeout(startTimer);
+      if (timer) window.clearInterval(timer);
     };
   }, [classId, deviceId]);
+
+  const membersDisplayedRef = useRef(false);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -516,7 +520,7 @@ export default function CallClient() {
   }, []);
 
   const fetchMembers = useCallback(
-    async (reason = "manual") => {
+    async (reason = "manual", opts?: { fast?: boolean }) => {
       if (!sessionId || !classId) return;
       if (fetchingRef.current) {
         pendingFetchReasonRef.current = reason;
@@ -524,19 +528,26 @@ export default function CallClient() {
       }
 
       fetchingRef.current = true;
+      const useFast = opts?.fast === true;
 
       try {
         const qs = new URLSearchParams({
           sessionId,
           classId,
+          lite: "1",
         });
+        if (useFast) {
+          qs.set("fast", "1");
+        }
         if (deviceId) {
           qs.set("viewerDeviceId", deviceId);
         }
 
-        const res = await fetch(`/api/session/status?${qs.toString()}`, {
-          cache: "no-store",
-        });
+        const res = await fetchWithRetry(
+          `/api/session/status?${qs.toString()}`,
+          { cache: "no-store" },
+          { kind: "members", maxAttempts: 3, signalType: reason }
+        );
 
         const rawText = await res.text().catch(() => "");
         let json: SessionStatusResponse | null = null;
@@ -587,13 +598,14 @@ export default function CallClient() {
               device_id: did,
               display_name: formatMemberDisplayName(m),
               photo_path: String(m.photo_path ?? "").trim() || null,
+              avatar_url: String(m.avatar_url ?? "").trim() || null,
               is_in_call: m.is_in_call === true,
               screen: String(m.screen ?? "").trim() || null,
             })
           );
         }
 
-        console.log(
+        debugConsoleLog(
           `[session-members] api-result context=call count=${nextMembers.length} ` +
             `ids=${compactMemberDeviceIds(nextMembers)} reason=${reason} ` +
             `session=${String(sessionId).slice(-6)}`
@@ -670,7 +682,7 @@ export default function CallClient() {
           return;
         }
 
-        console.log("[call] fetchMembers success", {
+        debugConsoleLog("[call] fetchMembers success", {
           reason,
           sessionId,
           deviceId: String(deviceId).slice(-4),
@@ -683,17 +695,32 @@ export default function CallClient() {
         clearRetryTimer();
         membersSyncRevisionRef.current += 1;
         setMembersSyncRevision(membersSyncRevisionRef.current);
+        markVoicePerf("members_loaded", {
+          extra: `count=${nextMembers.length} reason=${reason} fast=${useFast}`,
+        });
+        if (nextMembers.length > 0 && !membersDisplayedRef.current) {
+          membersDisplayedRef.current = true;
+          markVoicePerf("members_displayed", {
+            extra: `count=${nextMembers.length} fast=${useFast}`,
+          });
+          logVoicePerfPipeline(`reason=${reason}`);
+        }
 
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
         }
-      } catch (e: any) {
-        const message = e?.message ?? "unknown_error";
+      } catch (e: unknown) {
+        const message =
+          e && typeof e === "object" && "message" in e
+            ? String((e as { message?: string }).message)
+            : "unknown_error";
 
-        console.warn("[call] fetchMembers unexpected error", {
-          reason,
-          message,
-        });
+        if (!isIntentionalAbortError(e)) {
+          debugVoiceRetryable(`fetchMembers:${reason}`, "members_fetch_error", {
+            reason,
+            message,
+          });
+        }
 
         setFetchErrorCount((prev) => prev + 1);
         clearRetryTimer();
@@ -715,21 +742,22 @@ export default function CallClient() {
   );
 
   useEffect(() => {
-    void fetchMembers("initial");
+    membersDisplayedRef.current = false;
+    void fetchMembers("initial", { fast: true });
 
-    const sync2s = window.setTimeout(() => {
-      void fetchMembers("sync_2s");
-    }, 2000);
+    const presenceSync = window.setTimeout(() => {
+      void fetchMembers("presence_sync");
+    }, 1500);
     const sync5s = window.setTimeout(() => {
       void fetchMembers("sync_5s");
     }, 5000);
 
     return () => {
       clearRetryTimer();
-      window.clearTimeout(sync2s);
+      window.clearTimeout(presenceSync);
       window.clearTimeout(sync5s);
     };
-  }, [fetchMembers, clearRetryTimer]);
+  }, [fetchMembers, clearRetryTimer, sessionId]);
 
   useEffect(() => {
     if (!sessionId || !deviceId) return;
@@ -786,7 +814,7 @@ export default function CallClient() {
   }, [fetchMembers]);
 
   useEffect(() => {
-    console.log("[call] members state", {
+    debugConsoleLog("[call] members state", {
       count: members.length,
       deviceId,
       members: members.map((m) => ({
@@ -820,12 +848,7 @@ export default function CallClient() {
 
     window.setTimeout(() => {
       void sendPresence();
-      void fetchMembers("presence_after_join");
     }, 500);
-
-    window.setTimeout(() => {
-      void fetchMembers("presence_after_join_2");
-    }, 1500);
 
     const timer = window.setInterval(() => {
       void sendPresence();
@@ -847,7 +870,7 @@ export default function CallClient() {
         }).catch(() => {});
       }
     };
-  }, [classId, sessionId, deviceId, fetchMembers]);
+  }, [classId, sessionId, deviceId]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -867,7 +890,7 @@ export default function CallClient() {
         }
       )
       .subscribe((status) => {
-        console.log("[call] members subscribe status", {
+        debugConsoleLog("[call] members subscribe status", {
           sessionId,
           status,
         });
@@ -1302,7 +1325,7 @@ export default function CallClient() {
 
   useEffect(() => {
     if (!sessionId || !deviceId) return;
-    console.log(
+    debugConsoleLog(
       `[call-status] self-muted-debug userMuted=${userMuted} trackEnabled=${localTrackEnabledRef.current ?? "-"} ` +
         `micReady=${micReady} label=${userMuted ? "自分 / ミュート中" : "自分 / 発話可能"} reason=${muteInitReasonRef.current}`
     );
@@ -1362,6 +1385,13 @@ export default function CallClient() {
     });
   }, [members, speakingMemberId, peerStates]);
 
+  const handleMicReadyChange = useCallback((ready: boolean) => {
+    setMicReady(ready);
+    if (ready) {
+      markVoicePerf("local_mic_ready");
+    }
+  }, []);
+
   const callMembers = useMemo(() => {
     return members;
   }, [members]);
@@ -1403,7 +1433,7 @@ export default function CallClient() {
             reason: `track_apply_${reason}`,
           });
         }}
-        onMicReadyChange={setMicReady}
+        onMicReadyChange={handleMicReadyChange}
         onMicLevelChange={(level) => {
           setMicLevel(level);
 
@@ -1588,7 +1618,7 @@ export default function CallClient() {
         </div>
       </div>
 
-      {fetchErrorCount > 0 && (
+      {fetchErrorCount >= 3 && (
         <div
           style={{
             marginTop: 12,
@@ -1689,7 +1719,7 @@ export default function CallClient() {
                   wasPeerConnected: everConnectedPeersRef.current.has(memberId),
                 }),
               }).show;
-            const avatarUrl = member ? getAvatarUrl(member.photo_path) : "";
+            const avatarEager = i < 4;
 
             const isSpeaking =
               !!member?.lastSpokeAt &&
@@ -1767,18 +1797,13 @@ export default function CallClient() {
                     }}
                   >
                     {member ? (
-                      <img
-                        src={avatarUrl}
-                        alt={member.display_name}
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.src = "/default-avatar.jpg";
-                        }}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                        }}
+                      <MemberListAvatar
+                        photoPath={member.photo_path}
+                        avatarUrl={member.avatar_url}
+                        label={member.display_name}
+                        sizePx={LIST_MEMBER_AVATAR_PX}
+                        isMe={isMe}
+                        eager={avatarEager}
                       />
                     ) : null}
                   </div>

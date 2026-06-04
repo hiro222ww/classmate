@@ -1,3 +1,4 @@
+import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
 /** Guards + logs for session member list UI updates (room/call). */
 
 import {
@@ -209,7 +210,7 @@ export function logRoomMembersBeforeUpdate(params: {
       ? ` removed=${params.removed?.join(",") ?? ""} added=${params.added?.join(",") ?? ""}`
       : "";
 
-  console.log(
+  debugConsoleLog(
     `[room-members] before-update context=${params.context} reason=${params.reason} ` +
       `session=${params.sessionId.slice(-6)} class=${params.classId.slice(-6)} ` +
       `currentCount=${params.currentCount} nextCount=${params.nextCount} apply=${params.apply}` +
@@ -224,7 +225,7 @@ export function logRoomMembersEmptyIgnored(params: {
   emptyStreak: number;
   required: number;
 }) {
-  console.log(
+  debugConsoleLog(
     `[room-members] empty-result ignored context=${params.context} reason=${params.reason} ` +
       `streak=${params.emptyStreak}/${params.required}`
   );
@@ -235,7 +236,7 @@ export function logRoomMembersRemoved(params: {
   deviceTail: string;
   reason: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[room-members] member-removed context=${params.context} device=${params.deviceTail} ` +
       `reason=${params.reason}`
   );
