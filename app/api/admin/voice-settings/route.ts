@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminAuth";
-import { getTurnProviderDiagnostics } from "@/lib/turnProvider";
+import {
+  describeVoiceTransportMode,
+  normalizeVoiceTransportSettings,
+} from "@/lib/voiceTransportMode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,20 +31,18 @@ export async function GET(req: Request) {
     );
   }
 
-  const turnDiagnostics = getTurnProviderDiagnostics();
+  const transport = normalizeVoiceTransportSettings({
+    p2p_enabled: data?.p2p_enabled,
+    turn_fallback_enabled: data?.turn_fallback_enabled,
+  });
 
   return NextResponse.json({
     ok: true,
     settings: data,
-    turn_provider: turnDiagnostics.provider,
-    turn_provider_enabled: turnDiagnostics.enabled,
-    turn_diagnostics: {
-      twilio_env_present: turnDiagnostics.twilioEnvPresent,
-      static_env_configured: turnDiagnostics.staticEnvConfigured,
-      static_env_missing: turnDiagnostics.staticEnvMissing,
-      twilio_env_unused_warning: turnDiagnostics.twilioEnvUnusedWarning,
-      twilio_env_required_but_missing: turnDiagnostics.twilioEnvRequiredButMissing,
-    },
+    transport_mode: describeVoiceTransportMode(
+      transport.p2pEnabled,
+      transport.staticTurnEnabled
+    ),
   });
 }
 
@@ -53,27 +54,12 @@ export async function POST(req: Request) {
 
   const payload = {
     id: ID,
-
-    // 通話全体ON/OFF
     voice_enabled: Boolean(body.voice_enabled),
-
-    // 新規通話受付
     new_calls_enabled: Boolean(body.new_calls_enabled),
-
-    // TURN fallback
-    turn_fallback_enabled: Boolean(
-      body.turn_fallback_enabled
-    ),
-
-    // 最大人数
-    max_members_per_call: Number(
-      body.max_members_per_call ?? 5
-    ),
-
-    // 緊急メッセージ
-    emergency_message:
-      body.emergency_message || null,
-
+    p2p_enabled: body.p2p_enabled !== false,
+    turn_fallback_enabled: Boolean(body.turn_fallback_enabled),
+    max_members_per_call: Number(body.max_members_per_call ?? 5),
+    emergency_message: body.emergency_message || null,
     updated_at: new Date().toISOString(),
   };
 
@@ -95,8 +81,17 @@ export async function POST(req: Request) {
     );
   }
 
+  const transport = normalizeVoiceTransportSettings({
+    p2p_enabled: data.p2p_enabled,
+    turn_fallback_enabled: data.turn_fallback_enabled,
+  });
+
   return NextResponse.json({
     ok: true,
     settings: data,
+    transport_mode: describeVoiceTransportMode(
+      transport.p2pEnabled,
+      transport.staticTurnEnabled
+    ),
   });
 }

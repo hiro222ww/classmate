@@ -5,10 +5,12 @@ export const dynamic = "force-dynamic";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { HelpTip } from "@/components/HelpTip";
+import { describeVoiceTransportMode } from "@/lib/voiceTransportMode";
 
 type VoiceSettings = {
   voice_enabled: boolean;
   new_calls_enabled: boolean;
+  p2p_enabled: boolean;
   turn_fallback_enabled: boolean;
   max_members_per_call: number;
   emergency_message: string | null;
@@ -54,13 +56,23 @@ type VoiceLog = {
 const defaultSettings: VoiceSettings = {
   voice_enabled: true,
   new_calls_enabled: true,
+  p2p_enabled: true,
   turn_fallback_enabled: false,
   max_members_per_call: 5,
   emergency_message: "",
 };
 
-function turnFallbackModeLabel(enabled: boolean) {
-  return enabled ? "P2P + TURN fallback" : "P2Pのみ";
+function transportModeLabel(p2p: boolean, staticTurn: boolean) {
+  switch (describeVoiceTransportMode(p2p, staticTurn)) {
+    case "p2p_with_static_fallback":
+      return "P2P優先 + 自前TURN fallback";
+    case "p2p_only":
+      return "P2Pのみ";
+    case "relay_only":
+      return "自前TURNのみ（検証用）";
+    default:
+      return "通話不可（P2P/TURN 両方OFF）";
+  }
 }
 
 export default function AdminVoicePage() {
@@ -80,13 +92,6 @@ export default function AdminVoicePage() {
     useState(true);
 
   const [saving, setSaving] = useState(false);
-  const [turnProvider, setTurnProvider] = useState("disabled");
-  const [turnDiagnostics, setTurnDiagnostics] = useState<{
-    twilio_env_present?: boolean;
-    static_env_configured?: boolean;
-    twilio_env_unused_warning?: boolean;
-    twilio_env_required_but_missing?: boolean;
-  } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -110,12 +115,6 @@ export default function AdminVoicePage() {
         });
       }
 
-      if (typeof data?.turn_provider === "string") {
-        setTurnProvider(data.turn_provider);
-      }
-      if (data?.turn_diagnostics && typeof data.turn_diagnostics === "object") {
-        setTurnDiagnostics(data.turn_diagnostics);
-      }
     } finally {
       setLoading(false);
     }
@@ -209,12 +208,6 @@ export default function AdminVoicePage() {
         });
       }
 
-      if (typeof data?.turn_provider === "string") {
-        setTurnProvider(data.turn_provider);
-      }
-      if (data?.turn_diagnostics && typeof data.turn_diagnostics === "object") {
-        setTurnDiagnostics(data.turn_diagnostics);
-      }
     } finally {
       setSaving(false);
     }
@@ -306,7 +299,7 @@ export default function AdminVoicePage() {
             marginBottom: 24,
           }}
         >
-          TURN・接続状況・緊急停止を管理します。
+          音声の接続方式（P2P / 自前TURN）と緊急停止を管理します。
         </p>
 
         <div
@@ -330,57 +323,36 @@ export default function AdminVoicePage() {
               display: "inline-flex",
               padding: "4px 10px",
               borderRadius: 999,
-              background: settings.turn_fallback_enabled ? "#dbeafe" : "#ecfdf5",
-              color: settings.turn_fallback_enabled ? "#1d4ed8" : "#047857",
+              background:
+                !settings.p2p_enabled && !settings.turn_fallback_enabled
+                  ? "#fee2e2"
+                  : !settings.p2p_enabled
+                    ? "#dbeafe"
+                    : "#ecfdf5",
+              color:
+                !settings.p2p_enabled && !settings.turn_fallback_enabled
+                  ? "#b91c1c"
+                  : !settings.p2p_enabled
+                    ? "#1d4ed8"
+                    : "#047857",
               fontWeight: 900,
               fontSize: 13,
             }}
           >
-            {turnFallbackModeLabel(settings.turn_fallback_enabled)}
+            {transportModeLabel(
+              settings.p2p_enabled,
+              settings.turn_fallback_enabled
+            )}
           </span>
           <span style={{ fontSize: 12, color: "#6b7280" }}>
-            provider: {turnProvider} · fallback:{" "}
+            P2P: {settings.p2p_enabled ? "ON" : "OFF"} · 自前TURN:{" "}
             {settings.turn_fallback_enabled ? "ON" : "OFF"}
           </span>
-          <HelpTip
-            label="TURN fallback の説明"
-            content={
-              <>
-                P2P接続に失敗した相手だけTURN中継に切り替えます。成功済みのP2P接続は維持されます。
-                <br />
-                <br />
-                {!settings.turn_fallback_enabled
-                  ? "現在: DBで fallback OFF → /api/turn は 403 turn_fallback_disabled"
-                  : turnProvider === "disabled"
-                    ? "現在: TURN_PROVIDER 未設定/disabled → /api/turn は 403 turn_disabled"
-                    : turnProvider === "static"
-                      ? "現在: 自前 static TURN（/api/turn → provider:static の iceServers）。Twilio env が残っていても TURN_PROVIDER=static の間は Twilio API は呼びません。"
-                      : "現在: Twilio TURN token（TURN_PROVIDER=twilio のときのみ Twilio API を呼びます）"}
-                {turnDiagnostics?.twilio_env_unused_warning ? (
-                  <>
-                    <br />
-                    <br />
-                    注意: Twilio 用 env は検出されていますが、TURN_PROVIDER=static のため未使用です（warning のみ）。
-                  </>
-                ) : null}
-                {turnDiagnostics?.twilio_env_required_but_missing ? (
-                  <>
-                    <br />
-                    <br />
-                    警告: TURN_PROVIDER=twilio ですが Twilio env が不足しています。
-                  </>
-                ) : null}
-                {turnProvider === "static" &&
-                turnDiagnostics?.static_env_configured === false ? (
-                  <>
-                    <br />
-                    <br />
-                    警告: static TURN の env（STATIC_TURN_URLS 等）が不足しています。
-                  </>
-                ) : null}
-              </>
-            }
-          />
+          {!settings.p2p_enabled && !settings.turn_fallback_enabled ? (
+            <span style={{ fontSize: 12, color: "#b91c1c", fontWeight: 800 }}>
+              P2Pと自前TURNが両方OFFのため、音声通話は開始できません
+            </span>
+          ) : null}
         </div>
 
         {/* 接続統計 */}
@@ -631,10 +603,24 @@ export default function AdminVoicePage() {
 
           <div style={rowStyle}>
             <HelpTip
-              label="接続モードについて"
-              content="OFF: P2Pのみ。ON: P2P優先で、接続に失敗した相手だけTURN fallbackします。成功済みP2Pは維持されます。"
+              label="P2P"
+              content="ONのときは端末同士の直接接続を優先します。通常はON推奨です。"
             >
-              <div style={{ fontWeight: 800 }}>接続モード</div>
+              <div style={{ fontWeight: 800 }}>P2P</div>
+            </HelpTip>
+
+            <Toggle
+              checked={settings.p2p_enabled}
+              onChange={(v) => update("p2p_enabled", v)}
+            />
+          </div>
+
+          <div style={rowStyle}>
+            <HelpTip
+              label="自前TURN"
+              content="P2P接続に失敗した相手だけ、自前のTURNサーバーで中継します。P2PをOFFにした場合は最初からTURNを使います。"
+            >
+              <div style={{ fontWeight: 800 }}>自前TURN</div>
             </HelpTip>
 
             <Toggle
@@ -652,10 +638,26 @@ export default function AdminVoicePage() {
             }}
           >
             保存後:{" "}
-            <strong>{turnFallbackModeLabel(settings.turn_fallback_enabled)}</strong>
-            {" · "}
-            provider: <strong>{turnProvider}</strong>
+            <strong>
+              {transportModeLabel(
+                settings.p2p_enabled,
+                settings.turn_fallback_enabled
+              )}
+            </strong>
           </div>
+          {!settings.p2p_enabled && !settings.turn_fallback_enabled ? (
+            <p
+              style={{
+                marginTop: 12,
+                fontSize: 13,
+                color: "#b91c1c",
+                fontWeight: 700,
+                lineHeight: 1.5,
+              }}
+            >
+              P2Pと自前TURNが両方OFFのため、音声通話は開始できません
+            </p>
+          ) : null}
         </section>
 
         {/* 通話設定 */}

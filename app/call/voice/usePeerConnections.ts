@@ -46,6 +46,7 @@ import {
 
 const PRESERVE_REMOTE_AUDIO_WINDOW_MS = 12_000;
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
+import { normalizeVoiceTransportSettings } from "@/lib/voiceTransportMode";
 import {
   isPeerP2pEstablished,
   isPeerTransportUnconfirmed,
@@ -983,6 +984,9 @@ export function usePeerConnections({
   const orphanRemoteAudioLoggedRef = useRef<Set<string>>(new Set());
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
+  const p2pEnabledRef = useRef(true);
+  const relayForcedRef = useRef(false);
+  const voiceTransportDisabledRef = useRef(false);
   const turnProviderRef = useRef<string | null>(null);
   const remotePlaybackHealthRef = useRef(
     new Map<string, RemotePlaybackHealth>()
@@ -1485,12 +1489,16 @@ export function usePeerConnections({
           ? "turn"
           : "p2p");
 
+      const relayModeSuffix = relayForcedRef.current
+        ? " mode=relay_forced"
+        : "";
+
       console.log(
         `[voice-peer] ice-confirmed remote=${compactDeviceId(remoteId)} ` +
           `route=${route} conn=${conn} ice=${ice} ` +
           `localType=${recordedPair?.localType ?? "-"} ` +
           `remoteType=${recordedPair?.remoteType ?? "-"} ` +
-          `networkType=${recordedPair?.networkType ?? "-"} ${formatVoiceModeSuffix()}`
+          `networkType=${recordedPair?.networkType ?? "-"}${relayModeSuffix} ${formatVoiceModeSuffix()}`
       );
     },
     [touchPeerSignal]
@@ -1564,13 +1572,28 @@ export function usePeerConnections({
         ) {
           return;
         }
+        const pc = pcsRef.current.get(remoteId);
+        if (
+          p2pEnabledRef.current &&
+          turnFallbackEnabledRef.current &&
+          voiceRouteRef.current === "stun" &&
+          pc &&
+          isTransportMediaConnected(pc.connectionState, pc.iceConnectionState) &&
+          timestamps.lastPlaybackConfirmedAt == null
+        ) {
+          void attemptTurnFallbackForPeerRef.current(
+            remoteId,
+            "connected_no_actual_audio"
+          );
+          return;
+        }
         scheduleReconnectRef.current?.(remoteId, 1200, {
           reason: "audio_playback_unconfirmed_timeout",
           source: "audio_playback_unconfirmed_timeout",
           force: true,
         });
       });
-  }, []);
+  }, [hasLiveRemoteAudioStream]);
 
   const setPeerMeta = useCallback(
     (
@@ -2002,6 +2025,7 @@ export function usePeerConnections({
 
   const isPeerEligibleForP2pIceRetry = useCallback(
     (remoteId: string, pc?: RTCPeerConnection | null) => {
+      if (!p2pEnabledRef.current) return false;
       const activePc = pc ?? pcsRef.current.get(remoteId);
       if (!activePc || !isUsablePeerConnection(activePc)) return false;
       if (isPeerEstablishedForRecovery(remoteId, activePc)) return false;
@@ -2815,9 +2839,9 @@ export function usePeerConnections({
               pcForRetry,
               `reconnect_${source}`
             );
-          } else if (!turnFallbackEnabledRef.current) {
+          } else if (!p2pEnabledRef.current || !turnFallbackEnabledRef.current) {
             logP2pRetryOnly(remoteId, `reconnect_${source}`);
-          } else if (turnFallbackEnabledRef.current) {
+          } else {
             void attemptTurnFallbackForPeerRef.current(
               remoteId,
               transportFailed
@@ -3432,19 +3456,29 @@ export function usePeerConnections({
     turnFallbackEnabledRef.current = turnFallbackEnabled;
   }, [turnFallbackEnabled]);
 
-  const enableTurnFallback = useCallback(async () => {
+  const enableTurnFallback = useCallback(async (opts?: { initial?: boolean }) => {
     if (!turnFallbackEnabledRef.current) return false;
     if (voiceRouteRef.current === "turn") return true;
 
     if (turnIceServersRef.current && turnIceServersRef.current.length > 0) {
       voiceRouteRef.current = "turn";
       iceServersRef.current = turnIceServersRef.current;
+      if (opts?.initial) {
+        console.log(
+          `[turn] initial-relay-enabled provider=${turnProviderRef.current ?? "static"} ` +
+            `iceServersCount=${turnIceServersRef.current.length}`
+        );
+      }
       return true;
     }
 
     if (loadingTurnRef.current) return false;
 
     loadingTurnRef.current = true;
+
+    if (opts?.initial) {
+      console.log("[turn] initial-relay-start provider=static");
+    }
 
     try {
       const res = await fetch("/api/turn", {
@@ -3480,6 +3514,11 @@ export function usePeerConnections({
         turnIceServersRef.current = nextIceServers;
         voiceRouteRef.current = "turn";
         iceServersRef.current = nextIceServers;
+        if (opts?.initial) {
+          console.log(
+            `[turn] initial-relay-enabled provider=${provider} iceServersCount=${nextIceServers.length}`
+          );
+        }
         return true;
       }
 
@@ -3498,8 +3537,12 @@ export function usePeerConnections({
 
   const attemptTurnFallbackForPeer = useCallback(
     async (remoteId: string, turnReason = "host_srflx_checking_stuck") => {
-      if (!turnFallbackEnabledRef.current) {
+      if (!p2pEnabledRef.current || !turnFallbackEnabledRef.current) {
         logP2pRetryOnly(remoteId, `turn_fallback_${turnReason}`);
+        return false;
+      }
+
+      if (isPeerEstablishedForRecovery(remoteId)) {
         return false;
       }
 
@@ -3508,7 +3551,8 @@ export function usePeerConnections({
       }
 
       const stats = getOrCreatePeerIceStats(remoteId);
-      if (!hasNoRelayCandidates(stats)) {
+      const bypassNoRelayCheck = turnReason === "connected_no_actual_audio";
+      if (!bypassNoRelayCheck && !hasNoRelayCandidates(stats)) {
         return false;
       }
 
@@ -3565,6 +3609,7 @@ export function usePeerConnections({
       enableTurnFallback,
       getOrCreatePeerIceStats,
       hasLiveRemoteAudioStream,
+      isPeerEstablishedForRecovery,
       logP2pRetryOnly,
     ]
   );
@@ -3609,7 +3654,10 @@ export function usePeerConnections({
 
       const pc = new RTCPeerConnection({
         iceServers: currentIceServers,
-        iceTransportPolicy: voiceRouteRef.current === "turn" ? "relay" : "all",
+        iceTransportPolicy:
+          relayForcedRef.current || voiceRouteRef.current === "turn"
+            ? "relay"
+            : "all",
       });
 
       const localTrack = localAudioTrackRef.current;
@@ -3802,6 +3850,7 @@ export function usePeerConnections({
 
           if (
             voiceRouteRef.current === "stun" &&
+            p2pEnabledRef.current &&
             turnFallbackEnabledRef.current
           ) {
             void enableTurnFallback().then((ok) => {
@@ -3859,6 +3908,7 @@ export function usePeerConnections({
 
           if (
             voiceRouteRef.current === "stun" &&
+            p2pEnabledRef.current &&
             turnFallbackEnabledRef.current
           ) {
             window.setTimeout(() => {
@@ -3954,6 +4004,7 @@ export function usePeerConnections({
 
           if (
             voiceRouteRef.current === "stun" &&
+            p2pEnabledRef.current &&
             turnFallbackEnabledRef.current
           ) {
             void enableTurnFallback().then((ok) => {
@@ -4696,6 +4747,15 @@ export function usePeerConnections({
         `[voice-peer] ensure-start target=${compact} reason=${reason} force=${force} ${formatVoiceModeSuffix()}`
       );
 
+      if (voiceTransportDisabledRef.current) {
+        console.warn("[voice-audio-disabled] reason=p2p_and_turn_disabled");
+        logEnsureSkipped(remoteId, reason, "voice_transport_disabled");
+        notifyStatus(
+          "P2Pと自前TURNが両方OFFのため、音声通話は開始できません"
+        );
+        return false;
+      }
+
       if (!micReady) {
         logEnsureSkipped(remoteId, reason, "mic_not_ready");
         return false;
@@ -4827,6 +4887,7 @@ export function usePeerConnections({
       markConnectStart,
       maybeStartOffer,
       micReady,
+      notifyStatus,
       schedulePassiveWaitOfferTimeout,
       scheduleNoStreamNoOfferTimeout,
       sendReconnectRequest,
@@ -5213,7 +5274,11 @@ export function usePeerConnections({
       if (!isTransportMediaConnected(pc.connectionState, pc.iceConnectionState)) {
         return false;
       }
-      if (pair.route === "turn" && !turnFallbackEnabledRef.current) {
+      if (
+        pair.route === "turn" &&
+        !turnFallbackEnabledRef.current &&
+        !relayForcedRef.current
+      ) {
         return false;
       }
 
@@ -6437,18 +6502,42 @@ export function usePeerConnections({
         if (!alive) return;
 
         const settings = data?.settings;
+        const transport = normalizeVoiceTransportSettings({
+          p2p_enabled: data?.p2p_enabled ?? settings?.p2p_enabled,
+          static_turn_enabled: data?.static_turn_enabled,
+          turn_fallback_enabled:
+            data?.turn_fallback_enabled ?? settings?.turn_fallback_enabled,
+        });
 
-        if (settings) {
-          setTurnFallbackEnabled(settings.turn_fallback_enabled === true);
+        p2pEnabledRef.current = transport.p2pEnabled;
+        relayForcedRef.current = transport.relayForced;
+        voiceTransportDisabledRef.current = transport.voiceTransportDisabled;
+        setTurnFallbackEnabled(transport.staticTurnEnabled);
+        turnFallbackEnabledRef.current = transport.staticTurnEnabled;
 
-          if (settings.voice_enabled === false) {
-            notifyStatus(settings.emergency_message || "通話機能は停止中です");
-          }
-        } else {
-          setTurnFallbackEnabled(false);
+        console.log(`[p2p] enabled value=${transport.p2pEnabled}`);
+        console.log(
+          `[turn] static-enabled value=${transport.staticTurnEnabled}`
+        );
+
+        if (transport.voiceTransportDisabled) {
+          console.warn("[voice-audio-disabled] reason=p2p_and_turn_disabled");
+          notifyStatus(
+            "P2Pと自前TURNが両方OFFのため、音声通話は開始できません"
+          );
+        } else if (settings?.voice_enabled === false) {
+          notifyStatus(settings.emergency_message || "通話機能は停止中です");
+        }
+
+        if (transport.relayForced) {
+          void enableTurnFallback({ initial: true });
         }
       } catch {
+        p2pEnabledRef.current = true;
+        relayForcedRef.current = false;
+        voiceTransportDisabledRef.current = false;
         setTurnFallbackEnabled(false);
+        turnFallbackEnabledRef.current = false;
       }
     }
 
@@ -6457,7 +6546,7 @@ export function usePeerConnections({
     return () => {
       alive = false;
     };
-  }, [notifyStatus]);
+  }, [enableTurnFallback, notifyStatus]);
 
   const applyLocalAudioTrack = useCallback(
     (track: MediaStreamTrack | null, reason: string) => {
