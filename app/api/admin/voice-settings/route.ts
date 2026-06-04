@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminAuth";
-import { getTurnProviderInfo } from "@/lib/turnProvider";
+import { getTurnProviderDiagnostics } from "@/lib/turnProvider";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,13 +28,20 @@ export async function GET(req: Request) {
     );
   }
 
-  const turnProvider = getTurnProviderInfo();
+  const turnDiagnostics = getTurnProviderDiagnostics();
 
   return NextResponse.json({
     ok: true,
     settings: data,
-    turn_provider: turnProvider.provider,
-    turn_provider_enabled: turnProvider.enabled,
+    turn_provider: turnDiagnostics.provider,
+    turn_provider_enabled: turnDiagnostics.enabled,
+    turn_diagnostics: {
+      twilio_env_present: turnDiagnostics.twilioEnvPresent,
+      static_env_configured: turnDiagnostics.staticEnvConfigured,
+      static_env_missing: turnDiagnostics.staticEnvMissing,
+      twilio_env_unused_warning: turnDiagnostics.twilioEnvUnusedWarning,
+      twilio_env_required_but_missing: turnDiagnostics.twilioEnvRequiredButMissing,
+    },
   });
 }
 

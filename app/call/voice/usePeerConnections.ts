@@ -3464,7 +3464,7 @@ export function usePeerConnections({
       }
 
       const provider =
-        typeof data?.provider === "string" ? data.provider : "twilio";
+        typeof data?.provider === "string" ? data.provider : "unknown";
       turnProviderRef.current = provider;
 
       const nextIceServers = Array.isArray(data?.ice_servers)

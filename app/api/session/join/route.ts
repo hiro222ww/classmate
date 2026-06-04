@@ -16,6 +16,9 @@ import {
   loadRejoinEligibility,
 } from "@/lib/admissionMembership";
 import { getAdmissionStatus } from "@/lib/admissionWindow";
+import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
+import type { JoinStateSource } from "@/lib/ensureClassSessionMembership";
+import { tailJoinId } from "@/lib/joinStateInvariants";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -325,9 +328,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ session_members が真実。
-    // 招待リンク側の classId が古い/ズレていても、session.class_id を正として補正する。
-    const classId = session.classId || requestedClassId;
+    const classId = session.classId;
 
     if (!classId || !isUuid(classId)) {
       return NextResponse.json(
@@ -336,16 +337,21 @@ export async function POST(req: Request) {
       );
     }
 
-    if (requestedClassId && session.classId && requestedClassId !== session.classId) {
-      console.warn("[session/join class mismatch ignored]", {
-        requestedClassId,
-        sessionClassId: session.classId,
-        usingClassId: classId,
-        invite,
-      });
+    if (requestedClassId && requestedClassId !== classId) {
+      console.warn(
+        `[join-state] mismatch sessionClass=${tailJoinId(classId)} ` +
+          `requestedClass=${tailJoinId(requestedClassId)} session=${tailJoinId(sessionId)}`
+      );
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_class_mismatch",
+          sessionClassId: classId,
+          requestedClassId,
+        },
+        { status: 409 }
+      );
     }
-
-    const now = new Date().toISOString();
 
     const { data: profile, error: profileErr } = await supabaseAdmin
       .from("user_profiles")
@@ -430,78 +436,43 @@ export async function POST(req: Request) {
       }
     }
 
-    const { error: memberErr } = await supabaseAdmin
-      .from("session_members")
-      .upsert(
-        {
-          session_id: sessionId,
-          device_id: deviceId,
-          display_name: displayName,
-          joined_at: now,
-        },
-        { onConflict: "session_id,device_id" }
-      );
-
-    if (memberErr) {
-      console.error("[session/join] session_member_upsert_failed", {
-        sessionId,
-        deviceId,
-        displayName,
-        ...formatPostgresError(memberErr),
-      });
-
-      return NextResponse.json(
-        postgresErrorBody("session_member_upsert_failed", memberErr, {
-          sessionId,
-          deviceId,
-        }),
-        { status: 500 }
-      );
+    let joinSource: JoinStateSource = "normal_join";
+    if (invite) {
+      joinSource = "invite";
+    } else if (canRejoin) {
+      joinSource = "rejoin";
+    } else if (openJoinedClass) {
+      joinSource = "restore";
     }
 
-    // ✅ ホーム表示用の所属を必ず補正
-    const { error: membershipErr } = await supabaseAdmin
-      .from("class_memberships")
-      .upsert(
-        {
-          class_id: classId,
-          device_id: deviceId,
-          joined_at: now,
-        },
-        { onConflict: "class_id,device_id" }
-      );
+    const joinState = await ensureClassSessionMembership({
+      classId,
+      sessionId,
+      deviceId,
+      source: joinSource,
+      displayName,
+    });
 
-    if (membershipErr) {
-      console.log("[session/join membershipErr]", membershipErr);
-    }
+    if (!joinState.ok) {
+      const httpStatus =
+        joinState.error === "session_class_mismatch"
+          ? 409
+          : joinState.status === "partial"
+            ? 207
+            : 500;
 
-    // ✅ オンライン表示用のpresenceも同じclassIdにそろえる
-    const { error: presenceErr } = await supabaseAdmin
-      .from("class_presence")
-      .upsert(
-        {
-          class_id: classId,
-          device_id: deviceId,
-          session_id: sessionId,
-          screen: "room",
-          status: session.status === "active" ? "active" : "waiting",
-          last_seen_at: now,
-          updated_at: now,
-        },
-        { onConflict: "class_id,device_id" }
-      );
+      if (joinState.error === "session_member_upsert_failed" && joinState.details?.[0]) {
+        return NextResponse.json(
+          postgresErrorBody("session_member_upsert_failed", {
+            message: joinState.details[0],
+          } as { message: string },
+          { sessionId, deviceId }
+        ),
+          { status: httpStatus }
+        );
+      }
 
-    if (presenceErr) {
-      console.warn(
-        `[invite-presence] upsert failed class=${String(classId).slice(-6)} ` +
-          `session=${sessionId.slice(-6)} device=${deviceId.slice(-4)} ` +
-          `error=${presenceErr.message}`
-      );
-    } else {
-      console.log(
-        `[invite-presence] upsert screen=room class=${String(classId).slice(-6)} ` +
-          `session=${sessionId.slice(-6)} device=${deviceId.slice(-4)} ok=true path=session_join`
-      );
+      return NextResponse.json(joinState, { status: httpStatus });
     }
 
     const { count } = await supabaseAdmin
@@ -529,6 +500,7 @@ export async function POST(req: Request) {
       capacity: session.capacity,
       memberCount: Number(count ?? 0),
       alreadyInSession: false,
+      joinState,
     });
   } catch (e: unknown) {
     console.error("[session/join server_error]", e);

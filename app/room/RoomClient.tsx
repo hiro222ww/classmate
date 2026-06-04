@@ -139,6 +139,11 @@ type SessionStatusResponse = {
   };
   members?: MemberRow[];
   memberCount?: number;
+  viewerState?: {
+    hasClassMembership: boolean;
+    inSessionMembers: boolean;
+    inMemberList: boolean;
+  };
   error?: string;
 };
 
@@ -1035,6 +1040,7 @@ if (!res.ok || !json?.ok) {
             emptyStreak: memberEmptyStreakRef.current,
             inviteGraceActive,
             hasClassMembershipHint: hasClassMembershipHintRef.current,
+            viewerInSessionMembers: json.viewerState?.inSessionMembers,
           });
 
           memberEmptyStreakRef.current = decision.nextEmptyStreak;

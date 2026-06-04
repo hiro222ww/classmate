@@ -81,6 +81,12 @@ export default function AdminVoicePage() {
 
   const [saving, setSaving] = useState(false);
   const [turnProvider, setTurnProvider] = useState("disabled");
+  const [turnDiagnostics, setTurnDiagnostics] = useState<{
+    twilio_env_present?: boolean;
+    static_env_configured?: boolean;
+    twilio_env_unused_warning?: boolean;
+    twilio_env_required_but_missing?: boolean;
+  } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -106,6 +112,9 @@ export default function AdminVoicePage() {
 
       if (typeof data?.turn_provider === "string") {
         setTurnProvider(data.turn_provider);
+      }
+      if (data?.turn_diagnostics && typeof data.turn_diagnostics === "object") {
+        setTurnDiagnostics(data.turn_diagnostics);
       }
     } finally {
       setLoading(false);
@@ -202,6 +211,9 @@ export default function AdminVoicePage() {
 
       if (typeof data?.turn_provider === "string") {
         setTurnProvider(data.turn_provider);
+      }
+      if (data?.turn_diagnostics && typeof data.turn_diagnostics === "object") {
+        setTurnDiagnostics(data.turn_diagnostics);
       }
     } finally {
       setSaving(false);
@@ -342,8 +354,30 @@ export default function AdminVoicePage() {
                   : turnProvider === "disabled"
                     ? "現在: TURN_PROVIDER 未設定/disabled → /api/turn は 403 turn_disabled"
                     : turnProvider === "static"
-                      ? "現在: 自前 static TURN（/api/turn → iceServers）"
-                      : "現在: Twilio TURN token"}
+                      ? "現在: 自前 static TURN（/api/turn → provider:static の iceServers）。Twilio env が残っていても TURN_PROVIDER=static の間は Twilio API は呼びません。"
+                      : "現在: Twilio TURN token（TURN_PROVIDER=twilio のときのみ Twilio API を呼びます）"}
+                {turnDiagnostics?.twilio_env_unused_warning ? (
+                  <>
+                    <br />
+                    <br />
+                    注意: Twilio 用 env は検出されていますが、TURN_PROVIDER=static のため未使用です（warning のみ）。
+                  </>
+                ) : null}
+                {turnDiagnostics?.twilio_env_required_but_missing ? (
+                  <>
+                    <br />
+                    <br />
+                    警告: TURN_PROVIDER=twilio ですが Twilio env が不足しています。
+                  </>
+                ) : null}
+                {turnProvider === "static" &&
+                turnDiagnostics?.static_env_configured === false ? (
+                  <>
+                    <br />
+                    <br />
+                    警告: static TURN の env（STATIC_TURN_URLS 等）が不足しています。
+                  </>
+                ) : null}
               </>
             }
           />

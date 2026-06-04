@@ -5,6 +5,7 @@ import {
   pickLatestSessionMemberByDevice,
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
+import { auditJoinStateInvariants } from "@/lib/joinStateInvariants";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -327,12 +328,22 @@ export async function GET(req: Request) {
 
     const session = sessionRes.session;
 
-    if (String(session.class_id ?? "").trim() !== classIdRaw) {
-      console.warn("[session/status] class mismatch", {
-        sessionIdRaw,
-        classIdRaw,
-        sessionClassId: String(session.class_id ?? "").trim(),
-      });
+    const sessionClassId = String(session.class_id ?? "").trim();
+
+    if (sessionClassId !== classIdRaw) {
+      console.warn(
+        `[join-state] mismatch sessionClass=${sessionClassId.slice(-6)} ` +
+          `requestedClass=${classIdRaw.slice(-6)} session=${sessionIdRaw.slice(-6)}`
+      );
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_class_mismatch",
+          sessionClassId,
+          requestedClassId: classIdRaw,
+        },
+        { status: 409 }
+      );
     }
 
     const rawMembersRes = await getRawMembers(sb, sessionIdRaw);
@@ -381,6 +392,14 @@ export async function GET(req: Request) {
     const inCallCount = members.filter((m) => m.is_in_call === true).length;
     const withPresenceCount = members.filter((m) => m.last_seen_at).length;
 
+    let viewerState:
+      | {
+          hasClassMembership: boolean;
+          inSessionMembers: boolean;
+          inMemberList: boolean;
+        }
+      | undefined;
+
     if (viewerDeviceId) {
       const { data: membershipRow } = await sb
         .from("class_memberships")
@@ -389,15 +408,46 @@ export async function GET(req: Request) {
         .eq("device_id", viewerDeviceId)
         .maybeSingle();
 
-      const viewerInMembers = members.some(
+      const { data: viewerSessionMember } = await sb
+        .from("session_members")
+        .select("device_id")
+        .eq("session_id", sessionIdRaw)
+        .eq("device_id", viewerDeviceId)
+        .maybeSingle();
+
+      const inMemberList = members.some(
         (m) => String(m.device_id ?? "").trim() === viewerDeviceId
       );
 
+      viewerState = {
+        hasClassMembership: Boolean(membershipRow),
+        inSessionMembers: Boolean(viewerSessionMember),
+        inMemberList,
+      };
+
       console.log(
-        `[session-status] membership exists=${Boolean(membershipRow)} ` +
-          `viewerInMembers=${viewerInMembers} device=${viewerDeviceId.slice(-4)} ` +
+        `[session-status] membership exists=${viewerState.hasClassMembership} ` +
+          `viewerInSessionMembers=${viewerState.inSessionMembers} ` +
+          `viewerInMemberList=${viewerState.inMemberList} device=${viewerDeviceId.slice(-4)} ` +
           `session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
       );
+
+      await auditJoinStateInvariants(sb, {
+        classId: classIdRaw,
+        sessionId: sessionIdRaw,
+        deviceId: viewerDeviceId,
+        sessionClassId,
+        requestedClassId: classIdRaw,
+      });
+    }
+
+    for (const deviceId of deviceIds.slice(0, 20)) {
+      await auditJoinStateInvariants(sb, {
+        classId: classIdRaw,
+        sessionId: sessionIdRaw,
+        deviceId,
+        sessionClassId,
+      });
     }
 
     console.log(
@@ -429,6 +479,7 @@ export async function GET(req: Request) {
         members,
         memberCount: members.length,
         inCallMemberCount: members.filter((m) => m.is_in_call).length,
+        viewerState,
       },
       {
         headers: {

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   buildStaticTurnIceServers,
-  logTurnProviderConfig,
+  isTwilioTurnEnvPresent,
+  logTurnProviderDiagnostics,
   resolveTurnProvider,
   type TurnProvider,
 } from "@/lib/turnProvider";
@@ -25,16 +26,19 @@ async function isTurnFallbackExplicitlyEnabled() {
 }
 
 async function fetchTwilioIceServers() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const apiKey = process.env.TWILIO_API_KEY;
-  const apiSecret = process.env.TWILIO_API_SECRET;
-
-  if (!accountSid || !apiKey || !apiSecret) {
+  if (!isTwilioTurnEnvPresent()) {
+    console.warn(
+      "[turn] api-error provider=twilio branch=twilio_env_missing"
+    );
     return NextResponse.json(
       { ok: false, error: "twilio_env_missing" },
       { status: 500 }
     );
   }
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const apiKey = process.env.TWILIO_API_KEY;
+  const apiSecret = process.env.TWILIO_API_SECRET;
 
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Tokens.json`;
 
@@ -53,8 +57,11 @@ async function fetchTwilioIceServers() {
   const data = await res.json();
 
   if (!res.ok) {
+    console.warn(
+      `[turn] api-error provider=twilio branch=twilio_token_failed status=${res.status}`
+    );
     return NextResponse.json(
-      { ok: false, error: "twilio_token_failed", detail: data },
+      { ok: false, error: "twilio_token_failed" },
       { status: res.status }
     );
   }
@@ -82,7 +89,7 @@ function staticTurnResponse(provider: TurnProvider) {
 
   if (!built.ok) {
     console.warn(
-      `[turn] static-config invalid missing=${built.missing.join(",")}`
+      `[turn] api-error status=500 error=static_turn_env_missing missing=${built.missing.join(",")}`
     );
     return NextResponse.json(
       {
@@ -110,6 +117,7 @@ function staticTurnResponse(provider: TurnProvider) {
 
 export async function GET() {
   if (!(await isTurnFallbackExplicitlyEnabled())) {
+    console.log("[turn] api-error status=403 error=turn_fallback_disabled");
     return NextResponse.json(
       { ok: false, error: "turn_fallback_disabled" },
       { status: 403 }
@@ -117,9 +125,10 @@ export async function GET() {
   }
 
   const provider = resolveTurnProvider();
-  logTurnProviderConfig(provider);
+  logTurnProviderDiagnostics("api-request");
 
   if (provider === "disabled") {
+    console.log("[turn] api-error status=403 error=turn_disabled");
     return NextResponse.json(
       { ok: false, error: "turn_disabled" },
       { status: 403 }
@@ -130,5 +139,13 @@ export async function GET() {
     return staticTurnResponse(provider);
   }
 
-  return fetchTwilioIceServers();
+  if (provider === "twilio") {
+    return fetchTwilioIceServers();
+  }
+
+  console.log("[turn] api-error status=403 error=turn_disabled");
+  return NextResponse.json(
+    { ok: false, error: "turn_disabled" },
+    { status: 403 }
+  );
 }

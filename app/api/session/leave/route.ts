@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+/**
+ * Explicit session leave only.
+ * - Deletes session_members for (sessionId, deviceId).
+ * - Does NOT delete class_memberships (class home membership stays).
+ * - Does NOT delete class_presence (heartbeat may mark stale separately).
+ * - Must be called from intentional exit UI, not pagehide/bfcache/reload.
+ */
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {

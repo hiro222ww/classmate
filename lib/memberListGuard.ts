@@ -58,6 +58,10 @@ export function evaluateMemberListApply(params: {
   requiredEmptyStreak?: number;
   inviteGraceActive?: boolean;
   hasClassMembershipHint?: boolean;
+  /** DB session_members に viewer がいる（status API）。false なら一覧からの削除を確定扱いにできる */
+  viewerInSessionMembers?: boolean;
+  /** 明示退室操作後のみ true にする */
+  explicitLeave?: boolean;
 }): MemberListApplyDecision {
   const required = params.inviteGraceActive
     ? (params.requiredEmptyStreak ?? INVITE_MEMBER_EMPTY_STREAK_REQUIRED)
@@ -97,7 +101,28 @@ export function evaluateMemberListApply(params: {
     };
   }
 
+  if (params.explicitLeave === true) {
+    return {
+      apply: true,
+      nextEmptyStreak: 0,
+      shouldRedirectRemoved: true,
+      viewerInNext: false,
+    };
+  }
+
+  if (params.viewerInSessionMembers === true) {
+    return {
+      apply: false,
+      nextEmptyStreak: params.emptyStreak,
+      ignoreReason: "viewer_still_in_session_members",
+      shouldRedirectRemoved: false,
+      viewerInNext: false,
+    };
+  }
+
   const inviteGrace = params.inviteGraceActive === true;
+  const sessionMemberRemovalConfirmed =
+    params.viewerInSessionMembers === false;
 
   // Viewer missing from API result
   if (nextCount === 0 && prevCount > 0) {
@@ -114,12 +139,13 @@ export function evaluateMemberListApply(params: {
     return {
       apply: true,
       nextEmptyStreak: nextStreak,
-      shouldRedirectRemoved: !params.hasClassMembershipHint,
+      shouldRedirectRemoved:
+        sessionMemberRemovalConfirmed && !params.hasClassMembershipHint,
       viewerInNext: false,
     };
   }
 
-  // Others listed but viewer gone — treat as explicit session removal
+  // Others listed but viewer gone — require session_members removal confirmation
   if (nextCount > 0) {
     if (inviteGrace || params.hasClassMembershipHint) {
       const nextStreak = params.emptyStreak + 1;
@@ -150,7 +176,9 @@ export function evaluateMemberListApply(params: {
     ignoreReason:
       inviteGrace || nextStreak < required ? "invite_grace" : undefined,
     shouldRedirectRemoved:
-      confirmedEmpty && !params.hasClassMembershipHint,
+      confirmedEmpty &&
+      sessionMemberRemovalConfirmed &&
+      !params.hasClassMembershipHint,
     viewerInNext: false,
   };
 }

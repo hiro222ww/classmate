@@ -120,6 +120,11 @@ type SessionStatusResponse = {
     last_seen_at?: string | null;
   }>;
   memberCount?: number;
+  viewerState?: {
+    hasClassMembership: boolean;
+    inSessionMembers: boolean;
+    inMemberList: boolean;
+  };
   error?: string;
 };
 
@@ -525,6 +530,9 @@ export default function CallClient() {
           sessionId,
           classId,
         });
+        if (deviceId) {
+          qs.set("viewerDeviceId", deviceId);
+        }
 
         const res = await fetch(`/api/session/status?${qs.toString()}`, {
           cache: "no-store",
@@ -601,6 +609,7 @@ export default function CallClient() {
             nextMembers,
             viewerDeviceId: deviceId,
             emptyStreak: memberEmptyStreakRef.current,
+            viewerInSessionMembers: json.viewerState?.inSessionMembers,
           });
 
           memberEmptyStreakRef.current = decision.nextEmptyStreak;

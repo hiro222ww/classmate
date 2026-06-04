@@ -10,8 +10,9 @@ export async function POST(req: Request) {
   if (denied) return denied;
 
   const body = await req.json().catch(() => ({}));
+  const dryRun = body.dryRun === true;
 
-  if (body.confirm !== true) {
+  if (!dryRun && body.confirm !== true) {
     return NextResponse.json(
       { ok: false, error: "confirm_required" },
       { status: 400 }
@@ -22,6 +23,7 @@ export async function POST(req: Request) {
     classId: body.classId,
     sessionId: body.sessionId,
     deviceId: body.deviceId,
+    dryRun,
   });
 
   if (!result.ok) {
@@ -29,13 +31,18 @@ export async function POST(req: Request) {
       result.error === "class_not_found" ||
       result.error === "session_not_found" ||
       result.error === "session_class_mismatch"
-        ? 404
+        ? 409
         : 400;
     return NextResponse.json(result, { status });
   }
 
-  return NextResponse.json({
-    ok: true,
-    repair: result,
-  });
+  const httpStatus = result.status === "partial" ? 207 : 200;
+
+  return NextResponse.json(
+    {
+      ok: true,
+      repair: result,
+    },
+    { status: httpStatus }
+  );
 }

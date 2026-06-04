@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { resolveDisplayName } from "@/lib/resolveDisplayName";
+import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 
 const CLOSED_STATUSES = new Set(["closed", "ended", "expired"]);
 
@@ -261,6 +261,11 @@ export async function diagnoseClassRepair(input: {
     joinedAt: row.joined_at ?? null,
   }));
 
+  for (const row of otherMembershipsForDevice) {
+    if (row.classId) {
+      warnings.push(`device_in_other_class:${tailId(row.classId)}`);
+    }
+  }
   if (otherMembershipsForDevice.length > 0) {
     warnings.push("device_has_other_class_memberships");
   }
@@ -321,152 +326,302 @@ export async function diagnoseClassRepair(input: {
   };
 }
 
+export type RepairStepId =
+  | "class_memberships"
+  | "session_members"
+  | "class_presence";
+
+export type RepairStepStatus =
+  | "skipped"
+  | "planned"
+  | "applied"
+  | "failed";
+
+export type RepairStepResult = {
+  step: RepairStepId;
+  status: RepairStepStatus;
+  action?: string;
+  error?: string;
+};
+
 export type ClassRepairApplyResult = {
   ok: true;
   ids: { classId: string; sessionId: string; deviceId: string };
+  dryRun: boolean;
+  status: "dry_run" | "completed" | "partial";
   repaired: {
     membership: boolean;
     sessionMember: boolean;
     presence: boolean;
   };
+  planned: string[];
   actions: string[];
+  steps: RepairStepResult[];
   warnings: string[];
+  failedStep?: RepairStepId;
+  failedError?: string;
   diagnose: ClassRepairDiagnoseResult;
 };
+
+export type ClassRepairBlockedResult = {
+  ok: false;
+  error: string;
+  status: "blocked";
+  details?: string[];
+  sessionClassId?: string | null;
+  requestedClassId?: string;
+  warnings?: string[];
+  diagnose?: ClassRepairDiagnoseResult;
+};
+
+function buildRepairPlan(diagnose: ClassRepairDiagnoseResult): string[] {
+  const planned: string[] = [];
+
+  if (!diagnose.membershipExists) {
+    planned.push("upsert_class_memberships");
+  }
+  if (!diagnose.sessionMemberExists) {
+    planned.push("upsert_session_members");
+  }
+  if (!diagnose.presenceExists) {
+    planned.push("upsert_class_presence");
+  } else {
+    planned.push("refresh_class_presence");
+  }
+
+  return planned;
+}
+
+async function assertSessionClassMatch(ids: {
+  classId: string;
+  sessionId: string;
+}): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      error: "session_class_mismatch";
+      sessionClassId: string | null;
+      requestedClassId: string;
+    }
+> {
+  const { data: session } = await supabaseAdmin
+    .from("sessions")
+    .select("id,class_id")
+    .eq("id", ids.sessionId)
+    .maybeSingle();
+
+  if (!session) {
+    return { ok: false, error: "session_class_mismatch", sessionClassId: null, requestedClassId: ids.classId };
+  }
+
+  const sessionClassId = String(session.class_id ?? "").trim() || null;
+
+  if (sessionClassId !== ids.classId) {
+    console.warn(
+      `[admin-class-repair] session_class_mismatch session=${tailId(ids.sessionId)} ` +
+        `expected=${tailId(ids.classId)} actual=${tailId(sessionClassId ?? "")}`
+    );
+    return {
+      ok: false,
+      error: "session_class_mismatch",
+      sessionClassId,
+      requestedClassId: ids.classId,
+    };
+  }
+
+  return { ok: true };
+}
 
 export async function repairClassMembership(input: {
   classId: string;
   sessionId: string;
   deviceId: string;
+  dryRun?: boolean;
 }): Promise<
-  | { ok: false; error: string; details?: string[] }
+  | ClassRepairBlockedResult
   | ClassRepairApplyResult
 > {
   const ids = normalizeIds(input);
+  const dryRun = input.dryRun === true;
   const validationErrors = validateIds(ids);
   if (validationErrors.length > 0) {
-    return { ok: false, error: "invalid_params", details: validationErrors };
+    return {
+      ok: false,
+      error: "invalid_params",
+      status: "blocked",
+      details: validationErrors,
+    };
   }
 
   const diagnoseBefore = await diagnoseClassRepair(ids);
-  if (!diagnoseBefore.ok) return diagnoseBefore;
+  if (!diagnoseBefore.ok) {
+    return {
+      ok: false,
+      error: diagnoseBefore.error,
+      status: "blocked",
+      details: diagnoseBefore.details,
+    };
+  }
+
+  const warnings = [...diagnoseBefore.warnings];
 
   if (!diagnoseBefore.classExists) {
-    return { ok: false, error: "class_not_found" };
+    return {
+      ok: false,
+      error: "class_not_found",
+      status: "blocked",
+      warnings,
+      diagnose: diagnoseBefore,
+    };
   }
   if (!diagnoseBefore.sessionExists) {
-    return { ok: false, error: "session_not_found" };
+    return {
+      ok: false,
+      error: "session_not_found",
+      status: "blocked",
+      warnings,
+      diagnose: diagnoseBefore,
+    };
   }
+
+  const classMatch = await assertSessionClassMatch(ids);
+  if (!classMatch.ok) {
+    return {
+      ok: false,
+      error: classMatch.error,
+      status: "blocked",
+      sessionClassId: classMatch.sessionClassId,
+      requestedClassId: classMatch.requestedClassId,
+      warnings,
+      diagnose: diagnoseBefore,
+    };
+  }
+
   if (!diagnoseBefore.sessionClassMatches) {
-    return { ok: false, error: "session_class_mismatch" };
+    return {
+      ok: false,
+      error: "session_class_mismatch",
+      status: "blocked",
+      sessionClassId: diagnoseBefore.session?.classId ?? null,
+      requestedClassId: ids.classId,
+      warnings,
+      diagnose: diagnoseBefore,
+    };
   }
 
-  console.log(
-    `[admin-class-repair] repair-start class=${tailId(ids.classId)} ` +
-      `session=${tailId(ids.sessionId)} device=${tailId(ids.deviceId)}`
-  );
-
+  const planned = buildRepairPlan(diagnoseBefore);
+  const steps: RepairStepResult[] = [];
   const actions: string[] = [];
-  const warnings = [...diagnoseBefore.warnings];
-  const now = new Date().toISOString();
   const repaired = {
     membership: false,
     sessionMember: false,
     presence: false,
   };
 
-  if (!diagnoseBefore.membershipExists) {
-    const { error } = await supabaseAdmin.from("class_memberships").upsert(
-      {
-        class_id: ids.classId,
-        device_id: ids.deviceId,
-        joined_at: now,
-      },
-      { onConflict: "class_id,device_id" }
-    );
-
-    if (error) {
-      return { ok: false, error: "membership_upsert_failed", details: [error.message] };
-    }
-
-    repaired.membership = true;
-    actions.push("upsert_class_memberships");
-    console.log(
-      `[admin-class-repair] upsert membership class=${tailId(ids.classId)} device=${tailId(ids.deviceId)}`
-    );
-  }
-
-  if (!diagnoseBefore.sessionMemberExists) {
-    const { data: profile } = await supabaseAdmin
-      .from("user_profiles")
-      .select("display_name")
-      .eq("device_id", ids.deviceId)
-      .maybeSingle();
-
-    const resolved = resolveDisplayName({
-      profileDisplayName: profile?.display_name,
-      sessionMemberDisplayName: null,
-    });
-
-    const { error } = await supabaseAdmin.from("session_members").upsert(
-      {
-        session_id: ids.sessionId,
-        device_id: ids.deviceId,
-        display_name: resolved.displayName,
-        joined_at: now,
-        is_in_call: false,
-      },
-      { onConflict: "session_id,device_id" }
-    );
-
-    if (error) {
-      return { ok: false, error: "session_member_upsert_failed", details: [error.message] };
-    }
-
-    repaired.sessionMember = true;
-    actions.push("upsert_session_members");
-    console.log(
-      `[admin-class-repair] upsert session_member session=${tailId(ids.sessionId)} device=${tailId(ids.deviceId)}`
-    );
-  }
-
-  const sessionStatus = String(diagnoseBefore.session?.status ?? "forming");
-  const presenceStatus = sessionStatus === "active" ? "active" : "waiting";
-
-  const { error: presenceError } = await supabaseAdmin.from("class_presence").upsert(
-    {
-      class_id: ids.classId,
-      device_id: ids.deviceId,
-      session_id: ids.sessionId,
-      screen: "room",
-      status: presenceStatus,
-      last_seen_at: now,
-      updated_at: now,
-    },
-    { onConflict: "class_id,device_id" }
+  console.log(
+    `[admin-class-repair] ${dryRun ? "dry-run" : "repair-start"} class=${tailId(ids.classId)} ` +
+      `session=${tailId(ids.sessionId)} device=${tailId(ids.deviceId)} planned=${planned.join(",")}`
   );
 
-  if (presenceError) {
+  if (dryRun) {
+    for (const action of planned) {
+      const step: RepairStepId =
+        action === "upsert_class_memberships"
+          ? "class_memberships"
+          : action === "upsert_session_members"
+            ? "session_members"
+            : "class_presence";
+
+      steps.push({
+        step,
+        status: "planned",
+        action,
+      });
+    }
+
     return {
-      ok: false,
-      error: "presence_upsert_failed",
-      details: [presenceError.message],
+      ok: true,
+      ids,
+      dryRun: true,
+      status: "dry_run",
+      repaired,
+      planned,
+      actions: planned,
+      steps,
+      warnings,
+      diagnose: diagnoseBefore,
     };
   }
 
-  if (!diagnoseBefore.presenceExists) {
-    actions.push("upsert_class_presence");
-  } else {
-    actions.push("refresh_class_presence");
+  const ensureRes = await ensureClassSessionMembership({
+    classId: ids.classId,
+    sessionId: ids.sessionId,
+    deviceId: ids.deviceId,
+    source: "restore",
+  });
+
+  if (!ensureRes.ok) {
+    if (ensureRes.status === "blocked") {
+      return {
+        ok: false,
+        error: ensureRes.error,
+        status: "blocked",
+        sessionClassId: ensureRes.sessionClassId,
+        requestedClassId: ensureRes.requestedClassId,
+        warnings,
+        diagnose: diagnoseBefore,
+      };
+    }
+
+    const failedStep = ensureRes.failedStep ?? "class_presence";
+    return {
+      ok: true,
+      ids,
+      dryRun: false,
+      status: "partial",
+      repaired,
+      planned,
+      actions,
+      steps: ensureRes.steps ?? steps,
+      warnings: [...warnings, ...(ensureRes.details ?? [])],
+      failedStep,
+      failedError: ensureRes.details?.[0] ?? ensureRes.error,
+      diagnose: diagnoseBefore,
+    };
   }
-  repaired.presence = true;
-  console.log(
-    `[admin-class-repair] upsert presence class=${tailId(ids.classId)} session=${tailId(ids.sessionId)} device=${tailId(ids.deviceId)}`
-  );
+
+  for (const step of ensureRes.steps) {
+    const repairStep: RepairStepResult = {
+      step: step.step,
+      status: step.status === "failed" ? "failed" : step.status === "applied" ? "applied" : "skipped",
+      action: step.action,
+      error: step.error,
+    };
+    steps.push(repairStep);
+    if (step.action) actions.push(step.action);
+  }
+
+  repaired.membership = ensureRes.membershipUpserted;
+  repaired.sessionMember = ensureRes.sessionMemberUpserted;
+  repaired.presence = ensureRes.presenceUpserted;
+  warnings.push(...ensureRes.warnings);
 
   const diagnoseAfter = await diagnoseClassRepair(ids);
   if (!diagnoseAfter.ok) {
-    return { ok: false, error: "post_diagnose_failed" };
+    return {
+      ok: true,
+      ids,
+      dryRun: false,
+      status: "partial",
+      repaired,
+      planned,
+      actions,
+      steps,
+      warnings,
+      failedStep: "class_presence",
+      failedError: "post_diagnose_failed",
+      diagnose: diagnoseBefore,
+    };
   }
 
   console.log(
@@ -477,8 +632,12 @@ export async function repairClassMembership(input: {
   return {
     ok: true,
     ids,
+    dryRun: false,
+    status: "completed",
     repaired,
+    planned,
     actions,
+    steps,
     warnings,
     diagnose: diagnoseAfter,
   };

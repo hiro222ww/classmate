@@ -80,3 +80,66 @@ export function getTurnProviderInfo() {
     enabled: isTurnProviderEnabled(provider),
   };
 }
+
+export function isTwilioTurnEnvPresent() {
+  return Boolean(
+    String(process.env.TWILIO_ACCOUNT_SID ?? "").trim() &&
+      String(process.env.TWILIO_API_KEY ?? "").trim() &&
+      String(process.env.TWILIO_API_SECRET ?? "").trim()
+  );
+}
+
+export type TurnProviderDiagnostics = {
+  provider: TurnProvider;
+  enabled: boolean;
+  twilioEnvPresent: boolean;
+  staticEnvConfigured: boolean;
+  staticEnvMissing: string[];
+  twilioEnvUnusedWarning: boolean;
+  twilioEnvRequiredButMissing: boolean;
+};
+
+export function getTurnProviderDiagnostics(): TurnProviderDiagnostics {
+  const provider = resolveTurnProvider();
+  const twilioEnvPresent = isTwilioTurnEnvPresent();
+  const staticBuilt = buildStaticTurnIceServers();
+
+  return {
+    provider,
+    enabled: isTurnProviderEnabled(provider),
+    twilioEnvPresent,
+    staticEnvConfigured: staticBuilt.ok,
+    staticEnvMissing: staticBuilt.ok ? [] : staticBuilt.missing,
+    twilioEnvUnusedWarning: provider === "static" && twilioEnvPresent,
+    twilioEnvRequiredButMissing: provider === "twilio" && !twilioEnvPresent,
+  };
+}
+
+/** Server logs only — never prints credentials. */
+export function logTurnProviderDiagnostics(context: string) {
+  const d = getTurnProviderDiagnostics();
+  console.log(
+    `[turn] ${context} provider=${d.provider} enabled=${d.enabled} ` +
+      `twilioEnvPresent=${d.twilioEnvPresent} staticEnvConfigured=${d.staticEnvConfigured}`
+  );
+
+  if (d.twilioEnvUnusedWarning) {
+    console.warn(
+      `[turn] ${context} twilio-env-present-but-unused provider=static ` +
+        "(Twilio API is not called while TURN_PROVIDER=static)"
+    );
+  }
+
+  if (d.twilioEnvRequiredButMissing) {
+    console.warn(
+      `[turn] ${context} twilio-env-missing provider=twilio ` +
+        "(TWILIO_ACCOUNT_SID / TWILIO_API_KEY / TWILIO_API_SECRET required)"
+    );
+  }
+
+  if (d.provider === "static" && !d.staticEnvConfigured) {
+    console.warn(
+      `[turn] ${context} static-env-incomplete missing=${d.staticEnvMissing.join(",")}`
+    );
+  }
+}

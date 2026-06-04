@@ -94,6 +94,10 @@ export default function ClassRepairPanel({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [diagnose, setDiagnose] = useState<DiagnoseResult | null>(null);
+  const [planned, setPlanned] = useState<string[]>([]);
+  const [steps, setSteps] = useState<
+    Array<{ step: string; status: string; action?: string; error?: string }>
+  >([]);
 
   const repairConfirmText = useMemo(() => {
     if (!classId || !sessionId || !deviceId) {
@@ -109,22 +113,45 @@ export default function ClassRepairPanel({
     setBusy(true);
     setMsg("");
     setDiagnose(null);
+    setPlanned([]);
+    setSteps([]);
 
     try {
-      const qs = new URLSearchParams({ classId, sessionId, deviceId });
-      const res = await fetch(`/api/admin/class-repair/diagnose?${qs}`, {
-        cache: "no-store",
+      const res = await fetch("/api/admin/class-repair/repair", {
+        method: "POST",
         credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId,
+          sessionId,
+          deviceId,
+          dryRun: true,
+        }),
       });
+
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.ok) {
-        setMsg(data?.error ?? `診断失敗 (${res.status})`);
+        const blocked = data?.diagnose ?? null;
+        if (blocked) setDiagnose(blocked);
+        const mismatch =
+          data?.error === "session_class_mismatch" && data?.sessionClassId
+            ? ` (session.class_id=${shortId(data.sessionClassId)})`
+            : "";
+        setMsg(`${data?.error ?? `診断失敗 (${res.status})`}${mismatch}`);
         return;
       }
 
-      setDiagnose(data.diagnose);
-      setMsg("診断完了");
+      const repair = data.repair;
+      setDiagnose(repair?.diagnose ?? null);
+      setPlanned(repair?.planned ?? []);
+      setSteps(repair?.steps ?? []);
+
+      const planText =
+        (repair?.planned ?? []).length > 0
+          ? repair.planned.join(", ")
+          : "修復予定なし（整合済み）";
+      setMsg(`診断完了（dryRun）— 予定: ${planText}`);
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : "診断エラー");
     } finally {
@@ -137,6 +164,8 @@ export default function ClassRepairPanel({
 
     setBusy(true);
     setMsg("");
+    setPlanned([]);
+    setSteps([]);
 
     try {
       const res = await fetch("/api/admin/class-repair/repair", {
@@ -148,19 +177,32 @@ export default function ClassRepairPanel({
           sessionId,
           deviceId,
           confirm: true,
+          dryRun: false,
         }),
       });
 
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.ok) {
+        if (data?.diagnose) setDiagnose(data.diagnose);
         setMsg(data?.error ?? `修復失敗 (${res.status})`);
         return;
       }
 
-      setDiagnose(data.repair?.diagnose ?? null);
+      const repair = data.repair;
+      setDiagnose(repair?.diagnose ?? null);
+      setPlanned(repair?.planned ?? []);
+      setSteps(repair?.steps ?? []);
+
+      if (repair?.status === "partial") {
+        setMsg(
+          `一部のみ成功（${repair.failedStep} で失敗）: 完了=${(repair.actions ?? []).join(", ") || "なし"}`
+        );
+        return;
+      }
+
       setMsg(
-        `修復完了: ${(data.repair?.actions ?? []).join(", ") || "no-op"}`
+        `修復完了: ${(repair?.actions ?? []).join(", ") || "no-op"}`
       );
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : "修復エラー");
@@ -276,6 +318,27 @@ export default function ClassRepairPanel({
           {diagnose.warnings.length > 0 ? (
             <div style={{ marginTop: 8, color: "#92400e" }}>
               警告（自動削除なし）: {diagnose.warnings.join(", ")}
+            </div>
+          ) : null}
+
+          {planned.length > 0 ? (
+            <div style={{ marginTop: 10, fontWeight: 800 }}>
+              修復予定（dryRun）: {planned.join(", ")}
+            </div>
+          ) : null}
+
+          {steps.length > 0 ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontWeight: 800 }}>ステップ</div>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {steps.map((s) => (
+                  <li key={`${s.step}-${s.status}`}>
+                    {s.step}: {s.status}
+                    {s.action ? ` (${s.action})` : ""}
+                    {s.error ? ` — ${s.error}` : ""}
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
 

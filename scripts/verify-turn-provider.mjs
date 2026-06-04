@@ -138,6 +138,27 @@ if (disabledProbe === "disabled") {
   report.fail("disabled provider", `got ${disabledProbe}`);
 }
 
+const unsetProbe = resolveTurnProvider({});
+if (unsetProbe === "disabled") {
+  report.pass("unset provider defaults disabled", "TURN_PROVIDER unset");
+} else {
+  report.fail("unset provider", `got ${unsetProbe}`);
+}
+
+const invalidProbe = resolveTurnProvider({ TURN_PROVIDER: "not-a-provider" });
+if (invalidProbe === "disabled") {
+  report.pass("invalid provider treated as disabled", "TURN_PROVIDER=not-a-provider");
+} else {
+  report.fail("invalid provider", `got ${invalidProbe}`);
+}
+
+const twilioProbe = resolveTurnProvider({ TURN_PROVIDER: "twilio" });
+if (twilioProbe === "twilio") {
+  report.pass("twilio provider", "TURN_PROVIDER=twilio");
+} else {
+  report.fail("twilio provider", `got ${twilioProbe}`);
+}
+
 const sb = resolveSupabaseConfig({ envFile });
 const dbFallback = await fetchVoiceSettingsTurnFallback(sb);
 if (dbFallback == null) {
