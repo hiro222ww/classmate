@@ -168,7 +168,8 @@ async function getProfileMap(
 async function getPresenceMap(
   sb: ReturnType<typeof admin>,
   deviceIds: string[],
-  sessionId: string
+  sessionId: string,
+  classId: string
 ) {
   if (deviceIds.length === 0) {
     return {
@@ -177,11 +178,17 @@ async function getPresenceMap(
     };
   }
 
-  const { data, error } = await sb
+  let query = sb
     .from("class_presence")
-    .select("device_id,screen,session_id,last_seen_at")
+    .select("device_id,screen,session_id,last_seen_at,class_id")
     .in("device_id", deviceIds)
     .order("last_seen_at", { ascending: false });
+
+  if (classId) {
+    query = query.eq("class_id", classId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return { ok: false as const, error };
@@ -267,6 +274,11 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const sessionIdRaw = (searchParams.get("sessionId") ?? "").trim();
     const classIdRaw = (searchParams.get("classId") ?? "").trim();
+    const viewerDeviceId = (
+      searchParams.get("viewerDeviceId") ??
+      searchParams.get("deviceId") ??
+      ""
+    ).trim();
 
     if (!sessionIdRaw) {
       return NextResponse.json(
@@ -347,7 +359,12 @@ export async function GET(req: Request) {
       );
     }
 
-    const presenceMapRes = await getPresenceMap(sb, deviceIds, sessionIdRaw);
+    const presenceMapRes = await getPresenceMap(
+      sb,
+      deviceIds,
+      sessionIdRaw,
+      classIdRaw
+    );
     if (!presenceMapRes.ok) {
       return NextResponse.json(
         { ok: false, error: presenceMapRes.error.message },
@@ -359,6 +376,43 @@ export async function GET(req: Request) {
       rawMembersRes.members,
       profileMapRes.profileMap,
       presenceMapRes.presenceMap
+    );
+
+    const inCallCount = members.filter((m) => m.is_in_call === true).length;
+    const withPresenceCount = members.filter((m) => m.last_seen_at).length;
+
+    if (viewerDeviceId) {
+      const { data: membershipRow } = await sb
+        .from("class_memberships")
+        .select("class_id")
+        .eq("class_id", classIdRaw)
+        .eq("device_id", viewerDeviceId)
+        .maybeSingle();
+
+      const viewerInMembers = members.some(
+        (m) => String(m.device_id ?? "").trim() === viewerDeviceId
+      );
+
+      console.log(
+        `[session-status] membership exists=${Boolean(membershipRow)} ` +
+          `viewerInMembers=${viewerInMembers} device=${viewerDeviceId.slice(-4)} ` +
+          `session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
+      );
+    }
+
+    console.log(
+      `[session-status] members count=${members.length} ids=${members.map((m) => String(m.device_id ?? "").slice(-4)).join(",")} ` +
+        `session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
+    );
+    console.log(
+      `[session-status] presence inCall=${inCallCount} withLastSeen=${withPresenceCount} ` +
+        `rawSessionRows=${rawMembersRes.members.length}`
+    );
+
+    console.log(
+      `[session-members] api-result session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)} ` +
+        `rawRows=${rawMembersRes.members.length} members=${members.length} ` +
+        `ids=${members.map((m) => String(m.device_id ?? "").slice(-4)).join(",")}`
     );
 
     return NextResponse.json(

@@ -28,6 +28,16 @@ import {
   logMemberDisplayNamesFromApi,
 } from "@/lib/resolveDisplayName";
 import {
+  compactMemberDeviceIds,
+  diffMemberDeviceIds,
+  evaluateMemberListApply,
+  logRoomMembersBeforeUpdate,
+  logRoomMembersEmptyIgnored,
+  logRoomMembersRemoved,
+  MEMBER_LIST_EMPTY_STREAK_REQUIRED,
+} from "@/lib/memberListGuard";
+import { logDeviceIdStability } from "@/lib/deviceDiagnostics";
+import {
   installCallPageDiagnostics,
   logCallLifecycle,
   logCallStatusPeer,
@@ -158,6 +168,11 @@ export default function CallClient() {
 
   const [deviceId] = useState(() => getDeviceId());
 
+  useEffect(() => {
+    if (!deviceId) return;
+    logDeviceIdStability(deviceId, "call");
+  }, [deviceId, sessionId, classId]);
+
   const profileEditHref = useMemo(
     () =>
       withDev(
@@ -205,6 +220,7 @@ export default function CallClient() {
   >(() => {});
   const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
+  const memberEmptyStreakRef = useRef(0);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
@@ -569,28 +585,65 @@ export default function CallClient() {
           );
         }
 
-        console.log("[call] fetchMembers success", {
-          reason,
-          sessionId,
-          deviceId,
-          memberDeviceIds: nextMembers.map((m) => m.device_id),
-          membersSyncRevision: membersSyncRevisionRef.current + 1,
-          count: nextMembers.length,
-        });
-
-        const stillJoined = nextMembers.some(
-          (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
+        console.log(
+          `[session-members] api-result context=call count=${nextMembers.length} ` +
+            `ids=${compactMemberDeviceIds(nextMembers)} reason=${reason} ` +
+            `session=${String(sessionId).slice(-6)}`
         );
 
-        if (deviceId && !stillJoined) {
-          logNavigationIntent("removed_from_session", "CallClient.fetchMembers");
-          logRouteChange(getCurrentPath(), "/", "removed_from_session");
-          releaseSessionMic("removed_from_session", sessionId);
-          router.replace(withDev("/"));
-          return;
-        }
+        let redirectRemoved = false;
 
         setMembers((prev) => {
+          const decision = evaluateMemberListApply({
+            fetchOk: true,
+            reason,
+            prevMembers: prev,
+            nextMembers,
+            viewerDeviceId: deviceId,
+            emptyStreak: memberEmptyStreakRef.current,
+          });
+
+          memberEmptyStreakRef.current = decision.nextEmptyStreak;
+
+          const { removed, added } = diffMemberDeviceIds(prev, nextMembers);
+
+          logRoomMembersBeforeUpdate({
+            context: "call",
+            reason,
+            sessionId: String(sessionId),
+            classId: String(classId),
+            currentCount: prev.length,
+            nextCount: nextMembers.length,
+            currentIds: compactMemberDeviceIds(prev),
+            nextIds: compactMemberDeviceIds(nextMembers),
+            apply: decision.apply,
+            ignoreReason: decision.ignoreReason,
+            removed,
+            added,
+          });
+
+          if (!decision.apply) {
+            if (decision.ignoreReason === "temporary_empty_response") {
+              logRoomMembersEmptyIgnored({
+                context: "call",
+                reason,
+                emptyStreak: decision.nextEmptyStreak,
+                required: MEMBER_LIST_EMPTY_STREAK_REQUIRED,
+              });
+            }
+            return prev;
+          }
+
+          if (decision.shouldRedirectRemoved) {
+            redirectRemoved = true;
+            logRoomMembersRemoved({
+              context: "call",
+              deviceTail: String(deviceId).slice(-4),
+              reason: "session_status_viewer_missing",
+            });
+            return prev;
+          }
+
           return nextMembers.map((m) => {
             const existing = prev.find((x) => x.device_id === m.device_id);
             return {
@@ -598,6 +651,23 @@ export default function CallClient() {
               lastSpokeAt: existing?.lastSpokeAt,
             };
           });
+        });
+
+        if (redirectRemoved) {
+          logNavigationIntent("removed_from_session", "CallClient.fetchMembers");
+          logRouteChange(getCurrentPath(), "/", "removed_from_session");
+          releaseSessionMic("removed_from_session", sessionId);
+          router.replace(withDev("/"));
+          return;
+        }
+
+        console.log("[call] fetchMembers success", {
+          reason,
+          sessionId,
+          deviceId: String(deviceId).slice(-4),
+          memberDeviceIds: compactMemberDeviceIds(nextMembers),
+          membersSyncRevision: membersSyncRevisionRef.current + 1,
+          count: nextMembers.length,
         });
 
         setFetchErrorCount(0);

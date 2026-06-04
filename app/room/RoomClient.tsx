@@ -40,6 +40,27 @@ import {
 } from "@/lib/memberProfileView";
 import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
+import { HelpTip } from "@/components/HelpTip";
+import {
+  compactMemberDeviceIds,
+  diffMemberDeviceIds,
+  evaluateMemberListApply,
+  getInviteGraceRemainingMs,
+  logRoomMembersBeforeUpdate,
+  logRoomMembersEmptyIgnored,
+  logRoomMembersRemoved,
+  MEMBER_LIST_EMPTY_STREAK_REQUIRED,
+  INVITE_JOIN_GRACE_MS,
+} from "@/lib/memberListGuard";
+import { logDeviceIdInit, logDeviceIdStability } from "@/lib/deviceDiagnostics";
+import {
+  isInviteJoinGraceActive,
+  logInviteJoinClient,
+  logInviteRoute,
+  logRoomMembersInviteGraceIgnored,
+  readInviteRouteState,
+  storeInviteRouteState,
+} from "@/lib/inviteDiagnostics";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -143,6 +164,9 @@ function normalizeMemberCompare(list: MemberRow[]) {
     photo_path: String(m.photo_path ?? "").trim(),
     avatar_url: String(m.avatar_url ?? "").trim(),
     joined_at: String(m.joined_at ?? "").trim(),
+    is_in_call: m.is_in_call === true,
+    screen: String(m.screen ?? "").trim(),
+    last_seen_at: String(m.last_seen_at ?? "").trim(),
   }));
 }
 
@@ -445,6 +469,10 @@ function dedupeMembers(
       photo_path: photoPath,
       avatar_url: avatarUrl,
       joined_at: joinedAt,
+      is_in_call: row.is_in_call === true,
+      screen: row.screen ?? null,
+      last_seen_at: row.last_seen_at ?? null,
+      presence_session_id: row.presence_session_id ?? null,
     };
 
     const isMeByDevice =
@@ -535,6 +563,9 @@ export default function RoomClient() {
   );
 
   const [members, setMembers] = useState<MemberRow[]>([]);
+  const memberEmptyStreakRef = useRef(0);
+  const inviteJoinGraceUntilRef = useRef(0);
+  const hasClassMembershipHintRef = useRef(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
   const [topicTitle, setTopicTitle] = useState("ルーム");
   const [classLabel, setClassLabel] = useState("");
@@ -587,6 +618,73 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const id = String(getDeviceId() ?? "").trim();
     setDeviceId(id);
   }, [dev]);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    logDeviceIdInit(deviceId, "room");
+    logDeviceIdStability(deviceId, "room");
+  }, [deviceId, sessionId, classId]);
+
+  useEffect(() => {
+    if (pathname !== "/room") return;
+    if (!invite || !classId || !sessionId) return;
+
+    logInviteRoute("detected", {
+      classId,
+      sessionId,
+      invite: true,
+    });
+
+    storeInviteRouteState({
+      classId,
+      sessionId,
+      invite: true,
+      storedAt: Date.now(),
+    });
+
+    logInviteRoute("stored", { classId, sessionId, invite: true });
+  }, [pathname, invite, classId, sessionId]);
+
+  useEffect(() => {
+    if (pathname !== "/room") return;
+    const stored = readInviteRouteState();
+    if (!stored) return;
+
+    logInviteRoute("restored", {
+      classId,
+      sessionId,
+      storedClassId: stored.classId,
+      storedSessionId: stored.sessionId,
+      invite: stored.invite,
+    });
+
+    if (
+      stored.classId &&
+      classId &&
+      stored.classId !== classId
+    ) {
+      logInviteRoute("mismatch", {
+        classId,
+        sessionId,
+        storedClassId: stored.classId,
+        storedSessionId: stored.sessionId,
+        step: "classId",
+      });
+    }
+    if (
+      stored.sessionId &&
+      sessionId &&
+      stored.sessionId !== sessionId
+    ) {
+      logInviteRoute("mismatch", {
+        classId,
+        sessionId,
+        storedClassId: stored.classId,
+        storedSessionId: stored.sessionId,
+        step: "sessionId",
+      });
+    }
+  }, [pathname, classId, sessionId]);
 
   useEffect(() => {
     if (!sessionId || !deviceId) return;
@@ -884,6 +982,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
       try {
         const qs = new URLSearchParams({ sessionId, classId });
+        if (deviceId) {
+          qs.set("viewerDeviceId", deviceId);
+        }
 
         const res = await fetch(`/api/session/status?${qs.toString()}`, {
           cache: "no-store",
@@ -902,6 +1003,10 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
 if (!res.ok || !json?.ok) {
           setSoftConnectionError("status");
+          console.warn(
+            `[session-members] api-result ok=false context=room reason=fetchStatus ` +
+              `status=${res.status} session=${sessionId.slice(-6)} class=${classId.slice(-6)}`
+          );
           return;
         }
 
@@ -909,23 +1014,103 @@ if (!res.ok || !json?.ok) {
           (member) => applyRoomLocalLeftOverride(member, sessionId)
         );
 
-const stillJoined = incomingMembers.some(
-  (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
-);
+        console.log(
+          `[session-members] api-result context=room count=${incomingMembers.length} ` +
+            `ids=${compactMemberDeviceIds(incomingMembers)} session=${sessionId.slice(-6)}`
+        );
 
-if (deviceId && !stillJoined) {
-  setErr("このクラスから退出済みです。");
-  router.replace(withDev("/"));
-  return;
-}
+        let redirectRemoved = false;
 
-setMembers((prev) => {
-  const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
-  const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
-  if (prevNorm === nextNorm) return prev;
-  logMemberDisplayNamesFromApi("room:session/status", incomingMembers);
-  return incomingMembers;
-});
+        const inviteGraceActive = isInviteJoinGraceActive(
+          inviteJoinGraceUntilRef.current
+        );
+
+        setMembers((prev) => {
+          const decision = evaluateMemberListApply({
+            fetchOk: true,
+            reason: "fetchStatus",
+            prevMembers: prev,
+            nextMembers: incomingMembers,
+            viewerDeviceId: deviceId,
+            emptyStreak: memberEmptyStreakRef.current,
+            inviteGraceActive,
+            hasClassMembershipHint: hasClassMembershipHintRef.current,
+          });
+
+          memberEmptyStreakRef.current = decision.nextEmptyStreak;
+
+          const { removed, added } = diffMemberDeviceIds(prev, incomingMembers);
+
+          logRoomMembersBeforeUpdate({
+            context: "room",
+            reason: "fetchStatus",
+            sessionId,
+            classId,
+            currentCount: prev.length,
+            nextCount: incomingMembers.length,
+            currentIds: compactMemberDeviceIds(prev),
+            nextIds: compactMemberDeviceIds(incomingMembers),
+            apply: decision.apply,
+            ignoreReason: decision.ignoreReason,
+            removed,
+            added,
+          });
+
+          if (!decision.apply) {
+            if (
+              decision.ignoreReason === "invite_grace" ||
+              decision.ignoreReason === "temporary_empty_response"
+            ) {
+              if (decision.ignoreReason === "invite_grace") {
+                logRoomMembersInviteGraceIgnored({
+                  reason: "fetchStatus",
+                  graceMsRemaining: getInviteGraceRemainingMs(
+                    inviteJoinGraceUntilRef.current
+                  ),
+                  previousCount: prev.length,
+                  emptyStreak: decision.nextEmptyStreak,
+                });
+              } else {
+                logRoomMembersEmptyIgnored({
+                  context: "room",
+                  reason: "fetchStatus",
+                  emptyStreak: decision.nextEmptyStreak,
+                  required: MEMBER_LIST_EMPTY_STREAK_REQUIRED,
+                });
+              }
+            }
+            return prev;
+          }
+
+          if (decision.shouldRedirectRemoved) {
+            redirectRemoved = true;
+            logRoomMembersRemoved({
+              context: "room",
+              deviceTail: String(deviceId).slice(-4),
+              reason: "session_status_viewer_missing",
+            });
+            return prev;
+          }
+
+          const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
+          const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
+          if (prevNorm === nextNorm) return prev;
+          logMemberDisplayNamesFromApi("room:session/status", incomingMembers);
+          return incomingMembers;
+        });
+
+        if (redirectRemoved) {
+          setErr("このクラスから退出済みです。");
+          router.replace(withDev("/"));
+          return;
+        }
+
+        const inCallCount = incomingMembers.filter((m) => m.is_in_call === true).length;
+        console.log(
+          `[room] fetchMembers success session=${sessionId.slice(-6)} class=${classId.slice(-6)} ` +
+            `memberCount=${incomingMembers.length} inCall=${inCallCount} ` +
+            `deviceIds=${compactMemberDeviceIds(incomingMembers)}`
+        );
 
         if (!topicTitle && json.session?.topic) {
           setTopicTitle(String(json.session.topic).trim() || "ルーム");
@@ -952,7 +1137,7 @@ setMembers((prev) => {
     if (pathname !== "/room") return;
 
     async function sendPresence() {
-      await fetch("/api/class/presence", {
+      const res = await fetch("/api/class/presence", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -963,8 +1148,22 @@ setMembers((prev) => {
         }),
         cache: "no-store",
       }).catch((e) => {
-        console.warn("[room] presence heartbeat failed", e);
+        console.warn("[room] presence update failed", {
+          screen: "room",
+          sessionId: sessionId.slice(-6),
+          classId: classId.slice(-6),
+          deviceId: deviceId.slice(-4),
+          error: e instanceof Error ? e.message : String(e),
+        });
+        return null;
       });
+
+      if (res?.ok) {
+        console.log(
+          `[room] presence update screen=room session=${sessionId.slice(-6)} ` +
+            `class=${classId.slice(-6)} device=${deviceId.slice(-4)}`
+        );
+      }
     }
 
     void sendPresence();
@@ -1021,6 +1220,20 @@ setMembers((prev) => {
           if (!mapped) continue;
           nextMap[mapped.device_id] = mapped;
         }
+
+        const staleIds = Object.values(nextMap)
+          .filter((row) => {
+            const seen = row.last_seen_at;
+            if (!seen) return true;
+            const t = new Date(seen).getTime();
+            return !Number.isFinite(t) || Date.now() - t > PRESENCE_FRESH_MS_ROOM;
+          })
+          .map((row) => String(row.device_id ?? "").slice(-4));
+
+        console.log(
+          `[room] presence map session=${sessionId.slice(-6)} count=${Object.keys(nextMap).length} ` +
+            `stale=${staleIds.length}${staleIds.length ? ` ids=${staleIds.join(",")}` : ""}`
+        );
 
         setPresenceMap((prev) => {
           const prevStr = JSON.stringify(prev);
@@ -1114,12 +1327,27 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   async function join() {
   try {
-    if (invite) {
-      console.log("[invite] join-by-invite start", {
+    if (!deviceId) {
+      logInviteJoinClient("failed", {
         classId,
         sessionId,
-        deviceId,
+        deviceId: "",
+        step: "device_not_ready",
+        error: "device_missing",
+        deviceReady: false,
       });
+      throw new Error("端末IDの準備ができていません。ページを再読み込みしてください。");
+    }
+
+    logInviteJoinClient("start", {
+      classId,
+      sessionId,
+      deviceId,
+      deviceReady: true,
+    });
+
+    if (invite) {
+      logInviteRoute("join-start", { classId, sessionId, invite: true });
 
       const inviteRes = await fetch("/api/class/join-by-invite", {
         method: "POST",
@@ -1135,21 +1363,31 @@ const name = rawName === "You" ? "参加者" : rawName;
       const inviteJson = await readJsonSafe(inviteRes);
 
       if (!inviteRes.ok || !inviteJson?.ok) {
-  console.warn("[room invite] class join failed", inviteJson);
+        const errCode = String(inviteJson?.error ?? `http_${inviteRes.status}`);
+        logInviteJoinClient("failed", {
+          classId,
+          sessionId,
+          deviceId,
+          step: "join-by-invite",
+          error: errCode,
+        });
+        logInviteRoute("join-failed", {
+          classId,
+          sessionId,
+          error: errCode,
+          step: "join-by-invite",
+        });
 
-  if (inviteJson?.error === "class_slots_limit") {
-    throw new Error("参加できるクラス数の上限に達しています");
-  }
+        if (inviteJson?.error === "class_slots_limit") {
+          throw new Error("参加できるクラス数の上限に達しています");
+        }
 
-  throw new Error("招待されたクラスへの参加に失敗しました");
-}
+        throw new Error("招待されたクラスへの参加に失敗しました");
+      }
 
-      console.log("[invite] join-by-invite success", {
-        classId,
-        sessionId,
-        deviceId,
-        alreadyJoined: inviteJson?.alreadyJoined === true,
-      });
+      logInviteJoinClient("success", { classId, sessionId, deviceId });
+      hasClassMembershipHintRef.current = true;
+      inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
       markJoinedClassesStale(classId);
     }
 
@@ -1191,6 +1429,21 @@ const name = rawName === "You" ? "参加者" : rawName;
 
       if (!res.ok || !json?.ok) {
         const error = json?.error || rawText;
+
+        logInviteJoinClient("failed", {
+          classId,
+          sessionId,
+          deviceId,
+          step: "session_join",
+          error: String(error),
+        });
+
+        if (error === "admission_closed") {
+          console.warn(
+            `[admission] blocked reason=closed path=room_session_join_after_invite ` +
+              `invite=${invite} session=${sessionId.slice(-6)}`
+          );
+        }
 
         if (error === "session_full") {
           throw new Error("このクラスは満員です");
@@ -1266,10 +1519,28 @@ const name = rawName === "You" ? "参加者" : rawName;
         urlSessionId: sessionId,
       });
 
-      // ✅ 成功した後だけ固定する
-joinedSessionKeyRef.current = joinKey;
+      joinedSessionKeyRef.current = joinKey;
 
-// ✅ DB反映遅延対策（自分だけ先に表示）
+      hasClassMembershipHintRef.current = true;
+      inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
+
+      if (invite) {
+        logInviteRoute("join-success", { classId, sessionId, invite: true });
+        storeInviteRouteState({
+          classId,
+          sessionId,
+          invite: true,
+          storedAt: Date.now(),
+        });
+      }
+
+      logInviteJoinClient("success", {
+        classId,
+        sessionId,
+        deviceId,
+        step: invite ? "invite+session_join" : "session_join",
+      });
+
 setMembers((prev) => {
   const exists = prev.some(
     (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
@@ -1316,6 +1587,7 @@ await fetchStatus({ force: true });
   fetchStatus,
   searchParams,
   openJoinedClass,
+  invite,
 ]);
 
   useEffect(() => {
@@ -1540,12 +1812,12 @@ if (!shouldAutoStart) return;
                 flexWrap: "wrap",
               }}
             >
-              <div>
+              <HelpTip
+                label="招待リンクについて"
+                content="この待機ルームに直接参加できるリンクをコピーします。"
+              >
                 <div style={{ fontWeight: 900 }}>友達を招待</div>
-                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                  この待機ルームに直接参加できるリンクをコピーします。
-                </div>
-              </div>
+              </HelpTip>
 
               <button
                 onClick={async () => {

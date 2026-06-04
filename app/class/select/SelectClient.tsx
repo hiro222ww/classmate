@@ -13,6 +13,7 @@ import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
 import { isUserProfileComplete } from "@/lib/profileClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { tierName } from "@/lib/planTiers";
+import { HelpTip } from "@/components/HelpTip";
 
 type World = {
   world_key: string;
@@ -139,54 +140,6 @@ function Pill({ children }: { children: React.ReactNode }) {
 
 const AGE_PREF_HELP_TEXT =
   "この範囲の相手だけが同じクラスの候補になります。";
-
-function AgePrefHelpButton() {
-  const [pinned, setPinned] = useState(false);
-  const [hover, setHover] = useState(false);
-  const visible = pinned || hover;
-
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <button
-        type="button"
-        aria-label="話したい相手の年齢について"
-        aria-expanded={visible}
-        onClick={() => setPinned((value) => !value)}
-        onMouseEnter={() => setHover(true)}
-        onMouseLeave={() => setHover(false)}
-        style={{
-          width: 22,
-          height: 22,
-          borderRadius: 999,
-          border: "1px solid #cbd5e1",
-          background: visible ? "#eff6ff" : "#fff",
-          color: "#2563eb",
-          fontWeight: 900,
-          fontSize: 12,
-          lineHeight: 1,
-          cursor: "pointer",
-          padding: 0,
-        }}
-      >
-        ⓘ
-      </button>
-      {visible ? (
-        <span
-          role="tooltip"
-          style={{
-            fontSize: 12,
-            color: "#475569",
-            fontWeight: 700,
-            lineHeight: 1.5,
-            maxWidth: 280,
-          }}
-        >
-          {AGE_PREF_HELP_TEXT}
-        </span>
-      ) : null}
-    </span>
-  );
-}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1196,16 +1149,17 @@ return;
             lineHeight: 1.6,
           }}
         >
-          現在入校受付時間外です
+          <HelpTip
+            label="入校受付時間について"
+            content="テーマの確認や設定はできます。新規入校は受付時間内にお試しください。所属中のクラスへの再入室は「今のクラスに戻る」から可能です。"
+          >
+            <span>現在入校受付時間外です</span>
+          </HelpTip>
           {joinWindowText ? (
-            <>
-              <br />
-              受付時間：{joinWindowText}
-            </>
+            <span style={{ marginLeft: 8, fontSize: 12 }}>
+              受付：{joinWindowText}
+            </span>
           ) : null}
-          <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700 }}>
-            テーマの確認や設定はできます。新規入校は受付時間内にお試しください。所属中のクラスへの再入室は、下の「今のクラスに戻る」から可能です。
-          </div>
         </div>
       ) : null}
 
@@ -1234,36 +1188,17 @@ return;
         >
           今のクラスに戻る
         </h2>
-        <p
-          style={{
-            margin: "8px 0 14px",
-            fontSize: 13,
-            color: "#475569",
-            fontWeight: 700,
-            lineHeight: 1.6,
-          }}
-        >
-          {!joinWindowOpen
-            ? "所属中のクラスには、入校受付時間外でも入れます。"
-            : "所属中のクラスがあれば、続きから話せます。"}
+        <p style={{ margin: "8px 0 14px", fontSize: 13, color: "#475569", fontWeight: 700 }}>
+          所属中のクラスに戻る
+          <HelpTip
+            label="今のクラスに戻るについて"
+            content={
+              !joinWindowOpen
+                ? "入校受付時間外でも、すでに所属しているクラスには入れます。"
+                : "所属中のクラスがあれば、続きから話せます。"
+            }
+          />
         </p>
-        {!joinWindowOpen ? (
-          <div
-            style={{
-              marginBottom: 14,
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #bfdbfe",
-              background: "#eff6ff",
-              color: "#1e40af",
-              fontSize: 12,
-              fontWeight: 800,
-              lineHeight: 1.6,
-            }}
-          >
-            今のクラスにはいつでも戻れます。
-          </div>
-        ) : null}
         <Link
           href={withDev("/")}
           style={{
@@ -1386,10 +1321,9 @@ return;
             flexWrap: "wrap",
           }}
         >
-          <strong style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            話したい相手の年齢
-            <AgePrefHelpButton />
-          </strong>
+          <HelpTip label="話したい相手の年齢について" content={AGE_PREF_HELP_TEXT}>
+            <strong>話したい相手の年齢</strong>
+          </HelpTip>
           <span style={{ fontSize: 12, color: "#666" }}>
             {Math.min(prefs.min_age, prefs.max_age)}〜{Math.max(prefs.min_age, prefs.max_age)}歳
           </span>

@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { HelpTip } from "@/components/HelpTip";
 
 type VoiceSettings = {
   voice_enabled: boolean;
@@ -326,27 +327,45 @@ export default function AdminVoicePage() {
             {turnFallbackModeLabel(settings.turn_fallback_enabled)}
           </span>
           <span style={{ fontSize: 12, color: "#6b7280" }}>
-            provider: {turnProvider}
-            {" · "}
-            fallback: {settings.turn_fallback_enabled ? "ON" : "OFF"}
+            provider: {turnProvider} · fallback:{" "}
+            {settings.turn_fallback_enabled ? "ON" : "OFF"}
           </span>
-          <span style={{ fontSize: 12, color: "#6b7280", width: "100%" }}>
-            {!settings.turn_fallback_enabled
-              ? "/api/turn → 403 turn_fallback_disabled（DBでTURN fallback OFF）"
-              : turnProvider === "disabled"
-                ? "/api/turn → 403 turn_disabled（TURN_PROVIDER未設定/disabled）"
-                : turnProvider === "static"
-                  ? "/api/turn → static iceServers（P2P失敗peerのみ利用）"
-                  : "/api/turn → Twilio token（P2P失敗peerのみ利用）"}
-          </span>
+          <HelpTip
+            label="TURN fallback の説明"
+            content={
+              <>
+                P2P接続に失敗した相手だけTURN中継に切り替えます。成功済みのP2P接続は維持されます。
+                <br />
+                <br />
+                {!settings.turn_fallback_enabled
+                  ? "現在: DBで fallback OFF → /api/turn は 403 turn_fallback_disabled"
+                  : turnProvider === "disabled"
+                    ? "現在: TURN_PROVIDER 未設定/disabled → /api/turn は 403 turn_disabled"
+                    : turnProvider === "static"
+                      ? "現在: 自前 static TURN（/api/turn → iceServers）"
+                      : "現在: Twilio TURN token"}
+              </>
+            }
+          />
         </div>
 
         {/* 接続統計 */}
 
         <section style={cardStyle}>
-          <h2 style={sectionTitle}>
-            接続統計（今日）
-          </h2>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <h2 style={{ ...sectionTitle, margin: 0 }}>接続統計（今日）</h2>
+            <HelpTip
+              label="失敗率の見方"
+              content="失敗率は接続リトライごとの failed ログを含みます。のちに connected になった peer の過去 failed も残るため、実態より高く見えることがあります。route=unknown かつ connected は失敗扱いではありません。"
+            />
+          </div>
 
           {metricsLoading ? (
             <div
@@ -577,12 +596,12 @@ export default function AdminVoicePage() {
           </div>
 
           <div style={rowStyle}>
-            <div>
+            <HelpTip
+              label="接続モードについて"
+              content="OFF: P2Pのみ。ON: P2P優先で、接続に失敗した相手だけTURN fallbackします。成功済みP2Pは維持されます。"
+            >
               <div style={{ fontWeight: 800 }}>接続モード</div>
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                OFF: P2Pのみ / ON: P2P + TURN fallback
-              </div>
-            </div>
+            </HelpTip>
 
             <Toggle
               checked={settings.turn_fallback_enabled}
@@ -598,11 +617,9 @@ export default function AdminVoicePage() {
               lineHeight: 1.6,
             }}
           >
-            保存後のモード:{" "}
-            <strong>
-              {turnFallbackModeLabel(settings.turn_fallback_enabled)}
-            </strong>
-            <br />
+            保存後:{" "}
+            <strong>{turnFallbackModeLabel(settings.turn_fallback_enabled)}</strong>
+            {" · "}
             provider: <strong>{turnProvider}</strong>
           </div>
         </section>

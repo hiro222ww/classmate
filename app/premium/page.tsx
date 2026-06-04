@@ -14,6 +14,7 @@ import {
   TOPIC_PLAN_SAME_ACCESS_NOTE,
 } from "@/lib/planTiers";
 import { withDev } from "@/lib/withDev";
+import { HelpTip } from "@/components/HelpTip";
 
 type Entitlements = {
   class_slots?: number;
@@ -291,15 +292,8 @@ export default function PremiumPage() {
             : "無料"}
         </div>
         {hasThemePass ? (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 12,
-              color: "#6b7280",
-              lineHeight: 1.6,
-            }}
-          >
-            {TOPIC_PLAN_SAME_ACCESS_NOTE}
+          <div style={{ marginTop: 8 }}>
+            <HelpTip label="テーマプランの補足" content={TOPIC_PLAN_SAME_ACCESS_NOTE} />
           </div>
         ) : null}
 
@@ -327,29 +321,15 @@ export default function PremiumPage() {
       ) : null}
 
       <SoftCard>
-        <div
-          style={{
-            fontSize: 13,
-            lineHeight: 1.85,
-            color: "#374151",
-          }}
-        >
-          <p style={{ margin: 0 }}>{TOPIC_PLAN_BETA_INTRO}</p>
-        </div>
-      </SoftCard>
-
-      <SoftCard>
-        <div style={{ fontWeight: 900 }}>テーマプラン（任意の支援額）</div>
-        <p
-          style={{
-            margin: "8px 0 0",
-            fontSize: 13,
-            color: "#6b7280",
-            lineHeight: 1.6,
-          }}
-        >
-          {TOPIC_PLAN_SAME_ACCESS_NOTE}
-          金額が高いプランに追加機能があるわけではありません。
+        <HelpTip label="テーマプランについて" content={TOPIC_PLAN_BETA_INTRO}>
+          <div style={{ fontWeight: 900 }}>テーマプラン（任意の支援額）</div>
+        </HelpTip>
+        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>
+          支援額はお好みで選べます
+          <HelpTip
+            label="支援額の補足"
+            content={`${TOPIC_PLAN_SAME_ACCESS_NOTE} 金額が高いプランに追加機能があるわけではありません。`}
+          />
         </p>
 
         <div style={{ display: "grid", gap: 10, marginTop: 10 }}>

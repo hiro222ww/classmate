@@ -38,6 +38,13 @@ import {
   logVoiceClientEnv,
 } from "@/lib/voiceClientEnv";
 import type { RemotePlaybackHealth } from "./RemoteAudio";
+import {
+  buildVoicePlaybackBlockReason,
+  logVoiceReconnectDecision,
+  type VoiceReconnectDecisionInput,
+} from "@/lib/voiceReconnectDiagnostics";
+
+const PRESERVE_REMOTE_AUDIO_WINDOW_MS = 12_000;
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
 import {
   isPeerP2pEstablished,
@@ -977,6 +984,10 @@ export function usePeerConnections({
   const [turnFallbackEnabled, setTurnFallbackEnabled] = useState(false);
   const turnFallbackEnabledRef = useRef(false);
   const turnProviderRef = useRef<string | null>(null);
+  const remotePlaybackHealthRef = useRef(
+    new Map<string, RemotePlaybackHealth>()
+  );
+  const preserveRemoteAudioUntilRef = useRef(new Map<string, number>());
 
   useEffect(() => {
     remoteAudiosRef.current = remoteAudios;
@@ -1377,6 +1388,7 @@ export function usePeerConnections({
   const getRemoteIds = useCallback(() => {
     const selfId = String(deviceId ?? "").trim();
     return activeMembers
+      .filter((m) => m.is_in_call === true)
       .map((m) => String(m.device_id ?? "").trim())
       .filter((id) => id && id !== selfId);
   }, [activeMembers, deviceId]);
@@ -1486,6 +1498,8 @@ export function usePeerConnections({
 
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {
+      remotePlaybackHealthRef.current.set(remoteId, health);
+
       if (health.playSuccessEvent) {
         touchPeerSignal(remoteId, "play_success");
       }
@@ -1543,6 +1557,13 @@ export function usePeerConnections({
           emptyPeerSignalTimestamps();
         if (timestamps.lastPlaybackConfirmedAt != null) return;
         if (reconnectPendingRef.current.has(remoteId)) return;
+        const playbackHealth = remotePlaybackHealthRef.current.get(remoteId);
+        if (
+          playbackHealth?.audioActuallyPlaying === true &&
+          hasLiveRemoteAudioStream(remoteId)
+        ) {
+          return;
+        }
         scheduleReconnectRef.current?.(remoteId, 1200, {
           reason: "audio_playback_unconfirmed_timeout",
           source: "audio_playback_unconfirmed_timeout",
@@ -1918,6 +1939,8 @@ export function usePeerConnections({
         peerSignalTimestampsRef.current.get(remoteId) ??
         emptyPeerSignalTimestamps();
 
+      const playbackHealth = remotePlaybackHealthRef.current.get(remoteId);
+
       return isPeerP2pEstablished({
         conn: activePc.connectionState,
         ice: activePc.iceConnectionState,
@@ -1925,9 +1948,56 @@ export function usePeerConnections({
         trackReady: getPeerTrackReady(remoteId),
         lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
         lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
+        audioActuallyPlaying: playbackHealth?.audioActuallyPlaying === true,
       });
     },
     [getPeerTrackReady]
+  );
+
+  const buildReconnectDecisionInput = useCallback(
+    (
+      remoteId: string,
+      reason: string,
+      source: string,
+      opts?: { callerHint?: string; force?: boolean }
+    ): VoiceReconnectDecisionInput => {
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const media = getPeerMedia(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      const preserveUntil =
+        preserveRemoteAudioUntilRef.current.get(remoteId) ?? 0;
+
+      return {
+        remoteId,
+        reason,
+        source,
+        callerHint: opts?.callerHint,
+        force: opts?.force,
+        conn: pc?.connectionState ?? "-",
+        ice: pc?.iceConnectionState ?? "-",
+        sig: pc?.signalingState ?? "-",
+        hasRemoteStream: media.hasRemoteStream,
+        tracks: media.remoteTracksCount,
+        trackLive: getPeerTrackReady(remoteId),
+        health: remotePlaybackHealthRef.current.get(remoteId) ?? null,
+        confirmedAt: timestamps.lastPlaybackConfirmedAt,
+        lastPlaySuccessAt: timestamps.lastPlaySuccessAt,
+        lastPlaybackActiveAt: timestamps.lastPlaybackActiveAt,
+        voiceRoute: voiceRouteRef.current,
+        preserveAudioWindowActive:
+          preserveUntil > 0 && Date.now() < preserveUntil,
+        establishedRecovery: isPeerEstablishedForRecovery(remoteId, pc),
+        hasLiveRemoteStream: hasLiveRemoteAudioStream(remoteId),
+      };
+    },
+    [
+      getPeerMedia,
+      getPeerTrackReady,
+      hasLiveRemoteAudioStream,
+      isPeerEstablishedForRecovery,
+    ]
   );
 
   const isPeerEligibleForP2pIceRetry = useCallback(
@@ -2426,7 +2496,16 @@ export function usePeerConnections({
       peerLastConnectedAtRef.current.delete(remoteId);
       reconnectPendingRef.current.delete(remoteId);
       lastHealActionAtRef.current.delete(remoteId);
-      peerSignalTimestampsRef.current.delete(remoteId);
+      if (preserveRemoteAudio) {
+        preserveRemoteAudioUntilRef.current.set(
+          remoteId,
+          Date.now() + PRESERVE_REMOTE_AUDIO_WINDOW_MS
+        );
+      } else {
+        preserveRemoteAudioUntilRef.current.delete(remoteId);
+        peerSignalTimestampsRef.current.delete(remoteId);
+        remotePlaybackHealthRef.current.delete(remoteId);
+      }
       peerMetaRef.current.delete(remoteId);
       peerIceDiagnosticsRef.current.delete(remoteId);
       checkingPlaybackStuckAtRef.current.delete(remoteId);
@@ -2645,12 +2724,29 @@ export function usePeerConnections({
         return false;
       }
 
+      const decisionInputEarly = buildReconnectDecisionInput(
+        remoteId,
+        reasonRaw,
+        sourceRaw,
+        { callerHint, force: opts.force }
+      );
+
       if (isPeerEstablishedForRecovery(remoteId, pcEarly)) {
-        console.log(
-          `[voice-peer] reconnect-skip-p2p-established remote=${compactDeviceId(remoteId)} ` +
-            `reason=${reasonRaw} source=${sourceRaw} conn=${pcEarly?.connectionState ?? "-"} ` +
-            `ice=${pcEarly?.iceConnectionState ?? "-"} ${formatVoiceModeSuffix()}`
-        );
+        logVoiceReconnectDecision("voice-reconnect-blocked", {
+          ...decisionInputEarly,
+          allow: false,
+          blockReason: "p2p_established_recovery",
+        });
+        return false;
+      }
+
+      const playbackBlockEarly = buildVoicePlaybackBlockReason(decisionInputEarly);
+      if (playbackBlockEarly && !opts.force) {
+        logVoiceReconnectDecision("voice-reconnect-blocked", {
+          ...decisionInputEarly,
+          allow: false,
+          blockReason: playbackBlockEarly,
+        });
         return false;
       }
 
@@ -2771,6 +2867,14 @@ export function usePeerConnections({
         scheduledAt: Date.now(),
       });
 
+      logVoiceReconnectDecision("voice-reconnect-decision", {
+        ...buildReconnectDecisionInput(remoteId, reason, source, {
+          callerHint,
+          force: opts.force,
+        }),
+        allow: true,
+      });
+
       console.log(
         `[voice-peer] reconnect-scheduled target=${compactDeviceId(remoteId)} reason=${reason} source=${source} delayMs=${delay} owner=${deviceId < remoteId} ` +
           `otherPeers=${buildPeerScopeSnapshot(pcsRef.current, getPeerMedia, remoteId)} ${formatVoiceModeSuffix()}`
@@ -2784,6 +2888,32 @@ export function usePeerConnections({
       const timer = window.setTimeout(() => {
         reconnectTimersRef.current.delete(remoteId);
         reconnectPendingRef.current.delete(remoteId);
+
+        const fireInput = buildReconnectDecisionInput(remoteId, reason, source, {
+          force: opts.force,
+        });
+        const fireBlock = buildVoicePlaybackBlockReason(fireInput);
+        if (fireBlock && !opts.force) {
+          logVoiceReconnectDecision("voice-reconnect-fire-check", {
+            ...fireInput,
+            allow: false,
+            blockReason: fireBlock,
+          });
+          return;
+        }
+        if (isPeerEstablishedForRecovery(remoteId, pcsRef.current.get(remoteId))) {
+          logVoiceReconnectDecision("voice-reconnect-fire-check", {
+            ...fireInput,
+            allow: false,
+            blockReason: "p2p_established_recovery",
+          });
+          return;
+        }
+
+        logVoiceReconnectDecision("voice-reconnect-fire-check", {
+          ...fireInput,
+          allow: true,
+        });
 
         const nextConnectionId = makeConnectionId(deviceId, remoteId);
         console.log(
@@ -2830,12 +2960,11 @@ export function usePeerConnections({
       isPeerEstablishedForRecovery,
       isPeerEligibleForP2pIceRetry,
       logP2pRetryOnly,
+      buildReconnectDecisionInput,
+      buildVoicePlaybackBlockReason,
+      logVoiceReconnectDecision,
     ]
   );
-
-  useEffect(() => {
-    scheduleReconnectRef.current = scheduleReconnect;
-  }, [scheduleReconnect]);
 
   const attachRemoteTrackDiagnostics = useCallback(
     (remoteId: string, track: MediaStreamTrack) => {
@@ -3392,6 +3521,7 @@ export function usePeerConnections({
       const ok = await enableTurnFallback();
       const turnProvider = turnProviderRef.current ?? "unknown";
       if (!ok) {
+        turnFallbackAttemptedRef.current.delete(remoteId);
         console.warn(
           `[voice-peer] turn-fallback-failed remote=${compactDeviceId(remoteId)} ` +
             `provider=${turnProvider} ${formatVoiceModeSuffix()}`
@@ -4230,6 +4360,27 @@ export function usePeerConnections({
     async (remoteId: string, reason: string, mode: PeerHardResetMode) => {
       if (!remoteId || remoteId === deviceId) return;
 
+      if (mode === "auto") {
+        const resetInput = buildReconnectDecisionInput(
+          remoteId,
+          reason,
+          "auto_hard_reset"
+        );
+        const resetBlock = buildVoicePlaybackBlockReason(resetInput);
+        if (resetBlock) {
+          logVoiceReconnectDecision("voice-hard-reset-decision", {
+            ...resetInput,
+            allow: false,
+            blockReason: resetBlock,
+          });
+          return;
+        }
+        logVoiceReconnectDecision("voice-hard-reset-decision", {
+          ...resetInput,
+          allow: true,
+        });
+      }
+
       const logPrefix = mode === "manual" ? "manual-hard-reset" : "auto-hard-reset";
       console.log(
         `[voice-peer] ${logPrefix} remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
@@ -4303,6 +4454,7 @@ export function usePeerConnections({
     },
     [
       assignConnectionId,
+      buildReconnectDecisionInput,
       clearEndedRemoteAudio,
       clearPeerWatchdogTimers,
       clearPassiveReconnectState,
@@ -4455,6 +4607,21 @@ export function usePeerConnections({
       if (autoHardResetGiveUpRef.current.has(remoteId)) return;
       if (autoHardResetInProgressRef.current.has(remoteId)) return;
 
+      const preserveUntil =
+        preserveRemoteAudioUntilRef.current.get(remoteId) ?? 0;
+      if (preserveUntil > 0 && Date.now() < preserveUntil) {
+        logVoiceReconnectDecision("voice-hard-reset-decision", {
+          ...buildReconnectDecisionInput(
+            remoteId,
+            "orphan_remote_audio_provisional",
+            "auto_hard_reset_eval"
+          ),
+          allow: false,
+          blockReason: "preserve_remote_audio_window",
+        });
+        return;
+      }
+
       const timestamps =
         peerSignalTimestampsRef.current.get(remoteId) ??
         emptyPeerSignalTimestamps();
@@ -4478,9 +4645,15 @@ export function usePeerConnections({
 
       if (!trigger) return;
 
+      logVoiceReconnectDecision("voice-hard-reset-decision", {
+        ...buildReconnectDecisionInput(remoteId, trigger, "auto_hard_reset_eval"),
+        allow: true,
+        action: trigger,
+      });
+
       void tryRunPeerAutoHardReset(remoteId, trigger);
     },
-    [getPeerMedia, tryRunPeerAutoHardReset]
+    [buildReconnectDecisionInput, getPeerMedia, tryRunPeerAutoHardReset]
   );
 
   const flushPendingReconnectRequests = useCallback(() => {
@@ -5820,6 +5993,19 @@ export function usePeerConnections({
           scheduledInMs: item.scheduledInMs,
         }
       );
+
+      if (item.action === "reconnect" || item.action === "retry-offer") {
+        logVoiceReconnectDecision("voice-heal-decision", {
+          ...buildReconnectDecisionInput(
+            item.remoteId,
+            item.reason,
+            "heal_peer_connections"
+          ),
+          allow: true,
+          action: item.action,
+        });
+      }
+
       item.run?.();
     }
 
@@ -5885,6 +6071,7 @@ export function usePeerConnections({
     setPeerState,
     signalReady,
     startPeerOffer,
+    buildReconnectDecisionInput,
   ]);
 
   const handleSignal = useCallback(

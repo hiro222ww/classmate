@@ -125,6 +125,52 @@ async function ensureMembership(params: {
   };
 }
 
+function tailId(value: string) {
+  const v = String(value ?? "").trim();
+  if (!v) return "-";
+  return v.length <= 6 ? v : v.slice(-6);
+}
+
+async function ensureClassPresence(params: {
+  classId: string;
+  sessionId: string;
+  deviceId: string;
+  sessionStatus: string;
+}) {
+  const now = new Date().toISOString();
+  const status =
+    params.sessionStatus === "active" ? "active" : "waiting";
+
+  const { error } = await supabase.from("class_presence").upsert(
+    {
+      class_id: params.classId,
+      device_id: params.deviceId,
+      session_id: params.sessionId,
+      screen: "room",
+      status,
+      last_seen_at: now,
+      updated_at: now,
+    },
+    { onConflict: "class_id,device_id" }
+  );
+
+  if (error) {
+    console.warn(
+      `[invite-presence] upsert failed class=${tailId(params.classId)} ` +
+        `session=${tailId(params.sessionId)} device=${tailId(params.deviceId)} ` +
+        `error=${error.message}`
+    );
+    return { ok: false as const, error };
+  }
+
+  console.log(
+    `[invite-presence] upsert screen=room class=${tailId(params.classId)} ` +
+      `session=${tailId(params.sessionId)} device=${tailId(params.deviceId)} ok=true`
+  );
+
+  return { ok: true as const };
+}
+
 async function ensureSessionMember(params: {
   sessionId: string;
   deviceId: string;
@@ -296,21 +342,42 @@ export async function POST(req: Request) {
       classSlots: slotsRes.classSlots,
     });
 
-    if (!membershipRes.ok) return membershipRes.response;
+    if (!membershipRes.ok) {
+      console.warn(
+        `[invite-join] failed step=membership error=membership_upsert`
+      );
+      return membershipRes.response;
+    }
+
+    console.log(
+      `[invite-join] membership-upsert ok=true alreadyJoined=${membershipRes.alreadyJoined}`
+    );
 
     const sessionMemberRes = await ensureSessionMember({
       sessionId,
       deviceId,
     });
 
-    if (!sessionMemberRes.ok) return sessionMemberRes.response;
+    if (!sessionMemberRes.ok) {
+      console.warn(
+        `[invite-join] failed step=session_member error=session_member_upsert`
+      );
+      return sessionMemberRes.response;
+    }
 
-    console.log("[invite] join-by-invite success", {
+    console.log("[invite-join] session-member-upsert ok=true");
+
+    await ensureClassPresence({
       classId,
       sessionId,
       deviceId,
-      alreadyJoined: membershipRes.alreadyJoined,
+      sessionStatus: String(session.status ?? "forming"),
     });
+
+    console.log(
+      `[invite-join] success class=${tailId(classId)} session=${tailId(sessionId)} ` +
+        `device=${tailId(deviceId)}`
+    );
 
     return NextResponse.json({
       ok: true,
@@ -324,7 +391,9 @@ export async function POST(req: Request) {
       photoPath: sessionMemberRes.photoPath,
     });
   } catch (e: any) {
-    console.error("[join-by-invite] server error =", e);
+    console.error(
+      `[invite-join] failed step=server error=${e?.message ?? String(e)}`
+    );
 
     return NextResponse.json(
       {

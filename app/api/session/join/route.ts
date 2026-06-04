@@ -202,9 +202,30 @@ export async function POST(req: Request) {
     });
     const canRejoin = canRejoinFromEligibility(rejoinEligibility);
 
+    if (invite) {
+      console.log(
+        `[admission] bypass reason=invite session=${sessionId.slice(-6)} ` +
+          `class=${String(session.classId ?? "").slice(-6)} device=${deviceId.slice(-4)}`
+      );
+    } else if (canRejoin) {
+      const rejoinReason = rejoinEligibility.existingClassMember
+        ? "class_membership"
+        : rejoinEligibility.existingSessionMember
+          ? "session_member"
+          : "unknown";
+      console.log(
+        `[admission] canRejoin=true reason=${rejoinReason} session=${sessionId.slice(-6)} ` +
+          `device=${deviceId.slice(-4)}`
+      );
+    }
+
     if (!canRejoin && !invite) {
       const admission = await getAdmissionStatus();
       if (!admission.open) {
+        console.log(
+          `[admission] blocked reason=closed path=session_join session=${sessionId.slice(-6)} ` +
+            `class=${String(session.classId ?? "").slice(-6)} device=${deviceId.slice(-4)}`
+        );
         console.log("[session/join] admission_closed", {
           sessionId,
           classId: session.classId,
@@ -462,14 +483,25 @@ export async function POST(req: Request) {
           class_id: classId,
           device_id: deviceId,
           session_id: sessionId,
+          screen: "room",
           status: session.status === "active" ? "active" : "waiting",
+          last_seen_at: now,
           updated_at: now,
         },
         { onConflict: "class_id,device_id" }
       );
 
     if (presenceErr) {
-      console.log("[session/join presenceErr]", presenceErr);
+      console.warn(
+        `[invite-presence] upsert failed class=${String(classId).slice(-6)} ` +
+          `session=${sessionId.slice(-6)} device=${deviceId.slice(-4)} ` +
+          `error=${presenceErr.message}`
+      );
+    } else {
+      console.log(
+        `[invite-presence] upsert screen=room class=${String(classId).slice(-6)} ` +
+          `session=${sessionId.slice(-6)} device=${deviceId.slice(-4)} ok=true path=session_join`
+      );
     }
 
     const { count } = await supabaseAdmin
