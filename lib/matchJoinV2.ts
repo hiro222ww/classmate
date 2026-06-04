@@ -20,6 +20,13 @@ import {
   canRejoinFromEligibility,
   loadRejoinEligibility,
 } from "@/lib/admissionMembership";
+import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
+import {
+  logMatchJoinPrefs,
+  logMatchJoinRpcResult,
+  logMatchJoinStart,
+  tailMatchId,
+} from "@/lib/matchJoinLogging";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -105,6 +112,54 @@ function resolveJoinDisplayName(profile: ProfileRow) {
 
 function errorDetail(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function logSimilarRecruitingClasses(params: {
+  worldKey: string;
+  topicKey: string | null;
+  excludeClassId: string;
+  requestId: string;
+  createdNewClass: boolean;
+}) {
+  const { data: sessions, error } = await supabase
+    .from("sessions")
+    .select("id,class_id,status,created_at")
+    .in("status", ["forming", "waiting"])
+    .gte("created_at", new Date(Date.now() - 3 * 60 * 1000).toISOString())
+    .limit(30);
+
+  if (error || !sessions?.length) return;
+
+  const classIds = Array.from(
+    new Set(
+      sessions
+        .map((s) => String(s.class_id ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (classIds.length === 0) return;
+
+  const { data: classes } = await supabase
+    .from("classes")
+    .select("id,world_key,topic_key")
+    .in("id", classIds);
+
+  const similar = (classes ?? []).filter((c) => {
+    if (String(c.id) === params.excludeClassId) return false;
+    if (String(c.world_key ?? "default") !== params.worldKey) return false;
+    const topic = normalizeTopicKey(c.topic_key);
+    return topic === params.topicKey;
+  });
+
+  if (similar.length === 0) return;
+
+  console.warn(
+    `[match-join] race-detected similarClasses=${similar
+      .map((c) => tailMatchId(String(c.id)))
+      .join(",")} requestId=${params.requestId.slice(0, 8)} ` +
+      `createdNew=${params.createdNewClass} topic=${params.topicKey ?? "free"}`
+  );
 }
 
 async function getBlockedDeviceIds(deviceId: string) {
@@ -564,17 +619,17 @@ export async function matchJoinV2Post(req: Request) {
     const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
     const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
 
-    console.log("[class/match-join-v2] request", {
+    logMatchJoinStart({
       requestId,
       deviceId,
-      worldKey,
-      topicKey,
-      minAge: requestedMinAge,
-      maxAge: requestedMaxAge,
-      capacity: requestedCapacity,
-      openJoinedClass,
-      forcedClassId: forcedClassId || null,
-      rawClassId: rawClassId || null,
+      prefs: {
+        topicKey,
+        worldKey,
+        minAge: requestedMinAge,
+        maxAge: requestedMaxAge,
+        capacity: requestedCapacity,
+        openJoinedClass,
+      },
     });
 
     const profileRes = await getProfile(deviceId);
@@ -591,20 +646,28 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
-    console.log("[class/match-join-v2] age filter", {
-      deviceId,
-      selfAge,
-      requestedMinAge,
-      requestedMaxAge,
-      prefsLoadedFromDb: {
-        minAge: fallbackMinAge,
-        maxAge: fallbackMaxAge,
+    logMatchJoinPrefs({
+      requestId,
+      prefs: {
+        topicKey,
+        worldKey,
+        minAge: requestedMinAge,
+        maxAge: requestedMaxAge,
+        capacity: requestedCapacity,
+        openJoinedClass,
       },
-      bodyMinAge: body.minAge ?? null,
-      bodyMaxAge: body.maxAge ?? null,
-      canRejoinTargetClass,
-      openJoinedClass,
+      selfAge,
     });
+
+    if (
+      !openJoinedClass &&
+      (requestedMinAge !== fallbackMinAge || requestedMaxAge !== fallbackMaxAge)
+    ) {
+      console.log(
+        `[match-join] prefs-source requestId=${requestId.slice(0, 8)} ` +
+          `bodyAge=${requestedMinAge}-${requestedMaxAge} dbAge=${fallbackMinAge}-${fallbackMaxAge}`
+      );
+    }
 
     const slotsRes = await getClassSlots(deviceId);
     if (!slotsRes.ok) return slotsRes.response;
@@ -715,6 +778,7 @@ export async function matchJoinV2Post(req: Request) {
       blockedDeviceIds,
       requestedMinAge,
       requestedMaxAge,
+      requestId,
     });
 
     if (!atomicRes.ok) return atomicRes.response;
@@ -787,32 +851,44 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
-    console.log("[class/match-join-v2] success", {
-      requestId,
-      deviceId,
+    const raceMerged = Boolean(row.race_merged);
+    const createdNewClass =
+      Boolean(row.created_new_class) && !raceMerged;
+
+    await logSimilarRecruitingClasses({
       worldKey,
       topicKey,
-      minAge: requestedMinAge,
-      maxAge: requestedMaxAge,
-      capacity: requestedCapacity,
-      openJoinedClass,
-      forcedClassId: forcedClassId || null,
-      classId: row.class_id,
-      className: row.class_name,
-      sessionId: row.session_id,
-      sessionStatus: row.session_status,
-      status: row.session_status,
-      sessionCreatedAt: row.session_created_at,
-      recruitmentSessionTtlMinutes,
-      recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
-      expiredCount: Number(row.expired_count ?? 0),
-      candidateSessionCount: Number(row.candidate_session_count ?? 0),
+      excludeClassId: String(row.class_id),
+      requestId,
+      createdNewClass,
+    });
+
+    const joinState = await ensureClassSessionMembership({
+      classId: String(row.class_id),
+      sessionId: String(row.session_id),
+      deviceId,
+      source: openJoinedClass ? "restore" : "normal_join",
+      displayName: joinDisplayName,
+    });
+
+    if (!joinState.ok) {
+      console.warn(
+        `[match-join] join-state-failed requestId=${requestId.slice(0, 8)} ` +
+          `error=${joinState.error} class=${tailMatchId(String(row.class_id))} ` +
+          `session=${tailMatchId(String(row.session_id))}`
+      );
+    }
+
+    logMatchJoinRpcResult({
+      requestId,
+      deviceId,
+      classId: String(row.class_id),
+      sessionId: String(row.session_id),
+      createdNewClass,
       createdNewSession: Boolean(row.created_new_session),
-      createdNewClass: Boolean(row.created_new_class),
-      reused: row.reused,
-      alreadyJoined: row.already_joined,
-      billableCount: membershipSnapshot.billableCount,
-      classSlots,
+      reused: Boolean(row.reused),
+      raceMerged,
+      candidateSessionCount: Number(row.candidate_session_count ?? 0),
     });
 
     return NextResponse.json(
@@ -829,7 +905,9 @@ export async function matchJoinV2Post(req: Request) {
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
       createdNewSession: Boolean(row.created_new_session),
-      createdNewClass: Boolean(row.created_new_class),
+      createdNewClass,
+      raceMerged,
+      joinStateOk: joinState.ok,
       requestedCapacity,
       requestedMinAge,
       requestedMaxAge,

@@ -734,12 +734,10 @@ export default function SelectClient() {
       const finalMinAge = Math.min(prefs.min_age, prefs.max_age);
       const finalMaxAge = Math.max(prefs.min_age, prefs.max_age);
 
-      console.log("[select] match request ages =", {
-        prefs,
-        finalMinAge,
-        finalMaxAge,
-        prefsLoaded,
-      });
+      console.log(
+        `[match-join] click device=${String(deviceId).slice(-6)} topic=${b.topic_key} ` +
+          `prefs=${finalMinAge}-${finalMaxAge} world=${b.world_key ?? "default"}`
+      );
 
       const matchBody = buildMatchJoinRequestBody({
         deviceId,
@@ -751,7 +749,14 @@ export default function SelectClient() {
         openJoinedClassId: forcedClassId ?? null,
       });
 
-      console.log("[select] match-join-v2 request body =", matchBody);
+      const clientRequestId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `select-${Date.now()}`;
+
+      console.log(
+        `[match-join] request-start requestId=${clientRequestId.slice(0, 8)} device=${String(deviceId).slice(-6)}`
+      );
 
       const matchRes = await fetch("/api/class/match-join-v2", {
         method: "POST",
@@ -769,9 +774,11 @@ export default function SelectClient() {
       }
 
       console.log(
-  "[select] match-join response =",
-  JSON.stringify(matchJson, null, 2)
-);
+        `[match-join] response class=${String(matchJson?.classId ?? "").slice(-6)} ` +
+          `session=${String(matchJson?.sessionId ?? "").slice(-6)} ` +
+          `createdNew=${Boolean(matchJson?.createdNewClass)} joinedExisting=${Boolean(matchJson?.reused) || Boolean(matchJson?.raceMerged)} ` +
+          `requestId=${String(matchJson?.requestId ?? clientRequestId).slice(0, 8)}`
+      );
 
       if (!matchRes.ok || !matchJson?.ok) {
         if (matchJson?.error === "profile_required") {

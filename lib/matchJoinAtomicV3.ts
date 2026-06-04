@@ -18,6 +18,7 @@ export type MatchJoinAtomicV3Params = {
   blockedDeviceIds: string[];
   requestedMinAge: number;
   requestedMaxAge: number;
+  requestId?: string;
 };
 
 export type MatchJoinAtomicV3Row = {
@@ -33,6 +34,7 @@ export type MatchJoinAtomicV3Row = {
   candidate_session_count?: number | null;
   created_new_session?: boolean | null;
   created_new_class?: boolean | null;
+  race_merged?: boolean | null;
 };
 
 function parseRpcDetail(error: unknown): Record<string, unknown> {
@@ -229,18 +231,23 @@ export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
     };
   }
 
-  console.log("[match-join-v2] match_join_atomic_v3 result", {
-    classId: row.class_id,
-    sessionId: row.session_id,
-    sessionStatus: row.session_status,
-    sessionCreatedAt: row.session_created_at,
-    expiredCount: Number(row.expired_count ?? 0),
-    candidateSessionCount: Number(row.candidate_session_count ?? 0),
-    createdNewSession: Boolean(row.created_new_session),
-    createdNewClass: Boolean(row.created_new_class),
-    reused: Boolean(row.reused),
-    alreadyJoined: Boolean(row.already_joined),
-  });
+  const raceMerged = Boolean(row.race_merged);
+  const createdNewClass = Boolean(row.created_new_class) && !raceMerged;
+  const joinedExisting = Boolean(row.reused) || raceMerged;
+
+  console.log(
+    `[match-join] rpc-result requestId=${String(params.requestId ?? "").slice(0, 8)} ` +
+      `class=${String(row.class_id).slice(-6)} session=${String(row.session_id).slice(-6)} ` +
+      `createdNew=${createdNewClass} joinedExisting=${joinedExisting} ` +
+      `candidates=${Number(row.candidate_session_count ?? 0)} raceMerged=${raceMerged}`
+  );
+
+  if (createdNewClass && Number(row.candidate_session_count ?? 0) > 0) {
+    console.warn(
+      `[match-join] race-detected requestId=${String(params.requestId ?? "").slice(0, 8)} ` +
+        `createdNewClass=true candidates=${Number(row.candidate_session_count ?? 0)}`
+    );
+  }
 
   return { ok: true as const, row };
 }

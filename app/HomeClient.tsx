@@ -1466,7 +1466,9 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         capacity: 5,
       });
 
-      console.log("[home quick free] match-join-v2 request body =", quickBody);
+      console.log(
+        `[match-join] click device=${currentDeviceId.slice(-6)} topic=free prefs=default`
+      );
 
       const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
@@ -1476,7 +1478,12 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       });
 
       const json = await readJsonSafe(res);
-      console.log("[home quick free] response =", json);
+      console.log(
+        `[match-join] response class=${String(json?.classId ?? "").slice(-6)} ` +
+          `session=${String(json?.sessionId ?? "").slice(-6)} ` +
+          `createdNew=${Boolean(json?.createdNewClass)} joinedExisting=${Boolean(json?.reused) || Boolean(json?.raceMerged)} ` +
+          `requestId=${String(json?.requestId ?? "").slice(0, 8)}`
+      );
 
       if (!res.ok || !json?.ok) {
         if (json?.error === "class_slots_limit") {
