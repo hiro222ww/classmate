@@ -65,6 +65,10 @@ import {
 } from "@/lib/memberProfileView";
 import MemberListAvatar from "@/components/MemberListAvatar";
 import { debugVoiceRetryable } from "@/lib/debugVoiceLog";
+import {
+  getBackgroundSyncIntervalMs,
+  logAppLife,
+} from "@/lib/appLifecycle";
 import { fetchWithRetry, isIntentionalAbortError } from "@/lib/retryableFetch";
 import {
   logVoicePerfPipeline,
@@ -286,12 +290,23 @@ export default function CallClient() {
   }, [sessionId, deviceId]);
 
   useEffect(() => {
+    logAppLife("call-client-mount", {
+      session: String(sessionId).slice(-6),
+      device: String(deviceId).slice(-4),
+    });
     return () => {
+      logAppLife("call-client-unmount", {
+        session: String(sessionId).slice(-6),
+        device: String(deviceId).slice(-4),
+        members: members.length,
+        vis:
+          typeof document !== "undefined" ? document.visibilityState : "-",
+      });
       logCallLifecycle("unmount", { sessionId, deviceId });
       setPeerStates({});
       setPeerDiagnostics({});
     };
-  }, [sessionId, deviceId]);
+  }, [sessionId, deviceId, members.length]);
 
   useEffect(() => {
     const unlockRemoteAudio = () => {
@@ -829,6 +844,7 @@ export default function CallClient() {
     if (!classId || !sessionId || !deviceId) return;
 
     async function sendPresence() {
+      if (typeof document !== "undefined" && document.hidden) return;
       await fetch("/api/class/presence", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -840,7 +856,9 @@ export default function CallClient() {
         }),
         cache: "no-store",
       }).catch((e) => {
-        console.warn("[call] presence heartbeat failed", e);
+        debugVoiceRetryable("call:presence", "presence_heartbeat_failed", {
+          message: e instanceof Error ? e.message : String(e),
+        });
       });
     }
 
@@ -850,12 +868,26 @@ export default function CallClient() {
       void sendPresence();
     }, 500);
 
-    const timer = window.setInterval(() => {
-      void sendPresence();
-    }, 10000);
+    let timer: number | null = null;
+    const schedulePresence = () => {
+      if (timer) window.clearInterval(timer);
+      timer = window.setInterval(() => {
+        void sendPresence();
+      }, getBackgroundSyncIntervalMs(10_000, 30_000));
+    };
+    schedulePresence();
+
+    const onPresenceVisibility = () => {
+      schedulePresence();
+      if (document.visibilityState === "visible") {
+        void sendPresence();
+      }
+    };
+    document.addEventListener("visibilitychange", onPresenceVisibility);
 
     return () => {
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onPresenceVisibility);
+      if (timer) window.clearInterval(timer);
       if (classId && sessionId && deviceId) {
         void fetch("/api/class/presence", {
           method: "POST",
@@ -905,8 +937,9 @@ export default function CallClient() {
     if (!sessionId) return;
 
     const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void fetchMembers("poll");
-    }, 10000);
+    }, getBackgroundSyncIntervalMs(10_000, 25_000));
 
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers]);
@@ -926,6 +959,9 @@ export default function CallClient() {
   const handleRemoteCountChange = useCallback((_count: number) => {}, []);
 
   const handleVoiceCleanup = useCallback(() => {
+    debugConsoleLog(
+      `[call] voice-cleanup reason=peer_layer_cleanup vis=${typeof document !== "undefined" ? document.visibilityState : "-"}`
+    );
     setPeerStates({});
     setPeerDiagnostics({});
     setRemoteAudioHealth({});
@@ -936,6 +972,87 @@ export default function CallClient() {
   const handleManualPeerHardResetReady = useCallback(
     (reset: (remoteId: string) => void | Promise<void>) => {
       manualPeerHardResetRef.current = reset;
+    },
+    []
+  );
+
+  const handleLocalTrackMutedApplied = useCallback(
+    ({
+      userMuted: muted,
+      trackEnabled,
+      reason,
+    }: {
+      userMuted: boolean;
+      trackEnabled: boolean;
+      reason: string;
+    }) => {
+      localTrackEnabledRef.current = trackEnabled;
+      logRestoreMutedState({
+        stored: readCallMutePreference(sessionId, deviceId),
+        userMutedBefore: userMutedRef.current,
+        userMutedAfter: muted,
+        trackEnabledBefore: localTrackEnabledRef.current,
+        trackEnabledAfter: trackEnabled,
+        reason: `track_apply_${reason}`,
+      });
+    },
+    [sessionId, deviceId]
+  );
+
+  const handleMicLevelChange = useCallback(
+    (level: number) => {
+      setMicLevel(level);
+
+      if (!userMuted && level > 0.08) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            m.device_id === deviceId ? { ...m, lastSpokeAt: Date.now() } : m
+          )
+        );
+      }
+    },
+    [deviceId, userMuted]
+  );
+
+  const handleRemoteSpeakingChange = useCallback((remoteId: string) => {
+    setMembers((prev) =>
+      prev.map((m) =>
+        m.device_id === remoteId ? { ...m, lastSpokeAt: Date.now() } : m
+      )
+    );
+  }, []);
+
+  const handleRemotePlaybackHealthChange = useCallback(
+    (remoteId: string, health: RemotePlaybackHealth) => {
+      const normalizedHealth =
+        health.lastPlaySuccessAt != null &&
+        health.playFailedAt != null &&
+        health.lastPlaySuccessAt >= health.playFailedAt
+          ? { ...health, playFailedAt: null }
+          : health;
+
+      setRemoteAudioHealth((prev) => {
+        const current = prev[remoteId];
+        if (
+          current?.verified === normalizedHealth.verified &&
+          current?.playbackActive === normalizedHealth.playbackActive &&
+          current?.playbackActiveMode === normalizedHealth.playbackActiveMode &&
+          current?.audioActuallyPlaying === normalizedHealth.audioActuallyPlaying &&
+          current?.trackReady === normalizedHealth.trackReady &&
+          current?.playSuccess === normalizedHealth.playSuccess &&
+          current?.lastPlaySuccessAt === normalizedHealth.lastPlaySuccessAt &&
+          current?.playFailedAt === normalizedHealth.playFailedAt &&
+          current?.lastAttachAt === normalizedHealth.lastAttachAt &&
+          current?.level === normalizedHealth.level &&
+          current?.currentTimeAdvanced === normalizedHealth.currentTimeAdvanced
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [remoteId]: normalizedHealth,
+        };
+      });
     },
     []
   );
@@ -1422,71 +1539,11 @@ export default function CallClient() {
         membersSyncRevision={membersSyncRevision}
         userMuted={userMuted}
         userMutedRef={userMutedRef}
-        onLocalTrackMutedApplied={({ userMuted: muted, trackEnabled, reason }) => {
-          localTrackEnabledRef.current = trackEnabled;
-          logRestoreMutedState({
-            stored: readCallMutePreference(sessionId, deviceId),
-            userMutedBefore: userMutedRef.current,
-            userMutedAfter: muted,
-            trackEnabledBefore: localTrackEnabledRef.current,
-            trackEnabledAfter: trackEnabled,
-            reason: `track_apply_${reason}`,
-          });
-        }}
+        onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
         onMicReadyChange={handleMicReadyChange}
-        onMicLevelChange={(level) => {
-          setMicLevel(level);
-
-          if (!userMuted && level > 0.08) {
-            setMembers((prev) =>
-              prev.map((m) =>
-                m.device_id === deviceId
-                  ? { ...m, lastSpokeAt: Date.now() }
-                  : m
-              )
-            );
-          }
-        }}
-        onRemoteSpeakingChange={(remoteId) => {
-          setMembers((prev) =>
-            prev.map((m) =>
-              m.device_id === remoteId
-                ? { ...m, lastSpokeAt: Date.now() }
-                : m
-            )
-          );
-        }}
-        onRemotePlaybackHealthChange={(remoteId, health) => {
-          const normalizedHealth =
-            health.lastPlaySuccessAt != null &&
-            health.playFailedAt != null &&
-            health.lastPlaySuccessAt >= health.playFailedAt
-              ? { ...health, playFailedAt: null }
-              : health;
-
-          setRemoteAudioHealth((prev) => {
-            const current = prev[remoteId];
-            if (
-              current?.verified === normalizedHealth.verified &&
-              current?.playbackActive === normalizedHealth.playbackActive &&
-              current?.playbackActiveMode === normalizedHealth.playbackActiveMode &&
-              current?.audioActuallyPlaying === normalizedHealth.audioActuallyPlaying &&
-              current?.trackReady === normalizedHealth.trackReady &&
-              current?.playSuccess === normalizedHealth.playSuccess &&
-              current?.lastPlaySuccessAt === normalizedHealth.lastPlaySuccessAt &&
-              current?.playFailedAt === normalizedHealth.playFailedAt &&
-              current?.lastAttachAt === normalizedHealth.lastAttachAt &&
-              current?.level === normalizedHealth.level &&
-              current?.currentTimeAdvanced === normalizedHealth.currentTimeAdvanced
-            ) {
-              return prev;
-            }
-            return {
-              ...prev,
-              [remoteId]: normalizedHealth,
-            };
-          });
-        }}
+        onMicLevelChange={handleMicLevelChange}
+        onRemoteSpeakingChange={handleRemoteSpeakingChange}
+        onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
         onRemoteCountChange={handleRemoteCountChange}
         onStatusChange={setCallInfo}
         onPeerStatesChange={setPeerStates}

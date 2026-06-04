@@ -1,6 +1,8 @@
 "use client";
 
 import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
+import { logAppLife, isLikelyBenignRejection } from "@/lib/appLifecycle";
+import { isRetryableNetworkError } from "@/lib/retryableFetch";
 import {
   consumeCallBfcacheSuspend,
   consumeCallReloadSnapshot,
@@ -61,6 +63,7 @@ export function getNavigationType(): string {
 }
 
 export function logNavigationIntent(reason: string, source: string) {
+  logAppLife("navigation-intent", { reason, source });
   debugConsoleLog(
     `[call-lifecycle] navigation-intent reason=${reason} source=${source} ` +
       `path=${getCurrentPath()} nav=${getNavigationType()}`
@@ -99,6 +102,20 @@ function compactDeviceId(id: string | null | undefined): string {
 }
 
 export function saveFatalError(snapshot: FatalErrorSnapshot) {
+  if (
+    isRetryableNetworkError({
+      message: snapshot.message,
+      name: snapshot.name,
+    }) ||
+    isLikelyBenignRejection(snapshot.message)
+  ) {
+    debugConsoleLog(
+      `[call-lifecycle] fatal-suppressed-retryable kind=${snapshot.kind} ` +
+        `msg=${snapshot.message.slice(0, 80)}`
+    );
+    return;
+  }
+
   const line =
     snapshot.kind === "window-error"
       ? `[app-error] window-error chunk=${snapshot.chunkError} name=${snapshot.name} msg=${snapshot.message.slice(0, 160)}`
@@ -190,6 +207,12 @@ export function installCallLifecycleDiagnostics(params: {
 
   const onError = (event: ErrorEvent) => {
     const message = event.message ?? "";
+    if (isLikelyBenignRejection(message)) {
+      debugConsoleLog(
+        `[call-lifecycle] window-error-suppressed msg=${message.slice(0, 120)}`
+      );
+      return;
+    }
     const chunkError = isLikelyChunkLoadError(message);
     saveFatalError({
       savedAt: Date.now(),
@@ -216,6 +239,12 @@ export function installCallLifecycleDiagnostics(params: {
   const onRejection = (event: PromiseRejectionEvent) => {
     const reason = event.reason;
     const message = reason instanceof Error ? reason.message : String(reason);
+    if (isLikelyBenignRejection(message)) {
+      debugConsoleLog(
+        `[call-lifecycle] unhandled-rejection-suppressed msg=${message.slice(0, 120)}`
+      );
+      return;
+    }
     const chunkError = isLikelyChunkLoadError(message);
     saveFatalError({
       savedAt: Date.now(),

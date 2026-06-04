@@ -1,6 +1,7 @@
 "use client";
 
-import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
+import { debugConsoleLog } from "@/lib/debugVoiceLog";
+import { logAppLife } from "@/lib/appLifecycle";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import RemoteAudio, {
   type RemotePlaybackHealth,
@@ -10,7 +11,6 @@ import { useCallSignaling } from "./voice/useCallSignaling";
 import { usePeerConnections } from "./voice/usePeerConnections";
 import {
   compactDeviceId,
-  voiceDebugLog,
   type PeerStatusDiagnostics,
 } from "./voice/voiceDiagnostics";
 import { logVoiceClientEnv, getVoiceMode } from "@/lib/voiceClientEnv";
@@ -89,17 +89,8 @@ export default function CallVoiceLayer({
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
-
-  voiceDebugLog("[voice-layer] render", {
-    sessionId,
-    deviceId,
-    membersCount: members.length,
-    members: members.map((m) => ({
-      device_id: m.device_id,
-      is_in_call: m.is_in_call,
-    })),
-    userMuted,
-  });
+  const membersRef = useRef(members);
+  membersRef.current = members;
 
   const applyLocalAudioTrackRef = useRef<
     (track: MediaStreamTrack | null, reason: string) => void
@@ -150,12 +141,28 @@ export default function CallVoiceLayer({
   });
 
   useEffect(() => {
+    logAppLife("voice-layer-mount", {
+      instance: instanceId,
+      session: compactSessionId(sessionId),
+      device: compactDeviceId(deviceId),
+      members: membersRef.current.length,
+    });
     debugConsoleLog(
-      `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)}`
+      `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)} members=${membersRef.current.length}`
     );
     return () => {
+      const vis =
+        typeof document !== "undefined" ? document.visibilityState : "-";
+      logAppLife("voice-layer-unmount", {
+        instance: instanceId,
+        session: compactSessionId(sessionId),
+        device: compactDeviceId(deviceId),
+        members: membersRef.current.length,
+        vis,
+        reason: "component_unmount",
+      });
       debugConsoleLog(
-        `[voice-layer] unmount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)}`
+        `[voice-layer] unmount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)} members=${membersRef.current.length} vis=${vis} reason=component_unmount`
       );
       releaseSessionMic("voice_layer_unmount", sessionId);
     };
@@ -169,13 +176,24 @@ export default function CallVoiceLayer({
     applyLocalAudioTrackRef.current = peer.applyLocalAudioTrack;
   }, [peer.applyLocalAudioTrack]);
 
-  useEffect(() => {
-    signaling.setOnSignal(peer.handleSignal);
-  }, [signaling.setOnSignal, peer.handleSignal]);
+  const handleSignalRef = useRef(peer.handleSignal);
+  handleSignalRef.current = peer.handleSignal;
 
   useEffect(() => {
-    onManualPeerHardResetReady?.(peer.manualPeerHardReset);
-  }, [onManualPeerHardResetReady, peer.manualPeerHardReset]);
+    signaling.setOnSignal((row) => {
+      void handleSignalRef.current(row);
+    });
+  }, [signaling.setOnSignal]);
+
+  const onManualPeerHardResetReadyRef = useRef(onManualPeerHardResetReady);
+  onManualPeerHardResetReadyRef.current = onManualPeerHardResetReady;
+
+  const manualPeerHardResetRef = useRef(peer.manualPeerHardReset);
+  manualPeerHardResetRef.current = peer.manualPeerHardReset;
+
+  useEffect(() => {
+    onManualPeerHardResetReadyRef.current?.(manualPeerHardResetRef.current);
+  }, [peer.manualPeerHardReset]);
 
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {

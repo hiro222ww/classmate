@@ -33,6 +33,7 @@ import {
   type PeerStatusDiagnostics,
 } from "./voiceDiagnostics";
 import { recordCallReloadContext } from "@/lib/callReloadDiagnostics";
+import { isDocumentHidden } from "@/lib/appLifecycle";
 import {
   formatVoiceModeSuffix,
   getVoiceModePolicy,
@@ -843,6 +844,7 @@ export function usePeerConnections({
 }: UsePeerConnectionsArgs) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef(deviceId);
+  const membersCountRef = useRef(members.length);
   const onVoiceCleanupRef = useRef(onVoiceCleanup);
   const emitPeerStatesRef = useRef<() => void>(() => {});
 
@@ -2352,6 +2354,7 @@ export function usePeerConnections({
     if (!micReady || !signalReady) return;
 
     const timer = window.setInterval(() => {
+      if (isDocumentHidden()) return;
       const remoteIds = getRemoteIds();
 
       for (const remoteId of remoteIds) {
@@ -6843,6 +6846,7 @@ export function usePeerConnections({
     if (!signalReady) return;
 
     const timer = window.setInterval(() => {
+      if (isDocumentHidden()) return;
       healPeerConnections();
     }, voicePolicy.healIntervalMs);
 
@@ -6855,6 +6859,7 @@ export function usePeerConnections({
     if (!micReady || !signalReady) return;
 
     const timer = window.setInterval(() => {
+      if (isDocumentHidden()) return;
       flushPendingReconnectRequests();
       for (const remoteId of getRemoteIds()) {
         evaluateAndRunAutoHardResetForPeer(remoteId);
@@ -6874,6 +6879,7 @@ export function usePeerConnections({
 
   useEffect(() => {
     if (membersSyncRevision <= 0) return;
+    if (isDocumentHidden()) return;
     const receiveOnly = isReceiveOnlyMutedSession(
       voicePolicy.releaseMicOnMute,
       userMutedRef
@@ -7020,12 +7026,22 @@ export function usePeerConnections({
       emitPeerStatesRef.current();
       onVoiceCleanupRef.current?.();
 
+      const vis =
+        typeof document !== "undefined" ? document.visibilityState : "-";
+      const memberCount = membersCountRef.current;
+
       debugConsoleLog(
-        `[voice-peer] ${logTag} reason=${reason} pcs=${pcCount} timers=${timerCount} remoteAudios=${remoteAudioCount} ${formatVoiceModeSuffix()}`
+        `[voice-peer] ${logTag} reason=${reason} pcs=${pcCount} timers=${timerCount} ` +
+          `remoteAudios=${remoteAudioCount} members=${memberCount} vis=${vis} ` +
+          `${formatVoiceModeSuffix()}`
       );
     },
     []
   );
+
+  useEffect(() => {
+    membersCountRef.current = members.length;
+  }, [members.length]);
 
   useEffect(() => {
     const effectSessionId = sessionId;
@@ -7107,6 +7123,7 @@ export function usePeerConnections({
     if (!signalReady && !pcsRef.current.size) return;
 
     const timer = window.setInterval(() => {
+      if (isDocumentHidden()) return;
       const remoteIds = getRemoteIds();
 
       for (const remoteId of remoteIds) {

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import AppLifecycleBoot from "@/components/AppLifecycleBoot";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -24,6 +25,7 @@ export default function RootLayout({
             "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
         }}
       >
+        <AppLifecycleBoot />
         {/* ▼ メインコンテンツ */}
         <div style={{ minHeight: "100vh" }}>{children}</div>
 

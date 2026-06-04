@@ -1132,6 +1132,8 @@ if (!res.ok || !json?.ok) {
 
         if (redirectRemoved) {
           setErr("このクラスから退出済みです。");
+          logNavigationIntent("removed_from_session", "RoomClient.fetchMembers");
+          logRouteChange(getCurrentPath(), "/", "removed_from_session");
           router.replace(withDev("/"));
           return;
         }
@@ -1189,7 +1191,7 @@ if (!res.ok || !json?.ok) {
         return null;
       });
 
-      if (res?.ok) {
+      if (res?.ok && process.env.NEXT_PUBLIC_DEBUG_VOICE === "1") {
         console.log(
           `[room] presence update screen=room session=${sessionId.slice(-6)} ` +
             `class=${classId.slice(-6)} device=${deviceId.slice(-4)}`
@@ -1199,13 +1201,31 @@ if (!res.ok || !json?.ok) {
 
     void sendPresence();
 
-    const timer = window.setInterval(() => {
-      if (window.location.pathname !== "/room") return;
-      void sendPresence();
-    }, 10000);
+    const schedulePresence = () => {
+      if (timer) window.clearInterval(timer);
+      const ms =
+        typeof document !== "undefined" && document.hidden ? 30_000 : 10_000;
+      timer = window.setInterval(() => {
+        if (window.location.pathname !== "/room") return;
+        if (typeof document !== "undefined" && document.hidden) return;
+        void sendPresence();
+      }, ms);
+    };
+
+    let timer: number | null = null;
+    schedulePresence();
+
+    const onPresenceVisibility = () => {
+      schedulePresence();
+      if (document.visibilityState === "visible") {
+        void sendPresence();
+      }
+    };
+    document.addEventListener("visibilitychange", onPresenceVisibility);
 
     return () => {
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onPresenceVisibility);
+      if (timer) window.clearInterval(timer);
     };
   }, [classId, sessionId, deviceId, pathname]);
 
