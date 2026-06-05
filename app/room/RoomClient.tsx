@@ -353,8 +353,10 @@ function resolveRoomMemberParticipation(
   sessionId: string,
   previous: UiParticipationStatus | null,
   fetchFailed = false,
-  localExitedCall = false
+  localExitedCall = false,
+  lastInSessionAt?: number | null
 ): UiParticipationStatus {
+  const deviceId = String(member.device_id ?? "").trim();
   return resolveParticipationStatus({
     source: mergeRoomMemberPresenceSource(member, presence),
     currentSessionId: sessionId,
@@ -362,6 +364,10 @@ function resolveRoomMemberParticipation(
     previous,
     fetchFailed,
     localExitedCall,
+    context: "room",
+    deviceId,
+    inSessionMembers: true,
+    lastInSessionAt,
   });
 }
 
@@ -371,7 +377,8 @@ function resolveRoomMemberDisplay(
   sessionId: string,
   previous: UiParticipationStatus | null,
   isMe: boolean,
-  viewerDeviceId: string
+  viewerDeviceId: string,
+  lastInSessionAt?: number | null
 ) {
   const did = String(member.device_id ?? "").trim();
   const viewerId = String(viewerDeviceId ?? "").trim();
@@ -395,7 +402,8 @@ function resolveRoomMemberDisplay(
     sessionId,
     previous,
     false,
-    localExitedCall
+    localExitedCall,
+    lastInSessionAt
   );
 
   const screen = String(member.screen ?? presence?.screen ?? "").trim();
@@ -407,11 +415,18 @@ function resolveRoomMemberDisplay(
         ? "screen_room"
         : presence
           ? "presence"
-          : "member_fields";
+          : "session_member";
+
+  const unified =
+    status === "in_call"
+      ? ("in_call" as const)
+      : status === "waiting"
+        ? ("in_session" as const)
+        : ("offline" as const);
 
   return {
     status,
-    label: participationStatusLabel(status, "room"),
+    label: participationStatusLabel(status, "room", unified),
     used,
     reason:
       screen === "room"
@@ -600,6 +615,7 @@ export default function RoomClient() {
 
   const statusFailCountRef = useRef(0);
   const prevMemberStatusRef = useRef<Record<string, UiParticipationStatus>>({});
+  const lastInSessionAtRef = useRef<Record<string, number>>({});
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -946,10 +962,16 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     if (!sessionId) return;
 
     const nextStatuses: Record<string, UiParticipationStatus> = {};
+    const nowMs = Date.now();
+    const nextLastInSessionAt: Record<string, number> = {
+      ...lastInSessionAtRef.current,
+    };
 
     for (const member of visibleMembers) {
       const did = String(member.device_id ?? "").trim();
       if (!did) continue;
+
+      nextLastInSessionAt[did] = nowMs;
 
       const isMe = did === String(deviceId ?? "").trim();
       const display = resolveRoomMemberDisplay(
@@ -958,7 +980,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         sessionId,
         prevMemberStatusRef.current[did] ?? null,
         isMe,
-        deviceId
+        deviceId,
+        nextLastInSessionAt[did]
       );
 
       nextStatuses[did] = display.status;
@@ -989,6 +1012,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       }
     }
 
+    const visibleIds = new Set(
+      visibleMembers
+        .map((m) => String(m.device_id ?? "").trim())
+        .filter(Boolean)
+    );
+    for (const did of Object.keys(nextLastInSessionAt)) {
+      if (!visibleIds.has(did)) {
+        delete nextLastInSessionAt[did];
+      }
+    }
+    lastInSessionAtRef.current = nextLastInSessionAt;
     prevMemberStatusRef.current = nextStatuses;
   }, [visibleMembers, presenceMap, sessionId, deviceId]);
 
@@ -1952,7 +1986,8 @@ if (!shouldAutoStart) return;
                       sessionId,
                       prevStatuses[did] ?? null,
                       isMe,
-                      deviceId
+                      deviceId,
+                      lastInSessionAtRef.current[did] ?? Date.now()
                     );
                     const pill = participationStatusStyle(memberDisplay.status);
 

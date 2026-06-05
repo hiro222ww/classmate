@@ -1,4 +1,9 @@
 import { debugConsoleLog } from "@/lib/debugVoiceLog";
+import {
+  resolveMemberParticipationForUi,
+  type UnifiedMemberStatus,
+} from "@/lib/memberStatus";
+import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
 
 export type UiParticipationStatus = "in_call" | "waiting" | "offline";
 
@@ -938,6 +943,10 @@ export function resolveParticipationStatus(params: {
   previous?: UiParticipationStatus | null;
   fetchFailed?: boolean;
   localExitedCall?: boolean;
+  context?: "home" | "room";
+  deviceId?: string;
+  inSessionMembers?: boolean;
+  lastInSessionAt?: number | null;
 }): UiParticipationStatus {
   const {
     source,
@@ -946,67 +955,50 @@ export function resolveParticipationStatus(params: {
     previous = null,
     fetchFailed = false,
     localExitedCall = false,
+    context = "home",
+    deviceId = "",
+    inSessionMembers = true,
+    lastInSessionAt,
   } = params;
 
-  const lastSeenAt = source.last_seen_at;
-  const fresh = isPresenceFresh(lastSeenAt, freshMs);
-  const lastTs = parseTimestamp(lastSeenAt);
-  const staleGrace =
-    lastTs != null && Date.now() - lastTs <= freshMs + PRESENCE_STALE_GRACE_MS;
+  const { participation } = resolveMemberParticipationForUi({
+    context,
+    deviceId,
+    inSessionMembers,
+    explicitLeaveSeen: localExitedCall,
+    localExitedCall,
+    is_in_call: source.is_in_call,
+    screen: source.screen,
+    last_seen_at: source.last_seen_at,
+    presenceSessionId:
+      source.presence_session_id ?? source.session_id ?? null,
+    currentSessionId,
+    effective_status: source.effective_status ?? source.status ?? null,
+    lastInSessionAt,
+    previousParticipation: previous,
+    fetchFailed,
+    freshMs,
+  });
 
-  const screen = String(source.screen ?? "").trim();
-
-  if (localExitedCall || screen === "room" || screen === "home") {
-    return "waiting";
-  }
-
-  if (source.is_in_call === false) {
-    return "waiting";
-  }
-
-  if (source.is_in_call === true) {
-    return "in_call";
-  }
-
-  const sid = String(
-    source.presence_session_id ?? source.session_id ?? ""
-  ).trim();
-  const currentSid = String(currentSessionId ?? "").trim();
-
-  if (fresh) {
-    if (screen === "call") {
-      if (!currentSid || !sid || sid === currentSid) {
-        return "in_call";
-      }
-    }
-
-    const effective = normalizedEffective(source);
-    if (
-      effective === "calling" ||
-      effective === "call" ||
-      effective === "active"
-    ) {
-      if (!currentSid || !sid || sid === currentSid) {
-        return "in_call";
-      }
-    }
-
-    if (effective === "waiting" || effective === "room") {
-      return "waiting";
-    }
-  }
-
-  if ((fetchFailed || staleGrace) && previous && previous !== "offline") {
-    return previous;
-  }
-
-  return "offline";
+  return participation;
 }
 
 export function participationStatusLabel(
   status: UiParticipationStatus,
-  context: "home" | "room"
+  context: "home" | "room",
+  unified?: UnifiedMemberStatus
 ): string {
+  if (unified) {
+    if (unified === "in_call") return "通話中";
+    if (unified === "connecting") {
+      return context === "room" ? "接続準備中" : "接続処理中";
+    }
+    if (unified === "in_session") {
+      return context === "room" ? "入室中" : "待機中";
+    }
+    if (unified === "waiting") return "待機中";
+    return context === "home" ? "オフライン" : "オフライン";
+  }
   if (status === "in_call") return "通話中";
   if (status === "waiting") return "待機中";
   return context === "home" ? "オフライン" : "オフライン";
@@ -1065,6 +1057,7 @@ export function resolveCallMemberStatus(params: {
   isMe: boolean;
   isMuted: boolean;
   isInCall: boolean;
+  inSessionMember?: boolean;
   screen?: string | null;
   localExitedCall?: boolean;
   peerState: CallPeerState;
@@ -1178,14 +1171,20 @@ export function resolveCallMemberStatus(params: {
       nowMs,
     });
   const screen = String(params.screen ?? "").trim();
-  const forceWaiting =
-    params.localExitedCall === true ||
-    screen === "room" ||
-    screen === "home" ||
-    params.isInCall !== true;
+  const stable = isStableVoiceJoinMode();
+  const inSessionMember = params.inSessionMember !== false;
+  const forceWaiting = stable
+    ? params.localExitedCall === true
+    : params.localExitedCall === true ||
+      screen === "room" ||
+      screen === "home" ||
+      params.isInCall !== true;
+
+  const skipParticipationDowngrade =
+    stable && inSessionMember && !params.localExitedCall;
 
   if (params.isMe) {
-    if (forceWaiting) {
+    if (forceWaiting && !skipParticipationDowngrade) {
       return {
         text: "待機中",
         color: "#6b7280",
@@ -1210,7 +1209,7 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
-  if (forceWaiting) {
+  if (forceWaiting && !skipParticipationDowngrade) {
     return {
       text: "待機中",
       color: "#6b7280",
@@ -1224,6 +1223,22 @@ export function resolveCallMemberStatus(params: {
             ? "screen_home"
             : "is_in_call_false",
       source: "participation",
+    };
+  }
+
+  if (
+    skipParticipationDowngrade &&
+    params.peerState === "idle" &&
+    !params.hasPc &&
+    !params.wasPeerConnected
+  ) {
+    return {
+      text: "接続準備中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+      reason: "session_member_stable",
+      source: "memberStatus",
     };
   }
 
