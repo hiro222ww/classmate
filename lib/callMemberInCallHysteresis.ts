@@ -1,11 +1,19 @@
 import { debugConsoleLog } from "@/lib/debugVoiceLog";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
+import {
+  isStableVoiceJoinMode,
+  STABLE_REMOTE_PEER_GRACE_MS,
+} from "@/lib/stableVoiceJoin";
 
 /** Keep fast-path in-call peers during early presence_sync false negatives. */
-export const CALL_MEMBER_IN_CALL_HYSTERESIS_MS = 12_000;
+export const CALL_MEMBER_IN_CALL_HYSTERESIS_MS = isStableVoiceJoinMode()
+  ? STABLE_REMOTE_PEER_GRACE_MS
+  : 12_000;
 
 /** Per-member grace after last confirmed in-call (presence lag / list drop). */
-export const REMOTE_MEMBER_PRESENCE_GRACE_MS = 8_000;
+export const REMOTE_MEMBER_PRESENCE_GRACE_MS = isStableVoiceJoinMode()
+  ? STABLE_REMOTE_PEER_GRACE_MS
+  : 8_000;
 
 export type CallMemberInCallRow = {
   device_id: string;

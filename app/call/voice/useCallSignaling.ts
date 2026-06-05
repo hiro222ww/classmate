@@ -9,6 +9,7 @@ import {
   logSignalTransport,
   sleepMs,
 } from "@/lib/signalTransportLog";
+import { logVoicePipelineClassification } from "@/lib/voicePerf";
 
 /** Must match `call_signals_signal_type_check` in Supabase (see migration 20260602100000). */
 export const ALLOWED_CALL_SIGNAL_TYPES = [
@@ -72,6 +73,7 @@ export function useCallSignaling({
   onStatusChange,
 }: UseCallSignalingArgs) {
   const [signalReady, setSignalReady] = useState(false);
+  const signalReadyRef = useRef(false);
 
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const onSignalRef = useRef<(row: SignalRow) => Promise<void> | void>(() => {});
@@ -79,8 +81,27 @@ export function useCallSignaling({
   const channelResubscribeAttemptsRef = useRef(0);
 
   useEffect(() => {
+    signalReadyRef.current = signalReady;
+  }, [signalReady]);
+
+  useEffect(() => {
     onSignalRef.current = onSignal;
   }, [onSignal]);
+
+  useEffect(() => {
+    if (!sessionId || !deviceId || signalReady) return;
+    const timer = window.setTimeout(() => {
+      if (!signalReadyRef.current) {
+        logSignalTransport({
+          kind: "subscribe",
+          method: "realtime.subscribe",
+          extra: "signalReady_false_class=B",
+        });
+        logVoicePipelineClassification(undefined, "signalReady-false-long");
+      }
+    }, 12_000);
+    return () => window.clearTimeout(timer);
+  }, [sessionId, deviceId, signalReady]);
 
   const setOnSignal = useCallback(
     (next: (row: SignalRow) => Promise<void> | void) => {

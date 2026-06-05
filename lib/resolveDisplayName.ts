@@ -1,3 +1,5 @@
+import { debugConsoleLog } from "@/lib/debugVoiceLog";
+
 export const DISPLAY_NAME_FALLBACK = "参加者";
 
 const PLACEHOLDER_DISPLAY_NAMES = new Set([
@@ -110,7 +112,7 @@ export function logDisplayNameResolution(
   resolved: ResolvedDisplayName,
   extra?: Record<string, unknown>
 ) {
-  console.log(`[display_name:${context}]`, {
+  debugConsoleLog(`[display_name:${context}]`, {
     deviceId,
     displayName: resolved.displayName,
     source: resolved.source,

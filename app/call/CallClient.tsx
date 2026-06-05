@@ -81,6 +81,12 @@ import {
   shouldStartCallMemberInCallHysteresis,
 } from "@/lib/callMemberInCallHysteresis";
 import "@/lib/voiceConnectionDiagnostics";
+import {
+  isStableVoiceJoinMode,
+  shouldUseFastSessionStatus,
+  STABLE_PRESENCE_SYNC_MAX_DELAY_MS,
+  STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS,
+} from "@/lib/stableVoiceJoin";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -552,7 +558,7 @@ export default function CallClient() {
       }
 
       fetchingRef.current = true;
-      const useFast = opts?.fast === true;
+      const useFast = shouldUseFastSessionStatus(opts);
 
       try {
         const qs = new URLSearchParams({
@@ -788,21 +794,58 @@ export default function CallClient() {
     membersDisplayedRef.current = false;
     firstFastMembersAtRef.current = null;
     memberLastInCallAtRef.current = new Map();
-    void fetchMembers("initial", { fast: true });
 
-    const presenceSync = window.setTimeout(() => {
+    const useFastInitial = !isStableVoiceJoinMode();
+    void fetchMembers("initial", useFastInitial ? { fast: true } : undefined);
+
+    const timers: number[] = [];
+    const callStartedAt = Date.now();
+    let presenceSyncDone = false;
+
+    const schedulePresenceSync = () => {
+      if (presenceSyncDone) return;
+      const elapsed = Date.now() - callStartedAt;
+
+      if (isStableVoiceJoinMode()) {
+        const micReadyEnough =
+          micReady && elapsed >= STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS;
+        const maxDelayReached = elapsed >= STABLE_PRESENCE_SYNC_MAX_DELAY_MS;
+        if (!micReadyEnough && !maxDelayReached) {
+          timers.push(window.setTimeout(schedulePresenceSync, 500));
+          return;
+        }
+      }
+
+      presenceSyncDone = true;
+      debugConsoleLog(
+        `[call] presence_sync scheduled elapsedMs=${elapsed} micReady=${micReady} stable=${isStableVoiceJoinMode()}`
+      );
       void fetchMembers("presence_sync");
-    }, 1500);
-    const sync5s = window.setTimeout(() => {
-      void fetchMembers("sync_5s");
-    }, 5000);
+    };
+
+    if (isStableVoiceJoinMode()) {
+      timers.push(
+        window.setTimeout(schedulePresenceSync, STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS)
+      );
+      timers.push(
+        window.setTimeout(() => {
+          void fetchMembers("sync_5s");
+        }, 15_000)
+      );
+    } else {
+      timers.push(window.setTimeout(schedulePresenceSync, 1500));
+      timers.push(
+        window.setTimeout(() => {
+          void fetchMembers("sync_5s");
+        }, 5000)
+      );
+    }
 
     return () => {
       clearRetryTimer();
-      window.clearTimeout(presenceSync);
-      window.clearTimeout(sync5s);
+      for (const t of timers) window.clearTimeout(t);
     };
-  }, [fetchMembers, clearRetryTimer, sessionId]);
+  }, [fetchMembers, clearRetryTimer, sessionId, micReady]);
 
   useEffect(() => {
     if (!sessionId || !deviceId) return;
