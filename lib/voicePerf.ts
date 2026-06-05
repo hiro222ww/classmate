@@ -252,6 +252,10 @@ export function describeVoicePipelineClass(
   }
 }
 
+export function resetVoicePeerMarks(remoteId: string) {
+  peerMarks.delete(compactDeviceId(remoteId));
+}
+
 export function markVoicePeerClose(
   remoteId: string,
   reason: string,
@@ -263,7 +267,10 @@ export function markVoicePeerClose(
 
 export type VoiceConnectionFailureContext = {
   voiceClass: VoicePipelineFailureClass;
+  connectionId: string | null;
   offerSent: boolean;
+  offerReceived: boolean;
+  answerSent: boolean;
   answerReceived: boolean;
   iceConnected: boolean;
   audioConfirmed: boolean;
@@ -272,40 +279,119 @@ export type VoiceConnectionFailureContext = {
   remoteIdsSnapshot: string;
 };
 
+function isPcIceConnected(pc: RTCPeerConnection | null | undefined): boolean {
+  if (!pc) return false;
+  return (
+    pc.iceConnectionState === "connected" ||
+    pc.iceConnectionState === "completed" ||
+    pc.connectionState === "connected"
+  );
+}
+
+export function buildVoiceConnectionLogSnapshot(params: {
+  remoteId: string;
+  connectionId?: string | null;
+  pc?: RTCPeerConnection | null;
+  phase: "connected" | "failed";
+  peerCloseReason?: string | null;
+  remoteIdsSnapshot?: string[];
+}): VoiceConnectionFailureContext {
+  const remote = compactDeviceId(params.remoteId);
+  const bucket = peerMarks.get(remote);
+  const has = (event: string) => bucket?.has(event) ?? false;
+  const pc = params.pc ?? null;
+
+  const offerSent = has("offer_sent");
+  const offerReceived = has("offer_received");
+  const answerSent = has("answer_sent");
+  const answerReceived = has("answer_received");
+
+  const pcIceConnected = isPcIceConnected(pc);
+  const markIceConnected = has("ice_connected");
+  const iceConnected =
+    params.phase === "failed"
+      ? pcIceConnected
+      : pcIceConnected || markIceConnected;
+
+  const audioConfirmedStrict =
+    iceConnected && has("audio_confirmed_strict");
+  const audioConfirmed = audioConfirmedStrict;
+
+  let voiceClass: VoicePipelineFailureClass;
+  if (params.phase === "failed") {
+    if (peerHadEarlyClose(remote)) voiceClass = "E";
+    else if (!has("peer_connection_created")) voiceClass = "A";
+    else if (!offerSent && !offerReceived) voiceClass = "B";
+    else if (!iceConnected) voiceClass = "C";
+    else if (!has("remote_track_received") || !audioConfirmedStrict) {
+      voiceClass = "D";
+    } else {
+      voiceClass = "OK";
+    }
+    if (voiceClass === "OK") voiceClass = "C";
+  } else if (!iceConnected) {
+    voiceClass = "C";
+  } else if (!audioConfirmedStrict) {
+    voiceClass = "D";
+  } else {
+    voiceClass = "OK";
+  }
+
+  return {
+    voiceClass,
+    connectionId: params.connectionId ?? null,
+    offerSent,
+    offerReceived,
+    answerSent,
+    answerReceived,
+    iceConnected,
+    audioConfirmed,
+    audioConfirmedStrict,
+    peerCloseReason: params.peerCloseReason ?? null,
+    remoteIdsSnapshot:
+      (params.remoteIdsSnapshot ?? [])
+        .map((id) => compactDeviceId(id))
+        .join(",") || "-",
+  };
+}
+
 export function getVoiceConnectionFailureContext(
   remoteId: string,
   opts?: {
+    connectionId?: string | null;
+    pc?: RTCPeerConnection | null;
     peerCloseReason?: string | null;
     remoteIdsSnapshot?: string[];
   }
 ): VoiceConnectionFailureContext {
-  const remote = compactDeviceId(remoteId);
-  const bucket = peerMarks.get(remote);
-  const has = (event: string) => bucket?.has(event) ?? false;
-
-  return {
-    voiceClass: classifyVoicePipelineFailure(remoteId),
-    offerSent: has("offer_sent"),
-    answerReceived: has("answer_received"),
-    iceConnected: has("ice_connected"),
-    audioConfirmed: has("audio_confirmed_strict") || has("audio_confirmed"),
-    audioConfirmedStrict: has("audio_confirmed_strict"),
+  return buildVoiceConnectionLogSnapshot({
+    remoteId,
+    connectionId: opts?.connectionId ?? null,
+    pc: opts?.pc ?? null,
+    phase: "failed",
     peerCloseReason: opts?.peerCloseReason ?? null,
-    remoteIdsSnapshot: (opts?.remoteIdsSnapshot ?? [])
-      .map((id) => compactDeviceId(id))
-      .join(",") || "-",
-  };
+    remoteIdsSnapshot: opts?.remoteIdsSnapshot,
+  });
 }
 
 export function formatVoiceFailureConnectionState(
   ctx: VoiceConnectionFailureContext
 ): string {
+  const audio =
+    ctx.iceConnected && ctx.audioConfirmedStrict ? 1 : 0;
+  const connId = ctx.connectionId
+    ? ctx.connectionId.length <= 8
+      ? ctx.connectionId
+      : ctx.connectionId.slice(-8)
+    : "-";
+
   return (
     `failed:class=${ctx.voiceClass}|` +
+    `connId=${connId}|` +
     `offer=${ctx.offerSent ? 1 : 0}|` +
     `answer=${ctx.answerReceived ? 1 : 0}|` +
     `ice=${ctx.iceConnected ? 1 : 0}|` +
-    `audio=${ctx.audioConfirmedStrict ? 1 : ctx.audioConfirmed ? 0.5 : 0}|` +
+    `audio=${audio}|` +
     `close=${ctx.peerCloseReason ?? "-"}|` +
     `remotes=${ctx.remoteIdsSnapshot}`
   );

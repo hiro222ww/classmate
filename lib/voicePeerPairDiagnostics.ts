@@ -18,6 +18,15 @@ export type VoicePeerPairDiagCache = {
 
 const diagCache = new Map<string, VoicePeerPairDiagCache>();
 
+function diagCacheKey(
+  remoteId: string,
+  connectionId?: string | null
+): string {
+  const remote = compactDeviceId(remoteId);
+  const conn = String(connectionId ?? "").trim();
+  return conn ? `${remote}:${conn}` : remote;
+}
+
 function emptyDiagCache(): VoicePeerPairDiagCache {
   return {
     subClass: null,
@@ -36,14 +45,20 @@ export function resetVoicePeerPairDiag(remoteId?: string) {
     diagCache.clear();
     return;
   }
-  diagCache.delete(compactDeviceId(remoteId));
+  const remote = compactDeviceId(remoteId);
+  for (const key of Array.from(diagCache.keys())) {
+    if (key === remote || key.startsWith(`${remote}:`)) {
+      diagCache.delete(key);
+    }
+  }
 }
 
 export function updateVoicePeerPairDiag(
   remoteId: string,
-  patch: Partial<VoicePeerPairDiagCache>
+  patch: Partial<VoicePeerPairDiagCache>,
+  connectionId?: string | null
 ) {
-  const key = compactDeviceId(remoteId);
+  const key = diagCacheKey(remoteId, connectionId);
   const prev = diagCache.get(key) ?? emptyDiagCache();
   diagCache.set(key, {
     ...prev,
@@ -53,9 +68,21 @@ export function updateVoicePeerPairDiag(
 }
 
 export function getVoicePeerPairDiag(
-  remoteId: string
+  remoteId: string,
+  connectionId?: string | null
 ): VoicePeerPairDiagCache | null {
-  return diagCache.get(compactDeviceId(remoteId)) ?? null;
+  if (connectionId) {
+    return diagCache.get(diagCacheKey(remoteId, connectionId)) ?? null;
+  }
+  const remote = compactDeviceId(remoteId);
+  let latest: VoicePeerPairDiagCache | null = null;
+  for (const [key, value] of diagCache.entries()) {
+    if (key !== remote && !key.startsWith(`${remote}:`)) continue;
+    if (!latest || value.updatedAt >= latest.updatedAt) {
+      latest = value;
+    }
+  }
+  return latest;
 }
 
 export function detectSignalingAsymmetry(snap: {
@@ -119,6 +146,21 @@ export function enrichPeerVoiceClass(
 
   if (baseClass === "D" && subClass && subClass !== "OK") {
     return { voiceClass: "D", subClass };
+  }
+
+  if (snap.iceConnected && snap.audioConfirmedStrict) {
+    return { voiceClass: "OK", subClass: null };
+  }
+
+  if (!snap.iceConnected) {
+    return { voiceClass: baseClass === "E" ? "E" : "C", subClass: null };
+  }
+
+  if (!snap.audioConfirmedStrict) {
+    return {
+      voiceClass: "D",
+      subClass: subClass && subClass !== "OK" ? subClass : null,
+    };
   }
 
   return { voiceClass: baseClass, subClass: null };

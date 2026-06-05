@@ -45,6 +45,15 @@ let sessionId = "";
 let pairBuilder: (() => VoicePeerPairSnapshot[]) | null = null;
 const cachedPairs = new Map<string, VoicePeerPairSnapshot>();
 
+export function pairCacheKey(
+  remoteDeviceId: string,
+  connectionId: string | null | undefined
+): string {
+  const remote = String(remoteDeviceId ?? "").trim();
+  const conn = String(connectionId ?? "").trim() || "none";
+  return `${remote}:${conn}`;
+}
+
 export function resetVoicePeerPairRegistry(nextSessionId: string, nextLocalId: string) {
   const sid = String(nextSessionId ?? "").trim();
   const lid = String(nextLocalId ?? "").trim();
@@ -61,10 +70,20 @@ export function registerVoicePeerPairBuilder(
   pairBuilder = builder;
 }
 
+export function purgeVoicePeerPairCacheForRemote(remoteDeviceId: string) {
+  const remote = String(remoteDeviceId ?? "").trim();
+  for (const key of Array.from(cachedPairs.keys())) {
+    if (key.startsWith(`${remote}:`)) {
+      cachedPairs.delete(key);
+    }
+  }
+}
+
 export function updateVoicePeerPairCache(snapshots: VoicePeerPairSnapshot[]) {
   const now = Date.now();
   for (const snap of snapshots) {
-    cachedPairs.set(snap.remoteDeviceId, { ...snap, updatedAt: now });
+    const key = pairCacheKey(snap.remoteDeviceId, snap.connectionId);
+    cachedPairs.set(key, { ...snap, updatedAt: now });
   }
 }
 
@@ -76,7 +95,14 @@ export function dumpVoicePairs(): VoicePeerPairSnapshot[] {
       /* fall through */
     }
   }
-  return Array.from(cachedPairs.values()).sort((a, b) =>
+  const latestByRemote = new Map<string, VoicePeerPairSnapshot>();
+  for (const snap of cachedPairs.values()) {
+    const prev = latestByRemote.get(snap.remoteDeviceId);
+    if (!prev || snap.updatedAt >= prev.updatedAt) {
+      latestByRemote.set(snap.remoteDeviceId, snap);
+    }
+  }
+  return Array.from(latestByRemote.values()).sort((a, b) =>
     a.remoteDeviceId.localeCompare(b.remoteDeviceId)
   );
 }

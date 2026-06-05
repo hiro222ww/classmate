@@ -58,14 +58,15 @@ import {
   getP2pCheckingGraceMs,
 } from "@/lib/voiceJoinTiming";
 import {
+  buildVoiceConnectionLogSnapshot,
   formatVoiceFailureConnectionState,
-  getVoiceConnectionFailureContext,
   logVoicePerfPipeline,
   logVoicePipelineClassification,
   markVoicePeerClose,
   classifyVoicePipelineFailure,
   getPeerPipelineMarks,
   markVoicePerf,
+  resetVoicePeerMarks,
 } from "@/lib/voicePerf";
 import {
   AUDIO_DIAG_LOG_THROTTLE_MS,
@@ -108,6 +109,7 @@ import {
   setCachedVoiceTransport,
 } from "@/lib/sessionVoiceCache";
 import {
+  purgeVoicePeerPairCacheForRemote,
   registerVoicePeerPairBuilder,
   resetVoicePeerPairRegistry,
   updateVoicePeerPairCache,
@@ -138,6 +140,8 @@ import {
   logVoiceIceGatheringComplete,
   logVoiceIceGatheringState,
   logVoiceIceInsufficientCandidates,
+  logVoiceIceCandidateIgnored,
+  logVoiceIceCandidateSent,
   logVoiceIceLocalCandidate,
   logVoiceIceRemoteCandidateReceived,
   recordLocalIceCandidate,
@@ -1895,14 +1899,19 @@ export function usePeerConnections({
           senderTrackEnabled: sender?.track?.enabled ?? localTrack?.enabled ?? false,
         });
 
-        updateVoicePeerPairDiag(remoteId, {
-          subClass: subClass !== "OK" ? subClass : null,
-          inboundDeltaBytes: stats.deltaInboundBytes,
-          outboundDeltaBytes: stats.deltaOutboundBytes,
-          trackLive: trackOk,
-          currentTimeAdvanced: health?.currentTimeAdvanced === true,
-          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-        });
+        updateVoicePeerPairDiag(
+          remoteId,
+          {
+            subClass: subClass !== "OK" ? subClass : null,
+            inboundDeltaBytes: stats.deltaInboundBytes,
+            outboundDeltaBytes: stats.deltaOutboundBytes,
+            trackLive: trackOk,
+            currentTimeAdvanced: health?.currentTimeAdvanced === true,
+            paused:
+              health?.playSuccess === true && !health?.audioConfirmedStrict,
+          },
+          connectionIdsRef.current.get(remoteId) ?? null
+        );
 
         if (subClass !== "OK") {
           const logKey = `${remoteId}:${subClass}`;
@@ -2214,7 +2223,7 @@ export function usePeerConnections({
       const iceConnected =
         mesh.iceConnectionState === "connected" ||
         mesh.iceConnectionState === "completed";
-      const diag = getVoicePeerPairDiag(remoteId);
+      const diag = getVoicePeerPairDiag(remoteId, connectionId);
       const health = remotePlaybackHealthRef.current.get(remoteId);
       const closeReason =
         lastPeerCloseReasonRef.current.get(remoteId) ??
@@ -2290,8 +2299,8 @@ export function usePeerConnections({
         iceReceived: marks.ice_received,
         iceConnected,
         remoteTrackReceived: marks.remote_track_received,
-        audioConfirmed: marks.audio_confirmed_strict,
-        audioConfirmedStrict: marks.audio_confirmed_strict,
+        audioConfirmed: iceConnected && marks.audio_confirmed_strict,
+        audioConfirmedStrict: iceConnected && marks.audio_confirmed_strict,
         audioProvisional:
           !marks.audio_confirmed_strict &&
           (marks.audio_provisional || timestamps.lastPlaySuccessAt != null),
@@ -2672,6 +2681,24 @@ export function usePeerConnections({
     (remoteId: string, connectionId: string, reason: string) => {
       const old = getCurrentConnectionId(remoteId);
       if (old === connectionId) return;
+
+      if (old != null) {
+        resetVoicePeerMarks(remoteId);
+        resetVoicePeerPairDiag(remoteId);
+        resetPeerAudioDiagnostics(remoteId);
+        purgeVoicePeerPairCacheForRemote(remoteId);
+        oneWayAudioLoggedRef.current.forEach((key) => {
+          if (key === remoteId || key.startsWith(`${remoteId}:`)) {
+            oneWayAudioLoggedRef.current.delete(key);
+          }
+        });
+        for (const key of Array.from(loggedConnectedRef.current)) {
+          if (key.startsWith(`${remoteId}:`)) {
+            loggedConnectedRef.current.delete(key);
+          }
+        }
+      }
+
       setCurrentConnectionId(remoteId, connectionId);
       debugConsoleLog(
         `[voice-peer] connection-id remote=${compactDeviceId(remoteId)} ` +
@@ -2872,14 +2899,18 @@ export function usePeerConnections({
         const timeToConnectMs = startedAt ? Date.now() - startedAt : null;
 
         const remoteIdsSnapshot = getRemoteIds();
-        const failureCtx =
-          phase === "failed"
-            ? getVoiceConnectionFailureContext(remoteId, {
-                peerCloseReason:
-                  lastPeerCloseReasonRef.current.get(remoteId) ?? null,
-                remoteIdsSnapshot,
-              })
-            : null;
+        const logSnapshot = buildVoiceConnectionLogSnapshot({
+          remoteId,
+          connectionId,
+          pc,
+          phase,
+          peerCloseReason:
+            phase === "failed"
+              ? lastPeerCloseReasonRef.current.get(remoteId) ?? null
+              : null,
+          remoteIdsSnapshot,
+        });
+        const failureCtx = phase === "failed" ? logSnapshot : null;
         let connectedStats: PeerRtpStatsSnapshot | null = null;
         if (phase === "connected") {
           try {
@@ -2927,10 +2958,11 @@ export function usePeerConnections({
         if (phase === "failed" && failureCtx) {
           debugConsoleLog(
             `[voice-peer] connection-failed-log class=${failureCtx.voiceClass} ` +
-              `remote=${compactDeviceId(remoteId)} offer=${failureCtx.offerSent ? 1 : 0} ` +
-              `answer=${failureCtx.answerReceived ? 1 : 0} ice=${failureCtx.iceConnected ? 1 : 0} ` +
-              `audio=${failureCtx.audioConfirmed ? 1 : 0} close=${failureCtx.peerCloseReason ?? "-"} ` +
-              `remotes=${failureCtx.remoteIdsSnapshot}`
+              `remote=${compactDeviceId(remoteId)} connId=${compactConnectionId(connectionId)} ` +
+              `offer=${failureCtx.offerSent ? 1 : 0} answer=${failureCtx.answerReceived ? 1 : 0} ` +
+              `ice=${failureCtx.iceConnected ? 1 : 0} ` +
+              `audio=${failureCtx.audioConfirmedStrict ? 1 : 0} ` +
+              `close=${failureCtx.peerCloseReason ?? "-"} remotes=${failureCtx.remoteIdsSnapshot}`
           );
         }
 
@@ -4677,15 +4709,27 @@ export function usePeerConnections({
           : event.candidate;
 
         recordLocalIceCandidate(stats, candidateJson);
+        const peerPolicy = peerIcePolicyRef.current.get(remoteId);
+        const icePolicy: "relay" | "all" =
+          peerPolicy === "relay" || relayForcedRef.current ? "relay" : "all";
         logVoiceIceLocalCandidate({
           remoteId,
           connectionId: activeConnectionId,
           candidate: candidateJson,
+          policy: icePolicy,
         });
 
         void sendSignal(remoteId, "ice", {
           connectionId: activeConnectionId,
           candidate: candidateJson,
+        }).then((sent) => {
+          if (sent?.ok) {
+            logVoiceIceCandidateSent({
+              remoteId,
+              connectionId: activeConnectionId,
+              candidate: candidateJson,
+            });
+          }
         });
         touchPeerSignal(remoteId, "ice_sent");
         emitMeshSummary("ice_sent");
@@ -7352,6 +7396,13 @@ export function usePeerConnections({
             hasRemoteStream: media.hasRemoteStream,
             tracks: media.remoteTracksCount,
           });
+          if (signalType === "ice") {
+            logVoiceIceCandidateIgnored({
+              remoteId,
+              connectionId: incomingConnectionId,
+              reason: "connection_id_mismatch",
+            });
+          }
           return;
         }
 

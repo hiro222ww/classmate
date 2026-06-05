@@ -125,6 +125,7 @@ export function logVoiceIceLocalCandidate(params: {
   remoteId: string;
   connectionId: string | null;
   candidate: RTCIceCandidateInit;
+  policy?: "relay" | "all";
 }): void {
   const details = getIceCandidateDetails(params.candidate);
   debugConsoleLog(
@@ -132,6 +133,33 @@ export function logVoiceIceLocalCandidate(params: {
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `type=${details.type} protocol=${details.protocol} address=${details.address} ` +
       `port=${details.port} foundation=${details.foundation}`
+  );
+  debugConsoleLog(
+    `[voice-ice] candidate-generated remote=${compactDeviceId(params.remoteId)} ` +
+      `type=${details.type} policy=${params.policy ?? "all"}`
+  );
+}
+
+export function logVoiceIceCandidateSent(params: {
+  remoteId: string;
+  connectionId: string | null;
+  candidate: RTCIceCandidateInit;
+}): void {
+  const details = getIceCandidateDetails(params.candidate);
+  debugConsoleLog(
+    `[voice-ice] candidate-sent remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} type=${details.type}`
+  );
+}
+
+export function logVoiceIceCandidateIgnored(params: {
+  remoteId: string;
+  connectionId?: string | null;
+  reason: string;
+}): void {
+  debugConsoleLog(
+    `[voice-ice] candidate-ignored remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} reason=${params.reason}`
   );
 }
 
@@ -148,6 +176,11 @@ export function logVoiceIceRemoteCandidateReceived(params: {
       `type=${details.type} protocol=${details.protocol} address=${details.address} ` +
       `port=${details.port} foundation=${details.foundation} queued=${params.queued}`
   );
+  debugConsoleLog(
+    `[voice-ice] candidate-received remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} type=${details.type} ` +
+      `queued=${params.queued}`
+  );
 }
 
 export function logVoiceIceAddCandidateSuccess(params: {
@@ -159,6 +192,10 @@ export function logVoiceIceAddCandidateSuccess(params: {
   debugConsoleLog(
     `[voice-ice] addIceCandidate-success remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} type=${details.type}`
+  );
+  debugConsoleLog(
+    `[voice-ice] candidate-added remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} type=${details.type} ok=true`
   );
 }
 

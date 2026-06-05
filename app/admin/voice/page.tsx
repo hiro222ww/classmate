@@ -50,6 +50,7 @@ type VoiceMetrics = {
 
 function parseVoiceFailureState(state: string | null | undefined): {
   voiceClass: string | null;
+  connId: string | null;
   offer: string | null;
   answer: string | null;
   ice: string | null;
@@ -61,6 +62,7 @@ function parseVoiceFailureState(state: string | null | undefined): {
   if (!raw.startsWith("failed:class=")) {
     return {
       voiceClass: null,
+      connId: null,
       offer: null,
       answer: null,
       ice: null,
@@ -76,12 +78,18 @@ function parseVoiceFailureState(state: string | null | undefined): {
   };
   const classPart = parts[0] ?? "";
   const voiceClass = classPart.replace("failed:class=", "") || null;
+  const ice = read("ice");
+  const audioRaw = read("audio");
+  const audio = ice === "0" ? "0" : audioRaw;
+  const normalizedClass =
+    voiceClass === "OK" ? "unknown" : voiceClass;
   return {
-    voiceClass,
+    voiceClass: normalizedClass,
+    connId: read("connId"),
     offer: read("offer"),
     answer: read("answer"),
-    ice: read("ice"),
-    audio: read("audio"),
+    ice,
+    audio,
     closeReason: read("close"),
     remotes: read("remotes"),
   };
@@ -188,9 +196,32 @@ function pairStatusLabel(log: VoiceLog) {
   return state || "unknown";
 }
 
-function groupLogsBySession(logs: VoiceLog[]) {
-  const grouped = new Map<string, VoiceLog[]>();
+function dedupeLatestPairLogs(logs: VoiceLog[]): VoiceLog[] {
+  const latest = new Map<string, VoiceLog>();
   for (const log of logs) {
+    const key = [
+      String(log.session_id ?? "unknown"),
+      String(log.device_id ?? "-"),
+      String(log.remote_device_id ?? "-"),
+    ].join(":");
+    const existing = latest.get(key);
+    if (
+      !existing ||
+      String(log.created_at ?? "").localeCompare(String(existing.created_at ?? "")) >
+        0
+    ) {
+      latest.set(key, log);
+    }
+  }
+  return Array.from(latest.values()).sort((a, b) =>
+    String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
+  );
+}
+
+function groupLogsBySession(logs: VoiceLog[]) {
+  const deduped = dedupeLatestPairLogs(logs);
+  const grouped = new Map<string, VoiceLog[]>();
+  for (const log of deduped) {
     const sessionId = String(log.session_id ?? "unknown");
     const list = grouped.get(sessionId) ?? [];
     list.push(log);
@@ -790,9 +821,9 @@ export default function AdminVoicePage() {
                                 marginTop: 4,
                               }}
                             >
-                              offer={failure.offer} answer={failure.answer} ice=
-                              {failure.ice} audio={failure.audio} class=
-                              {failure.voiceClass ?? "-"}
+                              connId={failure.connId ?? "-"} offer={failure.offer}{" "}
+                              answer={failure.answer} ice={failure.ice} audio=
+                              {failure.audio} class={failure.voiceClass ?? "-"}
                             </div>
                           ) : connected.route != null ? (
                             <div
