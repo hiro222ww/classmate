@@ -50,6 +50,7 @@ import {
   participationStatusLabel,
   participationStatusStyle,
   PRESENCE_FRESH_MS_HOME,
+  resolveParticipationDisplay,
   resolveParticipationStatus,
   type ParticipationSource,
   type UiParticipationStatus,
@@ -2033,14 +2034,22 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                         {members.map((m) => {
                           const isMe = m.device_id === deviceId;
                           const memberDeviceId = normalizeMemberDeviceId(m.device_id);
-                          const participation = resolveHomeMemberParticipation(
-                            m,
-                            presenceMap[m.device_id],
-                            sessionId,
-                            prevStatuses[m.device_id] ?? null,
-                            false,
-                            lastInSessionAtMap[m.device_id] ?? Date.now()
-                          );
+                          const memberDisplay = resolveParticipationDisplay({
+                            source: mergeMemberPresenceSource(
+                              m,
+                              presenceMap[m.device_id]
+                            ),
+                            currentSessionId: sessionId,
+                            freshMs: PRESENCE_FRESH_MS_HOME,
+                            previous: prevStatuses[m.device_id] ?? null,
+                            context: "home",
+                            deviceId: String(m.device_id ?? "").trim(),
+                            inSessionMembers: true,
+                            lastInSessionAt:
+                              lastInSessionAtMap[m.device_id] ?? Date.now(),
+                            isMe,
+                          });
+                          const participation = memberDisplay.participation;
                           const pill = participationStatusStyle(participation);
 
                           return (
@@ -2121,7 +2130,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                   whiteSpace: "nowrap",
                                 }}
                               >
-                                {participationStatusLabel(participation, "home")}
+                                {memberDisplay.label}
                               </span>
                             </div>
                           );

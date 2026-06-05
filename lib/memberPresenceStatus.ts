@@ -947,6 +947,7 @@ export function resolveParticipationStatus(params: {
   deviceId?: string;
   inSessionMembers?: boolean;
   lastInSessionAt?: number | null;
+  isMe?: boolean;
 }): UiParticipationStatus {
   const {
     source,
@@ -959,6 +960,7 @@ export function resolveParticipationStatus(params: {
     deviceId = "",
     inSessionMembers = true,
     lastInSessionAt,
+    isMe = false,
   } = params;
 
   const { participation } = resolveMemberParticipationForUi({
@@ -967,6 +969,7 @@ export function resolveParticipationStatus(params: {
     inSessionMembers,
     explicitLeaveSeen: localExitedCall,
     localExitedCall,
+    isMe,
     is_in_call: source.is_in_call,
     screen: source.screen,
     last_seen_at: source.last_seen_at,
@@ -981,6 +984,54 @@ export function resolveParticipationStatus(params: {
   });
 
   return participation;
+}
+
+export function resolveParticipationDisplay(params: {
+  source: ParticipationSource;
+  currentSessionId?: string | null;
+  freshMs?: number;
+  previous?: UiParticipationStatus | null;
+  fetchFailed?: boolean;
+  localExitedCall?: boolean;
+  context?: "home" | "room";
+  deviceId?: string;
+  inSessionMembers?: boolean;
+  lastInSessionAt?: number | null;
+  isMe?: boolean;
+}) {
+  const {
+    source,
+    currentSessionId,
+    freshMs = PRESENCE_FRESH_MS_HOME,
+    previous = null,
+    fetchFailed = false,
+    localExitedCall = false,
+    context = "home",
+    deviceId = "",
+    inSessionMembers = true,
+    lastInSessionAt,
+    isMe = false,
+  } = params;
+
+  return resolveMemberParticipationForUi({
+    context,
+    deviceId,
+    inSessionMembers,
+    explicitLeaveSeen: localExitedCall,
+    localExitedCall,
+    isMe,
+    is_in_call: source.is_in_call,
+    screen: source.screen,
+    last_seen_at: source.last_seen_at,
+    presenceSessionId:
+      source.presence_session_id ?? source.session_id ?? null,
+    currentSessionId,
+    effective_status: source.effective_status ?? source.status ?? null,
+    lastInSessionAt,
+    previousParticipation: previous,
+    fetchFailed,
+    freshMs,
+  });
 }
 
 export function participationStatusLabel(
@@ -1058,6 +1109,7 @@ export function resolveCallMemberStatus(params: {
   isMuted: boolean;
   isInCall: boolean;
   inSessionMember?: boolean;
+  viewerOnCallScreen?: boolean;
   screen?: string | null;
   localExitedCall?: boolean;
   peerState: CallPeerState;
@@ -1182,19 +1234,38 @@ export function resolveCallMemberStatus(params: {
 
   const skipParticipationDowngrade =
     stable && inSessionMember && !params.localExitedCall;
+  const onCallScreen = params.viewerOnCallScreen !== false;
 
   if (params.isMe) {
+    if (onCallScreen && !params.localExitedCall) {
+      return {
+        text: params.isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+        color: "#6b7280",
+        chipBg: params.isMuted ? "#fef2f2" : "#eff6ff",
+        chipText: params.isMuted ? "#991b1b" : "#1d4ed8",
+        reason: "self_on_call_screen",
+        source: "isMe",
+      };
+    }
+
+    if (params.localExitedCall) {
+      return {
+        text: "待機中",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
+        reason: "localExitedCall",
+        source: "participation",
+      };
+    }
+
     if (forceWaiting && !skipParticipationDowngrade) {
       return {
         text: "待機中",
         color: "#6b7280",
         chipBg: "#f3f4f6",
         chipText: "#6b7280",
-        reason: params.localExitedCall
-          ? "localExitedCall"
-          : screen === "room"
-            ? "screen_room"
-            : "is_in_call_false",
+        reason: screen === "room" ? "screen_room" : "is_in_call_false",
         source: "participation",
       };
     }
@@ -1232,6 +1303,16 @@ export function resolveCallMemberStatus(params: {
     !params.hasPc &&
     !params.wasPeerConnected
   ) {
+    if (screen === "room" || screen === "home") {
+      return {
+        text: "待機中",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
+        reason: "session_member_in_room",
+        source: "memberStatus",
+      };
+    }
     return {
       text: "接続準備中",
       color: "#92400e",

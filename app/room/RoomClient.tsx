@@ -80,7 +80,7 @@ import {
   participationStatusLabel,
   participationStatusStyle,
   PRESENCE_FRESH_MS_ROOM,
-  resolveParticipationStatus,
+  resolveParticipationDisplay,
   type ParticipationSource,
   type UiParticipationStatus,
 } from "@/lib/memberPresenceStatus";
@@ -347,30 +347,6 @@ function mergeRoomMemberPresenceSource(
   };
 }
 
-function resolveRoomMemberParticipation(
-  member: MemberRow,
-  presence: PresenceRow | undefined,
-  sessionId: string,
-  previous: UiParticipationStatus | null,
-  fetchFailed = false,
-  localExitedCall = false,
-  lastInSessionAt?: number | null
-): UiParticipationStatus {
-  const deviceId = String(member.device_id ?? "").trim();
-  return resolveParticipationStatus({
-    source: mergeRoomMemberPresenceSource(member, presence),
-    currentSessionId: sessionId,
-    freshMs: PRESENCE_FRESH_MS_ROOM,
-    previous,
-    fetchFailed,
-    localExitedCall,
-    context: "room",
-    deviceId,
-    inSessionMembers: true,
-    lastInSessionAt,
-  });
-}
-
 function resolveRoomMemberDisplay(
   member: MemberRow,
   presence: PresenceRow | undefined,
@@ -387,53 +363,44 @@ function resolveRoomMemberDisplay(
   const localExitedCall =
     hasLocalLeftCall(sessionId, did) || (isMe && viewerLeftCall);
 
-  if (isMe || localExitedCall) {
+  if (localExitedCall) {
     return {
       status: "waiting" as const,
       label: "待機中",
-      used: isMe ? "self_in_room" : "local_exited_call",
-      reason: localExitedCall ? "localExitedCall" : "self_in_room",
+      used: "local_exited_call",
+      reason: "localExitedCall",
     };
   }
 
-  const status = resolveRoomMemberParticipation(
-    member,
-    presence,
-    sessionId,
+  const display = resolveParticipationDisplay({
+    source: mergeRoomMemberPresenceSource(member, presence),
+    currentSessionId: sessionId,
+    freshMs: PRESENCE_FRESH_MS_ROOM,
     previous,
-    false,
     localExitedCall,
-    lastInSessionAt
-  );
+    context: "room",
+    deviceId: did,
+    inSessionMembers: true,
+    lastInSessionAt,
+    isMe,
+  });
 
   const screen = String(member.screen ?? presence?.screen ?? "").trim();
-  const used = localExitedCall
-    ? "local_exited_call"
-    : member.is_in_call
-      ? "is_in_call"
-      : screen === "room"
-        ? "screen_room"
+  const used = isMe
+    ? "self_in_room"
+    : screen === "room"
+      ? "screen_room"
+      : display.unified === "in_call"
+        ? "peer_or_audio"
         : presence
           ? "presence"
           : "session_member";
 
-  const unified =
-    status === "in_call"
-      ? ("in_call" as const)
-      : status === "waiting"
-        ? ("in_session" as const)
-        : ("offline" as const);
-
   return {
-    status,
-    label: participationStatusLabel(status, "room", unified),
+    status: display.participation,
+    label: display.label,
     used,
-    reason:
-      screen === "room"
-        ? "screen_room"
-        : member.is_in_call
-          ? "is_in_call"
-          : status,
+    reason: display.reason,
   };
 }
 

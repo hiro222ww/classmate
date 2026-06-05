@@ -15,7 +15,7 @@ import {
 
 export type MemberStatusContext = "home" | "room" | "call";
 
-/** Unified status ladder (Home / Room / Call). */
+/** UI-only status ladder (Home / Room / Call). Not used for peer connection targets. */
 export type UnifiedMemberStatus =
   | "in_call"
   | "connecting"
@@ -42,6 +42,9 @@ export type ResolveMemberStatusInput = {
   inSessionMembers: boolean;
   explicitLeaveSeen?: boolean;
   localExitedCall?: boolean;
+  isMe?: boolean;
+  /** Viewer is on /call (self must not downgrade to waiting from presence). */
+  viewerOnCallScreen?: boolean;
   is_in_call?: boolean | null;
   screen?: string | null;
   last_seen_at?: string | null;
@@ -55,7 +58,7 @@ export type ResolveMemberStatusInput = {
   fetchFailed?: boolean;
   freshMs?: number;
   nowMs?: number;
-  /** Call-only peer / audio hints */
+  /** Call-only peer / audio hints for strict in_call UI */
   peerState?: CallPeerState;
   effectivePeerState?: EffectivePeerState;
   hasPc?: boolean;
@@ -90,11 +93,14 @@ export function participationToUnified(
   return null;
 }
 
+/** Maps unified UI status to pill color bucket. Connecting is not "in_call" green. */
 export function unifiedToParticipation(
   status: UnifiedMemberStatus
 ): UiParticipationStatus {
-  if (status === "in_call" || status === "connecting") return "in_call";
-  if (status === "in_session" || status === "waiting") return "waiting";
+  if (status === "in_call") return "in_call";
+  if (status === "connecting" || status === "in_session" || status === "waiting") {
+    return "waiting";
+  }
   return "offline";
 }
 
@@ -111,11 +117,19 @@ function buildEvidence(
     presenceOfflineForMs:
       lastSeen != null ? Math.max(0, nowMs - lastSeen) : null,
     peerState: input.peerState ?? null,
-    audioConfirmedRecently: input.audioConfirmedRecently === true,
+    audioConfirmedRecently:
+      input.audioConfirmedRecently === true ||
+      isRecentPlaySuccess(input.lastPlaySuccessAt, nowMs),
     stableMode: isStableVoiceJoinMode(),
     is_in_call: input.is_in_call,
     screen: String(input.screen ?? "").trim() || null,
   };
+}
+
+/** Never preserve in_call across grace without fresh voice evidence in this tick. */
+function clampPreservedStatus(status: UnifiedMemberStatus): UnifiedMemberStatus {
+  if (status === "in_call") return "in_session";
+  return status;
 }
 
 function shouldPreservePreviousStatus(
@@ -124,29 +138,66 @@ function shouldPreservePreviousStatus(
   lastInSessionAt: number | null | undefined
 ): boolean {
   if (!previous || previous === "offline") return false;
+  if (previous === "in_call") return false;
   const anchor = lastInSessionAt ?? null;
   if (anchor == null) return false;
   return nowMs - anchor < presenceGraceMs();
 }
 
+function hasStrongInCallEvidence(
+  input: ResolveMemberStatusInput,
+  nowMs: number
+): boolean {
+  const audioOk =
+    input.audioConfirmedRecently === true ||
+    isRecentPlaySuccess(input.lastPlaySuccessAt, nowMs);
+  const peerConnected =
+    input.peerState === "connected" ||
+    input.effectivePeerState === "connected" ||
+    input.effectivePeerState === "connected_effective";
+  return audioOk || peerConnected;
+}
+
+function hasConnectingEvidence(input: ResolveMemberStatusInput): boolean {
+  return !!(
+    input.hasPc ||
+    input.peerState === "connecting" ||
+    input.wasPeerConnected
+  );
+}
+
+/**
+ * UI display status only. Connection target selection (getRemoteIds / closePeer)
+ * uses separate stable-mode logic and must not call this.
+ */
 export function resolveUnifiedMemberStatus(
   input: ResolveMemberStatusInput
 ): { status: UnifiedMemberStatus; reason: string; evidence: MemberStatusEvidence } {
   const nowMs = input.nowMs ?? Date.now();
-  const stable = isStableVoiceJoinMode();
   const freshMs = input.freshMs ?? PRESENCE_FRESH_MS_HOME;
   const evidence = buildEvidence(input, nowMs);
   const screen = String(input.screen ?? "").trim();
-  const previous = input.previous ?? participationToUnified(input.previousParticipation);
+  const previous =
+    input.previous ?? participationToUnified(input.previousParticipation);
+  const stable = isStableVoiceJoinMode();
+  const effective = normalizedEffective(input.effective_status);
 
   if (input.explicitLeaveSeen || input.localExitedCall) {
     return { status: "waiting", reason: "explicit_leave", evidence };
   }
 
+  if (input.isMe && input.viewerOnCallScreen) {
+    return { status: "in_call", reason: "self_on_call_screen", evidence };
+  }
+
+  if (input.isMe && (input.context === "room" || screen === "room")) {
+    return { status: "in_session", reason: "self_in_room", evidence };
+  }
+
   if (!input.inSessionMembers) {
     if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
       return {
-        status: previous!,
+        status: clampPreservedStatus(previous!),
         reason: "missing_session_grace",
         evidence,
       };
@@ -158,73 +209,57 @@ export function resolveUnifiedMemberStatus(
     };
   }
 
-  if (input.context === "call") {
-    const audioOk =
-      input.audioConfirmedRecently === true ||
-      isRecentPlaySuccess(input.lastPlaySuccessAt, nowMs);
-    const peerConnected =
-      input.peerState === "connected" ||
-      input.effectivePeerState === "connected" ||
-      input.effectivePeerState === "connected_effective";
-
-    if (audioOk || peerConnected) {
-      return { status: "in_call", reason: "peer_or_audio_connected", evidence };
-    }
-
-    if (
-      input.hasPc ||
-      input.peerState === "connecting" ||
-      input.wasPeerConnected
-    ) {
-      return { status: "connecting", reason: "peer_connecting", evidence };
-    }
+  if (hasStrongInCallEvidence(input, nowMs)) {
+    return { status: "in_call", reason: "peer_or_audio_connected", evidence };
   }
 
-  if (input.is_in_call === true) {
-    const sid = String(input.presenceSessionId ?? "").trim();
-    const currentSid = String(input.currentSessionId ?? "").trim();
-    if (!currentSid || !sid || sid === currentSid) {
-      return { status: "in_call", reason: "is_in_call_true", evidence };
+  if (hasConnectingEvidence(input)) {
+    return { status: "connecting", reason: "peer_connecting", evidence };
+  }
+
+  if (screen === "room" || screen === "home" || screen === "offline") {
+    if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
+      return {
+        status: clampPreservedStatus(previous!),
+        reason: "presence_grace",
+        evidence,
+      };
     }
+    return {
+      status: input.context === "room" ? "in_session" : "waiting",
+      reason: "screen_room_or_home",
+      evidence,
+    };
   }
 
   if (
+    screen === "call" &&
     isPresenceFresh(input.last_seen_at, freshMs) &&
-    screen === "call"
+    !hasStrongInCallEvidence(input, nowMs)
   ) {
-    const sid = String(input.presenceSessionId ?? "").trim();
-    const currentSid = String(input.currentSessionId ?? "").trim();
-    if (!currentSid || !sid || sid === currentSid) {
-      return { status: "in_call", reason: "screen_call_fresh", evidence };
+    if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
+      return {
+        status: clampPreservedStatus(previous!),
+        reason: "screen_call_grace",
+        evidence,
+      };
     }
-  }
-
-  const effective = normalizedEffective(input.effective_status);
-  if (
-    isPresenceFresh(input.last_seen_at, freshMs) &&
-    (effective === "calling" ||
-      effective === "call" ||
-      effective === "active")
-  ) {
-    const sid = String(input.presenceSessionId ?? "").trim();
-    const currentSid = String(input.currentSessionId ?? "").trim();
-    if (!currentSid || !sid || sid === currentSid) {
-      return { status: "in_call", reason: "effective_in_call", evidence };
-    }
+    return {
+      status: "in_session",
+      reason: "screen_call_no_voice",
+      evidence,
+    };
   }
 
   const presenceWouldDowngrade =
     input.is_in_call === false ||
-    screen === "room" ||
-    screen === "home" ||
-    screen === "offline" ||
     effective === "waiting" ||
     effective === "room";
 
   if (stable && input.inSessionMembers && presenceWouldDowngrade) {
     if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
       return {
-        status: previous!,
+        status: clampPreservedStatus(previous!),
         reason: "stable_presence_grace",
         evidence,
       };
@@ -236,35 +271,18 @@ export function resolveUnifiedMemberStatus(
     };
   }
 
-  if (!stable) {
-    if (screen === "room" || screen === "home") {
-      if (
-        shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)
-      ) {
-        return { status: previous!, reason: "presence_grace", evidence };
-      }
-      return { status: "waiting", reason: "screen_home_or_room", evidence };
-    }
+  const lastSeen = parseTs(input.last_seen_at);
+  const staleButGraceful =
+    input.fetchFailed ||
+    (lastSeen != null &&
+      nowMs - lastSeen <= freshMs + PRESENCE_STALE_GRACE_MS);
 
-    if (input.is_in_call === false) {
-      if (
-        shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)
-      ) {
-        return { status: previous!, reason: "presence_grace", evidence };
-      }
-      return { status: "waiting", reason: "is_in_call_false", evidence };
-    }
-  }
-
-  if (
-    (input.fetchFailed ||
-      (parseTs(input.last_seen_at) != null &&
-        nowMs - (parseTs(input.last_seen_at) ?? 0) <=
-          freshMs + PRESENCE_STALE_GRACE_MS)) &&
-    previous &&
-    previous !== "offline"
-  ) {
-    return { status: previous, reason: "stale_presence_grace", evidence };
+  if (staleButGraceful && previous && previous !== "offline") {
+    return {
+      status: clampPreservedStatus(previous),
+      reason: "stale_presence_grace",
+      evidence,
+    };
   }
 
   if (input.inSessionMembers) {
@@ -293,18 +311,25 @@ export function getMemberStatusLabel(
   return context === "home" ? "オフライン" : "オフライン";
 }
 
-export function logMemberStatusDowngrade(params: {
+export function logMemberStatusDecide(params: {
   context: MemberStatusContext;
   deviceId: string;
-  to: UnifiedMemberStatus;
-  from: UnifiedMemberStatus | null;
+  self: boolean;
+  screen: string | null;
+  inSession: boolean;
+  peerState: string | null;
+  audioConfirmed: boolean;
+  presence: string | null;
+  label: string;
   reason: string;
-  evidence: MemberStatusEvidence;
+  unified: UnifiedMemberStatus;
 }) {
   debugConsoleLog(
-    `[member-status] downgrade to=${params.to} from=${params.from ?? "-"} ` +
-      `reason=${params.reason} member=${String(params.deviceId).slice(-4)} ` +
-      `evidence=${JSON.stringify(params.evidence)}`
+    `[member-status] decide member=${String(params.deviceId).slice(-4)} ` +
+      `self=${params.self} screen=${params.screen ?? "-"} ` +
+      `inSession=${params.inSession} peerState=${params.peerState ?? "-"} ` +
+      `audioConfirmed=${params.audioConfirmed} presence=${params.presence ?? "-"} ` +
+      `label=${params.label} reason=${params.reason} unified=${params.unified}`
   );
 }
 
@@ -321,22 +346,19 @@ export function resolveMemberParticipationForUi(
   const participation = unifiedToParticipation(resolved.status);
   const label = getMemberStatusLabel(resolved.status, input.context);
 
-  const prevUnified =
-    input.previous ??
-    participationToUnified(input.previousParticipation);
-  const downgraded =
-    prevUnified != null &&
-    rankStatus(resolved.status) < rankStatus(prevUnified);
-  if (downgraded) {
-    logMemberStatusDowngrade({
-      context: input.context,
-      deviceId: input.deviceId,
-      to: resolved.status,
-      from: prevUnified,
-      reason: resolved.reason,
-      evidence: resolved.evidence,
-    });
-  }
+  logMemberStatusDecide({
+    context: input.context,
+    deviceId: input.deviceId,
+    self: input.isMe === true,
+    screen: String(input.screen ?? "").trim() || null,
+    inSession: input.inSessionMembers,
+    peerState: input.peerState ?? null,
+    audioConfirmed: resolved.evidence.audioConfirmedRecently,
+    presence: String(input.is_in_call ?? ""),
+    label,
+    reason: resolved.reason,
+    unified: resolved.status,
+  });
 
   return {
     participation,
@@ -345,21 +367,6 @@ export function resolveMemberParticipationForUi(
     reason: resolved.reason,
     evidence: resolved.evidence,
   };
-}
-
-function rankStatus(status: UnifiedMemberStatus): number {
-  switch (status) {
-    case "in_call":
-      return 5;
-    case "connecting":
-      return 4;
-    case "in_session":
-      return 3;
-    case "waiting":
-      return 2;
-    default:
-      return 1;
-  }
 }
 
 export function isExplicitMemberLeave(

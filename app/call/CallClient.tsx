@@ -1341,6 +1341,7 @@ export default function CallClient() {
         isMuted: userMuted,
         isInCall,
         inSessionMember: true,
+        viewerOnCallScreen: true,
         screen: localExitedCall ? "room" : member.screen,
         localExitedCall,
         peerState,
