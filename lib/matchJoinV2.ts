@@ -852,24 +852,18 @@ export async function matchJoinV2Post(req: Request) {
       }
     }
 
-    if (
-      openJoinedClass &&
-      isRecruitingSessionStatus(resolvedSessionStatus) &&
-      !isSessionEligibleForNormalJoin({
-        sessionStatus: resolvedSessionStatus,
-        sessionCreatedAt: resolvedSessionCreatedAt,
-        recruitmentSessionTtlMinutes,
-      })
-    ) {
-      console.log(
-        `[match-join] existing-session invalid reason=stale session=${tailMatchId(resolvedSessionId)}`
+    if (openJoinedClass && blocksNewJoinSessionStatus(resolvedSessionStatus)) {
+      console.warn(
+        `[class/match-join-v2] resolved session not joinable status=${resolvedSessionStatus} ` +
+          `session=${tailMatchId(resolvedSessionId)} — re-resolving`
       );
+      const staleResolvedId = resolvedSessionId;
       const reResolved = await resolveOpenJoinedClassSession({
         classId: String(row.class_id),
         className: String(row.class_name ?? "").trim() || "クラス",
-        sessionId: resolvedSessionId,
-        sessionStatus: resolvedSessionStatus,
-        sessionCreatedAt: resolvedSessionCreatedAt,
+        sessionId: "",
+        sessionStatus: "forming",
+        sessionCreatedAt: null,
         matchDeadlineAt: forcedClassDeadline,
         deviceId,
         requestedCapacity,
@@ -878,15 +872,15 @@ export async function matchJoinV2Post(req: Request) {
       if (reResolved.ok) {
         if (
           reResolved.createdNewSession &&
-          resolvedSessionId &&
-          reResolved.sessionId !== resolvedSessionId
+          staleResolvedId &&
+          reResolved.sessionId !== staleResolvedId
         ) {
           await supabase
             .from("session_members")
             .delete()
-            .eq("session_id", resolvedSessionId)
+            .eq("session_id", staleResolvedId)
             .eq("device_id", deviceId);
-          await closeEmptySessionIfNeeded(supabase, resolvedSessionId);
+          await closeEmptySessionIfNeeded(supabase, staleResolvedId);
         }
         resolvedSessionId = reResolved.sessionId;
         resolvedSessionStatus = reResolved.sessionStatus;

@@ -119,6 +119,8 @@ export function evaluateOpenJoinedSessionReuse(params: {
   memberCount: number;
   deviceIsSessionMember: boolean;
   recruitmentSessionTtlMinutes?: number | null;
+  /** openJoinedClass: join active sessions that already have members. */
+  allowJoinActiveWithoutMembership?: boolean;
 }): { reusable: boolean; reason: OpenJoinedSessionInvalidReason | null } {
   const status = normalizeSessionStatus(params.sessionStatus);
   const ttl =
@@ -138,7 +140,10 @@ export function evaluateOpenJoinedSessionReuse(params: {
     if (params.memberCount <= 0) {
       return { reusable: false, reason: "empty" };
     }
-    if (!params.deviceIsSessionMember) {
+    if (
+      !params.deviceIsSessionMember &&
+      !params.allowJoinActiveWithoutMembership
+    ) {
       return { reusable: false, reason: "active_not_member" };
     }
     return { reusable: true, reason: null };
@@ -152,6 +157,30 @@ export function evaluateOpenJoinedSessionReuse(params: {
   }
 
   return { reusable: false, reason: "unknown" };
+}
+
+/** Same rules as /api/session/join + openJoinedClass recruitment freshness. */
+export function isSessionJoinableForOpenClass(params: {
+  sessionStatus?: string | null;
+  sessionCreatedAt?: string | null;
+  matchDeadlineAt?: string | null;
+  memberCount: number;
+  recruitmentSessionTtlMinutes?: number | null;
+}): { joinable: boolean; reason: OpenJoinedSessionInvalidReason | null } {
+  const evaluation = evaluateOpenJoinedSessionReuse({
+    sessionStatus: params.sessionStatus,
+    sessionCreatedAt: params.sessionCreatedAt,
+    matchDeadlineAt: params.matchDeadlineAt,
+    memberCount: params.memberCount,
+    deviceIsSessionMember: true,
+    recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+    allowJoinActiveWithoutMembership: true,
+  });
+
+  return {
+    joinable: evaluation.reusable,
+    reason: evaluation.reason,
+  };
 }
 
 export function pickClassDisplaySession(

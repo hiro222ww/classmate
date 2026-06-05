@@ -1568,21 +1568,18 @@ return () => {
         return;
       }
 
-      const hasActiveSession = Boolean(target.has_active_session && target.session_id);
       const openBody = buildMatchJoinRequestBody({
         deviceId: currentDeviceId,
         openJoinedClassId: target.id,
-        sessionId: hasActiveSession ? target.session_id ?? null : null,
         topicKey: target.topic_key,
         worldKey: target.world_key ?? "default",
         capacity: 5,
       });
 
-      if (!hasActiveSession) {
-        console.log(
-          `[home openClass] no-active-session create-new class=${String(target.id).slice(-6)}`
-        );
-      }
+      console.log(
+        `[home openClass] resolve-joinable-session class=${String(target.id).slice(-6)} ` +
+          `hintSession=${String(target.session_id ?? "").slice(-6) || "-"}`
+      );
 
       console.log("[home openClass] match-join-v2 request body =", openBody);
 
@@ -1656,6 +1653,25 @@ console.log("[home] resolved ids", { classId, sessionId, json });
 
       if (!classId || !sessionId) {
         alert("open_class_missing_ids");
+        return;
+      }
+
+      const resolvedStatus = String(
+        json?.sessionStatus ?? json?.session_status ?? ""
+      )
+        .trim()
+        .toLowerCase();
+      if (
+        resolvedStatus === "closed" ||
+        resolvedStatus === "expired" ||
+        resolvedStatus === "ended"
+      ) {
+        console.warn("[home openClass] reject non-joinable session", {
+          classId: classId.slice(-6),
+          sessionId: sessionId.slice(-6),
+          sessionStatus: resolvedStatus,
+        });
+        alert("このセッションは終了しています。もう一度お試しください。");
         return;
       }
 

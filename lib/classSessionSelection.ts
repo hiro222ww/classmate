@@ -27,6 +27,7 @@ export type CanonicalSessionPick = {
   memberCount: number;
   reason:
     | "reuse_active_member"
+    | "reuse_active_with_members"
     | "reuse_recruiting_most_members"
     | "reuse_recruiting_newest"
     | "reuse_rpc_session"
@@ -141,6 +142,7 @@ export function pickCanonicalOpenJoinedSession(params: {
       memberCount: session.memberCount,
       deviceIsSessionMember: session.deviceIsMember,
       recruitmentSessionTtlMinutes: ttl,
+      allowJoinActiveWithoutMembership: true,
     });
 
     if (!evaluation.reusable) continue;
@@ -149,6 +151,8 @@ export function pickCanonicalOpenJoinedSession(params: {
     let reason: CanonicalSessionPick["reason"];
     if (status === "active" && session.deviceIsMember) {
       reason = "reuse_active_member";
+    } else if (status === "active" && session.memberCount > 0) {
+      reason = "reuse_active_with_members";
     } else if (session.memberCount > 0) {
       reason = "reuse_recruiting_most_members";
     } else {
@@ -158,14 +162,8 @@ export function pickCanonicalOpenJoinedSession(params: {
     const createdMs = session.createdAt
       ? new Date(session.createdAt).getTime()
       : 0;
-    const preferred =
-      params.preferredSessionId &&
-      session.id === params.preferredSessionId
-        ? 1_000_000
-        : 0;
 
     const score =
-      preferred +
       session.memberCount * 10_000 +
       (isRecruitmentSessionFresh(session.createdAt, ttl) ? 1_000 : 0) +
       (10 - statusRank(status)) * 100 -

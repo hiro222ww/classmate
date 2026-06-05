@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 import {
   evaluateOpenJoinedSessionReuse,
+  isSessionJoinableForOpenClass,
   type OpenJoinedSessionInvalidReason,
 } from "@/lib/recruitment";
 import { tailMatchId } from "@/lib/matchJoinLogging";
@@ -44,7 +45,7 @@ type ResolveErr = {
   response: NextResponse;
 };
 
-async function createFormingSession(params: {
+export async function createFormingSession(params: {
   classId: string;
   className: string;
   requestedCapacity: number;
@@ -87,6 +88,145 @@ async function createFormingSession(params: {
   };
 }
 
+async function loadSessionJoinability(
+  sessionId: string,
+  matchDeadlineAt: string | null,
+  recruitmentSessionTtlMinutes: number | null
+) {
+  const id = String(sessionId ?? "").trim();
+  if (!id) {
+    return {
+      ok: false as const,
+      joinable: { joinable: false, reason: "unknown" as const },
+    };
+  }
+
+  const { data: sessionRow, error } = await supabase
+    .from("sessions")
+    .select("id,status,created_at,capacity")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error || !sessionRow?.id) {
+    return {
+      ok: false as const,
+      joinable: { joinable: false, reason: "unknown" as const },
+    };
+  }
+
+  const { count } = await supabase
+    .from("session_members")
+    .select("device_id", { count: "exact", head: true })
+    .eq("session_id", id);
+
+  const memberCount = Number(count ?? 0);
+  const capacity = Number(sessionRow.capacity ?? 5);
+  if (memberCount >= capacity) {
+    return {
+      ok: false as const,
+      joinable: { joinable: false, reason: "unknown" as const },
+    };
+  }
+
+  const joinable = isSessionJoinableForOpenClass({
+    sessionStatus: String(sessionRow.status ?? ""),
+    sessionCreatedAt: sessionRow.created_at ?? null,
+    matchDeadlineAt,
+    memberCount,
+    recruitmentSessionTtlMinutes,
+  });
+
+  if (!joinable.joinable) {
+    return { ok: false as const, joinable };
+  }
+
+  return {
+    ok: true as const,
+    sessionId: id,
+    sessionStatus: String(sessionRow.status ?? "forming"),
+    sessionCreatedAt: sessionRow.created_at ?? null,
+    memberCount,
+    joinable,
+  };
+}
+
+async function ensureJoinableSessionOrCreate(params: {
+  classId: string;
+  className: string;
+  sessionId: string;
+  sessionStatus: string;
+  sessionCreatedAt: string | null;
+  matchDeadlineAt: string | null;
+  memberCount: number;
+  requestedCapacity: number;
+  recruitmentSessionTtlMinutes: number | null;
+  selectionReason: string;
+}): Promise<ResolveOk | ResolveErr> {
+  const localCheck = isSessionJoinableForOpenClass({
+    sessionStatus: params.sessionStatus,
+    sessionCreatedAt: params.sessionCreatedAt,
+    matchDeadlineAt: params.matchDeadlineAt,
+    memberCount: params.memberCount,
+    recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+  });
+
+  let sessionId = params.sessionId;
+  let sessionStatus = params.sessionStatus;
+  let sessionCreatedAt = params.sessionCreatedAt;
+  let memberCount = params.memberCount;
+  let selectionReason = params.selectionReason;
+
+  if (!localCheck.joinable) {
+    console.log(
+      `[match-join] existing-session invalid reason=${localCheck.reason ?? "unknown"} ` +
+        `session=${tailMatchId(sessionId)} class=${tailMatchId(params.classId)}`
+    );
+  } else {
+    const live = await loadSessionJoinability(
+      sessionId,
+      params.matchDeadlineAt,
+      params.recruitmentSessionTtlMinutes
+    );
+
+    if (live.ok) {
+      return {
+        ok: true,
+        sessionId: live.sessionId,
+        sessionStatus: live.sessionStatus,
+        sessionCreatedAt: live.sessionCreatedAt,
+        createdNewSession: false,
+        reused: true,
+        selectionReason,
+      };
+    }
+
+    console.log(
+      `[match-join] existing-session invalid reason=${live.joinable.reason ?? "unknown"} ` +
+        `session=${tailMatchId(sessionId)} class=${tailMatchId(params.classId)} ` +
+        `source=live_db`
+    );
+  }
+
+  const created = await createFormingSession({
+    classId: params.classId,
+    className: params.className,
+    requestedCapacity: params.requestedCapacity,
+    reason: localCheck.reason ?? "no_valid_active_session",
+  });
+
+  if (!created.ok) return created;
+
+  return {
+    ok: true,
+    sessionId: created.sessionId,
+    sessionStatus: created.sessionStatus,
+    sessionCreatedAt: created.sessionCreatedAt,
+    createdNewSession: true,
+    reused: false,
+    selectionReason: "create_new_session_not_joinable",
+  };
+}
+
 export async function resolveOpenJoinedClassSession(
   params: ResolveParams
 ): Promise<ResolveOk | ResolveErr> {
@@ -122,15 +262,18 @@ export async function resolveOpenJoinedClassSession(
         `class=${tailMatchId(params.classId)}`
     );
 
-    return {
-      ok: true,
+    return ensureJoinableSessionOrCreate({
+      classId: params.classId,
+      className: params.className,
       sessionId: canonical.sessionId,
       sessionStatus: canonical.sessionStatus,
       sessionCreatedAt: canonical.sessionCreatedAt,
-      createdNewSession: false,
-      reused: true,
+      matchDeadlineAt: params.matchDeadlineAt,
+      memberCount: canonical.memberCount,
+      requestedCapacity: params.requestedCapacity,
+      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
       selectionReason: canonical.reason,
-    };
+    });
   }
 
   logClassSessionsDebug(params.classId, classSessions);
@@ -144,6 +287,7 @@ export async function resolveOpenJoinedClassSession(
       memberCount: rpcSession.memberCount,
       deviceIsSessionMember: rpcSession.deviceIsMember,
       recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+      allowJoinActiveWithoutMembership: true,
     });
 
     if (evaluation.reusable) {
@@ -151,15 +295,18 @@ export async function resolveOpenJoinedClassSession(
         `[class-session] selected session=${tailMatchId(params.sessionId)} ` +
           `reason=reuse_rpc_session class=${tailMatchId(params.classId)}`
       );
-      return {
-        ok: true,
+      return ensureJoinableSessionOrCreate({
+        classId: params.classId,
+        className: params.className,
         sessionId: params.sessionId,
         sessionStatus: params.sessionStatus,
         sessionCreatedAt: params.sessionCreatedAt,
-        createdNewSession: false,
-        reused: true,
+        matchDeadlineAt: params.matchDeadlineAt,
+        memberCount: rpcSession.memberCount,
+        requestedCapacity: params.requestedCapacity,
+        recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
         selectionReason: "reuse_rpc_session",
-      };
+      });
     }
 
     console.log(
