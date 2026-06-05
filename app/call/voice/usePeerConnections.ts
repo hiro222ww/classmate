@@ -112,6 +112,10 @@ import {
   recordRemoteIceCandidate,
   type PeerIceDiagnostics,
 } from "./voiceIceDiagnostics";
+import {
+  hasTurnIceServer,
+  resolveIceTransportPolicy,
+} from "@/lib/voiceRoute";
 
 type Member = {
   device_id: string;
@@ -3975,12 +3979,17 @@ export function usePeerConnections({
           ? iceServersRef.current
           : FALLBACK_ICE_SERVERS;
 
+      const iceTransportPolicy = resolveIceTransportPolicy(
+        relayForcedRef.current || voiceRouteRef.current === "turn"
+      );
+
+      debugConsoleLog(
+        `[voice-peer] create-peer policy=${iceTransportPolicy} p2pEnabled=${p2pEnabledRef.current} hasTurn=${hasTurnIceServer(currentIceServers)} relayForced=${relayForcedRef.current}`
+      );
+
       const pc = new RTCPeerConnection({
         iceServers: currentIceServers,
-        iceTransportPolicy:
-          relayForcedRef.current || voiceRouteRef.current === "turn"
-            ? "relay"
-            : "all",
+        iceTransportPolicy,
       });
       markVoicePerf("peer_connection_created", { remoteId });
 
@@ -6856,6 +6865,8 @@ export function usePeerConnections({
     ]
   );
 
+  const voiceSettingsLoadedOnceRef = useRef(false);
+
   useEffect(() => {
     let alive = true;
 
@@ -6865,6 +6876,7 @@ export function usePeerConnections({
         let transport = cached?.transport;
         let settingsVoiceEnabled = cached?.voiceEnabled ?? true;
         let emergencyMessage = cached?.emergencyMessage ?? null;
+        let settingsSource = cached ? "cache" : "api";
 
         if (!transport) {
           const res = await fetchWithRetry(
@@ -6896,6 +6908,7 @@ export function usePeerConnections({
             voice_enabled: settingsVoiceEnabled,
             emergency_message: emergencyMessage,
           });
+          settingsSource = "api";
           markVoicePerf("voice_settings_loaded", { extra: "cached=false" });
         } else {
           markVoicePerf("voice_settings_loaded", { extra: "cached=true" });
@@ -6906,7 +6919,12 @@ export function usePeerConnections({
         voiceTransportDisabledRef.current = transport.voiceTransportDisabled;
         setTurnFallbackEnabled(transport.staticTurnEnabled);
         turnFallbackEnabledRef.current = transport.staticTurnEnabled;
+        voiceSettingsLoadedOnceRef.current = true;
 
+        const icePolicy = resolveIceTransportPolicy(transport.relayForced);
+        debugConsoleLog(
+          `[voice-settings] client-loaded p2p_enabled=${transport.p2pEnabled} turn_provider=static icePolicy=${icePolicy} source=${settingsSource}`
+        );
         debugConsoleLog(`[p2p] enabled value=${transport.p2pEnabled}`);
         debugConsoleLog(
           `[turn] static-enabled value=${transport.staticTurnEnabled}`
@@ -6924,12 +6942,15 @@ export function usePeerConnections({
         if (transport.relayForced) {
           void enableTurnFallback({ initial: true });
         }
-      } catch {
-        p2pEnabledRef.current = true;
-        relayForcedRef.current = false;
-        voiceTransportDisabledRef.current = false;
-        setTurnFallbackEnabled(false);
-        turnFallbackEnabledRef.current = false;
+      } catch (err) {
+        if (!voiceSettingsLoadedOnceRef.current) {
+          p2pEnabledRef.current = true;
+          relayForcedRef.current = false;
+          voiceTransportDisabledRef.current = false;
+          setTurnFallbackEnabled(false);
+          turnFallbackEnabledRef.current = false;
+        }
+        console.warn("[voice-settings] load failed — keeping prior transport", err);
       }
     }
 
@@ -6938,7 +6959,7 @@ export function usePeerConnections({
     return () => {
       alive = false;
     };
-  }, [enableTurnFallback, notifyStatus]);
+  }, [enableTurnFallback, notifyStatus, sessionId]);
 
   const applyLocalAudioTrack = useCallback(
     (track: MediaStreamTrack | null, reason: string) => {

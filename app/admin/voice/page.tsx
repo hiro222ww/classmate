@@ -2,10 +2,14 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { HelpTip } from "@/components/HelpTip";
-import { describeVoiceTransportMode } from "@/lib/voiceTransportMode";
+import {
+  DEFAULT_P2P_ENABLED,
+  describeVoiceTransportMode,
+  parseExplicitBoolean,
+} from "@/lib/voiceTransportMode";
 
 type VoiceSettings = {
   voice_enabled: boolean;
@@ -96,11 +100,52 @@ type VoiceLog = {
 const defaultSettings: VoiceSettings = {
   voice_enabled: true,
   new_calls_enabled: true,
-  p2p_enabled: true,
+  p2p_enabled: DEFAULT_P2P_ENABLED,
   turn_fallback_enabled: false,
   max_members_per_call: 5,
   emergency_message: "",
 };
+
+function isAdminVoiceDebug() {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      process.env.NEXT_PUBLIC_DEBUG_VOICE === "true" ||
+      new URLSearchParams(window.location.search).get("debugVoice") === "1" ||
+      localStorage.getItem("debugVoice") === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function adminVoiceDebugLog(event: string, extra: Record<string, unknown> = {}) {
+  if (!isAdminVoiceDebug()) return;
+  const suffix = Object.entries(extra)
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(" ");
+  console.log(`[admin-voice-settings] ${event}${suffix ? ` ${suffix}` : ""}`);
+}
+
+function normalizeAdminVoiceSettings(
+  raw: Partial<VoiceSettings> | null | undefined
+): VoiceSettings {
+  if (!raw) return { ...defaultSettings };
+
+  return {
+    voice_enabled: raw.voice_enabled !== false,
+    new_calls_enabled: raw.new_calls_enabled !== false,
+    p2p_enabled: parseExplicitBoolean(
+      raw.p2p_enabled,
+      DEFAULT_P2P_ENABLED
+    ),
+    turn_fallback_enabled: raw.turn_fallback_enabled === true,
+    max_members_per_call: Number(
+      raw.max_members_per_call ?? defaultSettings.max_members_per_call
+    ),
+    emergency_message: raw.emergency_message ?? "",
+  };
+}
 
 function transportModeLabel(p2p: boolean, staticTurn: boolean) {
   switch (describeVoiceTransportMode(p2p, staticTurn)) {
@@ -133,7 +178,15 @@ export default function AdminVoicePage() {
 
   const [saving, setSaving] = useState(false);
 
+  const loadSeqRef = useRef(0);
+  const saveSeqRef = useRef(0);
+
+  function shouldIgnoreSettingsFetch(seq: number) {
+    return seq < loadSeqRef.current || seq <= saveSeqRef.current;
+  }
+
   async function load() {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
 
     try {
@@ -146,17 +199,32 @@ export default function AdminVoicePage() {
 
       const data = await res.json().catch(() => null);
 
-      if (data?.settings) {
-        setSettings({
-          ...defaultSettings,
-          ...data.settings,
-          emergency_message:
-            data.settings.emergency_message ?? "",
+      if (shouldIgnoreSettingsFetch(seq)) {
+        adminVoiceDebugLog("refetch ignored stale", {
+          seq,
+          loadSeq: loadSeqRef.current,
+          saveSeq: saveSeqRef.current,
         });
+        return;
       }
 
+      if (data?.settings) {
+        const normalized = normalizeAdminVoiceSettings(data.settings);
+        adminVoiceDebugLog("refetch", {
+          p2p_enabled: normalized.p2p_enabled,
+          source: "db",
+        });
+        setSettings(normalized);
+      } else if (typeof data?.p2p_enabled === "boolean") {
+        setSettings((prev) => ({
+          ...prev,
+          p2p_enabled: data.p2p_enabled,
+        }));
+      }
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -223,6 +291,9 @@ export default function AdminVoicePage() {
   }
 
   async function save(next = settings) {
+    const seq = ++saveSeqRef.current;
+    loadSeqRef.current = seq;
+    adminVoiceDebugLog("save-request", { p2p_enabled: next.p2p_enabled });
     setSaving(true);
 
     try {
@@ -239,15 +310,21 @@ export default function AdminVoicePage() {
 
       const data = await res.json().catch(() => null);
 
-      if (data?.settings) {
-        setSettings({
-          ...defaultSettings,
-          ...data.settings,
-          emergency_message:
-            data.settings.emergency_message ?? "",
+      if (!res.ok || !data?.ok) {
+        adminVoiceDebugLog("save-failed", {
+          p2p_enabled: next.p2p_enabled,
+          status: res.status,
         });
+        return;
       }
 
+      if (data?.settings) {
+        const normalized = normalizeAdminVoiceSettings(data.settings);
+        adminVoiceDebugLog("save-response", {
+          p2p_enabled: normalized.p2p_enabled,
+        });
+        setSettings(normalized);
+      }
     } finally {
       setSaving(false);
     }

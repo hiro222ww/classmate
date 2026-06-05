@@ -14,11 +14,6 @@ const cards = [
     href: "/admin/voice",
   },
   {
-    title: "クラス修復",
-    desc: "membership / session_member / presence の診断・upsert 復旧",
-    href: "/admin/rooms#class-repair",
-  },
-  {
     title: "通報管理",
     desc: "通報内容の確認・対応状況の更新",
     href: "/admin/reports",
