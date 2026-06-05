@@ -16,7 +16,8 @@
     "test:e2e:growth": "node scripts/e2e-growth.mjs",
     "test:e2e:entitlements": "node scripts/e2e-entitlements.mjs",
     "test:e2e:webrtc": "node scripts/e2e-webrtc-call.mjs",
-    "test:turn-provider": "node scripts/verify-turn-provider.mjs"
+    "test:turn-provider": "node scripts/verify-turn-provider.mjs",
+    "build:learning-docx": "node scripts/build-learning-docx.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.93.1",
@@ -32,6 +33,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/web-push": "^3.6.4",
+    "docx": "^9.7.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.5",
     "playwright": "^1.52.0",

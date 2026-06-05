@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 import {
-  getBillableMembershipSnapshot,
-  getClassSlotsForDevice,
-} from "@/lib/classMembershipSlots";
-import { isLegacyEntryClassName } from "@/lib/legacyClassNames";
+  buildHomeClassVisibilityDebug,
+  fetchActiveClassMemberships,
+  getActiveMembershipSnapshot,
+} from "@/lib/activeClassMemberships";
+import { getClassSlotsForDevice } from "@/lib/classMembershipSlots";
 import {
   getClassStatusLabel,
+  isDeadlinePassed,
   pickClassDisplaySession,
   type RecruitmentSessionRow,
 } from "@/lib/recruitment";
@@ -17,6 +19,36 @@ import { fetchActiveCallRequestsForClasses } from "@/lib/callRequest";
 import { fetchUnreadCountsForClasses } from "@/lib/classMessageReads";
 
 export const dynamic = "force-dynamic";
+
+function tailId(id: string | null | undefined) {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  return value.length <= 6 ? value : value.slice(-6);
+}
+
+function resolveMembershipStatusLabel(params: {
+  hasActiveSession: boolean;
+  sessionStatus: string | null;
+  matchDeadlineAt: string | null;
+  sessionCreatedAt: string | null;
+  recruitmentSessionTtlMinutes: number | null;
+}): string {
+  if (params.hasActiveSession && params.sessionStatus) {
+    return getClassStatusLabel({
+      sessionStatus: params.sessionStatus,
+      matchDeadlineAt: params.matchDeadlineAt,
+      hasActiveSession: true,
+      sessionCreatedAt: params.sessionCreatedAt,
+      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+    });
+  }
+
+  if (isDeadlinePassed(params.matchDeadlineAt)) {
+    return "募集締切";
+  }
+
+  return "所属中";
+}
 
 export async function GET(req: Request) {
   try {
@@ -28,9 +60,7 @@ export async function GET(req: Request) {
       "";
 
     const normalizedDeviceId = String(deviceId).trim();
-
-    console.log("[class/mine] raw deviceId =", deviceId);
-    console.log("[class/mine] normalizedDeviceId =", normalizedDeviceId);
+    const debugMemberships = url.searchParams.get("debugMemberships") === "1";
 
     if (!normalizedDeviceId) {
       return NextResponse.json(
@@ -39,50 +69,73 @@ export async function GET(req: Request) {
       );
     }
 
-    // 1) class_memberships を取得（所属一覧）
-    const { data: memberships, error: membershipsErr } = await supabaseAdmin
-      .from("class_memberships")
-      .select("class_id")
-      .eq("device_id", normalizedDeviceId);
+    const membershipRes = await fetchActiveClassMemberships(
+      supabaseAdmin,
+      normalizedDeviceId
+    );
 
-    console.log("[class/mine] memberships error =", membershipsErr);
-    console.log("[class/mine] memberships data =", memberships);
-
-    if (membershipsErr) {
+    if (!membershipRes.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "class_mine_membership_failed",
-          detail: membershipsErr.message,
+          detail: membershipRes.error,
         },
         { status: 500 }
       );
     }
 
-    const classIds = Array.from(
-  new Set(
-    (memberships ?? [])
-      .map((row: any) => String(row.class_id ?? "").trim())
-      .filter(Boolean)
-  )
-);
+    const membershipRows = membershipRes.rows;
+    const billableMembershipRows = membershipRows.filter((row) => row.isBillable);
+    const classIds = billableMembershipRows.map((row) => row.classId);
+
+    console.log(
+      `[home] joined-classes source=class_memberships count=${classIds.length} ` +
+        `classIds=${classIds.map(tailId).join(",") || "-"} device=${tailId(normalizedDeviceId)}`
+    );
+
+    for (const row of membershipRows) {
+      if (row.isBillable) continue;
+      console.log(
+        `[home] class-hidden reason=legacy_entry_class class=${tailId(row.classId)} name=${row.className ?? "-"}`
+      );
+    }
 
     if (classIds.length === 0) {
+      const snapshotRes = await getActiveMembershipSnapshot(
+        supabaseAdmin,
+        normalizedDeviceId
+      );
+      const [slotsRes] = await Promise.all([
+        getClassSlotsForDevice(supabaseAdmin, normalizedDeviceId),
+      ]);
+
       return NextResponse.json({
         ok: true,
         classes: [],
+        class_slots: slotsRes.ok ? slotsRes.classSlots : null,
+        membership_count_billable: snapshotRes.ok
+          ? snapshotRes.snapshot.billableCount
+          : 0,
+        membership_count_total: snapshotRes.ok
+          ? snapshotRes.snapshot.totalCount
+          : 0,
+        membership_count_legacy: snapshotRes.ok
+          ? snapshotRes.snapshot.legacyCount
+          : 0,
         debug: {
-          membershipCount: 0,
-          classRowCount: 0,
-          topicRowCount: 0,
-          sessionRowCount: 0,
-          joinFailedCount: 0,
-          legacyFilteredCount: 0,
+          membershipCount: membershipRows.length,
+          visibleClassCount: 0,
+          billableMembershipCount: 0,
+          legacyMembershipCount: membershipRows.filter((row) => row.isLegacy).length,
+          visibility: buildHomeClassVisibilityDebug({
+            rows: membershipRows,
+            visibleClassIds: [],
+          }),
         },
       });
     }
 
-    // 2) classes を取得（deadlineは表示用に持つが、絞り込みには使わない）
     const { data: classRows, error: classesErr } = await supabaseAdmin
       .from("classes")
       .select(
@@ -101,9 +154,6 @@ export async function GET(req: Request) {
       )
       .in("id", classIds);
 
-    console.log("[class/mine] classes error =", classesErr);
-    console.log("[class/mine] classes data =", classRows);
-
     if (classesErr) {
       return NextResponse.json(
         {
@@ -116,28 +166,31 @@ export async function GET(req: Request) {
     }
 
     const classMap = new Map(
-      (classRows ?? []).map((c: any) => [String(c.id).trim(), c])
+      (classRows ?? []).map((c: { id: string }) => [String(c.id).trim(), c])
     );
 
-    // 3) topic_key 一覧を抽出
+    for (const row of billableMembershipRows) {
+      if (!classMap.has(row.classId)) {
+        console.log(
+          `[home] class-hidden reason=class_row_missing class=${tailId(row.classId)}`
+        );
+      }
+    }
+
     const topicKeys = Array.from(
       new Set(
         (classRows ?? [])
-          .map((c: any) => String(c.topic_key ?? "").trim())
+          .map((c: { topic_key?: string | null }) => String(c.topic_key ?? "").trim())
           .filter(Boolean)
       )
     );
 
-    // 4) topics を別取得
-    let topicRows: any[] = [];
+    let topicRows: Array<{ topic_key: string; title: string; description: string }> = [];
     if (topicKeys.length > 0) {
       const { data: topicsData, error: topicsErr } = await supabaseAdmin
         .from("topics")
         .select("topic_key,title,description")
         .in("topic_key", topicKeys);
-
-      console.log("[class/mine] topics error =", topicsErr);
-      console.log("[class/mine] topics data =", topicsData);
 
       if (topicsErr) {
         return NextResponse.json(
@@ -150,14 +203,13 @@ export async function GET(req: Request) {
         );
       }
 
-      topicRows = topicsData ?? [];
+      topicRows = (topicsData ?? []) as typeof topicRows;
     }
 
     const topicMap = new Map(
-      topicRows.map((t: any) => [String(t.topic_key).trim(), t])
+      topicRows.map((t) => [String(t.topic_key).trim(), t])
     );
 
-    // 5) sessions を取得（状態表示用）
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
     const recruitmentSessionTtlSetting = await getRecruitmentSessionTtlSetting();
 
@@ -171,9 +223,6 @@ export async function GET(req: Request) {
       .select("id,class_id,status,created_at")
       .in("class_id", classIds)
       .in("status", ["forming", "waiting", "active"]);
-
-    console.log("[class/mine] sessions error =", sessionsErr);
-    console.log("[class/mine] sessions data =", sessionRows);
 
     if (sessionsErr) {
       return NextResponse.json(
@@ -189,14 +238,14 @@ export async function GET(req: Request) {
     const sessionsByClass = new Map<string, RecruitmentSessionRow[]>();
 
     for (const row of sessionRows ?? []) {
-      const classId = String((row as any)?.class_id ?? "").trim();
+      const classId = String((row as { class_id?: unknown }).class_id ?? "").trim();
       if (!classId) continue;
 
       const list = sessionsByClass.get(classId) ?? [];
       list.push({
-        id: String((row as any)?.id ?? "").trim(),
-        status: String((row as any)?.status ?? "").trim(),
-        created_at: (row as any)?.created_at ?? null,
+        id: String((row as { id?: unknown }).id ?? "").trim(),
+        status: String((row as { status?: unknown }).status ?? "").trim(),
+        created_at: (row as { created_at?: string | null }).created_at ?? null,
       });
       sessionsByClass.set(classId, list);
     }
@@ -213,19 +262,26 @@ export async function GET(req: Request) {
     >();
 
     for (const classId of classIds) {
-      const classRow = classMap.get(classId);
+      const classRow = classMap.get(classId) as
+        | { match_deadline_at?: string | null }
+        | undefined;
       const picked = pickClassDisplaySession(
         sessionsByClass.get(classId) ?? [],
         recruitmentSessionTtlMinutes,
         { matchDeadlineAt: classRow?.match_deadline_at ?? null }
       );
 
-      if (!picked) continue;
+      if (!picked) {
+        console.log(
+          `[home] class-visible-without-active-session class=${tailId(classId)}`
+        );
+        continue;
+      }
 
-      const statusLabel = getClassStatusLabel({
+      const statusLabel = resolveMembershipStatusLabel({
+        hasActiveSession: true,
         sessionStatus: picked.status,
         matchDeadlineAt: classRow?.match_deadline_at ?? null,
-        hasActiveSession: true,
         sessionCreatedAt: picked.created_at,
         recruitmentSessionTtlMinutes,
       });
@@ -248,15 +304,34 @@ export async function GET(req: Request) {
       (await fetchUnreadCountsForClasses(normalizedDeviceId, classIds)) ??
       new Map();
 
-    // 6) merge
-    const merged = classIds.map((classId) => {
-      const c = classMap.get(classId);
+    const classes = classIds.map((classId) => {
+      const c = classMap.get(classId) as
+        | {
+            id?: string;
+            name?: string;
+            description?: string;
+            world_key?: string | null;
+            topic_key?: string | null;
+            min_age?: number;
+            is_sensitive?: boolean;
+            is_user_created?: boolean;
+            created_at?: string | null;
+            match_deadline_at?: string | null;
+          }
+        | undefined;
       const topicKey = String(c?.topic_key ?? "").trim();
       const topic = topicKey ? topicMap.get(topicKey) : null;
       const session = sessionMap.get(classId);
       const meetingPlan = meetingPlanMap.get(classId) ?? null;
       const callRequest = callRequestMap.get(classId) ?? null;
       const unreadCount = unreadCountMap.get(classId) ?? 0;
+      const statusLabel = resolveMembershipStatusLabel({
+        hasActiveSession: Boolean(session?.id),
+        sessionStatus: session?.status ?? null,
+        matchDeadlineAt: c?.match_deadline_at ?? null,
+        sessionCreatedAt: session?.created_at ?? null,
+        recruitmentSessionTtlMinutes,
+      });
 
       return {
         class_id: classId,
@@ -277,7 +352,7 @@ export async function GET(req: Request) {
         session_id: session?.id ?? null,
         session_status: session?.status ?? null,
         session_created_at: session?.created_at ?? null,
-        status_label: session?.status_label ?? null,
+        status_label: statusLabel,
         is_recruiting: Boolean(session?.is_recruiting),
         next_meeting_plan: meetingPlan,
         active_call_request: callRequest,
@@ -285,58 +360,71 @@ export async function GET(req: Request) {
       };
     });
 
-    // 7) レガシー入口クラスだけ除外
-    const classes = merged.filter(
-      (c: any) => !isLegacyEntryClassName(c?.name)
-    );
-    const legacyFilteredCount = merged.length - classes.length;
-
-    const [slotsRes, billableRes] = await Promise.all([
+    const [slotsRes, snapshotRes] = await Promise.all([
       getClassSlotsForDevice(supabaseAdmin, normalizedDeviceId),
-      getBillableMembershipSnapshot(supabaseAdmin, normalizedDeviceId),
+      getActiveMembershipSnapshot(supabaseAdmin, normalizedDeviceId),
     ]);
 
-    const classSlots = slotsRes.ok ? slotsRes.classSlots : null;
-    const membershipSnapshot = billableRes.ok ? billableRes.snapshot : null;
+    const membershipSnapshot = snapshotRes.ok ? snapshotRes.snapshot : null;
+    const visibility = buildHomeClassVisibilityDebug({
+      rows: membershipRows,
+      visibleClassIds: classes.map((c) => String(c.id)),
+    });
 
     console.log("[class/mine] slot snapshot", {
-      classSlots,
-      membershipSnapshot,
+      classSlots: slotsRes.ok ? slotsRes.classSlots : null,
+      billableCount: membershipSnapshot?.billableCount ?? null,
       visibleClassCount: classes.length,
+      hidden: visibility.hidden.map((row) => ({
+        classId: tailId(row.classId),
+        reason: row.reason,
+      })),
     });
 
     return NextResponse.json({
       ok: true,
       classes,
-      class_slots: classSlots,
+      class_slots: slotsRes.ok ? slotsRes.classSlots : null,
       membership_count_billable: membershipSnapshot?.billableCount ?? null,
       membership_count_total: membershipSnapshot?.totalCount ?? null,
       membership_count_legacy: membershipSnapshot?.legacyCount ?? null,
       recruitment_session_ttl_minutes: recruitmentSessionTtlMinutes,
       recruitment_session_ttl_unlimited: recruitmentSessionTtlSetting.unlimited,
       debug: {
-        membershipCount: memberships?.length ?? 0,
+        membershipCount: membershipRows.length,
         visibleClassCount: classes.length,
         billableMembershipCount: membershipSnapshot?.billableCount ?? null,
         legacyMembershipCount: membershipSnapshot?.legacyCount ?? null,
-        classSlots,
+        classSlots: slotsRes.ok ? slotsRes.classSlots : null,
         classRowCount: classRows?.length ?? 0,
-        topicRowCount: topicRows?.length ?? 0,
+        topicRowCount: topicRows.length,
         sessionRowCount: sessionRows?.length ?? 0,
-        joinFailedCount: classes.filter((c: any) => !c.join_ok).length,
-        legacyFilteredCount,
+        joinFailedCount: classes.filter((c) => !c.join_ok).length,
         billableClassIds: membershipSnapshot?.billableClassIds ?? [],
         legacyClassIds: membershipSnapshot?.legacyClassIds ?? [],
+        visibility,
+        ...(debugMemberships
+          ? {
+              memberships: membershipRows,
+              visibleClasses: classes.map((c) => ({
+                id: c.id,
+                name: c.name,
+                has_active_session: c.has_active_session,
+                status_label: c.status_label,
+              })),
+            }
+          : {}),
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "unknown_error";
     console.error("[class/mine] internal error =", e);
 
     return NextResponse.json(
       {
         ok: false,
         error: "internal_error",
-        detail: e?.message ?? "unknown_error",
+        detail: message,
       },
       { status: 500 }
     );

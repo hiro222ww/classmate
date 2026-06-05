@@ -9,6 +9,7 @@ export const NON_RECRUITING_SESSION_STATUSES = [
 export type ClassStatusLabel =
   | "通話中"
   | "入室中"
+  | "所属中"
   | "募集中"
   | "募集締切"
   | "募集停止"

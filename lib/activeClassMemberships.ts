@@ -1,0 +1,220 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { isBillableClassName, isLegacyEntryClassName } from "@/lib/legacyClassNames";
+
+export type ActiveClassMembershipRow = {
+  classId: string;
+  className: string | null;
+  joinedAt: string | null;
+  isLegacy: boolean;
+  isBillable: boolean;
+  classMissing: boolean;
+};
+
+export type ActiveMembershipSnapshot = {
+  totalCount: number;
+  billableCount: number;
+  legacyCount: number;
+  billableClassIds: string[];
+  legacyClassIds: string[];
+  rows: ActiveClassMembershipRow[];
+};
+
+export type HomeClassVisibilityRow = {
+  classId: string;
+  className: string | null;
+  visible: boolean;
+  countsTowardSlots: boolean;
+  reason: string | null;
+};
+
+export type HomeClassVisibilityDebug = {
+  activeMembershipClassIds: string[];
+  visibleClassIds: string[];
+  slotCountClassIds: string[];
+  hidden: HomeClassVisibilityRow[];
+};
+
+function tailId(id: string) {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  return value.length <= 6 ? value : value.slice(-6);
+}
+
+export async function fetchActiveClassMemberships(
+  sb: SupabaseClient,
+  deviceId: string
+): Promise<
+  | { ok: true; rows: ActiveClassMembershipRow[] }
+  | { ok: false; error: string }
+> {
+  const normalizedDeviceId = String(deviceId ?? "").trim();
+  if (!normalizedDeviceId) {
+    return { ok: false, error: "device_id_missing" };
+  }
+
+  const { data, error } = await sb
+    .from("class_memberships")
+    .select("class_id, joined_at")
+    .eq("device_id", normalizedDeviceId);
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  const membershipRows = data ?? [];
+  const classIds = Array.from(
+    new Set(
+      membershipRows
+        .map((row) => String((row as { class_id?: unknown }).class_id ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (classIds.length === 0) {
+    return { ok: true, rows: [] };
+  }
+
+  const { data: classRows, error: classErr } = await sb
+    .from("classes")
+    .select("id, name")
+    .in("id", classIds);
+
+  if (classErr) {
+    return { ok: false, error: classErr.message };
+  }
+
+  const classById = new Map<string, { name: string | null }>();
+  for (const row of classRows ?? []) {
+    const id = String((row as { id?: unknown }).id ?? "").trim();
+    if (!id) continue;
+    classById.set(id, {
+      name: String((row as { name?: unknown }).name ?? "").trim() || null,
+    });
+  }
+
+  const joinedAtByClass = new Map<string, string | null>();
+  for (const row of membershipRows) {
+    const classId = String((row as { class_id?: unknown }).class_id ?? "").trim();
+    if (!classId) continue;
+    joinedAtByClass.set(
+      classId,
+      String((row as { joined_at?: unknown }).joined_at ?? "").trim() || null
+    );
+  }
+
+  const rows: ActiveClassMembershipRow[] = classIds.map((classId) => {
+    const classInfo = classById.get(classId);
+    const className = classInfo?.name ?? null;
+    const isLegacy = isLegacyEntryClassName(className);
+    return {
+      classId,
+      className,
+      joinedAt: joinedAtByClass.get(classId) ?? null,
+      isLegacy,
+      isBillable: isBillableClassName(className),
+      classMissing: !classInfo,
+    };
+  });
+
+  return { ok: true, rows };
+}
+
+export function buildActiveMembershipSnapshot(
+  rows: ActiveClassMembershipRow[]
+): ActiveMembershipSnapshot {
+  const billableClassIds: string[] = [];
+  const legacyClassIds: string[] = [];
+
+  for (const row of rows) {
+    if (row.isBillable) {
+      billableClassIds.push(row.classId);
+    } else {
+      legacyClassIds.push(row.classId);
+    }
+  }
+
+  return {
+    totalCount: rows.length,
+    billableCount: billableClassIds.length,
+    legacyCount: legacyClassIds.length,
+    billableClassIds,
+    legacyClassIds,
+    rows,
+  };
+}
+
+export async function getActiveMembershipSnapshot(
+  sb: SupabaseClient,
+  deviceId: string
+): Promise<
+  | { ok: true; snapshot: ActiveMembershipSnapshot }
+  | { ok: false; error: string }
+> {
+  const fetched = await fetchActiveClassMemberships(sb, deviceId);
+  if (!fetched.ok) {
+    return { ok: false, error: fetched.error };
+  }
+
+  const snapshot = buildActiveMembershipSnapshot(fetched.rows);
+
+  console.log(
+    `[class-slots] count activeMemberships=${snapshot.billableCount} ` +
+      `legacy=${snapshot.legacyCount} total=${snapshot.totalCount} ` +
+      `classIds=${snapshot.billableClassIds.map(tailId).join(",") || "-"}`
+  );
+
+  return { ok: true, snapshot };
+}
+
+/** @deprecated Use getActiveMembershipSnapshot — kept for existing imports. */
+export async function getBillableMembershipSnapshot(
+  sb: SupabaseClient,
+  deviceId: string
+) {
+  const res = await getActiveMembershipSnapshot(sb, deviceId);
+  if (!res.ok) {
+    return { ok: false as const, error: res.error };
+  }
+  const snapshot = res.snapshot;
+  return {
+    ok: true as const,
+    snapshot: {
+      totalCount: snapshot.totalCount,
+      billableCount: snapshot.billableCount,
+      legacyCount: snapshot.legacyCount,
+      billableClassIds: snapshot.billableClassIds,
+      legacyClassIds: snapshot.legacyClassIds,
+    },
+  };
+}
+
+export function buildHomeClassVisibilityDebug(params: {
+  rows: ActiveClassMembershipRow[];
+  visibleClassIds: string[];
+}): HomeClassVisibilityDebug {
+  const visibleSet = new Set(params.visibleClassIds);
+  const hidden: HomeClassVisibilityRow[] = [];
+
+  for (const row of params.rows) {
+    if (visibleSet.has(row.classId)) continue;
+    const reason = row.isLegacy
+      ? "legacy_entry_class"
+      : row.classMissing
+        ? "class_row_missing"
+        : "filtered";
+    hidden.push({
+      classId: row.classId,
+      className: row.className,
+      visible: false,
+      countsTowardSlots: row.isBillable,
+      reason,
+    });
+  }
+
+  return {
+    activeMembershipClassIds: params.rows.map((row) => row.classId),
+    visibleClassIds: params.visibleClassIds,
+    slotCountClassIds: params.rows.filter((row) => row.isBillable).map((row) => row.classId),
+    hidden,
+  };
+}

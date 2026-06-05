@@ -285,7 +285,7 @@ function getClassStatusStyle(label: string) {
     };
   }
 
-  if (label === "入室中") {
+  if (label === "入室中" || label === "所属中") {
     return {
       background: "#e0e7ff",
       color: "#3730a3",
@@ -422,12 +422,38 @@ export default function HomeClient() {
           return;
         }
 
-        const nextClasses = filterOutLocallyHiddenClasses(
-          Array.isArray(classesJson.classes) ? classesJson.classes : []
-        ) as MineClass[];
+        const rawClasses = Array.isArray(classesJson.classes)
+          ? (classesJson.classes as MineClass[])
+          : [];
+        const nextClasses = filterOutLocallyHiddenClasses(rawClasses);
         const classIds = nextClasses.map((c: MineClass) =>
           String(c.id ?? "").trim()
         );
+
+        for (const c of rawClasses) {
+          const id = String(c.id ?? "").trim();
+          if (!id) continue;
+          if (isLocallyHiddenClass(id)) {
+            console.log(
+              `[home] class-hidden reason=local_session_storage class=${id.slice(-6)}`
+            );
+            continue;
+          }
+          if (!leavingClassIdsRef.current.has(id)) {
+            clearLocallyHiddenClass(id);
+          }
+        }
+
+        const billableCount = Number(classesJson.membership_count_billable ?? 0);
+        const membershipCount = Number(classesJson.debug?.membershipCount ?? 0);
+        if (billableCount > 0 && nextClasses.length === 0) {
+          console.warn(
+            `[home] joined-classes mismatch billable=${billableCount} visible=0 ` +
+              `memberships=${membershipCount} hidden=${JSON.stringify(
+                classesJson.debug?.visibility?.hidden ?? []
+              )}`
+          );
+        }
 
         if (classesJson.recruitment_session_ttl_unlimited === true) {
           setRecruitmentSessionTtlUnlimited(true);
@@ -439,11 +465,10 @@ export default function HomeClient() {
           );
         }
 
-        console.log("[home] fetchJoinedClasses success", {
-          reason,
-          count: nextClasses.length,
-          classIds,
-        });
+        console.log(
+          `[home] joined-classes source=class_memberships count=${nextClasses.length} ` +
+            `classIds=${classIds.map((id) => id.slice(-6)).join(",") || "-"} reason=${reason}`
+        );
 
         setClasses((prev) => {
           const forceApply =
@@ -452,7 +477,13 @@ export default function HomeClient() {
             reason === "visibility" ||
             reason === "manual";
 
-          if (!forceApply && prev.length > 0 && nextClasses.length === 0) {
+          if (
+            !forceApply &&
+            prev.length > 0 &&
+            nextClasses.length === 0 &&
+            billableCount <= 0 &&
+            membershipCount <= 0
+          ) {
             console.warn("[home] ignore empty classes snapshot once");
             return prev;
           }
@@ -1494,14 +1525,21 @@ return () => {
         return;
       }
 
+      const hasActiveSession = Boolean(target.has_active_session && target.session_id);
       const openBody = buildMatchJoinRequestBody({
         deviceId: currentDeviceId,
         openJoinedClassId: target.id,
-        sessionId: target.session_id ?? null,
+        sessionId: hasActiveSession ? target.session_id ?? null : null,
         topicKey: target.topic_key,
         worldKey: target.world_key ?? "default",
         capacity: 5,
       });
+
+      if (!hasActiveSession) {
+        console.log(
+          `[home openClass] no-active-session create-new class=${String(target.id).slice(-6)}`
+        );
+      }
 
       console.log("[home openClass] match-join-v2 request body =", openBody);
 
@@ -1721,7 +1759,6 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
     leavingClassIdsRef.current.add(classId);
     setLeavingClassId(classId);
-    markLocallyHiddenClass(classId);
     console.log("[home-leave] optimistic-remove", { classId, deviceId: currentDeviceId });
 
     classesBeforeLeaveRef.current = classes;
@@ -1767,7 +1804,10 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       const alreadyLeft = errorCode === "not_member";
 
       if (res.ok && json?.ok) {
-        console.log("[home-leave] success", { classId, deviceId: currentDeviceId });
+        console.log(
+          `[class-leave] membership-updated class=${classId.slice(-6)} status=left device=${currentDeviceId.slice(-6)}`
+        );
+        markLocallyHiddenClass(classId);
         classesBeforeLeaveRef.current = null;
         return;
       }
@@ -1910,15 +1950,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                 lastInSessionAtMap,
                 sessionMemberIds
               );
-              const recruitmentFallbackLabel = getClassStatusLabel({
-                sessionStatus: c.session_status,
-                matchDeadlineAt: c.match_deadline_at,
-                hasActiveSession: c.has_active_session,
-                sessionCreatedAt: c.session_created_at,
-                recruitmentSessionTtlMinutes,
-              });
               const classStatusLabel =
-                participationLabel ?? recruitmentFallbackLabel;
+                participationLabel ?? c.status_label ?? "所属中";
               const classStatusPill = getClassStatusStyle(classStatusLabel);
               const { inCall, waiting } = summarizeMemberParticipation(
                 members,
