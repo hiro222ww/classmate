@@ -11,6 +11,7 @@ type Props = {
   children: React.ReactNode;
 
   onBack?: () => void;
+  onHome?: () => void;
   onStartCall?: () => void;
   startDisabled?: boolean;
   startLabel?: string;
@@ -25,6 +26,7 @@ export function ChalkboardRoomShell({
   right,
   children,
   onBack,
+  onHome,
   onStartCall,
   startDisabled = false,
   startLabel = "通話を開始",
@@ -106,21 +108,42 @@ export function ChalkboardRoomShell({
           移動
         </Link>
 
-        <Link
-          href={homeHref}
-          style={{
-            display: "inline-block",
-            padding: "8px 10px",
-            borderRadius: 10,
-            background: "#f2f2f2",
-            color: "#111",
-            textDecoration: "none",
-            fontWeight: 900,
-            fontSize: 13,
-          }}
-        >
-          ホーム
-        </Link>
+        {onHome ? (
+          <button
+            type="button"
+            onClick={onHome}
+            style={{
+              display: "inline-block",
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: "#f2f2f2",
+              color: "#111",
+              textDecoration: "none",
+              fontWeight: 900,
+              fontSize: 13,
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            ホーム
+          </button>
+        ) : (
+          <Link
+            href={homeHref}
+            style={{
+              display: "inline-block",
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: "#f2f2f2",
+              color: "#111",
+              textDecoration: "none",
+              fontWeight: 900,
+              fontSize: 13,
+            }}
+          >
+            ホーム
+          </Link>
+        )}
 
         {right}
       </div>

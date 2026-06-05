@@ -453,12 +453,35 @@ export default function HomeClient() {
         const billableCount = Number(classesJson.membership_count_billable ?? 0);
         const membershipCount = Number(classesJson.debug?.membershipCount ?? 0);
         if (billableCount > 0 && nextClasses.length === 0) {
+          const billableIds = Array.isArray(classesJson.debug?.billableClassIds)
+            ? (classesJson.debug.billableClassIds as string[])
+            : [];
+          for (const billableId of billableIds) {
+            const hid = String(billableId ?? "").trim();
+            if (!hid) continue;
+            if (isLocallyHiddenClass(hid)) {
+              console.log(
+                `[home] clear-local-hidden reason=billable_membership_mismatch class=${hid.slice(-6)}`
+              );
+            }
+            clearLocallyHiddenClass(hid);
+          }
           console.warn(
             `[home] joined-classes mismatch billable=${billableCount} visible=0 ` +
               `memberships=${membershipCount} hidden=${JSON.stringify(
                 classesJson.debug?.visibility?.hidden ?? []
               )}`
           );
+          if (
+            reason === "mount" ||
+            reason === "focus" ||
+            reason === "visibility" ||
+            reason === "return_home"
+          ) {
+            window.setTimeout(() => {
+              void fetchJoinedClasses("membership_mismatch_retry", { deviceId: id });
+            }, 300);
+          }
         }
 
         if (classesJson.recruitment_session_ttl_unlimited === true) {

@@ -17,6 +17,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
+import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import {
@@ -621,6 +622,48 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     return prev;
   });
 }
+
+  /** Return to Home — keeps session_members and class_memberships; presence only. */
+  const goHome = useCallback(() => {
+    const did = String(deviceId ?? "").trim();
+    const cid = String(classId ?? "").trim();
+
+    logNavigationIntent("return_home", "RoomClient.goHome");
+    logRouteChange(getCurrentPath(), withDev("/"), "return_home");
+
+    if (cid) {
+      clearLocallyHiddenClass(cid);
+    }
+
+    if (cid && did) {
+      void fetch("/api/class/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          classId: cid,
+          deviceId: did,
+          screen: "home",
+        }),
+        cache: "no-store",
+      })
+        .then((res) => {
+          if (res.ok) {
+            console.log(
+              `[room] return-home presence=screen=home class=${cid.slice(-6)} ` +
+                `session=${sessionId.slice(-6)} device=${did.slice(-4)}`
+            );
+          }
+        })
+        .catch((e) => {
+          console.warn("[room] return-home presence failed", {
+            classId: cid.slice(-6),
+            error: e instanceof Error ? e.message : String(e),
+          });
+        });
+    }
+
+    router.push(withDev("/"));
+  }, [classId, deviceId, router, sessionId]);
 
   useEffect(() => {
     const id = String(getDeviceId() ?? "").trim();
@@ -1952,6 +1995,7 @@ if (!shouldAutoStart) return;
                       : []
           }
           onBack={() => router.push(withDev("/class/select"))}
+          onHome={goHome}
           onStartCall={() =>
             router.push(
               withDev(
