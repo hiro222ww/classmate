@@ -46,7 +46,9 @@ export function markVoicePerf(
 
     const connectedAt = bucket.get("ice_connected")?.atMs;
     if (
-      (event === "audio_confirmed" || event === "playback_confirmed") &&
+      (event === "audio_confirmed" ||
+        event === "audio_confirmed_strict" ||
+        event === "playback_confirmed") &&
       connectedAt != null
     ) {
       const delta = Math.round(at - connectedAt);
@@ -94,7 +96,9 @@ const PIPELINE_EVENTS = [
   "remote_track_received",
   "remote_audio_attached",
   "audio_play_success",
+  "audio_provisional",
   "audio_confirmed",
+  "audio_confirmed_strict",
   "peer_closed",
 ] as const;
 
@@ -124,7 +128,9 @@ const PEER_PIPELINE_EVENTS = [
   "ice_received",
   "ice_connected",
   "remote_track_received",
+  "audio_provisional",
   "audio_confirmed",
+  "audio_confirmed_strict",
   "peer_closed",
 ] as const;
 
@@ -170,7 +176,10 @@ function peerHadEarlyClose(remote: string): boolean {
   if (!bucket?.has("peer_closed")) return false;
   const closedAt = bucket.get("peer_closed")?.atMs ?? 0;
   const iceAt = bucket.get("ice_connected")?.atMs ?? 0;
-  const audioAt = bucket.get("audio_confirmed")?.atMs ?? 0;
+  const audioAt =
+    bucket.get("audio_confirmed_strict")?.atMs ??
+    bucket.get("audio_confirmed")?.atMs ??
+    0;
   if (audioAt > 0) return false;
   if (iceAt > 0 && closedAt > iceAt) return true;
   return closedAt > 0 && iceAt <= 0;
@@ -202,7 +211,8 @@ export function classifyVoicePipelineFailure(
   if (!has("offer_sent") && !has("offer_received")) return "B";
   if (has("offer_received") || has("answer_received") || has("answer_sent")) {
     if (!has("ice_connected")) return "C";
-    if (!has("audio_confirmed") && !has("remote_track_received")) return "D";
+    if (!has("remote_track_received")) return "D";
+    if (!has("audio_confirmed_strict")) return "D";
   } else if (has("offer_sent")) {
     return "B";
   }
@@ -257,6 +267,7 @@ export type VoiceConnectionFailureContext = {
   answerReceived: boolean;
   iceConnected: boolean;
   audioConfirmed: boolean;
+  audioConfirmedStrict: boolean;
   peerCloseReason: string | null;
   remoteIdsSnapshot: string;
 };
@@ -277,7 +288,8 @@ export function getVoiceConnectionFailureContext(
     offerSent: has("offer_sent"),
     answerReceived: has("answer_received"),
     iceConnected: has("ice_connected"),
-    audioConfirmed: has("audio_confirmed") || has("audio_play_success"),
+    audioConfirmed: has("audio_confirmed_strict") || has("audio_confirmed"),
+    audioConfirmedStrict: has("audio_confirmed_strict"),
     peerCloseReason: opts?.peerCloseReason ?? null,
     remoteIdsSnapshot: (opts?.remoteIdsSnapshot ?? [])
       .map((id) => compactDeviceId(id))
@@ -293,7 +305,7 @@ export function formatVoiceFailureConnectionState(
     `offer=${ctx.offerSent ? 1 : 0}|` +
     `answer=${ctx.answerReceived ? 1 : 0}|` +
     `ice=${ctx.iceConnected ? 1 : 0}|` +
-    `audio=${ctx.audioConfirmed ? 1 : 0}|` +
+    `audio=${ctx.audioConfirmedStrict ? 1 : ctx.audioConfirmed ? 0.5 : 0}|` +
     `close=${ctx.peerCloseReason ?? "-"}|` +
     `remotes=${ctx.remoteIdsSnapshot}`
   );

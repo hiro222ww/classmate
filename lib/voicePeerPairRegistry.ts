@@ -19,6 +19,7 @@ export type VoicePeerPairSnapshot = {
   iceReceived: boolean;
   remoteTrackReceived: boolean;
   audioConfirmed: boolean;
+  audioProvisional?: boolean;
   lastSignalAt: number | null;
   lastAudioAt: number | null;
   selectedLocalCandidateType: string | null;

@@ -17,11 +17,17 @@ import {
   logVoicePeerAutoRecover,
 } from "./voiceDiagnostics";
 import { markVoicePerf } from "@/lib/voicePerf";
+import {
+  evaluateAudioConfirmedStrict,
+  getPeerInboundDeltaBytes,
+  logRemoteAudioConfirmCheck,
+  type RemoteAudioConfirmInput,
+} from "@/lib/voiceAudioDiagnostics";
 
 const voicePolicy = getVoiceModePolicy();
 const ATTACH_LOG_THROTTLE_MS = 5000;
 const PROVISIONAL_PLAYBACK_MS = 15000;
-const SILENT_PLAYBACK_SUSPECT_MS = 5000;
+const SILENT_PLAYBACK_SUSPECT_MS = 8000;
 const CONFIRMED_LEVEL_THRESHOLD = 0.02;
 const REATTACH_DELAY_MS = 100;
 const AUDIO_OUTPUT_CONFIG_LOG_THROTTLE_MS = 10000;
@@ -45,6 +51,7 @@ export type RemotePlaybackHealth = {
   playFailedAt: number | null;
   lastAttachAt: number | null;
   audioActuallyPlaying: boolean;
+  audioConfirmedStrict: boolean;
 };
 
 const PLAYBACK_HEALTH_LOG_THROTTLE_MS = 2000;
@@ -247,9 +254,9 @@ function evaluateRemotePlaybackHealth(params: {
   const provisionalActive =
     provisionalEligible &&
     provisionalStartedAt != null &&
-    Date.now() - provisionalStartedAt < PROVISIONAL_PLAYBACK_MS;
+    nowMs - provisionalStartedAt < PROVISIONAL_PLAYBACK_MS;
 
-  const playbackActive = confirmedActive || provisionalActive;
+  const playbackActive = confirmedActive;
   const playbackActiveMode: PlaybackActiveMode = confirmedActive
     ? "confirmed"
     : provisionalActive
@@ -266,19 +273,7 @@ function evaluateRemotePlaybackHealth(params: {
       webAudioFallback ||
       (voicePolicy.voiceMode !== "ios_conservative" && afterMs >= 1500));
 
-  const playSuccessRecent =
-    lastPlaySuccessAt != null &&
-    nowMs - lastPlaySuccessAt < PROVISIONAL_PLAYBACK_MS;
-
-  const audioActuallyPlaying =
-    trackReady === "live" &&
-    !trackMuted &&
-    !elPaused &&
-    (playbackActive ||
-      verified ||
-      (playSuccess && playSuccessRecent) ||
-      currentTimeAdvanced ||
-      level > CONFIRMED_LEVEL_THRESHOLD);
+  const audioActuallyPlaying = confirmedActive;
 
   return {
     playSuccess,
@@ -295,6 +290,40 @@ function evaluateRemotePlaybackHealth(params: {
     playFailedAt,
     lastAttachAt,
     audioActuallyPlaying,
+    audioConfirmedStrict: false,
+  };
+}
+
+function buildRemoteAudioConfirmInput(params: {
+  el: HTMLAudioElement;
+  stream: MediaStream;
+  health: Pick<
+    RemotePlaybackHealth,
+    "playSuccess" | "currentTimeAdvanced" | "trackMuted" | "trackReady" | "level"
+  >;
+  remoteId: string;
+  playFailed: boolean;
+}): RemoteAudioConfirmInput {
+  const { el, stream, health, remoteId, playFailed } = params;
+  const track = getPlaybackTrack(el, stream);
+  return {
+    hasElement: true,
+    srcObjectSet: el.srcObject === stream,
+    audioTracks: stream.getAudioTracks().length,
+    paused: el.paused,
+    elementMuted: el.muted,
+    volume: el.volume,
+    currentTime: el.currentTime,
+    currentTimeAdvanced: health.currentTimeAdvanced,
+    readyState: el.readyState,
+    networkState: el.networkState,
+    trackReadyState: health.trackReady,
+    trackMuted: health.trackMuted,
+    trackEnabled: track?.enabled ?? false,
+    level: health.level,
+    playSuccess: health.playSuccess,
+    playFailed,
+    inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
   };
 }
 
@@ -431,7 +460,7 @@ export default function RemoteAudio({
       if (params.playSuccessEvent) {
         playFailedAtRef.current = null;
       }
-      const health = evaluateRemotePlaybackHealth({
+      const baseHealth = evaluateRemotePlaybackHealth({
         el,
         stream,
         playSuccess: params.playSuccess,
@@ -446,6 +475,23 @@ export default function RemoteAudio({
         lastAttachAt: lastAttachAtRef.current,
         afterMs: params.afterMs,
       });
+      const confirmInput = buildRemoteAudioConfirmInput({
+        el,
+        stream,
+        health: baseHealth,
+        remoteId,
+        playFailed: playFailedAtRef.current != null,
+      });
+      const audioConfirmedStrict = evaluateAudioConfirmedStrict(confirmInput);
+      logRemoteAudioConfirmCheck({
+        remoteId,
+        check: confirmInput,
+        audioConfirmedStrict,
+      });
+      const health: RemotePlaybackHealth = {
+        ...baseHealth,
+        audioConfirmedStrict,
+      };
       if (health.playbackActiveMode === "confirmed") {
         firstConfirmedAtRef.current = Date.now();
         silentReattachAttemptsRef.current = 0;
@@ -819,7 +865,7 @@ export default function RemoteAudio({
 
   const maybeHandleSilentPlaybackSuspect = useCallback(
     (el: HTMLAudioElement, health: RemotePlaybackHealth, level: number) => {
-      if (!playSuccessRef.current || health.playbackActiveMode === "confirmed") {
+      if (!playSuccessRef.current || health.audioConfirmedStrict) {
         return;
       }
 
@@ -871,22 +917,14 @@ export default function RemoteAudio({
         const currentTime = el.currentTime;
         const level = levelRef.current;
 
-        const health = evaluateRemotePlaybackHealth({
-          el,
-          stream,
+        const health = publishPlaybackHealth(el, {
           playSuccess: playSuccessRef.current,
           currentTime,
           previousCurrentTime,
-          level,
-          webAudioFallback: fallbackActiveRef.current,
-          provisionalStartedAt: provisionalPlaybackStartedAtRef.current,
-          lastPlaySuccessAt: playSuccessAtRef.current,
-          playFailedAt: playFailedAtRef.current,
-          lastAttachAt: lastAttachAtRef.current,
           afterMs,
         });
 
-        if (health.playbackActiveMode === "confirmed") {
+        if (health.audioConfirmedStrict) {
           firstConfirmedAtRef.current = Date.now();
           silentReattachAttemptsRef.current = 0;
           unconfirmedTimeoutFiredRef.current = false;
@@ -904,13 +942,7 @@ export default function RemoteAudio({
         });
 
         if (health.playbackActive) {
-          emitPlaybackHealth(health);
-          logRemotePlaybackActive(
-            health,
-            health.playbackActiveMode === "provisional"
-              ? "live_track_playing_no_meter"
-              : "playback_check_confirmed"
-          );
+          logRemotePlaybackActive(health, "playback_check_confirmed");
         }
 
         maybeHandleSilentPlaybackSuspect(el, health, level);
@@ -964,10 +996,10 @@ export default function RemoteAudio({
     },
     [
       clearPlaybackChecks,
-      emitPlaybackHealth,
       instanceId,
       logRemotePlaybackActive,
       maybeHandleSilentPlaybackSuspect,
+      publishPlaybackHealth,
       remoteId,
       stream,
     ]

@@ -10,6 +10,10 @@ import {
   describeVoiceTransportMode,
   parseExplicitBoolean,
 } from "@/lib/voiceTransportMode";
+import {
+  formatConnectedPairStatusLabel,
+  parseVoiceConnectedState,
+} from "@/lib/voiceAudioDiagnostics";
 
 type VoiceSettings = {
   voice_enabled: boolean;
@@ -148,11 +152,7 @@ function pairStatusLabel(log: VoiceLog) {
     return `${detail} / class=${failClass}`;
   }
 
-  if (state === "connected" || log.phase === "connected") {
-    return "OK / audio OK";
-  }
-
-  return state || "unknown";
+  return formatConnectedPairStatusLabel(state, log.phase);
 }
 
 function groupLogsBySession(logs: VoiceLog[]) {
@@ -717,6 +717,9 @@ export default function AdminVoicePage() {
                       const failure = parseVoiceFailureState(
                         String(log.connection_state ?? "")
                       );
+                      const connected = parseVoiceConnectedState(
+                        String(log.connection_state ?? "")
+                      );
 
                       return (
                         <div
@@ -757,6 +760,22 @@ export default function AdminVoicePage() {
                               offer={failure.offer} answer={failure.answer} ice=
                               {failure.ice} audio={failure.audio} class=
                               {failure.voiceClass ?? "-"}
+                            </div>
+                          ) : connected.route != null ? (
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: "#6b7280",
+                                marginTop: 4,
+                              }}
+                            >
+                              route={connected.route} ice={connected.ice} track=
+                              {connected.track} playback={connected.playback}{" "}
+                              audio={connected.audio}
+                              {connected.sub && connected.sub !== "-"
+                                ? ` sub=${connected.sub}`
+                                : ""}
+                              {connected.oneWay === "1" ? " oneWay=1" : ""}
                             </div>
                           ) : null}
                         </div>

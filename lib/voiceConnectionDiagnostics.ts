@@ -15,8 +15,13 @@ import {
 
 function formatPairLine(pair: VoicePeerPairSnapshot): string {
   const remote = compactDeviceId(pair.remoteDeviceId);
-  const audio =
-    pair.audioConfirmed || pair.voiceClass === "OK" ? "audio OK" : "audio not confirmed";
+  const audio = pair.audioConfirmed
+    ? "audio OK"
+    : pair.audioProvisional
+      ? "audio provisional"
+      : pair.iceState === "connected" || pair.iceState === "completed"
+        ? "audio pending"
+        : "audio not confirmed";
   const route = pair.route === "turn" ? "TURN" : pair.route === "p2p" ? "P2P" : "unknown";
   const status = pair.voiceClass === "OK" ? "OK" : `failed(${pair.voiceClass})`;
   const detail = !pair.offerReceived && pair.role === "passive"
