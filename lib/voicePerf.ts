@@ -233,3 +233,21 @@ export function markVoicePeerClose(
   markVoicePerf("peer_closed", { remoteId, extra: `reason=${reason}${extra ? ` ${extra}` : ""}` });
   logVoicePipelineClassification(remoteId, `close reason=${reason}`);
 }
+
+export function getVoicePeerPipelineSnapshot(remoteId: string) {
+  const remote = compactDeviceId(remoteId);
+  const bucket = peerMarks.get(remote);
+  const has = (event: string) => bucket?.has(event) ?? false;
+
+  return {
+    failureClass: classifyVoicePipelineFailure(remoteId),
+    offerSent: has("offer_sent"),
+    offerReceived: has("offer_received"),
+    answerSent: has("answer_sent"),
+    answerReceived: has("answer_received"),
+    iceConnected: has("ice_connected"),
+    audioConfirmed: has("audio_confirmed"),
+    peerClosed: has("peer_closed"),
+    peerConnectionCreated: has("peer_connection_created"),
+  };
+}

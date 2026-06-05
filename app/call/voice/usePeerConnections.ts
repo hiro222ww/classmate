@@ -56,11 +56,17 @@ import {
   getP2pCheckingGraceMs,
 } from "@/lib/voiceJoinTiming";
 import {
+  getVoicePeerPipelineSnapshot,
   logVoicePerfPipeline,
   logVoicePipelineClassification,
   markVoicePeerClose,
   markVoicePerf,
 } from "@/lib/voicePerf";
+import {
+  countVoiceConnectionMembers,
+  getVoiceConnectionRemoteIds,
+  isViewerInVoiceConnection,
+} from "@/lib/voiceSessionMembers";
 import {
   createRemotePeerGraceRefs,
   getClosePeerEvidence,
@@ -875,12 +881,8 @@ export function usePeerConnections({
   resetSessionVoiceCache(sessionId);
 
   const inCallMemberCount = useMemo(() => {
-    const inCallIds = members
-      .filter((m) => m.is_in_call !== false)
-      .map((m) => String(m.device_id ?? "").trim())
-      .filter(Boolean);
-    return Math.max(1, inCallIds.length || members.length || 1);
-  }, [members]);
+    return countVoiceConnectionMembers(members, deviceId);
+  }, [members, deviceId]);
   onVoiceCleanupRef.current = onVoiceCleanup;
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -1438,22 +1440,12 @@ export function usePeerConnections({
   }, [members]);
 
   const getSessionMemberRemoteIds = useCallback(() => {
-    const selfId = String(deviceId ?? "").trim();
-    return activeMembers
-      .map((m) => String(m.device_id ?? "").trim())
-      .filter((id) => id && id !== selfId);
+    return getVoiceConnectionRemoteIds(activeMembers, deviceId);
   }, [activeMembers, deviceId]);
 
   const getStrictRemoteIds = useCallback(() => {
-    if (isStableVoiceJoinMode()) {
-      return getSessionMemberRemoteIds();
-    }
-    const selfId = String(deviceId ?? "").trim();
-    return activeMembers
-      .filter((m) => m.is_in_call === true)
-      .map((m) => String(m.device_id ?? "").trim())
-      .filter((id) => id && id !== selfId);
-  }, [activeMembers, deviceId, getSessionMemberRemoteIds]);
+    return getVoiceConnectionRemoteIds(activeMembers, deviceId);
+  }, [activeMembers, deviceId]);
 
   const getRemoteIds = useCallback(() => {
     const strict = getStrictRemoteIds();
@@ -1768,6 +1760,9 @@ export function usePeerConnections({
 
   const isRemoteInCall = useCallback(
     (remoteId: string) => {
+      if (isStableVoiceJoinMode()) {
+        return getRemoteIds().includes(remoteId);
+      }
       const strict = getStrictRemoteIds();
       if (strict.includes(remoteId)) return true;
       const decision = shouldCloseRemotePeerNow(
@@ -1775,9 +1770,9 @@ export function usePeerConnections({
         strict,
         remotePeerGraceRefsRef.current
       );
-      return !decision.closeNow && decision.via === "grace_active";
+      return !decision.closeNow;
     },
-    [getStrictRemoteIds]
+    [getRemoteIds, getStrictRemoteIds]
   );
 
   const peerNeedsPc = useCallback((remoteId: string) => {
@@ -2201,6 +2196,24 @@ export function usePeerConnections({
 
         const startedAt = connectStartedAtRef.current.get(remoteId);
         const timeToConnectMs = startedAt ? Date.now() - startedAt : null;
+        const remoteIds = getVoiceConnectionRemoteIds(membersRef.current, deviceId);
+        const pipeline = getVoicePeerPipelineSnapshot(remoteId);
+        const failureClass = phase === "failed" ? pipeline.failureClass : "OK";
+        const closeEvidence = getClosePeerEvidence(
+          remoteId,
+          remotePeerGraceRefsRef.current,
+          membersRef.current
+        );
+
+        if (phase === "failed") {
+          debugConsoleLog(
+            `[voice-perf] admin-failed class=${failureClass} remote=${compactDeviceId(remoteId)} ` +
+              `remoteIds=${remoteIds.map((id) => compactDeviceId(id)).join(",") || "-"} ` +
+              `offerSent=${pipeline.offerSent} answerReceived=${pipeline.answerReceived} ` +
+              `iceConnected=${pipeline.iceConnected} route=${result.route} ` +
+              `audioConfirmed=${pipeline.audioConfirmed} closeReason=${closeEvidence.lastPresenceState}`
+          );
+        }
 
         await fetch("/api/voice-connection-log", {
           method: "POST",
@@ -2213,12 +2226,17 @@ export function usePeerConnections({
             route: result.route,
             localCandidateType: result.localType,
             remoteCandidateType: result.remoteType,
-            voiceRoute: voiceRouteRef.current,
+            voiceRoute:
+              phase === "failed"
+                ? `fail:${failureClass}`
+                : voiceRouteRef.current,
             connectionState:
-              phase === "connected" ? pc.connectionState : "failed",
+              phase === "connected"
+                ? pc.connectionState
+                : `failed:${failureClass}`,
             timeToConnectMs,
             os: osRef.current,
-            memberCount: members.length,
+            memberCount: membersRef.current.length,
           }),
         });
 
@@ -2229,7 +2247,7 @@ export function usePeerConnections({
         console.warn("[call] voice log failed", e);
       }
     },
-    [deviceId, getCurrentConnectionId, members.length, sessionId]
+    [deviceId, getCurrentConnectionId, sessionId]
   );
 
   const upsertRemoteAudio = useCallback(
@@ -4555,8 +4573,7 @@ export function usePeerConnections({
     (remoteId: string, triggerReason: string) => {
       clearNoStreamNoOfferTimer(remoteId);
 
-      const selfMember = members.find((m) => m.device_id === deviceId);
-      const localInCall = selfMember?.is_in_call !== false;
+      const localInCall = isViewerInVoiceConnection(deviceId, members);
       const remoteInCall = isRemoteInCall(remoteId);
       if (!localInCall || !remoteInCall) return;
 

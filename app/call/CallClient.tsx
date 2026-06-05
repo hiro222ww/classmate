@@ -87,6 +87,10 @@ import {
   STABLE_PRESENCE_SYNC_MAX_DELAY_MS,
   STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS,
 } from "@/lib/stableVoiceJoin";
+import {
+  buildVoiceConnectionMembers,
+  getVoiceConnectionRemoteIds,
+} from "@/lib/voiceSessionMembers";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -237,6 +241,7 @@ export default function CallClient() {
   const memberEmptyStreakRef = useRef(0);
   const firstFastMembersAtRef = useRef<number | null>(null);
   const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
+  const sessionMemberIdsRef = useRef<string[]>([]);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
@@ -645,10 +650,19 @@ export default function CallClient() {
           firstFastMembersAtRef.current = Date.now();
         }
 
+        sessionMemberIdsRef.current = nextMembers
+          .map((m) => String(m.device_id ?? "").trim())
+          .filter(Boolean);
+
+        const inCallUiCount = nextMembers.filter(
+          (m) => m.is_in_call === true
+        ).length;
+
         debugConsoleLog(
           `[session-members] api-result context=call count=${nextMembers.length} ` +
             `ids=${compactMemberDeviceIds(nextMembers)} reason=${reason} ` +
-            `session=${String(sessionId).slice(-6)} fast=${useFast}`
+            `session=${String(sessionId).slice(-6)} fast=${useFast} ` +
+            `inCallUi=${inCallUiCount} voiceRemoteIds=${getVoiceConnectionRemoteIds(nextMembers, deviceId).map((id) => id.slice(-4)).join(",") || "-"}`
         );
 
         let redirectRemoved = false;
@@ -1584,22 +1598,34 @@ export default function CallClient() {
     }
   }, []);
 
-  const callMembers = useMemo(() => {
-    return members;
-  }, [members]);
+  const voiceMembers = useMemo(() => {
+    const selfRow = members.find(
+      (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
+    );
+    return buildVoiceConnectionMembers(
+      members,
+      sessionMemberIdsRef.current,
+      deviceId,
+      selfRow
+    );
+  }, [members, membersSyncRevision, deviceId]);
 
   useEffect(() => {
-    voiceDebugLog("[call] callMembers before voice layer", {
-      count: callMembers.length,
+    voiceDebugLog("[call] voiceMembers before voice layer", {
+      count: voiceMembers.length,
+      sessionMemberIds: sessionMemberIdsRef.current.map((id) => id.slice(-4)),
+      voiceRemoteIds: getVoiceConnectionRemoteIds(voiceMembers, deviceId).map(
+        (id) => id.slice(-4)
+      ),
       deviceId,
-      callMembers: callMembers.map((m) => ({
+      voiceMembers: voiceMembers.map((m) => ({
         device_id: m.device_id,
         display_name: m.display_name,
         is_in_call: m.is_in_call,
         isMe: m.device_id === deviceId,
       })),
     });
-  }, [callMembers, deviceId]);
+  }, [voiceMembers, deviceId]);
 
   if (!deviceId) {
     return null;
@@ -1610,7 +1636,7 @@ export default function CallClient() {
       <CallVoiceLayer
         sessionId={sessionId}
         deviceId={deviceId}
-        members={callMembers}
+        members={voiceMembers}
         membersSyncRevision={membersSyncRevision}
         userMuted={userMuted}
         userMutedRef={userMutedRef}

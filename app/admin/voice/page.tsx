@@ -53,6 +53,29 @@ type VoiceLog = {
   created_at?: string | null;
 };
 
+function parseVoiceFailureClass(log: VoiceLog): string | null {
+  const state = String(log.connection_state ?? "").trim();
+  if (state.startsWith("failed:")) {
+    return state.slice("failed:".length).toUpperCase() || null;
+  }
+  const voiceRoute = String(
+    (log as { voice_route?: string | null }).voice_route ?? ""
+  ).trim();
+  if (voiceRoute.startsWith("fail:")) {
+    return voiceRoute.slice("fail:".length).toUpperCase() || null;
+  }
+  if (state === "failed") return "?";
+  return null;
+}
+
+const VOICE_FAILURE_HINTS: Record<string, string> = {
+  A: "members / remoteIds",
+  B: "signaling / offer / answer",
+  C: "ICE / TURN",
+  D: "audio / track",
+  E: "cleanup / close",
+};
+
 const defaultSettings: VoiceSettings = {
   voice_enabled: true,
   new_calls_enabled: true,
@@ -491,6 +514,10 @@ export default function AdminVoicePage() {
                 const state = String(
                   log.connection_state ?? "unknown"
                 );
+                const failureClass = parseVoiceFailureClass(log);
+                const failureHint = failureClass
+                  ? VOICE_FAILURE_HINTS[failureClass] ?? failureClass
+                  : null;
 
                 const usedTurn =
                   log.used_turn === true ||
@@ -521,8 +548,20 @@ export default function AdminVoicePage() {
                       {usedTurn
                         ? "TURN"
                         : "P2P/不明"}{" "}
-                      / {state}
+                      / {failureClass ? `failed (${failureClass})` : state}
                     </div>
+
+                    {failureHint ? (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#b45309",
+                          fontWeight: 800,
+                        }}
+                      >
+                        分類 {failureClass}: {failureHint}
+                      </div>
+                    ) : null}
 
                     <div
                       style={{
