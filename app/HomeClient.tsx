@@ -38,7 +38,6 @@ import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import {
   clearLocallyHiddenClass,
-  filterOutLocallyHiddenClasses,
   isLocallyHiddenClass,
   markLocallyHiddenClass,
 } from "@/lib/localHiddenClasses";
@@ -425,24 +424,31 @@ export default function HomeClient() {
         const rawClasses = Array.isArray(classesJson.classes)
           ? (classesJson.classes as MineClass[])
           : [];
-        const nextClasses = filterOutLocallyHiddenClasses(rawClasses);
-        const classIds = nextClasses.map((c: MineClass) =>
-          String(c.id ?? "").trim()
-        );
 
+        const nextClasses: MineClass[] = [];
         for (const c of rawClasses) {
           const id = String(c.id ?? "").trim();
           if (!id) continue;
-          if (isLocallyHiddenClass(id)) {
-            console.log(
-              `[home] class-hidden reason=local_session_storage class=${id.slice(-6)}`
-            );
+
+          if (leavingClassIdsRef.current.has(id)) {
             continue;
           }
-          if (!leavingClassIdsRef.current.has(id)) {
-            clearLocallyHiddenClass(id);
+
+          if (isLocallyHiddenClass(id)) {
+            console.log(
+              `[home] ignore-local-hidden reason=active_membership class=${id.slice(-6)}`
+            );
+            console.log(
+              `[home] clear-local-hidden reason=server_membership_exists class=${id.slice(-6)}`
+            );
           }
+          clearLocallyHiddenClass(id);
+          nextClasses.push(c);
         }
+
+        const classIds = nextClasses.map((c: MineClass) =>
+          String(c.id ?? "").trim()
+        );
 
         const billableCount = Number(classesJson.membership_count_billable ?? 0);
         const membershipCount = Number(classesJson.debug?.membershipCount ?? 0);
@@ -777,6 +783,8 @@ async function loadMembersAndPresence() {
   }
 
   const classIds = classes.map((c) => c.id).filter(Boolean);
+  const viewerId = String(deviceId ?? "").trim();
+  let shouldRefreshJoinedClasses = false;
   try {
     
     const results = await Promise.all(
@@ -875,6 +883,14 @@ if (sessionId) {
   }
 }
 
+if (viewerId && sessionMemberIds.has(viewerId) && isLocallyHiddenClass(classId)) {
+  console.log(
+    `[home] clear-local-hidden reason=session_members_exists class=${classId.slice(-6)}`
+  );
+  clearLocallyHiddenClass(classId);
+  shouldRefreshJoinedClasses = true;
+}
+
 // presenceは失敗してもOK
 try {
   const presenceRes = await fetch(
@@ -946,6 +962,10 @@ return {
     }
   })
 );
+
+        if (shouldRefreshJoinedClasses && !cancelled) {
+          void fetchJoinedClasses("session_members_exists", { deviceId });
+        }
 
         if (cancelled) return;
 
@@ -1187,7 +1207,7 @@ return () => {
   window.clearInterval(timer);
   document.removeEventListener("visibilitychange", onVisible);
 };
-  }, [classes, deviceId, notificationsEnabled]);
+  }, [classes, deviceId, fetchJoinedClasses, notificationsEnabled]);
 
   useEffect(() => {
     if (!classes.length || !deviceId) return;
@@ -1444,7 +1464,7 @@ return () => {
     for (const c of classes) {
       const id = String(c.id ?? "").trim();
       if (!id) continue;
-      if (isLocallyHiddenClass(id)) continue;
+      if (leavingClassIdsRef.current.has(id)) continue;
 
       const prev = byId.get(id);
       const prevTime = prev?.created_at ? new Date(prev.created_at).getTime() : 0;
@@ -1806,6 +1826,9 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       if (res.ok && json?.ok) {
         console.log(
           `[class-leave] membership-updated class=${classId.slice(-6)} status=left device=${currentDeviceId.slice(-6)}`
+        );
+        console.log(
+          `[home] class-hidden reason=class_leave_success class=${classId.slice(-6)}`
         );
         markLocallyHiddenClass(classId);
         classesBeforeLeaveRef.current = null;

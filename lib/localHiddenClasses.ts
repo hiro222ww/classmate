@@ -1,5 +1,6 @@
 const KEY_PREFIX = "classmate_hidden_class";
-const DEFAULT_TTL_MS = 5 * 60 * 1000;
+/** Optimistic hide after class leave success only; cleared when /api/class/mine returns the class. */
+const DEFAULT_TTL_MS = 60 * 1000;
 
 const memoryHiddenUntil = new Map<string, number>();
 
@@ -66,8 +67,9 @@ export function clearLocallyHiddenClass(classId: string) {
   }
 }
 
+/** @deprecated Server membership wins; use clearLocallyHiddenClass on mine success instead. */
 export function filterOutLocallyHiddenClasses<T extends { id?: string | null }>(
   rows: T[]
 ): T[] {
-  return rows.filter((row) => !isLocallyHiddenClass(String(row.id ?? "").trim()));
+  return rows;
 }
