@@ -28,6 +28,7 @@ import {
   tailMatchId,
 } from "@/lib/matchJoinLogging";
 import { resolveOpenJoinedClassSession } from "@/lib/openJoinedClassSession";
+import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -689,7 +690,15 @@ export async function matchJoinV2Post(req: Request) {
     const membershipSnapshot = billableRes.snapshot;
     const allMembershipIdsBefore = membershipSnapshot.billableClassIds;
 
+    console.log(
+      `[class-slots] count activeMemberships=${membershipSnapshot.billableCount} ` +
+        `limit=${classSlots} classIds=${membershipSnapshot.billableClassIds.map((id) => id.slice(-6)).join(",") || "-"}`
+    );
+
     if (!forcedClassId && membershipSnapshot.billableCount >= classSlots) {
+      console.log(
+        `[match-join] reject class_slot_limit active=${membershipSnapshot.billableCount} limit=${classSlots}`
+      );
       console.warn("[class/match-join-v2] class_slots_limit", {
         deviceId,
         classSlots,
@@ -794,7 +803,8 @@ export async function matchJoinV2Post(req: Request) {
       : recruitmentSessionTtlSetting.minutes ??
         (await getRecruitmentSessionTtlMinutes());
 
-    let resolvedSessionId = String(row.session_id ?? "").trim();
+    const rpcSessionId = String(row.session_id ?? "").trim();
+    let resolvedSessionId = rpcSessionId;
     let resolvedSessionStatus = String(row.session_status ?? "forming");
     let resolvedSessionCreatedAt = row.session_created_at ?? null;
     let resolvedCreatedNewSession = Boolean(row.created_new_session);
@@ -820,6 +830,63 @@ export async function matchJoinV2Post(req: Request) {
       resolvedSessionCreatedAt = resolved.sessionCreatedAt;
       resolvedCreatedNewSession = resolved.createdNewSession;
       resolvedReused = resolved.reused;
+
+      if (
+        resolvedCreatedNewSession &&
+        rpcSessionId &&
+        resolvedSessionId !== rpcSessionId
+      ) {
+        await supabase
+          .from("session_members")
+          .delete()
+          .eq("session_id", rpcSessionId)
+          .eq("device_id", deviceId);
+        await closeEmptySessionIfNeeded(supabase, rpcSessionId);
+      }
+    }
+
+    if (
+      openJoinedClass &&
+      isRecruitingSessionStatus(resolvedSessionStatus) &&
+      !isSessionEligibleForNormalJoin({
+        sessionStatus: resolvedSessionStatus,
+        sessionCreatedAt: resolvedSessionCreatedAt,
+        recruitmentSessionTtlMinutes,
+      })
+    ) {
+      console.log(
+        `[match-join] existing-session invalid reason=stale session=${tailMatchId(resolvedSessionId)}`
+      );
+      const reResolved = await resolveOpenJoinedClassSession({
+        classId: String(row.class_id),
+        className: String(row.class_name ?? "").trim() || "クラス",
+        sessionId: resolvedSessionId,
+        sessionStatus: resolvedSessionStatus,
+        sessionCreatedAt: resolvedSessionCreatedAt,
+        matchDeadlineAt: forcedClassDeadline,
+        deviceId,
+        requestedCapacity,
+        recruitmentSessionTtlMinutes,
+      });
+      if (reResolved.ok) {
+        if (
+          reResolved.createdNewSession &&
+          resolvedSessionId &&
+          reResolved.sessionId !== resolvedSessionId
+        ) {
+          await supabase
+            .from("session_members")
+            .delete()
+            .eq("session_id", resolvedSessionId)
+            .eq("device_id", deviceId);
+          await closeEmptySessionIfNeeded(supabase, resolvedSessionId);
+        }
+        resolvedSessionId = reResolved.sessionId;
+        resolvedSessionStatus = reResolved.sessionStatus;
+        resolvedSessionCreatedAt = reResolved.sessionCreatedAt;
+        resolvedCreatedNewSession = reResolved.createdNewSession;
+        resolvedReused = reResolved.reused;
+      }
     }
 
     const classIdOut = String(row.class_id ?? "").trim();

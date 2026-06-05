@@ -355,7 +355,8 @@ function resolveRoomMemberDisplay(
   isMe: boolean,
   viewerDeviceId: string,
   lastInSessionAt?: number | null,
-  previousInternal?: import("@/lib/memberStatus").InternalMemberStatus | null
+  previousInternal?: import("@/lib/memberStatus").InternalMemberStatus | null,
+  inSessionMembers = false
 ) {
   const did = String(member.device_id ?? "").trim();
   const viewerId = String(viewerDeviceId ?? "").trim();
@@ -383,7 +384,7 @@ function resolveRoomMemberDisplay(
     localExitedCall,
     context: "room",
     deviceId: did,
-    inSessionMembers: true,
+    inSessionMembers,
     inClassMembership: false,
     lastInSessionAt,
     isMe,
@@ -955,11 +956,16 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       ...lastInSessionAtRef.current,
     };
 
+    const sessionMemberIds = sessionMemberIdsForPresenceRef.current;
+
     for (const member of visibleMembers) {
       const did = String(member.device_id ?? "").trim();
       if (!did) continue;
 
-      nextLastInSessionAt[did] = nowMs;
+      const inSession = sessionMemberIds.has(did);
+      if (inSession) {
+        nextLastInSessionAt[did] = nowMs;
+      }
 
       const isMe = did === String(deviceId ?? "").trim();
       const display = resolveRoomMemberDisplay(
@@ -970,7 +976,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         isMe,
         deviceId,
         nextLastInSessionAt[did],
-        prevMemberInternalRef.current[did] ?? null
+        prevMemberInternalRef.current[did] ?? null,
+        inSession
       );
 
       nextStatuses[did] = display.status;

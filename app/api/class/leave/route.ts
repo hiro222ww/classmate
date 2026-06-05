@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 
 /**
  * Explicit class leave (Home UI).
@@ -76,6 +77,8 @@ export async function POST(req: Request) {
       .map((s) => String(s.id ?? "").trim())
       .filter(Boolean);
 
+    const closedSessionIds: string[] = [];
+
     if (sessionIds.length > 0) {
       const { error: sessionMembersErr } = await supabaseAdmin
         .from("session_members")
@@ -92,6 +95,16 @@ export async function POST(req: Request) {
           },
           { status: 500 }
         );
+      }
+
+      for (const sessionId of sessionIds) {
+        const closeRes = await closeEmptySessionIfNeeded(
+          supabaseAdmin,
+          sessionId
+        );
+        if (closeRes.closed) {
+          closedSessionIds.push(sessionId);
+        }
       }
     }
 
@@ -129,10 +142,15 @@ export async function POST(req: Request) {
       );
     }
 
+    console.log(
+      `[class-leave] membership-updated class=${classId.slice(-6)} status=left device=${deviceId.slice(-6)}`
+    );
+
     return NextResponse.json({
       ok: true,
       classId,
       removedSessionIds: sessionIds,
+      closedSessionIds,
     });
   } catch (e: any) {
     return NextResponse.json(

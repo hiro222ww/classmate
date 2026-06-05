@@ -3,6 +3,13 @@ import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
+import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
+import {
+  evaluateOpenJoinedSessionReuse,
+  isDeadlinePassed,
+  isSessionEligibleForNormalJoin,
+} from "@/lib/recruitment";
+import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +126,7 @@ export async function POST(req: Request) {
 
     const { data: klass, error: classError } = await supabase
       .from("classes")
-      .select("id,name")
+      .select("id,name,match_deadline_at")
       .eq("id", classId)
       .maybeSingle();
 
@@ -151,9 +158,22 @@ export async function POST(req: Request) {
       return membershipRes.response;
     }
 
+    if (isDeadlinePassed(klass.match_deadline_at ?? null)) {
+      return NextResponse.json(
+        { ok: false, error: "match_deadline_passed" },
+        { status: 403 }
+      );
+    }
+
+    const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
+    await expireStaleRecruitmentSessions(supabase, {
+      classIds: [classId],
+      ttlMinutes: recruitmentSessionTtlMinutes,
+    });
+
     const { data: sessionRow, error: sessionErr } = await supabase
       .from("sessions")
-      .select("id,status,class_id")
+      .select("id,status,class_id,created_at")
       .eq("id", sessionId)
       .maybeSingle();
 
@@ -190,6 +210,48 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { ok: false, error: "session_class_mismatch", sessionId, classId },
         { status: 409 }
+      );
+    }
+
+    const { data: memberRows } = await supabase
+      .from("session_members")
+      .select("device_id")
+      .eq("session_id", sessionId);
+    const memberIds = (memberRows ?? [])
+      .map((row) => String(row.device_id ?? "").trim())
+      .filter(Boolean);
+    const reuse = evaluateOpenJoinedSessionReuse({
+      sessionStatus: sessionStatus,
+      sessionCreatedAt: sessionRow.created_at ?? null,
+      matchDeadlineAt: klass.match_deadline_at ?? null,
+      memberCount: memberIds.length,
+      deviceIsSessionMember: memberIds.includes(deviceId),
+      recruitmentSessionTtlMinutes,
+    });
+    if (!reuse.reusable) {
+      console.log(
+        `[match-join] existing-session invalid reason=${reuse.reason ?? "unknown"} session=${sessionId.slice(-6)}`
+      );
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "session_not_joinable",
+          reason: reuse.reason ?? "unknown",
+        },
+        { status: 403 }
+      );
+    }
+    if (
+      !isSessionEligibleForNormalJoin({
+        sessionStatus,
+        sessionCreatedAt: sessionRow.created_at ?? null,
+        recruitmentSessionTtlMinutes,
+      }) &&
+      sessionStatus !== "active"
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "recruitment_closed", sessionStatus },
+        { status: 403 }
       );
     }
 

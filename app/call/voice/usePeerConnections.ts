@@ -1662,6 +1662,14 @@ export function usePeerConnections({
           `remoteType=${recordedPair?.remoteType ?? "-"} ` +
           `networkType=${recordedPair?.networkType ?? "-"}${relayModeSuffix} ${formatVoiceModeSuffix()}`
       );
+
+      if (relayForcedRef.current && route === "p2p") {
+        debugConsoleLog(
+          `[voice-peer] policy-violation remote=${compactDeviceId(remoteId)} ` +
+            `expected=relay actual=p2p localType=${recordedPair?.localType ?? "-"} ` +
+            `remoteType=${recordedPair?.remoteType ?? "-"}`
+        );
+      }
     },
     []
   );
@@ -7242,6 +7250,17 @@ export function usePeerConnections({
         currentConnectionId = incomingConnectionId;
       }
 
+      if (!voiceSettingsReadyRef.current) {
+        logVoiceSignalIgnored({
+          reason: "voice_settings_not_loaded",
+          type: signalType,
+          remote: remoteId,
+          incomingConnectionId,
+          currentConnectionId,
+        });
+        return;
+      }
+
       const pc = createPeerConnection(remoteId, incomingConnectionId);
 
       try {
@@ -7545,14 +7564,21 @@ export function usePeerConnections({
           }
         }
       } catch (err) {
-        if (!voiceSettingsLoadedOnceRef.current) {
-          p2pEnabledRef.current = true;
-          relayForcedRef.current = false;
-          voiceTransportDisabledRef.current = false;
-          setTurnFallbackEnabled(false);
-          turnFallbackEnabledRef.current = false;
+        const cached = getCachedVoiceTransport(sessionId);
+        if (cached && voiceSettingsLoadedOnceRef.current) {
+          p2pEnabledRef.current = cached.transport.p2pEnabled;
+          relayForcedRef.current = cached.transport.relayForced;
+          voiceTransportDisabledRef.current = cached.transport.voiceTransportDisabled;
+          setTurnFallbackEnabled(cached.transport.staticTurnEnabled);
+          turnFallbackEnabledRef.current = cached.transport.staticTurnEnabled;
+        } else if (!voiceSettingsLoadedOnceRef.current) {
+          console.warn(
+            "[voice-settings] load failed before first load — peer creation blocked until retry",
+            err
+          );
+        } else {
+          console.warn("[voice-settings] load failed — keeping prior transport", err);
         }
-        console.warn("[voice-settings] load failed — keeping prior transport", err);
       } finally {
         if (alive) {
           voiceSettingsReadyRef.current = true;

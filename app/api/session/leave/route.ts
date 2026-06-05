@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 
 /**
  * Explicit session leave only.
@@ -58,58 +59,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: remainingRows, error: countErr } = await supabaseAdmin
-      .from("session_members")
-      .select("device_id")
-      .eq("session_id", sessionId)
-      .not("device_id", "is", null)
-      .neq("device_id", "");
-
-    console.log("[session/leave] remainingRows =", remainingRows);
-    console.log("[session/leave] countErr =", countErr);
-
-    if (countErr) {
-      return NextResponse.json(
-        { ok: false, error: countErr.message },
-        { status: 500 }
-      );
-    }
-
-    const uniqueIds = new Set(
-      (remainingRows ?? [])
-        .map((r: any) => String(r.device_id ?? "").trim())
-        .filter(Boolean)
-    );
-
-    const remaining = uniqueIds.size;
-
-    console.log("[session/leave] remaining =", remaining);
-
-    if (remaining <= 0) {
-      const { error: closeErr } = await supabaseAdmin
-        .from("sessions")
-        .update({ status: "closed" })
-        .eq("id", sessionId);
-
-      console.log("[session/leave] closeErr =", closeErr);
-
-      if (closeErr) {
-        return NextResponse.json(
-          { ok: false, error: closeErr.message },
-          { status: 500 }
-        );
-      }
-
-      console.log(
-        `[session-lifecycle] close-empty-session session=${sessionId.slice(-6)}`
-      );
-    }
+    const closeRes = await closeEmptySessionIfNeeded(supabaseAdmin, sessionId);
 
     return NextResponse.json({
       ok: true,
       sessionId,
-      remaining,
-      closed: remaining <= 0,
+      remaining: closeRes.remaining,
+      closed: closeRes.closed,
     });
   } catch (e: any) {
     console.error("[session/leave] internal error =", e);

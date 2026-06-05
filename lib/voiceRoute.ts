@@ -21,7 +21,7 @@ export function shouldForceRelayIceTransport(params: {
   staticTurnEnabled: boolean;
   voiceRouteTurn?: boolean;
 }): boolean {
-  if (!params.p2pEnabled && params.staticTurnEnabled) {
+  if (!params.p2pEnabled) {
     return true;
   }
   if (params.p2pEnabled && params.voiceRouteTurn === true) {

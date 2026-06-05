@@ -401,7 +401,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!existingMembership && !canRejoin) {
+    if (!existingMembership) {
       const slotsRes = await getClassSlotsForDevice(supabaseAdmin, deviceId);
       if (!slotsRes.ok) {
         return NextResponse.json(
@@ -424,6 +424,10 @@ export async function POST(req: Request) {
       }
 
       if (billableRes.snapshot.billableCount >= classSlots) {
+        console.log(
+          `[match-join] reject class_slot_limit active=${billableRes.snapshot.billableCount} ` +
+            `limit=${classSlots} class=${tailJoinId(classId)}`
+        );
         return NextResponse.json(
           {
             ok: false,

@@ -931,6 +931,32 @@ export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
     });
   }
 
+  if (memberDeviceIds.length >= 3) {
+    const remotePeers = memberDeviceIds.filter((id) => id !== localDeviceId);
+    const expectedPairs =
+      (memberDeviceIds.length * (memberDeviceIds.length - 1)) / 2;
+    const missingPc = remotePeers.filter(
+      (id) => !peers.some((p) => p.remoteDeviceId === id && p.pcExists)
+    );
+    const missingAudio = remotePeers.filter((id) => {
+      const peer = peers.find((p) => p.remoteDeviceId === id);
+      if (!peer?.pcExists) return false;
+      return (
+        peer.lastPlaybackConfirmedAt == null &&
+        peer.lastOnTrackAt == null &&
+        !peer.hasRemoteStream
+      );
+    });
+    warn("mesh_pair_matrix", {
+      memberCount: memberDeviceIds.length,
+      expectedPairs,
+      peerConnectionCount: pcCount,
+      missingPc: missingPc.map((id) => compactDeviceId(id)).join(",") || "-",
+      missingAudio:
+        missingAudio.map((id) => compactDeviceId(id)).join(",") || "-",
+    });
+  }
+
   for (const peer of peers) {
     const {
       remoteDeviceId,

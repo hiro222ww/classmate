@@ -71,15 +71,23 @@ export async function getBillableMembershipSnapshot(
 
   const totalCount = billableClassIds.length + legacyClassIds.length;
 
+  const snapshot = {
+    totalCount,
+    billableCount: billableClassIds.length,
+    legacyCount: legacyClassIds.length,
+    billableClassIds,
+    legacyClassIds,
+  };
+
+  console.log(
+    `[class-slots] count activeMemberships=${snapshot.billableCount} ` +
+      `legacy=${snapshot.legacyCount} total=${snapshot.totalCount} ` +
+      `classIds=${snapshot.billableClassIds.map((id) => id.slice(-6)).join(",") || "-"}`
+  );
+
   return {
     ok: true,
-    snapshot: {
-      totalCount,
-      billableCount: billableClassIds.length,
-      legacyCount: legacyClassIds.length,
-      billableClassIds,
-      legacyClassIds,
-    },
+    snapshot,
   };
 }
 

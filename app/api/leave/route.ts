@@ -1,65 +1,7 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { POST as classLeavePost } from "@/app/api/class/leave/route";
 
+/** @deprecated Use POST /api/class/leave for full cleanup. */
 export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-    const deviceId = String(body?.deviceId ?? "").trim();
-    const classId = String(body?.classId ?? "").trim();
-
-    if (!deviceId) {
-      return NextResponse.json(
-        { error: "device_id_missing" },
-        { status: 400 }
-      );
-    }
-
-    if (!classId) {
-      return NextResponse.json(
-        { error: "class_id_missing" },
-        { status: 400 }
-      );
-    }
-
-    const { data: membership, error: findErr } = await supabaseAdmin
-      .from("class_memberships")
-      .select("class_id")
-      .eq("device_id", deviceId)
-      .eq("class_id", classId)
-      .maybeSingle();
-
-    if (findErr) {
-      return NextResponse.json(
-        { error: "membership_lookup_failed", detail: findErr.message },
-        { status: 500 }
-      );
-    }
-
-    if (!membership) {
-      return NextResponse.json(
-        { error: "not_member" },
-        { status: 400 }
-      );
-    }
-
-    const { error: delErr } = await supabaseAdmin
-      .from("class_memberships")
-      .delete()
-      .eq("device_id", deviceId)
-      .eq("class_id", classId);
-
-    if (delErr) {
-      return NextResponse.json(
-        { error: "leave_failed", detail: delErr.message },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "internal_error", detail: e?.message ?? "unknown_error" },
-      { status: 500 }
-    );
-  }
+  return classLeavePost(req);
 }

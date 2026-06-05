@@ -285,6 +285,14 @@ function getClassStatusStyle(label: string) {
     };
   }
 
+  if (label === "入室中") {
+    return {
+      background: "#e0e7ff",
+      color: "#3730a3",
+      border: "1px solid #a5b4fc",
+    };
+  }
+
   return {
     background: "#f9fafb",
     color: "#6b7280",
@@ -1902,16 +1910,15 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                 lastInSessionAtMap,
                 sessionMemberIds
               );
+              const recruitmentFallbackLabel = getClassStatusLabel({
+                sessionStatus: c.session_status,
+                matchDeadlineAt: c.match_deadline_at,
+                hasActiveSession: c.has_active_session,
+                sessionCreatedAt: c.session_created_at,
+                recruitmentSessionTtlMinutes,
+              });
               const classStatusLabel =
-                participationLabel ??
-                c.status_label ??
-                getClassStatusLabel({
-                  sessionStatus: c.session_status,
-                  matchDeadlineAt: c.match_deadline_at,
-                  hasActiveSession: c.has_active_session,
-                  sessionCreatedAt: c.session_created_at,
-                  recruitmentSessionTtlMinutes,
-                });
+                participationLabel ?? recruitmentFallbackLabel;
               const classStatusPill = getClassStatusStyle(classStatusLabel);
               const { inCall, waiting } = summarizeMemberParticipation(
                 members,

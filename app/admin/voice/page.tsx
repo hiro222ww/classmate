@@ -132,13 +132,21 @@ function pairRouteLabel(log: VoiceLog) {
 
 function pairStatusLabel(log: VoiceLog) {
   const state = String(log.connection_state ?? "");
+  const phase = String(log.phase ?? "").trim();
   const failure = parseVoiceFailureState(state);
   const voiceRoute = String(log.voice_route ?? "").trim();
-  const failClass =
+  let failClass =
     failure.voiceClass ??
     (voiceRoute.startsWith("fail-") ? voiceRoute.replace("fail-", "") : null);
 
-  if (failClass) {
+  if (phase === "failed" && (!failClass || failClass === "OK")) {
+    failClass = "unknown";
+  }
+  if (phase === "connected" && failClass && failClass !== "OK") {
+    failClass = null;
+  }
+
+  if (failClass && failClass !== "OK") {
     const detail =
       failure.offer === "0"
         ? "offer missing"

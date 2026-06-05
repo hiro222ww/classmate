@@ -8,6 +8,7 @@ export const NON_RECRUITING_SESSION_STATUSES = [
 
 export type ClassStatusLabel =
   | "通話中"
+  | "入室中"
   | "募集中"
   | "募集締切"
   | "募集停止"
@@ -201,7 +202,6 @@ export function pickClassDisplaySession(
 
   if (bestActive) return bestActive;
   if (bestFreshRecruiting) return bestFreshRecruiting;
-  if (bestStaleRecruiting) return bestStaleRecruiting;
   return null;
 }
 
@@ -267,7 +267,7 @@ export function getClassStatusLabel(params: {
   }
 
   if (hasActiveSession) {
-    return "待機中";
+    return "入室中";
   }
 
   return "募集終了";
@@ -275,7 +275,7 @@ export function getClassStatusLabel(params: {
 
 export function sessionStatusesForJoin(isExistingMember: boolean) {
   if (isExistingMember) {
-    return ["forming", "waiting", "active", "closed", "expired"];
+    return ["forming", "waiting", "active"];
   }
 
   return ["forming", "waiting"];
