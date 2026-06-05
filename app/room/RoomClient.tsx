@@ -634,6 +634,21 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [deviceId, sessionId, classId]);
 
   useEffect(() => {
+    if (!classId || !sessionId || !deviceId) return;
+    const joinedKey = joinedSessionKeyRef.current ?? "";
+    const joinedSession = joinedKey.includes(":")
+      ? joinedKey.split(":")[0]
+      : joinedKey || "-";
+    console.log(
+      `[room-session] device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
+        `session=${sessionId.slice(-6)} urlSession=${sessionId.slice(-6)} ` +
+        `joinedSession=${
+          joinedSession !== "-" ? String(joinedSession).slice(-6) : "-"
+        } openJoinedClass=${openJoinedClass ? 1 : 0}`
+    );
+  }, [classId, sessionId, deviceId, openJoinedClass]);
+
+  useEffect(() => {
     if (pathname !== "/room") return;
     if (!invite || !classId || !sessionId) return;
 
@@ -1172,9 +1187,9 @@ if (!res.ok || !json?.ok) {
 
         const inCallCount = incomingMembers.filter((m) => m.is_in_call === true).length;
         console.log(
-          `[room] fetchMembers success session=${sessionId.slice(-6)} class=${classId.slice(-6)} ` +
-            `memberCount=${incomingMembers.length} inCall=${inCallCount} ` +
-            `deviceIds=${compactMemberDeviceIds(incomingMembers)}`
+          `[session-members] context=room session=${sessionId.slice(-6)} ` +
+            `count=${incomingMembers.length} ids=${compactMemberDeviceIds(incomingMembers)} ` +
+            `class=${classId.slice(-6)} inCall=${inCallCount}`
         );
 
         if (!topicTitle && json.session?.topic) {
@@ -1609,12 +1624,12 @@ const name = rawName === "You" ? "参加者" : rawName;
 
       if (cancelled) return;
 
-      console.log("[room join] response", {
-        ok: json?.ok,
-        sessionId: json?.sessionId,
-        status: json?.status,
-        urlSessionId: sessionId,
-      });
+      console.log(
+        `[room-session] join-success device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
+          `session=${sessionId.slice(-6)} urlSession=${sessionId.slice(-6)} ` +
+          `joinedSession=${String(json?.sessionId ?? sessionId).slice(-6)} ` +
+          `openJoinedClass=${openJoinedClass ? 1 : 0} memberCount=${json?.memberCount ?? "-"}`
+      );
 
       joinedSessionKeyRef.current = joinKey;
 

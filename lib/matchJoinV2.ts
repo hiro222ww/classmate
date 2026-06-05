@@ -831,6 +831,13 @@ export async function matchJoinV2Post(req: Request) {
       resolvedCreatedNewSession = resolved.createdNewSession;
       resolvedReused = resolved.reused;
 
+      console.log(
+        `[class-session] match-join-resolve class=${tailMatchId(String(row.class_id))} ` +
+          `rpc=${tailMatchId(rpcSessionId)} resolved=${tailMatchId(resolvedSessionId)} ` +
+          `createdNew=${resolvedCreatedNewSession} reused=${resolvedReused} ` +
+          `reason=${resolved.selectionReason}`
+      );
+
       if (
         resolvedCreatedNewSession &&
         rpcSessionId &&

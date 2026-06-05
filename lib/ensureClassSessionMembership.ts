@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { pruneSplitClassSessionMemberships } from "@/lib/classSessionSelection";
 import {
   auditJoinStateInvariants,
   tailJoinId,
@@ -346,6 +347,13 @@ export async function ensureClassSessionMembership(
       `[join-state] step=class_presence applied class=${tailJoinId(ids.classId)} session=${tailJoinId(ids.sessionId)} device=${tailJoinId(ids.deviceId)}`
     );
   }
+
+  await pruneSplitClassSessionMemberships({
+    classId: ids.classId,
+    deviceId: ids.deviceId,
+    keepSessionId: ids.sessionId,
+    client: sb,
+  });
 
   const postWarnings = await auditJoinStateInvariants(sb, {
     classId: ids.classId,

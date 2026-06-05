@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { listClassSessionsWithMembers } from "@/lib/classSessionSelection";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 
 const CLOSED_STATUSES = new Set(["closed", "ended", "expired"]);
@@ -56,6 +57,15 @@ export type ClassRepairDiagnoseResult = {
     sessionId: string;
     status: string;
     memberCount: number;
+    memberIds: string[];
+    createdAt: string | null;
+    isTarget: boolean;
+  }>;
+  activeClassSessions: Array<{
+    sessionId: string;
+    status: string;
+    memberCount: number;
+    memberIds: string[];
     createdAt: string | null;
     isTarget: boolean;
   }>;
@@ -182,43 +192,58 @@ export async function diagnoseClassRepair(input: {
     .select("*", { count: "exact", head: true })
     .eq("class_id", ids.classId);
 
-  const { data: classSessions } = await supabaseAdmin
-    .from("sessions")
-    .select("id,status,created_at")
-    .eq("class_id", ids.classId)
-    .order("created_at", { ascending: false })
-    .limit(30);
+  const classSessionRows = await listClassSessionsWithMembers(
+    supabaseAdmin,
+    ids.classId,
+    ids.deviceId
+  );
+
+  const activeClassSessions: ClassRepairDiagnoseResult["activeClassSessions"] =
+    classSessionRows.map((row) => ({
+      sessionId: row.id,
+      status: row.status,
+      memberCount: row.memberCount,
+      memberIds: row.memberIds,
+      createdAt: row.createdAt,
+      isTarget: row.id === ids.sessionId,
+    }));
 
   const possibleSplitSessions: ClassRepairDiagnoseResult["possibleSplitSessions"] =
     [];
 
-  for (const row of classSessions ?? []) {
-    const sid = String(row.id ?? "").trim();
-    if (!sid) continue;
-
+  for (const row of classSessionRows) {
     const status = String(row.status ?? "").trim();
     const isClosed = CLOSED_STATUSES.has(status.toLowerCase());
+    const isTarget = row.id === ids.sessionId;
 
-    const { count } = await supabaseAdmin
-      .from("session_members")
-      .select("*", { count: "exact", head: true })
-      .eq("session_id", sid);
-
-    const memberCount = Number(count ?? 0);
-    const isTarget = sid === ids.sessionId;
-
-    if (!isTarget && memberCount > 0 && !isClosed) {
-      warnings.push(`active_split_session:${tailId(sid)}`);
+    if (!isTarget && row.memberCount > 0 && !isClosed) {
+      warnings.push(`active_split_session:${tailId(row.id)}`);
     }
 
-    possibleSplitSessions.push({
-      sessionId: sid,
-      status,
-      memberCount,
-      createdAt: row.created_at ?? null,
-      isTarget,
-    });
+    if (!isTarget && row.memberCount > 0 && !isClosed) {
+      possibleSplitSessions.push({
+        sessionId: row.id,
+        status,
+        memberCount: row.memberCount,
+        memberIds: row.memberIds,
+        createdAt: row.createdAt,
+        isTarget,
+      });
+    }
   }
+
+  console.log(
+    `[class-session] admin-diagnose class=${tailId(ids.classId)} ` +
+      `activeSessions=${activeClassSessions.length} ` +
+      `sessions=${JSON.stringify(
+        activeClassSessions.map((s) => ({
+          id: tailId(s.sessionId),
+          status: s.status,
+          memberCount: s.memberCount,
+          members: s.memberIds.map((id) => tailId(id)).join(","),
+        }))
+      )}`
+  );
 
   const { data: otherSessionMembers } = await supabaseAdmin
     .from("session_members")
@@ -311,6 +336,7 @@ export async function diagnoseClassRepair(input: {
     },
     inconsistencies,
     warnings,
+    activeClassSessions,
     possibleSplitSessions,
     otherSessionsForDevice,
     otherMembershipsForDevice,

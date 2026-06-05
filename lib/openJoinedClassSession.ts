@@ -6,6 +6,11 @@ import {
   type OpenJoinedSessionInvalidReason,
 } from "@/lib/recruitment";
 import { tailMatchId } from "@/lib/matchJoinLogging";
+import {
+  listClassSessionsWithMembers,
+  logClassSessionsDebug,
+  pickCanonicalOpenJoinedSession,
+} from "@/lib/classSessionSelection";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -31,6 +36,7 @@ type ResolveOk = {
   sessionCreatedAt: string | null;
   createdNewSession: boolean;
   reused: boolean;
+  selectionReason: string;
 };
 
 type ResolveErr = {
@@ -38,46 +44,14 @@ type ResolveErr = {
   response: NextResponse;
 };
 
-async function countSessionMembers(sessionId: string, deviceId: string) {
-  const { data, error } = await supabase
-    .from("session_members")
-    .select("device_id")
-    .eq("session_id", sessionId);
-
-  if (error) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "session_member_lookup_failed",
-          detail: error.message,
-        },
-        { status: 500 }
-      ),
-    };
-  }
-
-  const ids = (data ?? [])
-    .map((row) => String(row.device_id ?? "").trim())
-    .filter(Boolean);
-
-  return {
-    ok: true as const,
-    memberCount: ids.length,
-    deviceIsSessionMember: ids.includes(deviceId),
-  };
-}
-
 async function createFormingSession(params: {
   classId: string;
   className: string;
   requestedCapacity: number;
-  reason: OpenJoinedSessionInvalidReason;
+  reason: OpenJoinedSessionInvalidReason | "no_valid_active_session";
 }) {
   console.log(
-    `[match-join] create-new-session reason=existing_session_${params.reason} ` +
-      `class=${tailMatchId(params.classId)}`
+    `[class-session] create-new reason=${params.reason} class=${tailMatchId(params.classId)}`
   );
 
   const { data, error } = await supabase
@@ -123,41 +97,83 @@ export async function resolveOpenJoinedClassSession(
     ttlMinutes: params.recruitmentSessionTtlMinutes,
   });
 
-  const membersRes = await countSessionMembers(params.sessionId, deviceId);
-  if (!membersRes.ok) return membersRes;
+  const classSessions = await listClassSessionsWithMembers(
+    supabase,
+    params.classId,
+    deviceId
+  );
 
-  const evaluation = evaluateOpenJoinedSessionReuse({
-    sessionStatus: params.sessionStatus,
-    sessionCreatedAt: params.sessionCreatedAt,
+  const canonical = pickCanonicalOpenJoinedSession({
+    sessions: classSessions,
+    deviceId,
     matchDeadlineAt: params.matchDeadlineAt,
-    memberCount: membersRes.memberCount,
-    deviceIsSessionMember: membersRes.deviceIsSessionMember,
     recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+    preferredSessionId: params.sessionId,
   });
 
-  if (evaluation.reusable) {
+  if (canonical) {
+    logClassSessionsDebug(params.classId, classSessions, {
+      selectedSessionId: canonical.sessionId,
+      reason: canonical.reason,
+    });
+    console.log(
+      `[class-session] selected session=${tailMatchId(canonical.sessionId)} ` +
+        `reason=${canonical.reason} members=${canonical.memberCount} ` +
+        `class=${tailMatchId(params.classId)}`
+    );
+
     return {
       ok: true,
-      sessionId: params.sessionId,
-      sessionStatus: params.sessionStatus,
-      sessionCreatedAt: params.sessionCreatedAt,
+      sessionId: canonical.sessionId,
+      sessionStatus: canonical.sessionStatus,
+      sessionCreatedAt: canonical.sessionCreatedAt,
       createdNewSession: false,
       reused: true,
+      selectionReason: canonical.reason,
     };
   }
 
-  const reason = evaluation.reason ?? "unknown";
-  console.log(
-    `[match-join] existing-session invalid reason=${reason} ` +
-      `session=${tailMatchId(params.sessionId)} class=${tailMatchId(params.classId)} ` +
-      `status=${params.sessionStatus} members=${membersRes.memberCount}`
-  );
+  logClassSessionsDebug(params.classId, classSessions);
+
+  const rpcSession = classSessions.find((row) => row.id === params.sessionId);
+  if (rpcSession) {
+    const evaluation = evaluateOpenJoinedSessionReuse({
+      sessionStatus: params.sessionStatus,
+      sessionCreatedAt: params.sessionCreatedAt,
+      matchDeadlineAt: params.matchDeadlineAt,
+      memberCount: rpcSession.memberCount,
+      deviceIsSessionMember: rpcSession.deviceIsMember,
+      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+    });
+
+    if (evaluation.reusable) {
+      console.log(
+        `[class-session] selected session=${tailMatchId(params.sessionId)} ` +
+          `reason=reuse_rpc_session class=${tailMatchId(params.classId)}`
+      );
+      return {
+        ok: true,
+        sessionId: params.sessionId,
+        sessionStatus: params.sessionStatus,
+        sessionCreatedAt: params.sessionCreatedAt,
+        createdNewSession: false,
+        reused: true,
+        selectionReason: "reuse_rpc_session",
+      };
+    }
+
+    console.log(
+      `[match-join] existing-session invalid reason=${evaluation.reason ?? "unknown"} ` +
+        `session=${tailMatchId(params.sessionId)} class=${tailMatchId(params.classId)} ` +
+        `status=${params.sessionStatus} members=${rpcSession.memberCount}`
+    );
+  }
 
   const created = await createFormingSession({
     classId: params.classId,
     className: params.className,
     requestedCapacity: params.requestedCapacity,
-    reason,
+    reason: "no_valid_active_session",
   });
 
   if (!created.ok) return created;
@@ -169,5 +185,6 @@ export async function resolveOpenJoinedClassSession(
     sessionCreatedAt: created.sessionCreatedAt,
     createdNewSession: true,
     reused: false,
+    selectionReason: "create_new_no_valid_active_session",
   };
 }

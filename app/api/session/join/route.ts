@@ -482,22 +482,23 @@ export async function POST(req: Request) {
       return NextResponse.json(joinState, { status: httpStatus });
     }
 
-    const { count } = await supabaseAdmin
+    const { data: memberRows, count } = await supabaseAdmin
       .from("session_members")
-      .select("*", { count: "exact", head: true })
+      .select("device_id", { count: "exact" })
       .eq("session_id", sessionId);
 
-    console.log("[session/join] success", {
-      sessionId,
-      classId,
-      status: session.status,
-      sessionCreatedAt: session.createdAt,
-      recruitmentSessionTtlMinutes,
-      openJoinedClass,
-      canRejoin,
-      deviceId,
-      memberCount: Number(count ?? 0),
-    });
+    const memberIds = (memberRows ?? [])
+      .map((row) => String(row.device_id ?? "").trim())
+      .filter(Boolean)
+      .map((id) => id.slice(-4))
+      .join(",");
+
+    console.log(
+      `[session-members] context=session_join session=${sessionId.slice(-6)} ` +
+        `count=${Number(count ?? 0)} ids=${memberIds || "-"} ` +
+        `class=${classId.slice(-6)} device=${deviceId.slice(-4)} ` +
+        `openJoinedClass=${openJoinedClass ? 1 : 0} source=${joinSource}`
+    );
 
     return NextResponse.json({
       ok: true,

@@ -130,15 +130,14 @@ export function evaluateOpenJoinedSessionReuse(params: {
   if (status === "expired") return { reusable: false, reason: "expired" };
   if (status === "ended") return { reusable: false, reason: "ended" };
 
-  if (params.memberCount <= 0) {
-    return { reusable: false, reason: "empty" };
-  }
-
   if (isDeadlinePassed(params.matchDeadlineAt ?? null)) {
     return { reusable: false, reason: "cutoff" };
   }
 
   if (status === "active") {
+    if (params.memberCount <= 0) {
+      return { reusable: false, reason: "empty" };
+    }
     if (!params.deviceIsSessionMember) {
       return { reusable: false, reason: "active_not_member" };
     }
