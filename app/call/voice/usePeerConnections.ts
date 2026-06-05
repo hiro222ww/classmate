@@ -29,6 +29,9 @@ import {
   logVoiceSignalStaleWarning,
   logVoicePeerPair,
   logVoicePeerRole,
+  logVoiceStartBlocked,
+  logVoiceStartCheck,
+  mapEnsureSkipToVoiceStartBlocked,
   compactConnectionId,
   voiceDebugLog,
   type VoiceMeshPeerSummaryEntry,
@@ -211,7 +214,20 @@ function canEnsurePeerWithoutLocalTrack(
   releaseMicOnMute: boolean,
   userMutedRef: React.MutableRefObject<boolean>
 ): boolean {
-  return !isOfferOwner && isReceiveOnlyMutedSession(releaseMicOnMute, userMutedRef);
+  if (!isOfferOwner) return true;
+  return isReceiveOnlyMutedSession(releaseMicOnMute, userMutedRef);
+}
+
+function hasPassiveRemoteNeedingPc(
+  deviceId: string,
+  remoteIds: string[],
+  peerNeedsPc: (remoteId: string) => boolean
+): boolean {
+  const selfId = String(deviceId ?? "").trim();
+  return remoteIds.some(
+    (remoteId) =>
+      selfId > remoteId && peerNeedsPc(remoteId)
+  );
 }
 
 function logVoicePeerReplaceTrack(
@@ -927,6 +943,13 @@ export function usePeerConnections({
     voiceSessionMemberIdsRef.current.clear();
     lastPeerCloseReasonRef.current.clear();
   }, [sessionId]);
+
+  useEffect(() => {
+    debugConsoleLog(
+      `[voice-peer] hook-start device=${compactDeviceId(deviceId)} ` +
+        `session=${sessionId.slice(-8)} micReady=${micReady} signalReady=${signalReady}`
+    );
+  }, [deviceId, micReady, sessionId, signalReady]);
 
   const inCallMemberCount = useMemo(() => {
     if (isStableVoiceJoinMode()) {
@@ -2458,8 +2481,74 @@ export function usePeerConnections({
         `[voice-peer] ensurePeerConnection skipped remote=${compactDeviceId(remoteId)} ` +
           `requested=${requestedReason} skip=${skipReason}${extra ? ` ${extra}` : ""}`
       );
+      logVoiceStartBlocked(
+        remoteId,
+        mapEnsureSkipToVoiceStartBlocked(skipReason)
+      );
     },
     []
+  );
+
+  const emitVoiceStartCheck = useCallback(
+    (remoteId: string) => {
+      const isOfferOwner = deviceId < remoteId;
+      const role: "active" | "passive" = isOfferOwner ? "active" : "passive";
+      const receiveOnly = isReceiveOnlyMutedSession(
+        voicePolicy.releaseMicOnMute,
+        userMutedRef
+      );
+      const localTrackLive = isLocalTrackLive(
+        localAudioTrackRef,
+        localStreamRef
+      );
+      const settingsReady = voiceSettingsReadyRef.current;
+      const hasTurn = hasTurnIceServer(iceServersRef.current);
+      const remoteIds = getRemoteIds();
+      const canCreatePassive =
+        role === "passive" &&
+        peerNeedsPc(remoteId) &&
+        isRemoteInCall(remoteId) &&
+        settingsReady &&
+        signalReady;
+      const canCreateActive =
+        role === "active" &&
+        peerNeedsPc(remoteId) &&
+        isRemoteInCall(remoteId) &&
+        settingsReady &&
+        signalReady &&
+        micReady &&
+        (localTrackLive || receiveOnly);
+      logVoiceStartCheck({
+        deviceId,
+        remoteId,
+        sessionId,
+        membersCount: members.length,
+        remoteIdsCount: remoteIds.length,
+        settingsReady,
+        hasTurn,
+        p2pEnabled: p2pEnabledRef.current,
+        icePolicy: getPeerIceTransportPolicy(),
+        signalReady,
+        micReady,
+        shouldCreatePeer: canCreatePassive || canCreateActive,
+        role,
+      });
+    },
+    [
+      deviceId,
+      getPeerIceTransportPolicy,
+      getRemoteIds,
+      isRemoteInCall,
+      localAudioTrackRef,
+      localStreamRef,
+      members.length,
+      micReady,
+      peerNeedsPc,
+      sessionId,
+      signalReady,
+      userMutedRef,
+      voicePolicy.releaseMicOnMute,
+    ]
   );
 
   const emitMeshSummary = useCallback(
@@ -4660,7 +4749,9 @@ export function usePeerConnections({
       peerIcePolicyRef.current.set(remoteId, iceTransportPolicy);
 
       debugConsoleLog(
-        `[voice-peer] create-peer policy=${iceTransportPolicy} p2pEnabled=${p2pEnabledRef.current} ` +
+        `[voice-peer] create-peer remote=${compactDeviceId(remoteId)} ` +
+          `connectionId=${compactConnectionId(connectionId)} ` +
+          `policy=${iceTransportPolicy} p2pEnabled=${p2pEnabledRef.current} ` +
           `staticTurn=${turnFallbackEnabledRef.current} voiceRoute=${voiceRouteRef.current} ` +
           `hasTurn=${hasTurnIceServer(currentIceServers)} relayForced=${relayForcedRef.current} ` +
           `settingsReady=${voiceSettingsReadyRef.current}`
@@ -5850,7 +5941,11 @@ export function usePeerConnections({
         }
       }
 
-      if (!micReady) {
+      emitVoiceStartCheck(remoteId);
+
+      if (!isOfferOwner && !micReady) {
+        // Passive peers can wait for remote offer without a live local mic track.
+      } else if (!micReady) {
         logEnsureSkipped(remoteId, reason, "mic_not_ready");
         return false;
       }
@@ -5987,6 +6082,7 @@ export function usePeerConnections({
       sendReconnectRequest,
       assignConnectionId,
       enableTurnFallback,
+      emitVoiceStartCheck,
       getP2pDirectFailedHoldRemainingMs,
       setPeerState,
       signalReady,
@@ -6565,14 +6661,36 @@ export function usePeerConnections({
         voicePolicy.releaseMicOnMute,
         userMutedRef
       );
+      const passiveNeedsPc = hasPassiveRemoteNeedingPc(
+        deviceId,
+        missing.map((peer) => peer.remoteDeviceId),
+        peerNeedsPc
+      );
+      const localTrackLive = isLocalTrackLive(
+        localAudioTrackRef,
+        localStreamRef
+      );
+      if (!signalReady) {
+        debugConsoleLog(
+          `[voice-peer] recoverMissingPcsFromMesh skipped trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
+            `signalReady=${signalReady} ${formatVoiceModeSuffix()}`
+        );
+        return;
+      }
       if (
-        !micReady ||
-        !signalReady ||
-        (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly)
+        !micReady &&
+        !passiveNeedsPc
       ) {
         debugConsoleLog(
           `[voice-peer] recoverMissingPcsFromMesh skipped trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
-            `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState} receiveOnly=${receiveOnly} ${formatVoiceModeSuffix()}`
+            `micReady=${micReady} passiveNeedsPc=${passiveNeedsPc} ${formatVoiceModeSuffix()}`
+        );
+        return;
+      }
+      if (!localTrackLive && !receiveOnly && !passiveNeedsPc) {
+        debugConsoleLog(
+          `[voice-peer] recoverMissingPcsFromMesh skipped trigger=${trigger} peers=${peers.length} missing=${missing.length} ` +
+            `micReady=${micReady} signalReady=${signalReady} localTrack=${localTrackState} receiveOnly=${receiveOnly} passiveNeedsPc=${passiveNeedsPc} ${formatVoiceModeSuffix()}`
         );
         return;
       }
@@ -6599,9 +6717,11 @@ export function usePeerConnections({
       }
     },
     [
+      deviceId,
       localAudioTrackRef,
       localStreamRef,
       micReady,
+      peerNeedsPc,
       recoverMissingPc,
       signalReady,
       userMutedRef,
@@ -6707,8 +6827,20 @@ export function usePeerConnections({
       scanAndEnsureMissingPcsRef.current(scanTrigger, buildHealScanPeers());
     };
 
-    if (!micReady || !signalReady) {
-      runHealScan(!micReady ? "healRun_mic_not_ready" : "healRun_signal_not_ready");
+    const remoteIdsForHeal = getRemoteIds();
+    const passiveNeedsPc = hasPassiveRemoteNeedingPc(
+      deviceId,
+      remoteIdsForHeal,
+      peerNeedsPc
+    );
+
+    if (!signalReady) {
+      runHealScan("healRun_signal_not_ready");
+      return;
+    }
+
+    if (!micReady && !passiveNeedsPc) {
+      runHealScan("healRun_mic_not_ready");
       return;
     }
 
@@ -6716,9 +6848,13 @@ export function usePeerConnections({
       voicePolicy.releaseMicOnMute,
       userMutedRef
     );
-    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly) {
+    const localTrackLive = isLocalTrackLive(
+      localAudioTrackRef,
+      localStreamRef
+    );
+    if (!localTrackLive && !receiveOnly && !passiveNeedsPc) {
       debugConsoleLog(
-        `[voice-peer] healPeerConnections skipped micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} receiveOnly=${receiveOnly} ${formatVoiceModeSuffix()}`
+        `[voice-peer] healPeerConnections skipped micReady=${micReady} localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} receiveOnly=${receiveOnly} passiveNeedsPc=${passiveNeedsPc} ${formatVoiceModeSuffix()}`
       );
       runHealScan("healRun_local_track_not_live");
       return;
@@ -7233,6 +7369,8 @@ export function usePeerConnections({
     signalReady,
     startPeerOffer,
     buildReconnectDecisionInput,
+    userMutedRef,
+    voicePolicy.releaseMicOnMute,
   ]);
 
   healPeerConnectionsRef.current = healPeerConnections;
@@ -7768,6 +7906,7 @@ export function usePeerConnections({
       } finally {
         if (alive) {
           voiceSettingsReadyRef.current = true;
+          healPeerConnectionsRef.current();
         }
       }
     }
@@ -7881,27 +8020,13 @@ export function usePeerConnections({
       })),
     });
 
-    if (!micReady) {
-      voiceDebugLog("[voice-peer] offer effect stop", { reason: "micReady_false" });
-      return;
-    }
-
     if (!signalReady) {
+      for (const remoteId of remoteIds) {
+        emitVoiceStartCheck(remoteId);
+        logVoiceStartBlocked(remoteId, "signal_not_ready");
+      }
       voiceDebugLog("[voice-peer] offer effect stop", {
         reason: "signalReady_false",
-      });
-      return;
-    }
-
-    const receiveOnly = isReceiveOnlyMutedSession(
-      voicePolicy.releaseMicOnMute,
-      userMutedRef
-    );
-    if (!isLocalTrackLive(localAudioTrackRef, localStreamRef) && !receiveOnly) {
-      voiceDebugLog("[voice-peer] offer effect stop", {
-        reason: "local_track_not_live",
-        localTrack: getLocalTrackReadyState(localAudioTrackRef, localStreamRef),
-        receiveOnly,
       });
       return;
     }
@@ -7918,6 +8043,7 @@ export function usePeerConnections({
             .join("|")}`
       );
       logVoicePipelineClassification(undefined, "offer-effect-no_remoteIds");
+      logVoiceStartBlocked("-", "no_remote_ids");
       voiceDebugLog("[voice-peer] offer effect stop", {
         reason: "no_remoteIds",
         strictRemoteIds: strict,
@@ -7930,6 +8056,17 @@ export function usePeerConnections({
       return;
     }
 
+    const receiveOnly = isReceiveOnlyMutedSession(
+      voicePolicy.releaseMicOnMute,
+      userMutedRef
+    );
+    const localTrackLive = isLocalTrackLive(
+      localAudioTrackRef,
+      localStreamRef
+    );
+    const activeCanOffer =
+      micReady && (localTrackLive || receiveOnly);
+
     for (const existingId of Array.from(pcsRef.current.keys())) {
       if (!remoteIds.includes(existingId)) {
         startedPeersRef.current.delete(existingId);
@@ -7940,6 +8077,8 @@ export function usePeerConnections({
     }
 
     for (const remoteId of remoteIds) {
+      emitVoiceStartCheck(remoteId);
+
       if (!getCurrentConnectionId(remoteId)) {
         assignConnectionId(
           remoteId,
@@ -7948,7 +8087,20 @@ export function usePeerConnections({
         );
       }
 
-      void maybeStartOffer(remoteId);
+      const isOfferOwner = deviceId < remoteId;
+      if (isOfferOwner) {
+        if (!activeCanOffer) {
+          if (!micReady) {
+            logVoiceStartBlocked(remoteId, "mic_not_ready");
+          } else if (!localTrackLive && !receiveOnly) {
+            logVoiceStartBlocked(remoteId, "local_track_not_live");
+          }
+          continue;
+        }
+        void maybeStartOffer(remoteId);
+      } else {
+        ensurePeerConnection(remoteId, "passive_on_join");
+      }
     }
 
     healPeerConnections();
@@ -7962,12 +8114,18 @@ export function usePeerConnections({
     closePeer,
     emitMeshSummary,
     emitPeerStates,
+    emitVoiceStartCheck,
+    ensurePeerConnection,
     getCurrentConnectionId,
     getRemoteIds,
     getStrictRemoteIds,
     healPeerConnections,
+    localAudioTrackRef,
+    localStreamRef,
     maybeClosePeerForMemberRemoval,
     maybeStartOffer,
+    userMutedRef,
+    voicePolicy.releaseMicOnMute,
   ]);
 
   useEffect(() => {

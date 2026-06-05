@@ -1113,6 +1113,81 @@ export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
   }
 }
 
+export type VoiceStartBlockedReason =
+  | "settings_not_ready"
+  | "turn_not_loaded"
+  | "signal_not_ready"
+  | "mic_not_ready"
+  | "local_track_not_live"
+  | "no_remote_ids"
+  | "not_in_call"
+  | "hidden"
+  | "voice_transport_disabled"
+  | "passive_awaiting_reconnect_offer"
+  | "already_has_pc"
+  | "unknown";
+
+export function mapEnsureSkipToVoiceStartBlocked(
+  skipReason: string
+): VoiceStartBlockedReason {
+  switch (skipReason) {
+    case "voice_settings_not_loaded":
+      return "settings_not_ready";
+    case "relay_forced_without_turn_servers":
+      return "turn_not_loaded";
+    case "signal_not_ready":
+      return "signal_not_ready";
+    case "mic_not_ready":
+      return "mic_not_ready";
+    case "local_track_not_live":
+      return "local_track_not_live";
+    case "member_not_in_call":
+      return "not_in_call";
+    case "passive_awaiting_reconnect_offer":
+      return "passive_awaiting_reconnect_offer";
+    case "voice_transport_disabled":
+      return "voice_transport_disabled";
+    default:
+      return "unknown";
+  }
+}
+
+export function logVoiceStartCheck(params: {
+  deviceId: string;
+  remoteId: string;
+  sessionId: string;
+  membersCount: number;
+  remoteIdsCount: number;
+  settingsReady: boolean;
+  hasTurn: boolean;
+  p2pEnabled: boolean;
+  icePolicy: string;
+  signalReady: boolean;
+  micReady: boolean;
+  shouldCreatePeer: boolean;
+  role: "active" | "passive";
+}) {
+  debugConsoleLog(
+    `[voice-start-check] device=${compactDeviceId(params.deviceId)} ` +
+      `remote=${compactDeviceId(params.remoteId)} ` +
+      `session=${compactSessionId(params.sessionId)} ` +
+      `members=${params.membersCount} remoteIds=${params.remoteIdsCount} ` +
+      `settingsReady=${params.settingsReady} hasTurn=${params.hasTurn} ` +
+      `p2pEnabled=${params.p2pEnabled} icePolicy=${params.icePolicy} ` +
+      `signalReady=${params.signalReady} micReady=${params.micReady} ` +
+      `shouldCreatePeer=${params.shouldCreatePeer} role=${params.role}`
+  );
+}
+
+export function logVoiceStartBlocked(
+  remoteId: string,
+  reason: VoiceStartBlockedReason
+) {
+  debugConsoleLog(
+    `[voice-start-blocked] remote=${compactDeviceId(remoteId)} reason=${reason}`
+  );
+}
+
 export function installCallPageDiagnostics(params: {
   sessionId: string;
   deviceId: string;
