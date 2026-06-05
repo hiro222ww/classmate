@@ -76,6 +76,10 @@ import {
   resetVoicePerfSession,
 } from "@/lib/voicePerf";
 import { resetSessionVoiceCache } from "@/lib/sessionVoiceCache";
+import {
+  applyCallMemberInCallHysteresis,
+  shouldStartCallMemberInCallHysteresis,
+} from "@/lib/callMemberInCallHysteresis";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -169,6 +173,7 @@ export default function CallClient() {
 
   useEffect(() => {
     if (!sessionId) return;
+    firstFastMembersAtRef.current = null;
     resetVoicePerfSession(sessionId);
     resetSessionVoiceCache(sessionId);
     markVoicePerf("call_screen_mounted");
@@ -222,6 +227,7 @@ export default function CallClient() {
   const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const memberEmptyStreakRef = useRef(0);
+  const firstFastMembersAtRef = useRef<number | null>(null);
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
@@ -620,20 +626,38 @@ export default function CallClient() {
           );
         }
 
+        if (
+          shouldStartCallMemberInCallHysteresis(
+            firstFastMembersAtRef.current,
+            useFast,
+            nextMembers.length
+          )
+        ) {
+          firstFastMembersAtRef.current = Date.now();
+        }
+
         debugConsoleLog(
           `[session-members] api-result context=call count=${nextMembers.length} ` +
             `ids=${compactMemberDeviceIds(nextMembers)} reason=${reason} ` +
-            `session=${String(sessionId).slice(-6)}`
+            `session=${String(sessionId).slice(-6)} fast=${useFast}`
         );
 
         let redirectRemoved = false;
 
         setMembers((prev) => {
+          const mergedMembers = applyCallMemberInCallHysteresis(prev, nextMembers, {
+            sessionId,
+            viewerDeviceId: deviceId,
+            firstFastMembersAt: firstFastMembersAtRef.current,
+            localExitedPeers: localExitedPeersRef.current,
+            fetchReason: reason,
+          });
+
           const decision = evaluateMemberListApply({
             fetchOk: true,
             reason,
             prevMembers: prev,
-            nextMembers,
+            nextMembers: mergedMembers,
             viewerDeviceId: deviceId,
             emptyStreak: memberEmptyStreakRef.current,
             viewerInSessionMembers: json.viewerState?.inSessionMembers,
@@ -649,9 +673,9 @@ export default function CallClient() {
             sessionId: String(sessionId),
             classId: String(classId),
             currentCount: prev.length,
-            nextCount: nextMembers.length,
+            nextCount: mergedMembers.length,
             currentIds: compactMemberDeviceIds(prev),
-            nextIds: compactMemberDeviceIds(nextMembers),
+            nextIds: compactMemberDeviceIds(mergedMembers),
             apply: decision.apply,
             ignoreReason: decision.ignoreReason,
             removed,
@@ -680,7 +704,7 @@ export default function CallClient() {
             return prev;
           }
 
-          return nextMembers.map((m) => {
+          return mergedMembers.map((m) => {
             const existing = prev.find((x) => x.device_id === m.device_id);
             return {
               ...m,
@@ -758,6 +782,7 @@ export default function CallClient() {
 
   useEffect(() => {
     membersDisplayedRef.current = false;
+    firstFastMembersAtRef.current = null;
     void fetchMembers("initial", { fast: true });
 
     const presenceSync = window.setTimeout(() => {
