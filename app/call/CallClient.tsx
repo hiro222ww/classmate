@@ -505,11 +505,12 @@ export default function CallClient() {
     [sessionId]
   );
 
+  /** Leave the call and return to Room — keeps session_members; updates presence only. */
   const markSelfLeftCall = useCallback(() => {
     const did = String(deviceId ?? "").trim();
     if (!did || !sessionId) return;
 
-    logNavigationIntent("explicit_leave", "CallClient.markSelfLeftCall");
+    logNavigationIntent("left_call_return_room", "CallClient.markSelfLeftCall");
     markLocalLeftCall(sessionId, did, LOCAL_LEFT_CALL_EXPLICIT_REASON);
     localExitedPeersRef.current.add(did);
     setPeerStates({});
@@ -525,18 +526,6 @@ export default function CallClient() {
           : member
       )
     );
-
-    void fetch("/api/session/leave", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        deviceId: did,
-      }),
-      cache: "no-store",
-    }).catch((err) => {
-      console.warn("[call] session leave failed", err);
-    });
 
     if (classId) {
       void fetch("/api/class/presence", {
@@ -1760,8 +1749,8 @@ export default function CallClient() {
                 `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
                   `&sessionId=${encodeURIComponent(sessionId)}`
               );
-              logNavigationIntent("explicit_leave", "CallClient.exit_button");
-              logRouteChange(getCurrentPath(), roomHref, "explicit_leave");
+              logNavigationIntent("left_call_return_room", "CallClient.exit_button");
+              logRouteChange(getCurrentPath(), roomHref, "left_call_return_room");
               markSelfLeftCall();
               releaseSessionMic("call_exit", sessionId);
               router.push(roomHref);

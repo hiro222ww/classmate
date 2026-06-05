@@ -1039,11 +1039,98 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     prevMemberInternalRef.current = nextInternals;
   }, [visibleMembers, presenceMap, sessionId, deviceId]);
 
+  const selfRejoinSessionIfMissing = useCallback(async (): Promise<boolean> => {
+    if (!sessionId || !classId || !deviceId) return true;
+
+    const checkQs = new URLSearchParams({
+      sessionId,
+      classId,
+      lite: "1",
+      viewerDeviceId: deviceId,
+    });
+
+    try {
+      const checkRes = await fetchWithRetry(
+        `/api/session/status?${checkQs.toString()}`,
+        { cache: "no-store" },
+        { kind: "members", maxAttempts: 2 }
+      );
+      const checkJson = (await checkRes.json().catch(() => null)) as
+        | SessionStatusResponse
+        | null;
+
+      if (checkRes.ok && checkJson?.viewerState?.inSessionMembers === true) {
+        return true;
+      }
+    } catch {
+      // fall through to rejoin attempt
+    }
+
+    const rawName = String(displayName ?? "").trim() || "参加者";
+    const name = rawName === "You" ? "参加者" : rawName;
+
+    console.log(
+      `[session-members] self-rejoin start context=room device=${deviceId.slice(-4)} ` +
+        `session=${sessionId.slice(-6)} class=${classId.slice(-6)}`
+    );
+
+    try {
+      const joinRes = await fetch(
+        `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            classId,
+            deviceId,
+            name,
+            capacity: 5,
+            openJoinedClass,
+          }),
+          cache: "no-store",
+        }
+      );
+
+      const joinJson = (await joinRes.json().catch(() => null)) as
+        | SessionJoinResponse
+        | null;
+
+      if (!joinRes.ok || !joinJson?.ok) {
+        console.warn(
+          `[session-members] self-rejoin failed context=room device=${deviceId.slice(-4)} ` +
+            `session=${sessionId.slice(-6)} error=${String(joinJson?.error ?? joinRes.status)}`
+        );
+        return false;
+      }
+
+      joinedSessionKeyRef.current = `${sessionId}:${classId}:${deviceId}:${name}`;
+      hasClassMembershipHintRef.current = true;
+      console.log(
+        `[session-members] self-rejoin ok context=room device=${deviceId.slice(-4)} ` +
+          `session=${sessionId.slice(-6)} memberCount=${joinJson.memberCount ?? "-"}`
+      );
+      return true;
+    } catch (e) {
+      console.warn("[room] self-rejoin failed", e);
+      return false;
+    }
+  }, [classId, deviceId, displayName, openJoinedClass, sessionId]);
+
   const fetchStatus = useCallback(
     async (opts?: { force?: boolean; fast?: boolean }) => {
       if (!sessionId || !classId) return;
       if (pathname !== "/room") return;
       if (!opts?.force && typeof document !== "undefined" && document.hidden) {
+        return;
+      }
+
+      const rejoinOk = await selfRejoinSessionIfMissing();
+      if (!rejoinOk) {
+        console.warn(
+          `[session-members] fetchStatus deferred context=room reason=self_rejoin_failed ` +
+            `session=${sessionId.slice(-6)} device=${String(deviceId ?? "").slice(-4)}`
+        );
         return;
       }
 
@@ -1209,7 +1296,7 @@ if (!res.ok || !json?.ok) {
         window.clearTimeout(timer);
       }
     },
-    [sessionId, classId, pathname, topicTitle, deviceId, router]
+    [sessionId, classId, pathname, topicTitle, deviceId, router, selfRejoinSessionIfMissing]
   );
 
   useEffect(() => {

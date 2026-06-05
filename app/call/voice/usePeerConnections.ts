@@ -1029,6 +1029,10 @@ export function usePeerConnections({
   const osRef = useRef<OsType>(detectOs());
   const connectStartedAtRef = useRef<Map<string, number>>(new Map());
   const loggedConnectedRef = useRef<Set<string>>(new Set());
+  const loggedAudioStrictRef = useRef<Set<string>>(new Set());
+  const refreshConnectedVoiceLogForAudioStrictRef = useRef<
+    (remoteId: string, source: string) => void
+  >(() => {});
   const healRunSeqRef = useRef(0);
   const peerHealActionRef = useRef<
     Map<string, { lastAction: string; consecutive: number }>
@@ -2017,6 +2021,16 @@ export function usePeerConnections({
         logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)} source=stats_poll`);
       }
 
+      if (
+        marks.audio_confirmed_strict ||
+        health?.audioConfirmedStrict === true
+      ) {
+        refreshConnectedVoiceLogForAudioStrictRef.current(
+          remoteId,
+          "stats_poll"
+        );
+      }
+
       if (!marks.audio_confirmed_strict && subClass !== "OK") {
         publishPeerAudioSubClass(remoteId, subClass, stats, health);
 
@@ -2058,6 +2072,10 @@ export function usePeerConnections({
         markVoicePerf("audio_confirmed_strict", { remoteId });
         markVoicePerf("audio_confirmed", { remoteId });
         logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)}`);
+        refreshConnectedVoiceLogForAudioStrictRef.current(
+          remoteId,
+          "remote_playback_health"
+        );
         oneWayAudioLoggedRef.current.forEach((key) => {
           if (key.startsWith(`${remoteId}:`)) {
             oneWayAudioLoggedRef.current.delete(key);
@@ -2326,11 +2344,15 @@ export function usePeerConnections({
       });
 
       const baseClass = classifyVoicePipelineFailure(remoteId);
+      const audioStrictConfirmed =
+        iceConnected &&
+        (marks.audio_confirmed_strict || health?.audioConfirmedStrict === true);
+
       const enriched = enrichPeerVoiceClass(
         baseClass,
         {
           iceConnected,
-          audioConfirmedStrict: marks.audio_confirmed_strict,
+          audioConfirmedStrict: audioStrictConfirmed,
           remoteTrackReceived: marks.remote_track_received,
         },
         subClass,
@@ -2354,10 +2376,10 @@ export function usePeerConnections({
         iceReceived: marks.ice_received,
         iceConnected,
         remoteTrackReceived: marks.remote_track_received,
-        audioConfirmed: iceConnected && marks.audio_confirmed_strict,
-        audioConfirmedStrict: iceConnected && marks.audio_confirmed_strict,
+        audioConfirmed: audioStrictConfirmed,
+        audioConfirmedStrict: audioStrictConfirmed,
         audioProvisional:
-          !marks.audio_confirmed_strict &&
+          !audioStrictConfirmed &&
           (marks.audio_provisional || timestamps.lastPlaySuccessAt != null),
         lastSignalAt: signalTimes.length ? Math.max(...signalTimes) : null,
         lastIceAt: timestamps.lastIceCandidateAt,
@@ -2818,6 +2840,11 @@ export function usePeerConnections({
             loggedConnectedRef.current.delete(key);
           }
         }
+        for (const key of Array.from(loggedAudioStrictRef.current)) {
+          if (key.startsWith(`${remoteId}:`)) {
+            loggedAudioStrictRef.current.delete(key);
+          }
+        }
       }
 
       setCurrentConnectionId(remoteId, connectionId);
@@ -3001,12 +3028,17 @@ export function usePeerConnections({
     async (
       remoteId: string,
       pc: RTCPeerConnection,
-      phase: "connected" | "failed" = "connected"
+      phase: "connected" | "failed" = "connected",
+      opts?: { repeat?: boolean; reason?: string }
     ) => {
       const connectionId = getCurrentConnectionId(remoteId);
       const logKey = `${remoteId}:${connectionId ?? "none"}:${phase}`;
 
-      if (phase === "connected" && loggedConnectedRef.current.has(logKey)) {
+      if (
+        phase === "connected" &&
+        loggedConnectedRef.current.has(logKey) &&
+        opts?.repeat !== true
+      ) {
         return;
       }
 
@@ -3088,7 +3120,14 @@ export function usePeerConnections({
         }
 
         if (phase === "connected") {
-          loggedConnectedRef.current.add(logKey);
+          if (opts?.repeat === true) {
+            debugConsoleLog(
+              `[voice-peer] connection-log-refresh remote=${compactDeviceId(remoteId)} ` +
+                `reason=${opts.reason ?? "repeat"} state=${connectionState}`
+            );
+          } else {
+            loggedConnectedRef.current.add(logKey);
+          }
         }
       } catch (e) {
         console.warn("[call] voice log failed", e);
@@ -3103,6 +3142,43 @@ export function usePeerConnections({
       sessionId,
     ]
   );
+
+  const refreshConnectedVoiceLogForAudioStrict = useCallback(
+    (remoteId: string, source: string) => {
+      const connectionId = getCurrentConnectionId(remoteId);
+      const strictLogKey = `${remoteId}:${connectionId ?? "none"}:audio_strict`;
+      if (loggedAudioStrictRef.current.has(strictLogKey)) return;
+
+      const pc = pcsRef.current.get(remoteId);
+      if (
+        !pc ||
+        !isTransportMediaConnected(pc.connectionState, pc.iceConnectionState)
+      ) {
+        return;
+      }
+
+      const marks = getPeerPipelineMarks(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId);
+      const strict =
+        marks.audio_confirmed_strict || health?.audioConfirmedStrict === true;
+      if (!strict) return;
+
+      loggedAudioStrictRef.current.add(strictLogKey);
+      debugConsoleLog(
+        `[voice-peer] audio-strict-log-upgrade remote=${compactDeviceId(remoteId)} ` +
+          `source=${source} mark=${marks.audio_confirmed_strict ? 1 : 0} ` +
+          `health=${health?.audioConfirmedStrict === true ? 1 : 0}`
+      );
+      void logVoiceConnection(remoteId, pc, "connected", {
+        repeat: true,
+        reason: `audio_strict_${source}`,
+      });
+    },
+    [getCurrentConnectionId, logVoiceConnection]
+  );
+
+  refreshConnectedVoiceLogForAudioStrictRef.current =
+    refreshConnectedVoiceLogForAudioStrict;
 
   const upsertRemoteAudio = useCallback(
     (
@@ -8338,6 +8414,7 @@ export function usePeerConnections({
       processedSignalIdsRef.current.clear();
       connectStartedAtRef.current.clear();
       loggedConnectedRef.current.clear();
+      loggedAudioStrictRef.current.clear();
       peerSnapshotRef.current.clear();
       peerEverConnectedRef.current.clear();
       peerLastConnectedAtRef.current.clear();

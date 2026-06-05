@@ -85,7 +85,7 @@ export function markLocalLeftCall(
   try {
     sessionStorage.setItem(storageKey(sid, did), JSON.stringify(record));
     console.log(
-      `[call-lifecycle] explicit-leave session=${sid.slice(-8)} device=${did.slice(-3)}`
+      `[call-lifecycle] left-call-return-room session=${sid.slice(-8)} device=${did.slice(-3)}`
     );
   } catch {
     // ignore quota / private mode

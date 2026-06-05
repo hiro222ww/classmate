@@ -3,11 +3,11 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 
 /**
- * Explicit session leave only.
+ * Explicit session leave only (Room exit / class leave — NOT call→room return).
  * - Deletes session_members for (sessionId, deviceId).
  * - Does NOT delete class_memberships (class home membership stays).
  * - Does NOT delete class_presence (heartbeat may mark stale separately).
- * - Must be called from intentional exit UI, not pagehide/bfcache/reload.
+ * - Must be called from intentional session-exit UI, never from Call exit/back.
  */
 export const dynamic = "force-dynamic";
 
