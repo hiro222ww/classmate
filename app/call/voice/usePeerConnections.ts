@@ -55,7 +55,18 @@ import {
   getConnectingTurnProbeMs,
   getP2pCheckingGraceMs,
 } from "@/lib/voiceJoinTiming";
-import { logVoicePerfPipeline, markVoicePerf } from "@/lib/voicePerf";
+import {
+  logVoicePerfPipeline,
+  logVoicePipelineClassification,
+  markVoicePeerClose,
+  markVoicePerf,
+} from "@/lib/voicePerf";
+import {
+  createRemotePeerGraceRefs,
+  getRemoteIdsWithMemberGrace,
+  isPresenceConfirmedRemoteLeave,
+  shouldCloseRemotePeerNow,
+} from "@/lib/callRemotePeerGrace";
 import {
   getCachedTurnIceServers,
   getCachedTurnProvider,
@@ -845,6 +856,8 @@ export function usePeerConnections({
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef(deviceId);
   const membersCountRef = useRef(members.length);
+  const remotePeerGraceRefsRef = useRef(createRemotePeerGraceRefs());
+  const deferredMemberCloseTimersRef = useRef<Map<string, number>>(new Map());
   const onVoiceCleanupRef = useRef(onVoiceCleanup);
   const emitPeerStatesRef = useRef<() => void>(() => {});
 
@@ -1415,13 +1428,36 @@ export function usePeerConnections({
     return members;
   }, [members]);
 
-  const getRemoteIds = useCallback(() => {
+  const getStrictRemoteIds = useCallback(() => {
     const selfId = String(deviceId ?? "").trim();
     return activeMembers
       .filter((m) => m.is_in_call === true)
       .map((m) => String(m.device_id ?? "").trim())
       .filter((id) => id && id !== selfId);
   }, [activeMembers, deviceId]);
+
+  const getRemoteIds = useCallback(() => {
+    const strict = getStrictRemoteIds();
+    const { ids, graceIds } = getRemoteIdsWithMemberGrace(
+      strict,
+      remotePeerGraceRefsRef.current
+    );
+    if (graceIds.length > 0) {
+      debugConsoleLog(
+        `[voice-peer] remote-ids-grace strict=${strict.map((id) => compactDeviceId(id)).join(",")} ` +
+          `grace=${graceIds.map((id) => compactDeviceId(id)).join(",")}`
+      );
+    }
+    return ids;
+  }, [getStrictRemoteIds]);
+
+  const clearDeferredMemberCloseTimer = useCallback((remoteId: string) => {
+    const timer = deferredMemberCloseTimersRef.current.get(remoteId);
+    if (timer != null) {
+      window.clearTimeout(timer);
+      deferredMemberCloseTimersRef.current.delete(remoteId);
+    }
+  }, []);
 
   const touchPeerSignal = useCallback(
     (
@@ -1484,6 +1520,16 @@ export function usePeerConnections({
       }
 
       peerSignalTimestampsRef.current.set(remoteId, next);
+
+      if (
+        event === "offer_received" ||
+        event === "answer_sent" ||
+        event === "answer_received" ||
+        event === "ice_sent" ||
+        event === "ice_received"
+      ) {
+        markVoicePerf(event, { remoteId });
+      }
     },
     []
   );
@@ -1704,10 +1750,16 @@ export function usePeerConnections({
 
   const isRemoteInCall = useCallback(
     (remoteId: string) => {
-      const member = members.find((m) => m.device_id === remoteId);
-      return member?.is_in_call === true;
+      const strict = getStrictRemoteIds();
+      if (strict.includes(remoteId)) return true;
+      const decision = shouldCloseRemotePeerNow(
+        remoteId,
+        strict,
+        remotePeerGraceRefsRef.current
+      );
+      return !decision.closeNow && decision.via === "grace_active";
     },
-    [members]
+    [getStrictRemoteIds]
   );
 
   const peerNeedsPc = useCallback((remoteId: string) => {
@@ -2506,7 +2558,14 @@ export function usePeerConnections({
       }
     ) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
-      const reason = opts?.reason ?? "unspecified";
+      const reason = String(opts?.reason ?? "").trim() || "missing_reason";
+      if (reason === "missing_reason") {
+        console.warn(
+          `[voice-peer] close missing reason remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
+        );
+      }
+
+      clearDeferredMemberCloseTimer(remoteId);
 
       if (
         reason === "reconnect_clear_ended_audio" &&
@@ -2617,6 +2676,7 @@ export function usePeerConnections({
         `${formatVoiceModeSuffix()}`;
 
       debugConsoleLog(compact);
+      markVoicePeerClose(remoteId, reason);
       recordCallReloadContext({ lastClosePeer: compact });
 
       if (shouldClearConnectionId) {
@@ -2632,6 +2692,7 @@ export function usePeerConnections({
       }
     },
     [
+      clearDeferredMemberCloseTimer,
       clearEndedRemoteAudio,
       clearPeerWatchdogTimers,
       clearReconnectTimer,
@@ -2641,6 +2702,52 @@ export function usePeerConnections({
       hasStaleEndedRemoteAudio,
       shouldHoldCloseForReconnectClearEnded,
     ]
+  );
+
+  const maybeClosePeerForMemberRemoval = useCallback(
+    (remoteId: string, source: string) => {
+      const strict = getStrictRemoteIds();
+      const decision = shouldCloseRemotePeerNow(
+        remoteId,
+        strict,
+        remotePeerGraceRefsRef.current
+      );
+
+      if (!decision.closeNow) {
+        debugConsoleLog(
+          `[voice-peer] close-deferred remote=${compactDeviceId(remoteId)} source=${source} ` +
+            `graceRemainingMs=${decision.graceRemainingMs} via=${decision.via}`
+        );
+        if (!deferredMemberCloseTimersRef.current.has(remoteId)) {
+          const timer = window.setTimeout(() => {
+            deferredMemberCloseTimersRef.current.delete(remoteId);
+            const strictNow = getStrictRemoteIds();
+            const later = shouldCloseRemotePeerNow(
+              remoteId,
+              strictNow,
+              remotePeerGraceRefsRef.current
+            );
+            if (later.closeNow && !strictNow.includes(remoteId)) {
+              closePeer(remoteId, {
+                clearConnectionId: true,
+                reason: "member_removed_grace_expired",
+              });
+            }
+          }, decision.graceRemainingMs);
+          deferredMemberCloseTimersRef.current.set(remoteId, timer);
+        }
+        return;
+      }
+
+      closePeer(remoteId, {
+        clearConnectionId: true,
+        reason:
+          decision.via === "explicit"
+            ? "explicit_remote_leave"
+            : "member_removed",
+      });
+    },
+    [closePeer, getStrictRemoteIds]
   );
 
   const attemptSignalingRecoverRef = useRef<
@@ -5778,7 +5885,8 @@ export function usePeerConnections({
           remoteId: existingId,
           action: "close-extra",
           reason: "member_left",
-          run: () => closePeer(existingId, { clearConnectionId: true, reason: "member_left" }),
+          run: () =>
+            maybeClosePeerForMemberRemoval(existingId, "heal_member_left"),
         });
       }
     }
@@ -6799,7 +6907,26 @@ export function usePeerConnections({
     }
 
     if (remoteIds.length < 1) {
-      voiceDebugLog("[voice-peer] offer effect stop", { reason: "no_remoteIds" });
+      const strict = getStrictRemoteIds();
+      debugConsoleLog(
+        `[voice-peer] offer-effect-stop class=A reason=no_remoteIds strictCount=${strict.length} ` +
+          `members=${members
+            .map(
+              (m) =>
+                `${String(m.device_id ?? "").slice(-4)}:inCall=${m.is_in_call === true ? 1 : 0}:screen=${String(m.screen ?? "-")}`
+            )
+            .join("|")}`
+      );
+      logVoicePipelineClassification(undefined, "offer-effect-no_remoteIds");
+      voiceDebugLog("[voice-peer] offer effect stop", {
+        reason: "no_remoteIds",
+        strictRemoteIds: strict,
+        members: members.map((m) => ({
+          device_id: m.device_id,
+          is_in_call: m.is_in_call,
+          screen: m.screen,
+        })),
+      });
       return;
     }
 
@@ -6808,7 +6935,7 @@ export function usePeerConnections({
         startedPeersRef.current.delete(existingId);
         peerStatesRef.current.delete(existingId);
         emitPeerStates();
-        closePeer(existingId, { clearConnectionId: true, reason: "member_removed" });
+        maybeClosePeerForMemberRemoval(existingId, "offer_effect_member_removed");
       }
     }
 
@@ -6837,9 +6964,22 @@ export function usePeerConnections({
     emitPeerStates,
     getCurrentConnectionId,
     getRemoteIds,
+    getStrictRemoteIds,
     healPeerConnections,
+    maybeClosePeerForMemberRemoval,
     maybeStartOffer,
   ]);
+
+  useEffect(() => {
+    const selfId = String(deviceId ?? "").trim();
+    for (const member of members) {
+      const remoteId = String(member.device_id ?? "").trim();
+      if (!remoteId || remoteId === selfId) continue;
+      if (!isPresenceConfirmedRemoteLeave(member)) continue;
+      if (!pcsRef.current.has(remoteId)) continue;
+      maybeClosePeerForMemberRemoval(remoteId, "presence_confirmed_leave");
+    }
+  }, [deviceId, members, maybeClosePeerForMemberRemoval]);
 
   useEffect(() => {
     if (!micReady) return;
@@ -7030,14 +7170,35 @@ export function usePeerConnections({
         typeof document !== "undefined" ? document.visibilityState : "-";
       const memberCount = membersCountRef.current;
 
+      const sid = String(sessionIdRef.current ?? "").slice(-6) || "-";
+      const did = compactDeviceId(deviceIdRef.current);
+
       debugConsoleLog(
-        `[voice-peer] ${logTag} reason=${reason} pcs=${pcCount} timers=${timerCount} ` +
-          `remoteAudios=${remoteAudioCount} members=${memberCount} vis=${vis} ` +
-          `${formatVoiceModeSuffix()}`
+        `[voice-peer] ${logTag} reason=${reason} session=${sid} device=${did} ` +
+          `pcs=${pcCount} timers=${timerCount} remoteAudios=${remoteAudioCount} ` +
+          `members=${memberCount} vis=${vis} ${formatVoiceModeSuffix()}`
       );
+      logVoicePipelineClassification(undefined, `cleanup ${logTag} reason=${reason}`);
     },
     []
   );
+
+  useEffect(() => {
+    const strict = getStrictRemoteIds();
+    const remoteIds = getRemoteIds();
+    const graceCount = remoteIds.length - strict.length;
+    debugConsoleLog(
+      `[voice-peer] remote-ids-snapshot strict=${strict.length} grace=${graceCount} ` +
+        `strictIds=${strict.map((id) => compactDeviceId(id)).join(",") || "-"} ` +
+        `allIds=${remoteIds.map((id) => compactDeviceId(id)).join(",") || "-"} ` +
+        `members=${members
+          .map(
+            (m) =>
+              `${String(m.device_id ?? "").slice(-4)}:inCall=${m.is_in_call === true ? 1 : 0}`
+          )
+          .join("|")}`
+    );
+  }, [getRemoteIds, getStrictRemoteIds, members, membersSyncRevision]);
 
   useEffect(() => {
     membersCountRef.current = members.length;

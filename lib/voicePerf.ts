@@ -84,13 +84,18 @@ const PIPELINE_EVENTS = [
   "turn_ice_servers_loaded",
   "peer_connection_created",
   "offer_sent",
+  "offer_received",
   "answer_sent",
+  "answer_received",
+  "ice_sent",
+  "ice_received",
   "ice_connected",
   "peer_connected",
   "remote_track_received",
   "remote_audio_attached",
   "audio_play_success",
   "audio_confirmed",
+  "peer_closed",
 ] as const;
 
 export function logVoicePerfPipeline(extra?: string) {
@@ -101,8 +106,130 @@ export function logVoicePerfPipeline(extra?: string) {
     return `${event}=${elapsed ?? "-"}`;
   });
 
+  const cls = classifyVoicePipelineFailure();
+
   debugConsoleLog(
-    `[voice-perf] pipeline session=${sessionKey.slice(-6)} ${parts.join(" ")}` +
+    `[voice-perf] pipeline class=${cls} session=${sessionKey.slice(-6)} ${parts.join(" ")}` +
       (extra ? ` extra=${extra}` : "")
   );
+}
+
+/** Summarize per-remote signal/ICE marks for A/B/C/D/E triage (debugVoice=1). */
+export function logVoicePeerPipelineSummary(remoteId: string) {
+  const remote = compactDeviceId(remoteId);
+  const bucket = peerMarks.get(remote);
+  const events = [
+    "peer_connection_created",
+    "offer_sent",
+    "offer_received",
+    "answer_sent",
+    "answer_received",
+    "ice_sent",
+    "ice_received",
+    "ice_connected",
+    "remote_track_received",
+    "audio_confirmed",
+    "peer_closed",
+  ] as const;
+  const parts = events.map((e) => `${e}=${bucket?.has(e) ? bucket.get(e)?.elapsedMs : "-"}`);
+  const cls = classifyVoicePipelineFailure(remoteId);
+  debugConsoleLog(
+    `[voice-perf] peer-pipeline class=${cls} remote=${remote} ${parts.join(" ")}`
+  );
+  return cls;
+}
+
+export type VoicePipelineFailureClass = "A" | "B" | "C" | "D" | "E" | "OK";
+
+function hasAnyPeerMark(event: string): boolean {
+  for (const bucket of peerMarks.values()) {
+    if (bucket.has(event)) return true;
+  }
+  return false;
+}
+
+function peerHadEarlyClose(remote: string): boolean {
+  const bucket = peerMarks.get(remote);
+  if (!bucket?.has("peer_closed")) return false;
+  const closedAt = bucket.get("peer_closed")?.atMs ?? 0;
+  const iceAt = bucket.get("ice_connected")?.atMs ?? 0;
+  const audioAt = bucket.get("audio_confirmed")?.atMs ?? 0;
+  if (audioAt > 0) return false;
+  if (iceAt > 0 && closedAt > iceAt) return true;
+  return closedAt > 0 && iceAt <= 0;
+}
+
+export function classifyVoicePipelineFailure(
+  remoteId?: string
+): VoicePipelineFailureClass {
+  if (!globalMarks.has("members_loaded")) return "A";
+
+  const rid = String(remoteId ?? "").trim();
+  if (!rid) {
+    if (!hasAnyPeerMark("peer_connection_created")) return "A";
+    if (!hasAnyPeerMark("offer_sent") && !hasAnyPeerMark("offer_received")) {
+      return "B";
+    }
+    for (const [remote] of peerMarks.entries()) {
+      if (peerHadEarlyClose(remote)) return "E";
+    }
+    return "OK";
+  }
+
+  const remote = compactDeviceId(rid);
+  const bucket = peerMarks.get(remote);
+  const has = (event: string) => bucket?.has(event) ?? false;
+
+  if (peerHadEarlyClose(remote)) return "E";
+  if (!has("peer_connection_created")) return "A";
+  if (!has("offer_sent") && !has("offer_received")) return "B";
+  if (has("offer_received") || has("answer_received") || has("answer_sent")) {
+    if (!has("ice_connected")) return "C";
+    if (!has("audio_confirmed") && !has("remote_track_received")) return "D";
+  } else if (has("offer_sent")) {
+    return "B";
+  }
+
+  return "OK";
+}
+
+export function logVoicePipelineClassification(
+  remoteId?: string,
+  extra?: string
+): VoicePipelineFailureClass {
+  const cls = classifyVoicePipelineFailure(remoteId);
+  debugConsoleLog(
+    `[voice-perf] classify class=${cls} remote=${remoteId ? compactDeviceId(remoteId) : "-"} ` +
+      `hint=${describeVoicePipelineClass(cls)}` +
+      (extra ? ` extra=${extra}` : "")
+  );
+  return cls;
+}
+
+export function describeVoicePipelineClass(
+  cls: VoicePipelineFailureClass
+): string {
+  switch (cls) {
+    case "A":
+      return "members/remoteIds/is_in_call";
+    case "B":
+      return "signaling/subscribe/offer/answer";
+    case "C":
+      return "ICE/TURN/candidates/connectionId";
+    case "D":
+      return "RemoteAudio/track/play";
+    case "E":
+      return "cleanup/close/lifecycle";
+    default:
+      return "ok";
+  }
+}
+
+export function markVoicePeerClose(
+  remoteId: string,
+  reason: string,
+  extra?: string
+) {
+  markVoicePerf("peer_closed", { remoteId, extra: `reason=${reason}${extra ? ` ${extra}` : ""}` });
+  logVoicePipelineClassification(remoteId, `close reason=${reason}`);
 }

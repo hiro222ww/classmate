@@ -337,8 +337,7 @@ export function useCallSignaling({
 
             if (
               !disposed &&
-              channelResubscribeAttemptsRef.current <
-                2
+              channelResubscribeAttemptsRef.current < 2
             ) {
               channelResubscribeAttemptsRef.current += 1;
               const attempt = channelResubscribeAttemptsRef.current;
@@ -350,6 +349,23 @@ export function useCallSignaling({
                 extra: `status=${status}`,
               });
               void sleepMs(300 * attempt).then(() => {
+                if (!disposed && aliveRef.current) {
+                  subscribeChannel();
+                }
+              });
+              return;
+            }
+
+            if (!disposed && aliveRef.current) {
+              logSignalTransport({
+                kind: "reconnect",
+                method: "realtime.resubscribe",
+                retryCount: channelResubscribeAttemptsRef.current,
+                retryable: true,
+                extra: `status=${status} exhausted_reset`,
+              });
+              channelResubscribeAttemptsRef.current = 0;
+              void sleepMs(2000).then(() => {
                 if (!disposed && aliveRef.current) {
                   subscribeChannel();
                 }

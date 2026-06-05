@@ -25,6 +25,7 @@ describe("applyCallMemberInCallHysteresis", () => {
       viewerDeviceId: viewer,
       firstFastMembersAt: startedAt,
       localExitedPeers: new Set(),
+      memberLastInCallAt: new Map([[remote, startedAt]]),
       fetchReason: "presence_sync",
       nowMs: startedAt + 1500,
     });
@@ -32,22 +33,26 @@ describe("applyCallMemberInCallHysteresis", () => {
     expect(out.find((m) => m.device_id === remote)?.is_in_call).toBe(true);
   });
 
-  it("drops removed members from incoming only", () => {
+  it("preserves missing remote during grace after fast hysteresis window", () => {
     const prev = [
       { device_id: viewer, is_in_call: true },
       { device_id: remote, is_in_call: true },
     ];
     const incoming = [{ device_id: viewer, is_in_call: true }];
+    const lastInCallAt = new Map([[remote, startedAt + 20_000]]);
 
     const out = applyCallMemberInCallHysteresis(prev, incoming, {
       sessionId,
       viewerDeviceId: viewer,
       firstFastMembersAt: startedAt,
       localExitedPeers: new Set(),
-      nowMs: startedAt + 1500,
+      memberLastInCallAt: lastInCallAt,
+      nowMs: startedAt + CALL_MEMBER_IN_CALL_HYSTERESIS_MS + 2000,
     });
 
-    expect(out.some((m) => m.device_id === remote)).toBe(false);
+    expect(out.some((m) => m.device_id === remote && m.is_in_call === true)).toBe(
+      true
+    );
   });
 
   it("applies false after hysteresis window", () => {
@@ -65,7 +70,9 @@ describe("applyCallMemberInCallHysteresis", () => {
       viewerDeviceId: viewer,
       firstFastMembersAt: startedAt,
       localExitedPeers: new Set(),
-      nowMs: startedAt + CALL_MEMBER_IN_CALL_HYSTERESIS_MS + 1,
+      memberLastInCallAt: new Map([[remote, startedAt]]),
+      nowMs:
+        startedAt + CALL_MEMBER_IN_CALL_HYSTERESIS_MS + 10_000,
     });
 
     expect(out.find((m) => m.device_id === remote)?.is_in_call).toBe(false);

@@ -80,6 +80,7 @@ import {
   applyCallMemberInCallHysteresis,
   shouldStartCallMemberInCallHysteresis,
 } from "@/lib/callMemberInCallHysteresis";
+import "@/lib/voiceConnectionDiagnostics";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -174,6 +175,7 @@ export default function CallClient() {
   useEffect(() => {
     if (!sessionId) return;
     firstFastMembersAtRef.current = null;
+    memberLastInCallAtRef.current = new Map();
     resetVoicePerfSession(sessionId);
     resetSessionVoiceCache(sessionId);
     markVoicePerf("call_screen_mounted");
@@ -228,6 +230,7 @@ export default function CallClient() {
   const membersSyncRevisionRef = useRef(0);
   const memberEmptyStreakRef = useRef(0);
   const firstFastMembersAtRef = useRef<number | null>(null);
+  const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
@@ -650,6 +653,7 @@ export default function CallClient() {
             viewerDeviceId: deviceId,
             firstFastMembersAt: firstFastMembersAtRef.current,
             localExitedPeers: localExitedPeersRef.current,
+            memberLastInCallAt: memberLastInCallAtRef.current,
             fetchReason: reason,
           });
 
@@ -783,6 +787,7 @@ export default function CallClient() {
   useEffect(() => {
     membersDisplayedRef.current = false;
     firstFastMembersAtRef.current = null;
+    memberLastInCallAtRef.current = new Map();
     void fetchMembers("initial", { fast: true });
 
     const presenceSync = window.setTimeout(() => {
