@@ -151,6 +151,48 @@ export async function POST(req: Request) {
       return membershipRes.response;
     }
 
+    const { data: sessionRow, error: sessionErr } = await supabase
+      .from("sessions")
+      .select("id,status,class_id")
+      .eq("id", sessionId)
+      .maybeSingle();
+
+    if (sessionErr) {
+      return NextResponse.json(
+        { ok: false, error: "session_lookup_failed", detail: sessionErr.message },
+        { status: 500 }
+      );
+    }
+
+    if (!sessionRow) {
+      return NextResponse.json(
+        { ok: false, error: "session_not_found", sessionId },
+        { status: 404 }
+      );
+    }
+
+    const sessionStatus = String(sessionRow.status ?? "").trim().toLowerCase();
+    if (
+      sessionStatus === "closed" ||
+      sessionStatus === "ended" ||
+      sessionStatus === "expired"
+    ) {
+      console.log(
+        `[room join] reject-closed-session session=${sessionId.slice(-6)} reason=${sessionStatus}`
+      );
+      return NextResponse.json(
+        { ok: false, error: "session_closed", sessionStatus },
+        { status: 400 }
+      );
+    }
+
+    if (String(sessionRow.class_id ?? "").trim() !== classId) {
+      return NextResponse.json(
+        { ok: false, error: "session_class_mismatch", sessionId, classId },
+        { status: 409 }
+      );
+    }
+
     const joinState = await ensureClassSessionMembership({
       classId,
       sessionId,

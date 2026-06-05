@@ -114,24 +114,41 @@ export function logVoicePerfPipeline(extra?: string) {
   );
 }
 
+const PEER_PIPELINE_EVENTS = [
+  "peer_connection_created",
+  "offer_sent",
+  "offer_received",
+  "answer_sent",
+  "answer_received",
+  "ice_sent",
+  "ice_received",
+  "ice_connected",
+  "remote_track_received",
+  "audio_confirmed",
+  "peer_closed",
+] as const;
+
+export type PeerPipelineEvent = (typeof PEER_PIPELINE_EVENTS)[number];
+
+export function getPeerPipelineMarks(
+  remoteId: string
+): Record<PeerPipelineEvent, boolean> {
+  const remote = compactDeviceId(remoteId);
+  const bucket = peerMarks.get(remote);
+  const out = {} as Record<PeerPipelineEvent, boolean>;
+  for (const event of PEER_PIPELINE_EVENTS) {
+    out[event] = bucket?.has(event) ?? false;
+  }
+  return out;
+}
+
 /** Summarize per-remote signal/ICE marks for A/B/C/D/E triage (debugVoice=1). */
 export function logVoicePeerPipelineSummary(remoteId: string) {
   const remote = compactDeviceId(remoteId);
   const bucket = peerMarks.get(remote);
-  const events = [
-    "peer_connection_created",
-    "offer_sent",
-    "offer_received",
-    "answer_sent",
-    "answer_received",
-    "ice_sent",
-    "ice_received",
-    "ice_connected",
-    "remote_track_received",
-    "audio_confirmed",
-    "peer_closed",
-  ] as const;
-  const parts = events.map((e) => `${e}=${bucket?.has(e) ? bucket.get(e)?.elapsedMs : "-"}`);
+  const parts = PEER_PIPELINE_EVENTS.map(
+    (e) => `${e}=${bucket?.has(e) ? bucket.get(e)?.elapsedMs : "-"}`
+  );
   const cls = classifyVoicePipelineFailure(remoteId);
   debugConsoleLog(
     `[voice-perf] peer-pipeline class=${cls} remote=${remote} ${parts.join(" ")}`

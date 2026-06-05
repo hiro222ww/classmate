@@ -1519,13 +1519,16 @@ return () => {
 
         if (
           json?.error === "match_deadline_passed" ||
-          json?.error === "recruitment_closed"
+          json?.error === "recruitment_closed" ||
+          json?.error === "session_closed"
         ) {
           alert(
             json?.message ??
               (json?.error === "match_deadline_passed"
                 ? "このマッチングは締め切られました"
-                : "このクラスは現在募集していません")
+                : json?.error === "session_closed"
+                  ? "このセッションは終了しています"
+                  : "このクラスは現在募集していません")
           );
           return;
         }
@@ -1565,6 +1568,14 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       if (!classId || !sessionId) {
         alert("open_class_missing_ids");
         return;
+      }
+
+      const staleSessionId = String(target.session_id ?? "").trim();
+      if (staleSessionId && staleSessionId !== sessionId) {
+        console.log(
+          `[home openClass] discard-stale-session oldSession=${staleSessionId} ` +
+            `newSession=${sessionId} reason=api_resolved`
+        );
       }
 
       router.push(buildRoomUrl(classId, sessionId, { openJoinedClass: true }));

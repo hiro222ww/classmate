@@ -99,6 +99,10 @@ export async function POST(req: Request) {
           { status: 500 }
         );
       }
+
+      console.log(
+        `[session-lifecycle] close-empty-session session=${sessionId.slice(-6)}`
+      );
     }
 
     return NextResponse.json({

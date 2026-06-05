@@ -27,6 +27,9 @@ import {
   logVoiceSignalSetRemoteOfferStart,
   logVoiceSignalStaleAnswerRecover,
   logVoiceSignalStaleWarning,
+  logVoicePeerPair,
+  logVoicePeerRole,
+  logVoiceOneWayAudio,
   compactConnectionId,
   voiceDebugLog,
   type VoiceMeshPeerSummaryEntry,
@@ -61,6 +64,8 @@ import {
   logVoicePerfPipeline,
   logVoicePipelineClassification,
   markVoicePeerClose,
+  classifyVoicePipelineFailure,
+  getPeerPipelineMarks,
   markVoicePerf,
 } from "@/lib/voicePerf";
 import {
@@ -89,6 +94,12 @@ import {
   setCachedVoiceTransport,
 } from "@/lib/sessionVoiceCache";
 import {
+  registerVoicePeerPairBuilder,
+  resetVoicePeerPairRegistry,
+  updateVoicePeerPairCache,
+  type VoicePeerPairSnapshot,
+} from "@/lib/voicePeerPairRegistry";
+import {
   isPeerP2pEstablished,
   isPeerTransportUnconfirmed,
   isTransportMediaConnected,
@@ -115,6 +126,7 @@ import {
 import {
   hasTurnIceServer,
   resolveIceTransportPolicy,
+  resolvePeerIceTransportPolicy,
 } from "@/lib/voiceRoute";
 
 type Member = {
@@ -920,6 +932,7 @@ export function usePeerConnections({
   const createPeerConnectionRef = useRef<
     ((remoteId: string, connectionId: string) => RTCPeerConnection) | null
   >(null);
+  const healPeerConnectionsRef = useRef<() => void>(() => {});
   const ensurePeerConnectionRef = useRef<
     ((
       remoteId: string,
@@ -1027,6 +1040,8 @@ export function usePeerConnections({
   const audioReplayAtRef = useRef<Map<string, number>>(new Map());
   const audioUnconfirmedTimeoutNotifiedRef = useRef<Set<string>>(new Set());
   const peerIceDiagnosticsRef = useRef<Map<string, PeerIceDiagnostics>>(new Map());
+  const peerIcePolicyRef = useRef<Map<string, RTCIceTransportPolicy>>(new Map());
+  const oneWayAudioLoggedRef = useRef<Set<string>>(new Set());
   const iceRestartAttemptsRef = useRef<Map<string, number>>(new Map());
   const checkingPlaybackStuckAtRef = useRef<Map<string, number>>(new Map());
   const softRenegotiateLastAtRef = useRef<Map<string, number>>(new Map());
@@ -1060,6 +1075,15 @@ export function usePeerConnections({
     new Map<string, RemotePlaybackHealth>()
   );
   const preserveRemoteAudioUntilRef = useRef(new Map<string, number>());
+  const voiceSettingsReadyRef = useRef(false);
+
+  const getPeerIceTransportPolicy = useCallback((): RTCIceTransportPolicy => {
+    return resolvePeerIceTransportPolicy({
+      p2pEnabled: p2pEnabledRef.current,
+      staticTurnEnabled: turnFallbackEnabledRef.current,
+      voiceRouteTurn: voiceRouteRef.current === "turn",
+    });
+  }, []);
 
   useEffect(() => {
     remoteAudiosRef.current = remoteAudios;
@@ -1684,6 +1708,30 @@ export function usePeerConnections({
         `confirmedAt=- playAt=${playAt} playbackAt=${playbackAt} attempts=3 ${formatVoiceModeSuffix()}`
     );
 
+    const pc = pcsRef.current.get(remoteId);
+    const marks = getPeerPipelineMarks(remoteId);
+    const media = getPeerMedia(remoteId);
+    const iceConnected =
+      pc != null &&
+      (pc.iceConnectionState === "connected" ||
+        pc.iceConnectionState === "completed");
+    if (
+      iceConnected &&
+      !marks.audio_confirmed &&
+      !oneWayAudioLoggedRef.current.has(remoteId)
+    ) {
+      oneWayAudioLoggedRef.current.add(remoteId);
+      logVoiceOneWayAudio({
+        remoteDeviceId: remoteId,
+        iceConnected: true,
+        remoteTrackReceived:
+          marks.remote_track_received || media.remoteTracksCount > 0,
+        audioConfirmed: false,
+        remoteReportedAudioConfirmed:
+          remotePlaybackHealthRef.current.get(remoteId)?.audioActuallyPlaying,
+      });
+    }
+
     void maybeSoftRenegotiatePeerRef
       .current(remoteId)
       .then((softOk) => {
@@ -1806,6 +1854,140 @@ export function usePeerConnections({
     [deviceId, getPeerMedia, getReconnectBlockReason, members]
   );
 
+  const buildPeerPairSnapshot = useCallback(
+    (remoteId: string): VoicePeerPairSnapshot => {
+      const mesh = buildMeshPeerSummary(remoteId);
+      const marks = getPeerPipelineMarks(remoteId);
+      const connectionId = connectionIdsRef.current.get(remoteId) ?? null;
+      const recordedPair = p2pNoRelaySelectedPairRef.current.get(remoteId);
+      const stats = peerIceDiagnosticsRef.current.get(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      const role: "active" | "passive" =
+        deviceId < remoteId ? "active" : "passive";
+      const storedPolicy = peerIcePolicyRef.current.get(remoteId);
+      const policy: "relay" | "all" =
+        storedPolicy === "relay"
+          ? "relay"
+          : resolvePeerIceTransportPolicy({
+              p2pEnabled: p2pEnabledRef.current,
+              staticTurnEnabled: turnFallbackEnabledRef.current,
+              voiceRouteTurn: voiceRouteRef.current === "turn",
+            });
+      const route =
+        recordedPair?.route ??
+        (policy === "relay" ||
+        stats?.localTypes.has("relay") ||
+        stats?.remoteTypes.has("relay")
+          ? "turn"
+          : stats?.localTypes.size || stats?.remoteTypes.size
+            ? "p2p"
+            : "unknown");
+      const signalTimes = [
+        timestamps.lastOfferAt,
+        timestamps.lastAnswerAt,
+        timestamps.lastIceCandidateAt,
+      ].filter((value): value is number => value != null);
+      const audioTimes = [
+        timestamps.lastPlaySuccessAt,
+        timestamps.lastPlaybackConfirmedAt,
+        timestamps.lastOnTrackAt,
+      ].filter((value): value is number => value != null);
+
+      return {
+        remoteDeviceId: remoteId,
+        connectionId,
+        role,
+        policy,
+        route,
+        pcState: mesh.connectionState ?? "none",
+        iceState: mesh.iceConnectionState ?? "none",
+        signalingState: mesh.signalingState ?? "none",
+        offerSent: marks.offer_sent,
+        offerReceived: marks.offer_received,
+        answerSent: marks.answer_sent,
+        answerReceived: marks.answer_received,
+        iceSent: marks.ice_sent,
+        iceReceived: marks.ice_received,
+        remoteTrackReceived: marks.remote_track_received,
+        audioConfirmed:
+          marks.audio_confirmed || timestamps.lastPlaybackConfirmedAt != null,
+        lastSignalAt: signalTimes.length ? Math.max(...signalTimes) : null,
+        lastAudioAt: audioTimes.length ? Math.max(...audioTimes) : null,
+        selectedLocalCandidateType: recordedPair?.localType ?? null,
+        selectedRemoteCandidateType: recordedPair?.remoteType ?? null,
+        voiceClass: classifyVoicePipelineFailure(remoteId),
+        updatedAt: Date.now(),
+      };
+    },
+    [buildMeshPeerSummary, deviceId]
+  );
+
+  const syncPeerPairDiagnostics = useCallback(
+    (opts?: { logPairs?: boolean }) => {
+      const remoteIds = getRemoteIds();
+      const peerIds = Array.from(
+        new Set([...remoteIds, ...Array.from(pcsRef.current.keys())])
+      );
+      const snapshots = peerIds.map((remoteId) =>
+        buildPeerPairSnapshot(remoteId)
+      );
+      updateVoicePeerPairCache(snapshots);
+
+      if (!opts?.logPairs) return;
+
+      for (const snap of snapshots) {
+        logVoicePeerPair({
+          ...snap,
+          voiceClass: snap.voiceClass,
+        });
+
+        const mesh = buildMeshPeerSummary(snap.remoteDeviceId);
+        if (
+          snap.role === "active" &&
+          !snap.offerSent &&
+          (mesh.msSinceConnectStart ?? 0) > 8_000
+        ) {
+          debugConsoleLog(
+            `[voice-peer-role] anomaly remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `role=active issue=offer_sent_missing ms=${mesh.msSinceConnectStart ?? "-"}`
+          );
+        }
+        if (
+          snap.role === "passive" &&
+          !snap.offerReceived &&
+          (mesh.msSinceConnectStart ?? 0) > 8_000
+        ) {
+          debugConsoleLog(
+            `[voice-peer-role] anomaly remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `role=passive issue=passive_wait_offer_stuck ms=${mesh.msSinceConnectStart ?? "-"}`
+          );
+        }
+        if (
+          relayForcedRef.current &&
+          snap.policy !== "relay"
+        ) {
+          debugConsoleLog(
+            `[voice-peer-pair] policy-mismatch remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `expected=relay got=${snap.policy}`
+          );
+        }
+        if (
+          relayForcedRef.current &&
+          snap.route !== "turn" &&
+          (snap.iceState === "connected" || snap.iceState === "completed")
+        ) {
+          debugConsoleLog(
+            `[voice-peer-pair] route-mismatch remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `expected=turn got=${snap.route}`
+          );
+        }
+      }
+    },
+    [buildMeshPeerSummary, buildPeerPairSnapshot, getRemoteIds]
+  );
+
   const isRemoteInCall = useCallback(
     (remoteId: string) => {
       const strict = getStrictRemoteIds();
@@ -1892,6 +2074,7 @@ export function usePeerConnections({
             `[voice-peer] checkVoiceMeshExpectations error trigger=${trigger} err=${String(err)}`
           );
         }
+        syncPeerPairDiagnostics({ logPairs: opts?.immediate === true });
       };
 
       if (opts?.immediate) {
@@ -1912,7 +2095,14 @@ export function usePeerConnections({
         run();
       }, MESH_SUMMARY_DEBOUNCE_MS);
     },
-    [buildMeshPeerSummary, deviceId, getRemoteIds, members, sessionId]
+    [
+      buildMeshPeerSummary,
+      deviceId,
+      getRemoteIds,
+      members,
+      sessionId,
+      syncPeerPairDiagnostics,
+    ]
   );
 
   const emitPeerStates = useCallback(() => {
@@ -2767,6 +2957,8 @@ export function usePeerConnections({
       }
       peerMetaRef.current.delete(remoteId);
       peerIceDiagnosticsRef.current.delete(remoteId);
+      peerIcePolicyRef.current.delete(remoteId);
+      oneWayAudioLoggedRef.current.delete(remoteId);
       checkingPlaybackStuckAtRef.current.delete(remoteId);
       p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
       p2pNoRelayRetryInFlightRef.current.delete(remoteId);
@@ -3979,12 +4171,14 @@ export function usePeerConnections({
           ? iceServersRef.current
           : FALLBACK_ICE_SERVERS;
 
-      const iceTransportPolicy = resolveIceTransportPolicy(
-        relayForcedRef.current || voiceRouteRef.current === "turn"
-      );
+      const iceTransportPolicy = getPeerIceTransportPolicy();
+      peerIcePolicyRef.current.set(remoteId, iceTransportPolicy);
 
       debugConsoleLog(
-        `[voice-peer] create-peer policy=${iceTransportPolicy} p2pEnabled=${p2pEnabledRef.current} hasTurn=${hasTurnIceServer(currentIceServers)} relayForced=${relayForcedRef.current}`
+        `[voice-peer] create-peer policy=${iceTransportPolicy} p2pEnabled=${p2pEnabledRef.current} ` +
+          `staticTurn=${turnFallbackEnabledRef.current} voiceRoute=${voiceRouteRef.current} ` +
+          `hasTurn=${hasTurnIceServer(currentIceServers)} relayForced=${relayForcedRef.current} ` +
+          `settingsReady=${voiceSettingsReadyRef.current}`
       );
 
       const pc = new RTCPeerConnection({
@@ -4459,6 +4653,7 @@ export function usePeerConnections({
       touchPeerSignal,
       emitMeshSummary,
       upsertRemoteAudio,
+      getPeerIceTransportPolicy,
     ]
   );
 
@@ -5115,6 +5310,15 @@ export function usePeerConnections({
       const compact = compactDeviceId(remoteId);
       const force = opts?.force === true;
       const mode = isOfferOwner ? "offer" : "passive_wait_offer";
+      const role: "active" | "passive" = isOfferOwner ? "active" : "passive";
+
+      logVoicePeerRole({
+        localDeviceId: deviceId,
+        remoteDeviceId: remoteId,
+        role,
+        reason,
+        localGreater: deviceId > remoteId,
+      });
 
       debugConsoleLog(
         `[voice-peer] ensure-start target=${compact} reason=${reason} force=${force} ${formatVoiceModeSuffix()}`
@@ -5127,6 +5331,24 @@ export function usePeerConnections({
           "P2Pと自前TURNが両方OFFのため、音声通話は開始できません"
         );
         return false;
+      }
+
+      if (!voiceSettingsReadyRef.current) {
+        logEnsureSkipped(remoteId, reason, "voice_settings_not_loaded");
+        return false;
+      }
+
+      if (!p2pEnabledRef.current && turnFallbackEnabledRef.current) {
+        if (
+          iceServersRef.current.length === 0 ||
+          !hasTurnIceServer(iceServersRef.current)
+        ) {
+          logEnsureSkipped(remoteId, reason, "relay_forced_without_turn_servers");
+          void enableTurnFallback({ initial: true }).then((ok) => {
+            if (ok) healPeerConnectionsRef.current();
+          });
+          return false;
+        }
       }
 
       if (!micReady) {
@@ -5265,6 +5487,7 @@ export function usePeerConnections({
       scheduleNoStreamNoOfferTimeout,
       sendReconnectRequest,
       assignConnectionId,
+      enableTurnFallback,
       getP2pDirectFailedHoldRemainingMs,
       setPeerState,
       signalReady,
@@ -6513,6 +6736,8 @@ export function usePeerConnections({
     buildReconnectDecisionInput,
   ]);
 
+  healPeerConnectionsRef.current = healPeerConnections;
+
   const handleSignal = useCallback(
     async (row: SignalRow) => {
       const signalType = row?.signal_type ?? "unknown";
@@ -6524,6 +6749,8 @@ export function usePeerConnections({
             reason: "duplicate_signal_id",
             type: signalType,
             remote: remoteId,
+            incomingConnectionId: row.payload?.connectionId ?? null,
+            currentConnectionId: getCurrentConnectionId(remoteId),
           });
         }
         return;
@@ -6535,6 +6762,8 @@ export function usePeerConnections({
           reason: "self_signal",
           type: signalType,
           remote: remoteId,
+          incomingConnectionId: row.payload?.connectionId ?? null,
+          currentConnectionId: getCurrentConnectionId(remoteId),
         });
         return;
       }
@@ -6543,6 +6772,10 @@ export function usePeerConnections({
           reason: "wrong_target",
           type: signalType,
           remote: remoteId,
+          expectedTarget: deviceId,
+          gotTarget: row.to_device_id,
+          incomingConnectionId: row.payload?.connectionId ?? null,
+          currentConnectionId: getCurrentConnectionId(remoteId),
         });
         return;
       }
@@ -6551,6 +6784,10 @@ export function usePeerConnections({
           reason: "wrong_session",
           type: signalType,
           remote: remoteId,
+          expectedSessionId: sessionId,
+          gotSessionId: row.session_id,
+          incomingConnectionId: row.payload?.connectionId ?? null,
+          currentConnectionId: getCurrentConnectionId(remoteId),
         });
         return;
       }
@@ -6564,6 +6801,8 @@ export function usePeerConnections({
             reason: "missing_connection_id",
             type: "reconnect-request",
             remote: remoteId,
+            incomingConnectionId: null,
+            currentConnectionId: getCurrentConnectionId(remoteId),
           });
           return;
         }
@@ -6609,6 +6848,8 @@ export function usePeerConnections({
           reason: "missing_connection_id",
           type: signalType,
           remote: remoteId,
+          incomingConnectionId: null,
+          currentConnectionId: getCurrentConnectionId(remoteId),
         });
         return;
       }
@@ -6699,6 +6940,8 @@ export function usePeerConnections({
               reason: "missing_sdp",
               type: "offer",
               remote: remoteId,
+              incomingConnectionId,
+              currentConnectionId,
             });
             return;
           }
@@ -6733,6 +6976,12 @@ export function usePeerConnections({
                 reason: "invalid_signaling_state",
                 type: "offer",
                 remote: remoteId,
+                incomingConnectionId,
+                currentConnectionId,
+                pcExists: true,
+                sig: pc.signalingState,
+                conn: pc.connectionState,
+                ice: pc.iceConnectionState,
               });
               return;
             }
@@ -6769,6 +7018,8 @@ export function usePeerConnections({
               reason: "missing_sdp",
               type: "answer",
               remote: remoteId,
+              incomingConnectionId,
+              currentConnectionId,
             });
             return;
           }
@@ -6785,6 +7036,12 @@ export function usePeerConnections({
               reason: "invalid_signaling_state",
               type: "answer",
               remote: remoteId,
+              incomingConnectionId,
+              currentConnectionId,
+              pcExists: true,
+              sig: pc.signalingState,
+              conn: pc.connectionState,
+              ice: pc.iceConnectionState,
             });
             return;
           }
@@ -6869,16 +7126,17 @@ export function usePeerConnections({
 
   useEffect(() => {
     let alive = true;
+    voiceSettingsReadyRef.current = false;
 
     async function loadVoiceSettings() {
-      try {
-        const cached = getCachedVoiceTransport(sessionId);
-        let transport = cached?.transport;
-        let settingsVoiceEnabled = cached?.voiceEnabled ?? true;
-        let emergencyMessage = cached?.emergencyMessage ?? null;
-        let settingsSource = cached ? "cache" : "api";
+      let settingsVoiceEnabled = true;
+      let emergencyMessage: string | null = null;
+      let settingsSource = "api";
 
-        if (!transport) {
+      try {
+        let transport = normalizeVoiceTransportSettings({});
+
+        try {
           const res = await fetchWithRetry(
             "/api/voice-settings",
             { cache: "no-store" },
@@ -6908,9 +7166,16 @@ export function usePeerConnections({
             voice_enabled: settingsVoiceEnabled,
             emergency_message: emergencyMessage,
           });
-          settingsSource = "api";
           markVoicePerf("voice_settings_loaded", { extra: "cached=false" });
-        } else {
+        } catch (fetchErr) {
+          const cached = getCachedVoiceTransport(sessionId);
+          if (!cached?.transport) {
+            throw fetchErr;
+          }
+          transport = cached.transport;
+          settingsVoiceEnabled = cached.voiceEnabled;
+          emergencyMessage = cached.emergencyMessage;
+          settingsSource = "cache";
           markVoicePerf("voice_settings_loaded", { extra: "cached=true" });
         }
 
@@ -6921,7 +7186,11 @@ export function usePeerConnections({
         turnFallbackEnabledRef.current = transport.staticTurnEnabled;
         voiceSettingsLoadedOnceRef.current = true;
 
-        const icePolicy = resolveIceTransportPolicy(transport.relayForced);
+        const icePolicy = resolvePeerIceTransportPolicy({
+          p2pEnabled: transport.p2pEnabled,
+          staticTurnEnabled: transport.staticTurnEnabled,
+          voiceRouteTurn: voiceRouteRef.current === "turn",
+        });
         debugConsoleLog(
           `[voice-settings] client-loaded p2p_enabled=${transport.p2pEnabled} turn_provider=static icePolicy=${icePolicy} source=${settingsSource}`
         );
@@ -6940,7 +7209,28 @@ export function usePeerConnections({
         }
 
         if (transport.relayForced) {
-          void enableTurnFallback({ initial: true });
+          const turnOk = await enableTurnFallback({ initial: true });
+          if (!alive) return;
+
+          if (turnOk) {
+            const stalePeerIds = Array.from(pcsRef.current.keys()).filter(
+              (remoteId) => peerIcePolicyRef.current.get(remoteId) !== "relay"
+            );
+            for (const remoteId of stalePeerIds) {
+              debugConsoleLog(
+                `[voice-peer] relay-policy-migrate remote=${compactDeviceId(remoteId)} ` +
+                  `from=${peerIcePolicyRef.current.get(remoteId) ?? "-"} to=relay`
+              );
+              closePeer(remoteId, CLOSE_FOR_RECONNECT);
+            }
+            if (stalePeerIds.length > 0) {
+              healPeerConnectionsRef.current();
+            }
+          } else {
+            console.warn(
+              "[voice-settings] relay-forced but turn ice servers unavailable"
+            );
+          }
         }
       } catch (err) {
         if (!voiceSettingsLoadedOnceRef.current) {
@@ -6951,6 +7241,10 @@ export function usePeerConnections({
           turnFallbackEnabledRef.current = false;
         }
         console.warn("[voice-settings] load failed — keeping prior transport", err);
+      } finally {
+        if (alive) {
+          voiceSettingsReadyRef.current = true;
+        }
       }
     }
 
@@ -6959,7 +7253,21 @@ export function usePeerConnections({
     return () => {
       alive = false;
     };
-  }, [enableTurnFallback, notifyStatus, sessionId]);
+  }, [closePeer, enableTurnFallback, notifyStatus, sessionId]);
+
+  useEffect(() => {
+    resetVoicePeerPairRegistry(sessionId, deviceId);
+    registerVoicePeerPairBuilder(() => {
+      const remoteIds = getRemoteIds();
+      const peerIds = Array.from(
+        new Set([...remoteIds, ...Array.from(pcsRef.current.keys())])
+      );
+      return peerIds.map((remoteId) => buildPeerPairSnapshot(remoteId));
+    });
+    return () => {
+      registerVoicePeerPairBuilder(null);
+    };
+  }, [buildPeerPairSnapshot, deviceId, getRemoteIds, sessionId]);
 
   const applyLocalAudioTrack = useCallback(
     (track: MediaStreamTrack | null, reason: string) => {

@@ -526,6 +526,18 @@ export default function CallClient() {
       )
     );
 
+    void fetch("/api/session/leave", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        deviceId: did,
+      }),
+      cache: "no-store",
+    }).catch((err) => {
+      console.warn("[call] session leave failed", err);
+    });
+
     if (classId) {
       void fetch("/api/class/presence", {
         method: "POST",

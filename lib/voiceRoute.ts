@@ -12,6 +12,32 @@ export function resolveIceTransportPolicy(
   return relayForced ? "relay" : "all";
 }
 
+/**
+ * RTCPeerConnection 用。P2P OFF + 自前TURN ON は常に relay。
+ * P2P ON 時は動的 TURN fallback 中のみ relay。
+ */
+export function shouldForceRelayIceTransport(params: {
+  p2pEnabled: boolean;
+  staticTurnEnabled: boolean;
+  voiceRouteTurn?: boolean;
+}): boolean {
+  if (!params.p2pEnabled && params.staticTurnEnabled) {
+    return true;
+  }
+  if (params.p2pEnabled && params.voiceRouteTurn === true) {
+    return true;
+  }
+  return false;
+}
+
+export function resolvePeerIceTransportPolicy(params: {
+  p2pEnabled: boolean;
+  staticTurnEnabled: boolean;
+  voiceRouteTurn?: boolean;
+}): RTCIceTransportPolicy {
+  return resolveIceTransportPolicy(shouldForceRelayIceTransport(params));
+}
+
 export function resolveSelectedCandidateRoute(
   localType: string | null | undefined,
   remoteType: string | null | undefined

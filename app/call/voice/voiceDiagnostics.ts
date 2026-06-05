@@ -489,12 +489,22 @@ export function compactConnectionId(id: string | null | undefined): string {
   return value.slice(-8);
 }
 
+function formatSignalIgnoreReason(reason: string): string {
+  if (reason === "stale_connection_id") return "connection_id_mismatch";
+  if (reason === "missing_connection_id") return "connection_id_missing";
+  return reason;
+}
+
 export function logVoiceSignalIgnored(params: {
   reason: string;
   type: string;
   remote: string;
   incomingConnectionId?: string | null;
   currentConnectionId?: string | null;
+  expectedSessionId?: string | null;
+  gotSessionId?: string | null;
+  expectedTarget?: string | null;
+  gotTarget?: string | null;
   pcExists?: boolean;
   sig?: string;
   conn?: string;
@@ -502,14 +512,37 @@ export function logVoiceSignalIgnored(params: {
   hasRemoteStream?: boolean;
   tracks?: number;
 }) {
+  const reason = formatSignalIgnoreReason(params.reason);
   const parts = [
-    `[voice-signal] ignored reason=${params.reason} type=${params.type} remote=${compactDeviceId(params.remote)}`,
+    `[voice-signal] ignored remote=${compactDeviceId(params.remote)} type=${params.type} reason=${reason}`,
   ];
 
-  if (params.incomingConnectionId !== undefined) {
+  if (
+    params.incomingConnectionId !== undefined ||
+    params.currentConnectionId !== undefined
+  ) {
     parts.push(
-      `incomingConnectionId=${compactConnectionId(params.incomingConnectionId)}`,
-      `currentConnectionId=${compactConnectionId(params.currentConnectionId)}`,
+      `expected=${compactConnectionId(params.currentConnectionId)}`,
+      `got=${compactConnectionId(params.incomingConnectionId)}`
+    );
+  }
+
+  if (params.expectedSessionId !== undefined || params.gotSessionId !== undefined) {
+    parts.push(
+      `expectedSession=${compactSessionId(params.expectedSessionId)}`,
+      `gotSession=${compactSessionId(params.gotSessionId)}`
+    );
+  }
+
+  if (params.expectedTarget !== undefined || params.gotTarget !== undefined) {
+    parts.push(
+      `expectedTarget=${compactDeviceId(params.expectedTarget)}`,
+      `gotTarget=${compactDeviceId(params.gotTarget)}`
+    );
+  }
+
+  if (params.pcExists !== undefined) {
+    parts.push(
       `pcExists=${params.pcExists === true}`,
       `sig=${params.sig ?? "-"}`,
       `conn=${params.conn ?? "-"}`,
@@ -520,6 +553,81 @@ export function logVoiceSignalIgnored(params: {
   }
 
   debugConsoleLog(parts.join(" "));
+}
+
+export function logVoicePeerRole(params: {
+  localDeviceId: string;
+  remoteDeviceId: string;
+  role: "active" | "passive";
+  reason: string;
+  localGreater: boolean;
+}) {
+  debugConsoleLog(
+    `[voice-peer-role] local=${compactDeviceId(params.localDeviceId)} ` +
+      `remote=${compactDeviceId(params.remoteDeviceId)} ` +
+      `role=${params.role} reason=${params.reason} ` +
+      `localGreater=${params.localGreater}`
+  );
+}
+
+export type VoicePeerPairLogInput = {
+  remoteDeviceId: string;
+  connectionId: string | null;
+  role: "active" | "passive";
+  policy: "relay" | "all";
+  route: "turn" | "p2p" | "unknown";
+  pcState: string;
+  iceState: string;
+  signalingState: string;
+  offerSent: boolean;
+  offerReceived: boolean;
+  answerSent: boolean;
+  answerReceived: boolean;
+  iceSent: boolean;
+  iceReceived: boolean;
+  remoteTrackReceived: boolean;
+  audioConfirmed: boolean;
+  lastSignalAt: number | null;
+  lastAudioAt: number | null;
+  selectedLocalCandidateType?: string | null;
+  selectedRemoteCandidateType?: string | null;
+  voiceClass: string;
+};
+
+export function logVoicePeerPair(input: VoicePeerPairLogInput) {
+  debugConsoleLog(
+    `[voice-peer-pair] remote=${compactDeviceId(input.remoteDeviceId)} ` +
+      `connectionId=${compactConnectionId(input.connectionId)} ` +
+      `role=${input.role} policy=${input.policy} route=${input.route} ` +
+      `pcState=${input.pcState} iceState=${input.iceState} ` +
+      `signalingState=${input.signalingState} ` +
+      `offerSent=${input.offerSent} offerReceived=${input.offerReceived} ` +
+      `answerSent=${input.answerSent} answerReceived=${input.answerReceived} ` +
+      `iceSent=${input.iceSent} iceReceived=${input.iceReceived} ` +
+      `remoteTrackReceived=${input.remoteTrackReceived} ` +
+      `audioConfirmed=${input.audioConfirmed} ` +
+      `lastSignalAt=${input.lastSignalAt ?? "-"} lastAudioAt=${input.lastAudioAt ?? "-"} ` +
+      `selectedLocal=${input.selectedLocalCandidateType ?? "-"} ` +
+      `selectedRemote=${input.selectedRemoteCandidateType ?? "-"} ` +
+      `class=${input.voiceClass}`
+  );
+}
+
+export function logVoiceOneWayAudio(params: {
+  remoteDeviceId: string;
+  iceConnected: boolean;
+  remoteTrackReceived: boolean;
+  audioConfirmed: boolean;
+  remoteReportedAudioConfirmed?: boolean;
+}) {
+  debugConsoleLog(
+    `[voice-peer] one-way-audio remote=${compactDeviceId(params.remoteDeviceId)} ` +
+      `iceConnected=${params.iceConnected} ` +
+      `remoteTrackReceived=${params.remoteTrackReceived} ` +
+      `audioConfirmed=${params.audioConfirmed} ` +
+      `remoteReportedAudioConfirmed=${params.remoteReportedAudioConfirmed ?? "-"} ` +
+      `class=D`
+  );
 }
 
 export function logVoiceSignalStaleAnswerRecover(params: {

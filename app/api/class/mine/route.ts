@@ -216,7 +216,8 @@ export async function GET(req: Request) {
       const classRow = classMap.get(classId);
       const picked = pickClassDisplaySession(
         sessionsByClass.get(classId) ?? [],
-        recruitmentSessionTtlMinutes
+        recruitmentSessionTtlMinutes,
+        { matchDeadlineAt: classRow?.match_deadline_at ?? null }
       );
 
       if (!picked) continue;

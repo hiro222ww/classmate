@@ -87,15 +87,88 @@ type VoiceLog = {
   id?: string;
   session_id?: string | null;
   device_id?: string | null;
+  remote_device_id?: string | null;
   os?: string | null;
   member_count?: number | null;
+  phase?: string | null;
   route?: string | null;
   used_turn?: boolean | null;
   voice_route?: string | null;
+  local_candidate_type?: string | null;
+  remote_candidate_type?: string | null;
   connection_state?: string | null;
   time_to_connect_ms?: number | null;
   created_at?: string | null;
 };
+
+function shortDeviceId(id: string | null | undefined) {
+  const value = String(id ?? "").trim();
+  if (!value) return "-";
+  if (value.length <= 4) return value;
+  return value.slice(-4);
+}
+
+function shortSessionId(id: string | null | undefined) {
+  const value = String(id ?? "").trim();
+  if (!value) return "unknown";
+  if (value.length <= 6) return value;
+  return value.slice(-6);
+}
+
+function pairRouteLabel(log: VoiceLog) {
+  const route = String(log.route ?? "unknown");
+  const usedTurn =
+    log.used_turn === true ||
+    route === "relay" ||
+    route === "turn" ||
+    log.local_candidate_type === "relay" ||
+    log.remote_candidate_type === "relay";
+  return usedTurn ? "TURN" : route === "p2p" ? "P2P" : "unknown";
+}
+
+function pairStatusLabel(log: VoiceLog) {
+  const state = String(log.connection_state ?? "");
+  const failure = parseVoiceFailureState(state);
+  const voiceRoute = String(log.voice_route ?? "").trim();
+  const failClass =
+    failure.voiceClass ??
+    (voiceRoute.startsWith("fail-") ? voiceRoute.replace("fail-", "") : null);
+
+  if (failClass) {
+    const detail =
+      failure.offer === "0"
+        ? "offer missing"
+        : failure.answer === "0"
+          ? "answer missing"
+          : failure.ice === "0"
+            ? "ice missing"
+            : failure.audio === "0"
+              ? "audio not confirmed"
+              : `failed(${failClass})`;
+    return `${detail} / class=${failClass}`;
+  }
+
+  if (state === "connected" || log.phase === "connected") {
+    return "OK / audio OK";
+  }
+
+  return state || "unknown";
+}
+
+function groupLogsBySession(logs: VoiceLog[]) {
+  const grouped = new Map<string, VoiceLog[]>();
+  for (const log of logs) {
+    const sessionId = String(log.session_id ?? "unknown");
+    const list = grouped.get(sessionId) ?? [];
+    list.push(log);
+    grouped.set(sessionId, list);
+  }
+  return Array.from(grouped.entries()).sort((a, b) => {
+    const aTime = a[1][0]?.created_at ?? "";
+    const bTime = b[1][0]?.created_at ?? "";
+    return String(bTime).localeCompare(String(aTime));
+  });
+}
 
 const defaultSettings: VoiceSettings = {
   voice_enabled: true,
@@ -597,115 +670,101 @@ export default function AdminVoicePage() {
             <div
               style={{
                 display: "grid",
-                gap: 8,
+                gap: 12,
               }}
             >
-              {logs.map((log, i) => {
-                const route = String(
-                  log.route ?? "unknown"
-                );
+              {groupLogsBySession(logs).map(([sessionId, sessionLogs]) => (
+                <div
+                  key={sessionId}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    padding: 12,
+                    background: "#f9fafb",
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>
+                    session {shortSessionId(sessionId)}
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 12,
+                        color: "#6b7280",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {sessionLogs.length} pair logs
+                    </span>
+                  </div>
 
-                const state = String(
-                  log.connection_state ?? "unknown"
-                );
-                const failure = parseVoiceFailureState(state);
-                const voiceRoute = String(log.voice_route ?? "").trim();
-                const failClass =
-                  failure.voiceClass ??
-                  (voiceRoute.startsWith("fail-")
-                    ? voiceRoute.replace("fail-", "")
-                    : null);
-
-                const usedTurn =
-                  log.used_turn === true ||
-                  route === "relay" ||
-                  route === "turn";
-
-                return (
                   <div
-                    key={
-                      log.id ??
-                      `${log.created_at}-${i}`
-                    }
                     style={{
-                      border:
-                        "1px solid #e5e7eb",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "#f9fafb",
                       display: "grid",
-                      gap: 4,
+                      gap: 6,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      fontSize: 13,
                     }}
                   >
-                    <div
-                      style={{
-                        fontWeight: 900,
-                      }}
-                    >
-                      {usedTurn
-                        ? "TURN"
-                        : "P2P/不明"}{" "}
-                      / {state}
-                    </div>
+                    {sessionLogs.map((log, i) => {
+                      const localId = shortDeviceId(log.device_id);
+                      const remoteId = shortDeviceId(log.remote_device_id);
+                      const pairLabel =
+                        remoteId !== "-"
+                          ? `${localId} ↔ ${remoteId}`
+                          : `room ${localId}`;
+                      const failure = parseVoiceFailureState(
+                        String(log.connection_state ?? "")
+                      );
 
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "#6b7280",
-                      }}
-                    >
-                      OS: {log.os ?? "unknown"} /
-                      人数:{" "}
-                      {log.member_count ?? "-"} /
-                      route: {route}
-                    </div>
-
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "#6b7280",
-                      }}
-                    >
-                      接続時間:{" "}
-                      {log.time_to_connect_ms ??
-                        "-"}
-                      ms /
-                      {log.created_at
-                        ? new Date(
-                            log.created_at
-                          ).toLocaleString()
-                        : ""}
-                    </div>
-
-                    {failClass ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#991b1b",
-                          fontWeight: 800,
-                        }}
-                      >
-                        失敗分類: {failClass}（A=members B=signaling C=ICE
-                        D=audio E=cleanup）
-                      </div>
-                    ) : null}
-
-                    {failure.offer != null ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#6b7280",
-                        }}
-                      >
-                        offer={failure.offer} answer={failure.answer} ice=
-                        {failure.ice} audio={failure.audio} close=
-                        {failure.closeReason ?? "-"} remotes=
-                        {failure.remotes ?? "-"}
-                      </div>
-                    ) : null}
+                      return (
+                        <div
+                          key={log.id ?? `${sessionId}-${i}`}
+                          style={{
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            background: "#fff",
+                            border: "1px solid #e5e7eb",
+                          }}
+                        >
+                          <div style={{ fontWeight: 800 }}>
+                            {pairLabel}: {pairRouteLabel(log)} /{" "}
+                            {pairStatusLabel(log)}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: "#6b7280",
+                              marginTop: 4,
+                            }}
+                          >
+                            remote={log.remote_device_id ?? "-"} · phase=
+                            {log.phase ?? "-"} · connect=
+                            {log.time_to_connect_ms ?? "-"}ms ·{" "}
+                            {log.created_at
+                              ? new Date(log.created_at).toLocaleString()
+                              : ""}
+                          </div>
+                          {failure.offer != null ? (
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: "#991b1b",
+                                marginTop: 4,
+                              }}
+                            >
+                              offer={failure.offer} answer={failure.answer} ice=
+                              {failure.ice} audio={failure.audio} class=
+                              {failure.voiceClass ?? "-"}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           )}
 

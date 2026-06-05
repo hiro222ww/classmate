@@ -100,10 +100,65 @@ export function isSessionEligibleForNormalJoin(params: {
   return isRecruitmentSessionFresh(params.sessionCreatedAt, ttl);
 }
 
+export type OpenJoinedSessionInvalidReason =
+  | "closed"
+  | "expired"
+  | "ended"
+  | "cutoff"
+  | "empty"
+  | "stale"
+  | "active_not_member"
+  | "unknown";
+
+export function evaluateOpenJoinedSessionReuse(params: {
+  sessionStatus?: string | null;
+  sessionCreatedAt?: string | null;
+  matchDeadlineAt?: string | null;
+  memberCount: number;
+  deviceIsSessionMember: boolean;
+  recruitmentSessionTtlMinutes?: number | null;
+}): { reusable: boolean; reason: OpenJoinedSessionInvalidReason | null } {
+  const status = normalizeSessionStatus(params.sessionStatus);
+  const ttl =
+    params.recruitmentSessionTtlMinutes === undefined
+      ? DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+      : params.recruitmentSessionTtlMinutes;
+
+  if (status === "closed") return { reusable: false, reason: "closed" };
+  if (status === "expired") return { reusable: false, reason: "expired" };
+  if (status === "ended") return { reusable: false, reason: "ended" };
+
+  if (params.memberCount <= 0) {
+    return { reusable: false, reason: "empty" };
+  }
+
+  if (isDeadlinePassed(params.matchDeadlineAt ?? null)) {
+    return { reusable: false, reason: "cutoff" };
+  }
+
+  if (status === "active") {
+    if (!params.deviceIsSessionMember) {
+      return { reusable: false, reason: "active_not_member" };
+    }
+    return { reusable: true, reason: null };
+  }
+
+  if (isRecruitingSessionStatus(status)) {
+    if (!isRecruitmentSessionFresh(params.sessionCreatedAt, ttl)) {
+      return { reusable: false, reason: "stale" };
+    }
+    return { reusable: true, reason: null };
+  }
+
+  return { reusable: false, reason: "unknown" };
+}
+
 export function pickClassDisplaySession(
   sessions: RecruitmentSessionRow[],
-  ttlMinutes: number | null = DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+  ttlMinutes: number | null = DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
+  opts?: { matchDeadlineAt?: string | null }
 ): RecruitmentSessionRow | null {
+  const deadlinePassed = isDeadlinePassed(opts?.matchDeadlineAt ?? null);
   let bestActive: RecruitmentSessionRow | null = null;
   let bestFreshRecruiting: RecruitmentSessionRow | null = null;
   let bestStaleRecruiting: RecruitmentSessionRow | null = null;
@@ -112,6 +167,10 @@ export function pickClassDisplaySession(
     const status = normalizeSessionStatus(session.status);
     const createdMs = sessionCreatedAtMs(session.created_at);
     if (createdMs === null) continue;
+
+    if (deadlinePassed && status === "active") {
+      continue;
+    }
 
     if (status === "active") {
       const currentMs = sessionCreatedAtMs(bestActive?.created_at);
@@ -122,6 +181,10 @@ export function pickClassDisplaySession(
     }
 
     if (!isRecruitingSessionStatus(status)) continue;
+
+    if (deadlinePassed) {
+      continue;
+    }
 
     const fresh = isRecruitmentSessionFresh(session.created_at, ttlMinutes);
     const target = fresh ? bestFreshRecruiting : bestStaleRecruiting;

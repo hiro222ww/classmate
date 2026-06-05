@@ -27,6 +27,7 @@ import {
   logMatchJoinStart,
   tailMatchId,
 } from "@/lib/matchJoinLogging";
+import { resolveOpenJoinedClassSession } from "@/lib/openJoinedClassSession";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -712,11 +713,14 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
+    let forcedClassDeadline: string | null = null;
+
     if (forcedClassId) {
       const forcedRes = await getForcedClassWithDeadline(forcedClassId);
       if (!forcedRes.ok) return forcedRes.response;
 
       const existingClass = forcedRes.row;
+      forcedClassDeadline = existingClass.match_deadline_at ?? null;
 
       const topicGenderRes = await getTopicGenderRestriction(
         existingClass.topic_key ?? null
@@ -790,22 +794,67 @@ export async function matchJoinV2Post(req: Request) {
       : recruitmentSessionTtlSetting.minutes ??
         (await getRecruitmentSessionTtlMinutes());
 
-    if (!canRejoinTargetClass && blocksNewJoinSessionStatus(row.session_status)) {
+    let resolvedSessionId = String(row.session_id ?? "").trim();
+    let resolvedSessionStatus = String(row.session_status ?? "forming");
+    let resolvedSessionCreatedAt = row.session_created_at ?? null;
+    let resolvedCreatedNewSession = Boolean(row.created_new_session);
+    let resolvedReused = Boolean(row.reused);
+
+    if (openJoinedClass && forcedClassId) {
+      const resolved = await resolveOpenJoinedClassSession({
+        classId: String(row.class_id),
+        className: String(row.class_name ?? "").trim() || "クラス",
+        sessionId: resolvedSessionId,
+        sessionStatus: resolvedSessionStatus,
+        sessionCreatedAt: resolvedSessionCreatedAt,
+        matchDeadlineAt: forcedClassDeadline,
+        deviceId,
+        requestedCapacity,
+        recruitmentSessionTtlMinutes,
+      });
+
+      if (!resolved.ok) return resolved.response;
+
+      resolvedSessionId = resolved.sessionId;
+      resolvedSessionStatus = resolved.sessionStatus;
+      resolvedSessionCreatedAt = resolved.sessionCreatedAt;
+      resolvedCreatedNewSession = resolved.createdNewSession;
+      resolvedReused = resolved.reused;
+    }
+
+    const classIdOut = String(row.class_id ?? "").trim();
+    if (!classIdOut || !resolvedSessionId) {
+      console.log("[match-join] reject reason=incomplete_match_result", {
+        classId: classIdOut,
+        sessionId: resolvedSessionId,
+        openJoinedClass,
+      });
+      return NextResponse.json(
+        { ok: false, error: "match_join_incomplete" },
+        { status: 500 }
+      );
+    }
+
+    if (
+      !openJoinedClass &&
+      !canRejoinTargetClass &&
+      blocksNewJoinSessionStatus(resolvedSessionStatus)
+    ) {
       console.warn("[class/match-join-v2] blocked non-recruiting session on normal path", {
         openJoinedClass,
         canRejoinTargetClass,
         forcedClassId: forcedClassId || null,
         classId: row.class_id,
         sessionId: row.session_id,
-        sessionStatus: row.session_status,
+        sessionStatus: resolvedSessionStatus,
       });
 
       return NextResponse.json(
         {
           ok: false,
           error: "recruitment_closed",
-          sessionStatus: String(row.session_status ?? ""),
-          sessionId: String(row.session_id ?? ""),
+          sessionStatus: resolvedSessionStatus,
+          sessionId: resolvedSessionId,
           message: "このクラスは現在募集していません。",
         },
         { status: 403 }
@@ -813,11 +862,12 @@ export async function matchJoinV2Post(req: Request) {
     }
 
     if (
+      !openJoinedClass &&
       !canRejoinTargetClass &&
-      isRecruitingSessionStatus(row.session_status) &&
+      isRecruitingSessionStatus(resolvedSessionStatus) &&
       !isSessionEligibleForNormalJoin({
-        sessionStatus: row.session_status,
-        sessionCreatedAt: row.session_created_at,
+        sessionStatus: resolvedSessionStatus,
+        sessionCreatedAt: resolvedSessionCreatedAt,
         recruitmentSessionTtlMinutes,
       })
     ) {
@@ -829,8 +879,8 @@ export async function matchJoinV2Post(req: Request) {
           forcedClassId: forcedClassId || null,
           classId: row.class_id,
           sessionId: row.session_id,
-          sessionStatus: row.session_status,
-          sessionCreatedAt: row.session_created_at,
+          sessionStatus: resolvedSessionStatus,
+          sessionCreatedAt: resolvedSessionCreatedAt,
           recruitmentSessionTtlMinutes,
           recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
         }
@@ -840,9 +890,9 @@ export async function matchJoinV2Post(req: Request) {
         {
           ok: false,
           error: "recruitment_closed",
-          sessionStatus: String(row.session_status ?? ""),
-          sessionId: String(row.session_id ?? ""),
-          sessionCreatedAt: row.session_created_at ?? null,
+          sessionStatus: resolvedSessionStatus,
+          sessionId: resolvedSessionId,
+          sessionCreatedAt: resolvedSessionCreatedAt,
           recruitmentSessionTtlMinutes,
           recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
           message: "このクラスは現在募集していません。",
@@ -864,8 +914,8 @@ export async function matchJoinV2Post(req: Request) {
     });
 
     const joinState = await ensureClassSessionMembership({
-      classId: String(row.class_id),
-      sessionId: String(row.session_id),
+      classId: classIdOut,
+      sessionId: resolvedSessionId,
       deviceId,
       source: openJoinedClass ? "restore" : "normal_join",
       displayName: joinDisplayName,
@@ -882,11 +932,11 @@ export async function matchJoinV2Post(req: Request) {
     logMatchJoinRpcResult({
       requestId,
       deviceId,
-      classId: String(row.class_id),
-      sessionId: String(row.session_id),
+      classId: classIdOut,
+      sessionId: resolvedSessionId,
       createdNewClass,
-      createdNewSession: Boolean(row.created_new_session),
-      reused: Boolean(row.reused),
+      createdNewSession: resolvedCreatedNewSession,
+      reused: resolvedReused,
       raceMerged,
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
     });
@@ -895,16 +945,16 @@ export async function matchJoinV2Post(req: Request) {
       {
         ok: true,
         requestId,
-        classId: String(row.class_id),
+        classId: classIdOut,
       className: String(row.class_name ?? "").trim() || "クラス",
-      sessionId: String(row.session_id),
-      sessionStatus: String(row.session_status ?? "forming"),
-      sessionCreatedAt: row.session_created_at ?? null,
+      sessionId: resolvedSessionId,
+      sessionStatus: resolvedSessionStatus,
+      sessionCreatedAt: resolvedSessionCreatedAt,
       recruitmentSessionTtlMinutes,
       recruitmentSessionTtlUnlimited: recruitmentSessionTtlSetting.unlimited,
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
-      createdNewSession: Boolean(row.created_new_session),
+      createdNewSession: resolvedCreatedNewSession,
       createdNewClass,
       raceMerged,
       joinStateOk: joinState.ok,
@@ -913,7 +963,7 @@ export async function matchJoinV2Post(req: Request) {
       requestedMaxAge,
       selfAge,
       alreadyJoined: Boolean(row.already_joined),
-      reused: Boolean(row.reused),
+      reused: resolvedReused,
       currentCount: Number(
         row.current_count ?? membershipSnapshot.billableCount
       ),

@@ -68,7 +68,10 @@ async function ensureJoinableSession(sessionId: string) {
 
   const status = String(data.status ?? "forming");
 
-  if (status === "closed" || status === "ended") {
+  if (status === "closed" || status === "ended" || status === "expired") {
+    console.log(
+      `[room join] reject-closed-session session=${sessionId.slice(-6)} reason=${status}`
+    );
     return { ok: false as const, error: "session_closed" };
   }
 
