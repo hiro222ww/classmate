@@ -2,6 +2,11 @@
 
 import { compactDeviceId } from "@/app/call/voice/voiceDiagnostics";
 import {
+  buildPairClassifyEntry,
+  computeOverallPairStatus,
+  formatAdminPairSummaryLine,
+} from "@/lib/voicePeerPairDiagnostics";
+import {
   classifyVoicePipelineFailure,
   describeVoicePipelineClass,
   logVoicePeerPipelineSummary,
@@ -14,59 +19,56 @@ import {
 } from "@/lib/voicePeerPairRegistry";
 
 function formatPairLine(pair: VoicePeerPairSnapshot): string {
-  const remote = compactDeviceId(pair.remoteDeviceId);
-  const audio = pair.audioConfirmed
-    ? "audio OK"
-    : pair.audioProvisional
-      ? "audio provisional"
-      : pair.iceState === "connected" || pair.iceState === "completed"
-        ? "audio pending"
-        : "audio not confirmed";
-  const route = pair.route === "turn" ? "TURN" : pair.route === "p2p" ? "P2P" : "unknown";
-  const status = pair.voiceClass === "OK" ? "OK" : `failed(${pair.voiceClass})`;
-  const detail = !pair.offerReceived && pair.role === "passive"
-    ? "offer_received missing"
-    : !pair.offerSent && pair.role === "active"
-      ? "offer_sent missing"
-      : !pair.audioConfirmed && pair.iceState === "connected"
-        ? "audio not confirmed"
-        : "";
-  return `${remote}: ${route} / ${status} / ${audio}${detail ? ` / ${detail}` : ""}`;
+  return formatAdminPairSummaryLine(pair);
 }
 
 /** Callable from console with debugVoice=1: __classifyVoiceConnection() */
 export function classifyVoiceConnection(remoteId?: string) {
   if (remoteId) {
-    const cls = classifyVoicePipelineFailure(remoteId);
+    const pairs = dumpVoicePairs();
+    const pair =
+      pairs.find((row) => row.remoteDeviceId === remoteId) ??
+      pairs.find(
+        (row) => compactDeviceId(row.remoteDeviceId) === compactDeviceId(remoteId)
+      );
+    const cls = pair?.voiceClass ?? classifyVoicePipelineFailure(remoteId);
     logVoicePeerPipelineSummary(remoteId);
     return {
       class: cls,
+      subClass: pair?.subClass ?? null,
       hint: describeVoicePipelineClass(cls),
+      pair: pair ? buildPairClassifyEntry(pair) : null,
     };
   }
 
   const pairs = dumpVoicePairs();
   const ctx = getVoicePeerPairContext();
-  const results = pairs.map((pair) => {
-    const cls = classifyVoicePipelineFailure(pair.remoteDeviceId);
-    return {
-      remote: pair.remoteDeviceId,
-      class: cls,
-      hint: describeVoicePipelineClass(cls),
-      line: formatPairLine({ ...pair, voiceClass: cls }),
-    };
-  });
+  const pairMap: Record<
+    string,
+    ReturnType<typeof buildPairClassifyEntry>
+  > = {};
+
+  for (const pair of pairs) {
+    const key = compactDeviceId(pair.remoteDeviceId);
+    pairMap[key] = buildPairClassifyEntry(pair);
+  }
+
+  const overall = computeOverallPairStatus(pairs);
 
   logVoicePerfPipeline("manual-classify-all");
   console.log(
     `[voice-peer-pair] classify-all session=${ctx.sessionId.slice(-6) || "-"} ` +
-      `local=${compactDeviceId(ctx.localDeviceId)} pairs=${results.length}`
+      `local=${compactDeviceId(ctx.localDeviceId)} pairs=${pairs.length} overall=${overall}`
   );
-  for (const row of results) {
-    console.log(`[voice-peer-pair] ${row.line} class=${row.class}`);
+  for (const pair of pairs) {
+    const entry = buildPairClassifyEntry(pair);
+    console.log(
+      `[voice-peer-pair] ${formatPairLine(pair)} class=${entry.class}` +
+        (entry.subClass ? ` sub=${entry.subClass}` : "")
+    );
   }
 
-  return { pairs: results };
+  return { overall, pairs: pairMap };
 }
 
 /** Callable from console with debugVoice=1: __dumpVoicePairs() */
@@ -79,6 +81,15 @@ export function dumpVoicePairsForConsole() {
   );
   for (const pair of pairs) {
     console.log(formatPairLine(pair));
+    console.log(
+      `[voice-peer-pair] detail remote=${compactDeviceId(pair.remoteDeviceId)} ` +
+        `role=${pair.role} route=${pair.route} offerSent=${pair.offerSent} ` +
+        `offerReceived=${pair.offerReceived} answerSent=${pair.answerSent} ` +
+        `answerReceived=${pair.answerReceived} iceSent=${pair.iceSent} ` +
+        `iceReceived=${pair.iceReceived} track=${pair.remoteTrackReceived} ` +
+        `audioStrict=${pair.audioConfirmedStrict} class=${pair.voiceClass} ` +
+        `sub=${pair.subClass ?? "-"} signalIssue=${pair.signalingIssue ?? "-"}`
+    );
   }
   return pairs;
 }

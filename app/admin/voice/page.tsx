@@ -134,33 +134,58 @@ function pairStatusLabel(log: VoiceLog) {
   const state = String(log.connection_state ?? "");
   const phase = String(log.phase ?? "").trim();
   const failure = parseVoiceFailureState(state);
+  const connected = parseVoiceConnectedState(state);
   const voiceRoute = String(log.voice_route ?? "").trim();
   let failClass =
     failure.voiceClass ??
     (voiceRoute.startsWith("fail-") ? voiceRoute.replace("fail-", "") : null);
 
-  if (phase === "failed" && (!failClass || failClass === "OK")) {
-    failClass = "unknown";
-  }
-  if (phase === "connected" && failClass && failClass !== "OK") {
-    failClass = null;
-  }
-
-  if (failClass && failClass !== "OK") {
+  if (phase === "failed") {
+    if (!failClass || failClass === "OK") {
+      failClass = "unknown";
+    }
     const detail =
-      failure.offer === "0"
-        ? "offer missing"
-        : failure.answer === "0"
-          ? "answer missing"
+      failure.answer === "0"
+        ? "answer missing"
+        : failure.offer === "0"
+          ? "offer missing"
           : failure.ice === "0"
             ? "ice missing"
             : failure.audio === "0"
               ? "audio not confirmed"
-              : `failed(${failClass})`;
-    return `${detail} / class=${failClass}`;
+              : failClass;
+    return `failed(${failClass}) / ${detail}`;
   }
 
-  return formatConnectedPairStatusLabel(state, log.phase);
+  if (phase === "connected" && connected.route != null) {
+    if (connected.audio === "strict") {
+      return "OK / audio OK";
+    }
+
+    if (connected.sub && connected.sub !== "-") {
+      const playback =
+        connected.sub === "D3" || connected.sub === "D4"
+          ? "playback NG"
+          : connected.sub === "D1" || connected.sub === "D2"
+            ? "track NG"
+            : connected.sub === "D5" || connected.sub === "D6"
+              ? "audio NG"
+              : "audio pending";
+      return `failed(${connected.sub}) / ${playback}`;
+    }
+
+    if (connected.oneWay === "1") {
+      return "OK / one-way audio pending";
+    }
+
+    return formatConnectedPairStatusLabel(state, log.phase);
+  }
+
+  if (phase === "connected") {
+    return "OK / audio pending";
+  }
+
+  return state || "unknown";
 }
 
 function groupLogsBySession(logs: VoiceLog[]) {

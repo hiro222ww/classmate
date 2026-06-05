@@ -585,13 +585,23 @@ export type VoicePeerPairLogInput = {
   answerReceived: boolean;
   iceSent: boolean;
   iceReceived: boolean;
+  iceConnected: boolean;
   remoteTrackReceived: boolean;
   audioConfirmed: boolean;
+  audioConfirmedStrict: boolean;
   lastSignalAt: number | null;
+  lastIceAt?: number | null;
+  lastTrackAt?: number | null;
   lastAudioAt: number | null;
+  lastAudioConfirmedAt?: number | null;
+  lastCloseReason?: string | null;
   selectedLocalCandidateType?: string | null;
   selectedRemoteCandidateType?: string | null;
+  inboundDeltaBytes?: number;
+  outboundDeltaBytes?: number;
+  signalingIssue?: string | null;
   voiceClass: string;
+  subClass?: string | null;
 };
 
 export function logVoicePeerPair(input: VoicePeerPairLogInput) {
@@ -599,17 +609,21 @@ export function logVoicePeerPair(input: VoicePeerPairLogInput) {
     `[voice-peer-pair] remote=${compactDeviceId(input.remoteDeviceId)} ` +
       `connectionId=${compactConnectionId(input.connectionId)} ` +
       `role=${input.role} policy=${input.policy} route=${input.route} ` +
-      `pcState=${input.pcState} iceState=${input.iceState} ` +
-      `signalingState=${input.signalingState} ` +
+      `pc=${input.pcState} ice=${input.iceState} signaling=${input.signalingState} ` +
       `offerSent=${input.offerSent} offerReceived=${input.offerReceived} ` +
       `answerSent=${input.answerSent} answerReceived=${input.answerReceived} ` +
       `iceSent=${input.iceSent} iceReceived=${input.iceReceived} ` +
-      `remoteTrackReceived=${input.remoteTrackReceived} ` +
-      `audioConfirmed=${input.audioConfirmed} ` +
-      `lastSignalAt=${input.lastSignalAt ?? "-"} lastAudioAt=${input.lastAudioAt ?? "-"} ` +
+      `iceConnected=${input.iceConnected} ` +
+      `track=${input.remoteTrackReceived} audioStrict=${input.audioConfirmedStrict} ` +
+      `lastSignalAt=${input.lastSignalAt ?? "-"} lastIceAt=${input.lastIceAt ?? "-"} ` +
+      `lastTrackAt=${input.lastTrackAt ?? "-"} lastAudioAt=${input.lastAudioAt ?? "-"} ` +
+      `lastAudioConfirmedAt=${input.lastAudioConfirmedAt ?? "-"} ` +
+      `lastCloseReason=${input.lastCloseReason ?? "-"} ` +
       `selectedLocal=${input.selectedLocalCandidateType ?? "-"} ` +
       `selectedRemote=${input.selectedRemoteCandidateType ?? "-"} ` +
-      `class=${input.voiceClass}`
+      `deltaIn=${input.inboundDeltaBytes ?? 0} deltaOut=${input.outboundDeltaBytes ?? 0} ` +
+      `signalIssue=${input.signalingIssue ?? "-"} ` +
+      `class=${input.voiceClass} sub=${input.subClass ?? "-"}`
   );
 }
 

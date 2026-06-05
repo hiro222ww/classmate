@@ -1,5 +1,7 @@
 "use client";
 
+import { resetVoicePeerPairDiag } from "@/lib/voicePeerPairDiagnostics";
+import type { OneWayAudioSubClass } from "@/lib/voiceAudioDiagnostics";
 import type { VoicePipelineFailureClass } from "@/lib/voicePerf";
 
 export type VoicePeerPairSnapshot = {
@@ -17,14 +19,24 @@ export type VoicePeerPairSnapshot = {
   answerReceived: boolean;
   iceSent: boolean;
   iceReceived: boolean;
+  iceConnected: boolean;
   remoteTrackReceived: boolean;
   audioConfirmed: boolean;
+  audioConfirmedStrict: boolean;
   audioProvisional?: boolean;
   lastSignalAt: number | null;
+  lastIceAt: number | null;
+  lastTrackAt: number | null;
   lastAudioAt: number | null;
+  lastAudioConfirmedAt: number | null;
+  lastCloseReason: string | null;
   selectedLocalCandidateType: string | null;
   selectedRemoteCandidateType: string | null;
+  inboundDeltaBytes: number;
+  outboundDeltaBytes: number;
+  signalingIssue: string | null;
   voiceClass: VoicePipelineFailureClass;
+  subClass: OneWayAudioSubClass | null;
   updatedAt: number;
 };
 
@@ -40,6 +52,7 @@ export function resetVoicePeerPairRegistry(nextSessionId: string, nextLocalId: s
   sessionId = sid;
   localDeviceId = lid;
   cachedPairs.clear();
+  resetVoicePeerPairDiag();
 }
 
 export function registerVoicePeerPairBuilder(

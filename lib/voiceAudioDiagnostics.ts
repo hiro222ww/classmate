@@ -318,13 +318,20 @@ export function logVoiceOneWayAudioSubClass(params: {
   audioConfirmedStrict: boolean;
   inboundDeltaBytes: number;
   outboundDeltaBytes: number;
+  currentTimeAdvanced?: boolean;
+  paused?: boolean;
+  trackLive?: boolean;
+  playFailed?: boolean;
 }) {
   const label = describeOneWayAudioSubClass(params.subClass);
   debugConsoleLog(
     `[voice-peer] one-way-audio remote=${compactDeviceId(params.remoteDeviceId)} ` +
       `class=D sub=${params.subClass}(${label}) iceConnected=${params.iceConnected} ` +
       `remoteTrackReceived=${params.remoteTrackReceived} audioConfirmedStrict=${params.audioConfirmedStrict} ` +
-      `inboundDeltaBytes=${params.inboundDeltaBytes} outboundDeltaBytes=${params.outboundDeltaBytes}`
+      `inboundBytesDelta=${params.inboundDeltaBytes} outboundBytesDelta=${params.outboundDeltaBytes} ` +
+      `currentTimeAdvanced=${params.currentTimeAdvanced === true} ` +
+      `paused=${params.paused === true} trackLive=${params.trackLive !== false} ` +
+      `playFailed=${params.playFailed === true}`
   );
 }
 

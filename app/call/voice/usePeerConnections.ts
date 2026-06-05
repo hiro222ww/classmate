@@ -114,6 +114,13 @@ import {
   type VoicePeerPairSnapshot,
 } from "@/lib/voicePeerPairRegistry";
 import {
+  detectSignalingAsymmetry,
+  enrichPeerVoiceClass,
+  getVoicePeerPairDiag,
+  resetVoicePeerPairDiag,
+  updateVoicePeerPairDiag,
+} from "@/lib/voicePeerPairDiagnostics";
+import {
   isPeerP2pEstablished,
   isPeerTransportUnconfirmed,
   isTransportMediaConnected,
@@ -1666,8 +1673,17 @@ export function usePeerConnections({
       if (relayForcedRef.current && route === "p2p") {
         debugConsoleLog(
           `[voice-peer] policy-violation remote=${compactDeviceId(remoteId)} ` +
-            `expected=relay actual=p2p localType=${recordedPair?.localType ?? "-"} ` +
-            `remoteType=${recordedPair?.remoteType ?? "-"}`
+            `policy=relay localType=${recordedPair?.localType ?? "-"} route=p2p`
+        );
+      }
+      if (
+        relayForcedRef.current &&
+        recordedPair?.localType &&
+        recordedPair.localType !== "relay"
+      ) {
+        debugConsoleLog(
+          `[voice-peer] policy-violation remote=${compactDeviceId(remoteId)} ` +
+            `policy=relay localType=${recordedPair.localType} route=${route}`
         );
       }
     },
@@ -1879,6 +1895,15 @@ export function usePeerConnections({
           senderTrackEnabled: sender?.track?.enabled ?? localTrack?.enabled ?? false,
         });
 
+        updateVoicePeerPairDiag(remoteId, {
+          subClass: subClass !== "OK" ? subClass : null,
+          inboundDeltaBytes: stats.deltaInboundBytes,
+          outboundDeltaBytes: stats.deltaOutboundBytes,
+          trackLive: trackOk,
+          currentTimeAdvanced: health?.currentTimeAdvanced === true,
+          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
+        });
+
         if (subClass !== "OK") {
           const logKey = `${remoteId}:${subClass}`;
           if (!oneWayAudioLoggedRef.current.has(logKey)) {
@@ -1891,6 +1916,10 @@ export function usePeerConnections({
               audioConfirmedStrict: false,
               inboundDeltaBytes: stats.deltaInboundBytes,
               outboundDeltaBytes: stats.deltaOutboundBytes,
+              currentTimeAdvanced: health?.currentTimeAdvanced === true,
+              paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
+              trackLive: trackOk,
+              playFailed: health?.playFailedAt != null,
             });
           }
         }
@@ -2011,6 +2040,11 @@ export function usePeerConnections({
           audioConfirmedStrict: false,
           inboundDeltaBytes: 0,
           outboundDeltaBytes: 0,
+          currentTimeAdvanced: health?.currentTimeAdvanced === true,
+          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
+          trackLive:
+            marks.remote_track_received || media.remoteTracksCount > 0,
+          playFailed: health?.playFailedAt != null,
         });
       }
     }
@@ -2177,6 +2211,67 @@ export function usePeerConnections({
         timestamps.lastPlaybackConfirmedAt,
         timestamps.lastOnTrackAt,
       ].filter((value): value is number => value != null);
+      const iceConnected =
+        mesh.iceConnectionState === "connected" ||
+        mesh.iceConnectionState === "completed";
+      const diag = getVoicePeerPairDiag(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId);
+      const closeReason =
+        lastPeerCloseReasonRef.current.get(remoteId) ??
+        diag?.lastCloseReason ??
+        null;
+
+      let subClass: OneWayAudioSubClass | null = diag?.subClass ?? null;
+      if (!subClass && iceConnected && !marks.audio_confirmed_strict) {
+        const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
+        const pc = pcsRef.current.get(remoteId);
+        const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
+        const trackOk =
+          marks.remote_track_received || mesh.remoteTracksCount > 0;
+        subClass = classifyOneWayAudioSubClass({
+          iceConnected,
+          remoteTrackReceived: trackOk,
+          inboundDeltaBytes: diag?.inboundDeltaBytes ?? 0,
+          inboundDeltaPackets: 0,
+          playSuccess: health?.playSuccess === true,
+          playFailed: health?.playFailedAt != null,
+          playbackStrict: health?.audioConfirmedStrict === true,
+          currentTimeAdvanced: health?.currentTimeAdvanced === true,
+          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
+          level: health?.level ?? 0,
+          outboundDeltaBytes: diag?.outboundDeltaBytes ?? 0,
+          senderTrackReadyState:
+            sender?.track?.readyState ?? localTrack?.readyState ?? "none",
+          senderTrackMuted: sender?.track?.muted ?? localTrack?.muted ?? false,
+          senderTrackEnabled:
+            sender?.track?.enabled ?? localTrack?.enabled ?? false,
+        });
+        if (subClass === "OK") subClass = null;
+      }
+
+      const signalingIssue = detectSignalingAsymmetry({
+        role,
+        offerSent: marks.offer_sent,
+        offerReceived: marks.offer_received,
+        answerSent: marks.answer_sent,
+        answerReceived: marks.answer_received,
+        iceSent: marks.ice_sent,
+        iceReceived: marks.ice_received,
+        iceConnected,
+        msSinceConnectStart: mesh.msSinceConnectStart,
+      });
+
+      const baseClass = classifyVoicePipelineFailure(remoteId);
+      const enriched = enrichPeerVoiceClass(
+        baseClass,
+        {
+          iceConnected,
+          audioConfirmedStrict: marks.audio_confirmed_strict,
+          remoteTrackReceived: marks.remote_track_received,
+        },
+        subClass,
+        signalingIssue
+      );
 
       return {
         remoteDeviceId: remoteId,
@@ -2193,20 +2288,30 @@ export function usePeerConnections({
         answerReceived: marks.answer_received,
         iceSent: marks.ice_sent,
         iceReceived: marks.ice_received,
+        iceConnected,
         remoteTrackReceived: marks.remote_track_received,
         audioConfirmed: marks.audio_confirmed_strict,
+        audioConfirmedStrict: marks.audio_confirmed_strict,
         audioProvisional:
           !marks.audio_confirmed_strict &&
           (marks.audio_provisional || timestamps.lastPlaySuccessAt != null),
         lastSignalAt: signalTimes.length ? Math.max(...signalTimes) : null,
+        lastIceAt: timestamps.lastIceCandidateAt,
+        lastTrackAt: timestamps.lastOnTrackAt,
         lastAudioAt: audioTimes.length ? Math.max(...audioTimes) : null,
+        lastAudioConfirmedAt: timestamps.lastPlaybackConfirmedAt,
+        lastCloseReason: closeReason,
         selectedLocalCandidateType: recordedPair?.localType ?? null,
         selectedRemoteCandidateType: recordedPair?.remoteType ?? null,
-        voiceClass: classifyVoicePipelineFailure(remoteId),
+        inboundDeltaBytes: diag?.inboundDeltaBytes ?? 0,
+        outboundDeltaBytes: diag?.outboundDeltaBytes ?? 0,
+        signalingIssue,
+        voiceClass: enriched.voiceClass,
+        subClass: enriched.subClass,
         updatedAt: Date.now(),
       };
     },
-    [buildMeshPeerSummary, deviceId]
+    [buildMeshPeerSummary, deviceId, localAudioTrackRef, localStreamRef]
   );
 
   const syncPeerPairDiagnostics = useCallback(
@@ -2226,9 +2331,17 @@ export function usePeerConnections({
         logVoicePeerPair({
           ...snap,
           voiceClass: snap.voiceClass,
+          subClass: snap.subClass,
         });
 
         const mesh = buildMeshPeerSummary(snap.remoteDeviceId);
+        if (snap.signalingIssue) {
+          debugConsoleLog(
+            `[voice-peer-role] anomaly remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `role=${snap.role} issue=${snap.signalingIssue} class=B ` +
+              `ms=${mesh.msSinceConnectStart ?? "-"}`
+          );
+        }
         if (
           snap.role === "active" &&
           !snap.offerSent &&
@@ -2249,23 +2362,43 @@ export function usePeerConnections({
               `role=passive issue=passive_wait_offer_stuck ms=${mesh.msSinceConnectStart ?? "-"}`
           );
         }
+        if (snap.role === "passive" && snap.offerSent && !snap.offerReceived) {
+          debugConsoleLog(
+            `[voice-peer-role] anomaly remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `role=passive issue=both_passive_or_passive_sent_offer`
+          );
+        }
+        if (snap.role === "active" && snap.offerReceived && !snap.offerSent) {
+          debugConsoleLog(
+            `[voice-peer-role] anomaly remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `role=active issue=both_active_glare`
+          );
+        }
+        if (relayForcedRef.current && snap.policy !== "relay") {
+          debugConsoleLog(
+            `[voice-peer] policy-violation remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `policy=relay localType=${snap.selectedLocalCandidateType ?? "-"} route=${snap.route}`
+          );
+        }
         if (
           relayForcedRef.current &&
-          snap.policy !== "relay"
+          snap.selectedLocalCandidateType &&
+          snap.selectedLocalCandidateType !== "relay" &&
+          snap.iceConnected
         ) {
           debugConsoleLog(
-            `[voice-peer-pair] policy-mismatch remote=${compactDeviceId(snap.remoteDeviceId)} ` +
-              `expected=relay got=${snap.policy}`
+            `[voice-peer] policy-violation remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `policy=relay localType=${snap.selectedLocalCandidateType} route=${snap.route}`
           );
         }
         if (
           relayForcedRef.current &&
           snap.route !== "turn" &&
-          (snap.iceState === "connected" || snap.iceState === "completed")
+          snap.iceConnected
         ) {
           debugConsoleLog(
-            `[voice-peer-pair] route-mismatch remote=${compactDeviceId(snap.remoteDeviceId)} ` +
-              `expected=turn got=${snap.route}`
+            `[voice-peer] policy-violation remote=${compactDeviceId(snap.remoteDeviceId)} ` +
+              `policy=relay localType=${snap.selectedLocalCandidateType ?? "-"} route=${snap.route}`
           );
         }
       }
@@ -3164,6 +3297,7 @@ export function usePeerConnections({
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
       const reason = String(opts?.reason ?? "").trim() || "missing_reason";
       lastPeerCloseReasonRef.current.set(remoteId, reason);
+      updateVoicePeerPairDiag(remoteId, { lastCloseReason: reason });
       if (reason === "missing_reason") {
         console.warn(
           `[voice-peer] close missing reason remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
@@ -3277,6 +3411,7 @@ export function usePeerConnections({
       audioDiagLogAtRef.current.delete(remoteId);
       audioStrictRecoveryAttemptedRef.current.delete(remoteId);
       resetPeerAudioDiagnostics(remoteId);
+      resetVoicePeerPairDiag(remoteId);
       checkingPlaybackStuckAtRef.current.delete(remoteId);
       p2pNoRelayRetryAttemptsRef.current.delete(remoteId);
       p2pNoRelayRetryInFlightRef.current.delete(remoteId);
@@ -5636,7 +5771,7 @@ export function usePeerConnections({
         localDeviceId: deviceId,
         remoteDeviceId: remoteId,
         role,
-        reason,
+        reason: "device_id_order",
         localGreater: deviceId > remoteId,
       });
 
