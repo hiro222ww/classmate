@@ -78,6 +78,8 @@ import {
   classifyOneWayAudioSubClass,
   collectPeerRtpStats,
   formatVoiceConnectedConnectionState,
+  getPeerInboundDeltaBytes,
+  getPeerOutboundDeltaBytes,
   logLocalAudioSenderCheck,
   logVoiceOneWayAudioSubClass,
   logVoiceRtpStats,
@@ -1717,6 +1719,127 @@ export function usePeerConnections({
     []
   );
 
+  const classifyPeerAudioSubClass = useCallback(
+    (
+      remoteId: string,
+      opts?: {
+        stats?: PeerRtpStatsSnapshot | null;
+        health?: RemotePlaybackHealth | null;
+        playbackStrict?: boolean;
+        remoteTrackReceived?: boolean;
+      }
+    ): OneWayAudioSubClass => {
+      const marks = getPeerPipelineMarks(remoteId);
+      const health =
+        opts?.health ?? remotePlaybackHealthRef.current.get(remoteId) ?? null;
+      const media = getPeerMedia(remoteId);
+      const pc = pcsRef.current.get(remoteId);
+      const iceConnected =
+        pc != null &&
+        isTransportMediaConnected(pc.connectionState, pc.iceConnectionState);
+      const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
+      const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
+      const receiveOnly = isReceiveOnlyMutedSession(
+        voicePolicy.releaseMicOnMute,
+        userMutedRef
+      );
+      const localSenderExpected =
+        micReady &&
+        (isLocalTrackLive(localAudioTrackRef, localStreamRef) || receiveOnly);
+      const trackOk =
+        opts?.remoteTrackReceived ??
+        (marks.remote_track_received || media.remoteTracksCount > 0);
+      const playbackStrict =
+        opts?.playbackStrict ??
+        (marks.audio_confirmed_strict || health?.audioConfirmedStrict === true);
+
+      return classifyOneWayAudioSubClass({
+        iceConnected,
+        remoteTrackReceived: trackOk,
+        inboundDeltaBytes:
+          opts?.stats?.deltaInboundBytes ?? getPeerInboundDeltaBytes(remoteId),
+        inboundDeltaPackets: opts?.stats?.deltaInboundPackets ?? 0,
+        inboundBytesTotal: opts?.stats?.inboundBytes,
+        hasRtpBaseline: opts?.stats?.hadRtpBaseline,
+        playSuccess: health?.playSuccess === true,
+        playFailed: health?.playFailedAt != null,
+        playbackStrict,
+        currentTimeAdvanced: health?.currentTimeAdvanced === true,
+        playbackUnconfirmed:
+          health?.playSuccess === true && !playbackStrict,
+        level: health?.level ?? 0,
+        outboundDeltaBytes:
+          opts?.stats?.deltaOutboundBytes ?? getPeerOutboundDeltaBytes(remoteId),
+        senderTrackReadyState:
+          sender?.track?.readyState ?? localTrack?.readyState ?? "none",
+        senderTrackMuted: sender?.track?.muted ?? localTrack?.muted ?? false,
+        senderTrackEnabled:
+          sender?.track?.enabled ?? localTrack?.enabled ?? false,
+        localSenderExpected,
+      });
+    },
+    [
+      getPeerMedia,
+      localAudioTrackRef,
+      localStreamRef,
+      micReady,
+      userMutedRef,
+      voicePolicy.releaseMicOnMute,
+    ]
+  );
+
+  const publishPeerAudioSubClass = useCallback(
+    (
+      remoteId: string,
+      subClass: OneWayAudioSubClass,
+      stats: PeerRtpStatsSnapshot | null,
+      health: RemotePlaybackHealth | null
+    ) => {
+      if (subClass === "OK") return;
+
+      const media = getPeerMedia(remoteId);
+      const marks = getPeerPipelineMarks(remoteId);
+      const trackOk =
+        marks.remote_track_received || media.remoteTracksCount > 0;
+
+      updateVoicePeerPairDiag(
+        remoteId,
+        {
+          subClass,
+          inboundDeltaBytes:
+            stats?.deltaInboundBytes ?? getPeerInboundDeltaBytes(remoteId),
+          outboundDeltaBytes:
+            stats?.deltaOutboundBytes ?? getPeerOutboundDeltaBytes(remoteId),
+          trackLive: trackOk,
+          currentTimeAdvanced: health?.currentTimeAdvanced === true,
+          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
+        },
+        connectionIdsRef.current.get(remoteId) ?? null
+      );
+
+      const logKey = `${remoteId}:${subClass}`;
+      if (!oneWayAudioLoggedRef.current.has(logKey)) {
+        oneWayAudioLoggedRef.current.add(logKey);
+        logVoiceOneWayAudioSubClass({
+          remoteDeviceId: remoteId,
+          subClass,
+          iceConnected: true,
+          remoteTrackReceived: trackOk,
+          audioConfirmedStrict: false,
+          inboundDeltaBytes:
+            stats?.deltaInboundBytes ?? getPeerInboundDeltaBytes(remoteId),
+          outboundDeltaBytes:
+            stats?.deltaOutboundBytes ?? getPeerOutboundDeltaBytes(remoteId),
+          currentTimeAdvanced: health?.currentTimeAdvanced === true,
+          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
+          trackLive: trackOk,
+          playFailed: health?.playFailedAt != null,
+        });
+      }
+    },
+    [getPeerMedia]
+  );
+
   const buildVoiceConnectedAudioState = useCallback(
     (
       remoteId: string,
@@ -1751,24 +1874,13 @@ export function usePeerConnections({
 
       let subClass: OneWayAudioSubClass | null = null;
       if (!strict && iceOk) {
-        const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
-        const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
-        subClass = classifyOneWayAudioSubClass({
-          iceConnected: iceOk,
+        const classified = classifyPeerAudioSubClass(remoteId, {
+          stats: stats ?? null,
+          health: health ?? null,
+          playbackStrict: strict,
           remoteTrackReceived: trackOk,
-          inboundDeltaBytes: stats?.deltaInboundBytes ?? 0,
-          inboundDeltaPackets: stats?.deltaInboundPackets ?? 0,
-          playSuccess: health?.playSuccess === true,
-          playFailed: health?.playFailedAt != null,
-          playbackStrict: false,
-          currentTimeAdvanced: health?.currentTimeAdvanced === true,
-          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-          level: health?.level ?? 0,
-          outboundDeltaBytes: stats?.deltaOutboundBytes ?? 0,
-          senderTrackReadyState: sender?.track?.readyState ?? localTrack?.readyState ?? "none",
-          senderTrackMuted: sender?.track?.muted ?? localTrack?.muted ?? false,
-          senderTrackEnabled: sender?.track?.enabled ?? localTrack?.enabled ?? false,
         });
+        subClass = classified !== "OK" ? classified : null;
       }
 
       return {
@@ -1777,11 +1889,11 @@ export function usePeerConnections({
         trackOk,
         playback,
         audio,
-        subClass: subClass && subClass !== "OK" ? subClass : null,
-        oneWay: subClass != null && subClass !== "OK",
+        subClass,
+        oneWay: subClass != null,
       };
     },
-    [getPeerMedia, localAudioTrackRef, localStreamRef]
+    [classifyPeerAudioSubClass, getPeerMedia, localAudioTrackRef, localStreamRef]
   );
 
   const attemptPeerAudioStrictRecovery = useCallback(
@@ -1850,10 +1962,17 @@ export function usePeerConnections({
 
       const stats = await collectPeerRtpStats(pc, remoteId);
       const now = Date.now();
+      const marks = getPeerPipelineMarks(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId) ?? null;
+      const subClass = marks.audio_confirmed_strict
+        ? ("OK" as OneWayAudioSubClass)
+        : classifyPeerAudioSubClass(remoteId, { stats, health });
+
       const lastLog = audioDiagLogAtRef.current.get(remoteId) ?? 0;
       const shouldLog = now - lastLog >= AUDIO_DIAG_LOG_THROTTLE_MS;
       if (shouldLog) {
         audioDiagLogAtRef.current.set(remoteId, now);
+        const pendingSub = subClass !== "OK" ? subClass : null;
         logVoiceRtpStats({
           remoteId,
           direction: "inbound",
@@ -1862,6 +1981,7 @@ export function usePeerConnections({
           deltaBytes: stats.deltaInboundBytes,
           deltaPackets: stats.deltaInboundPackets,
           audioLevel: stats.inboundAudioLevel,
+          subClass: pendingSub,
         });
         logVoiceRtpStats({
           remoteId,
@@ -1886,14 +2006,9 @@ export function usePeerConnections({
           packetsSent: stats.outboundPackets,
           deltaBytesSent: stats.deltaOutboundBytes,
           deltaPacketsSent: stats.deltaOutboundPackets,
+          subClass: pendingSub,
         });
       }
-
-      const marks = getPeerPipelineMarks(remoteId);
-      const health = remotePlaybackHealthRef.current.get(remoteId);
-      const media = getPeerMedia(remoteId);
-      const trackOk =
-        marks.remote_track_received || media.remoteTracksCount > 0;
 
       if (health?.audioConfirmedStrict && !marks.audio_confirmed_strict) {
         touchPeerSignal(remoteId, "playback_confirmed");
@@ -1902,65 +2017,13 @@ export function usePeerConnections({
         logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)} source=stats_poll`);
       }
 
-      if (!marks.audio_confirmed_strict) {
-        const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
-        const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
-        const subClass = classifyOneWayAudioSubClass({
-          iceConnected: true,
-          remoteTrackReceived: trackOk,
-          inboundDeltaBytes: stats.deltaInboundBytes,
-          inboundDeltaPackets: stats.deltaInboundPackets,
-          playSuccess: health?.playSuccess === true,
-          playFailed: health?.playFailedAt != null,
-          playbackStrict: health?.audioConfirmedStrict === true,
-          currentTimeAdvanced: health?.currentTimeAdvanced === true,
-          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-          level: health?.level ?? 0,
-          outboundDeltaBytes: stats.deltaOutboundBytes,
-          senderTrackReadyState: sender?.track?.readyState ?? localTrack?.readyState ?? "none",
-          senderTrackMuted: sender?.track?.muted ?? localTrack?.muted ?? false,
-          senderTrackEnabled: sender?.track?.enabled ?? localTrack?.enabled ?? false,
-        });
-
-        updateVoicePeerPairDiag(
-          remoteId,
-          {
-            subClass: subClass !== "OK" ? subClass : null,
-            inboundDeltaBytes: stats.deltaInboundBytes,
-            outboundDeltaBytes: stats.deltaOutboundBytes,
-            trackLive: trackOk,
-            currentTimeAdvanced: health?.currentTimeAdvanced === true,
-            paused:
-              health?.playSuccess === true && !health?.audioConfirmedStrict,
-          },
-          connectionIdsRef.current.get(remoteId) ?? null
-        );
-
-        if (subClass !== "OK") {
-          const logKey = `${remoteId}:${subClass}`;
-          if (!oneWayAudioLoggedRef.current.has(logKey)) {
-            oneWayAudioLoggedRef.current.add(logKey);
-            logVoiceOneWayAudioSubClass({
-              remoteDeviceId: remoteId,
-              subClass,
-              iceConnected: true,
-              remoteTrackReceived: trackOk,
-              audioConfirmedStrict: false,
-              inboundDeltaBytes: stats.deltaInboundBytes,
-              outboundDeltaBytes: stats.deltaOutboundBytes,
-              currentTimeAdvanced: health?.currentTimeAdvanced === true,
-              paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-              trackLive: trackOk,
-              playFailed: health?.playFailedAt != null,
-            });
-          }
-        }
+      if (!marks.audio_confirmed_strict && subClass !== "OK") {
+        publishPeerAudioSubClass(remoteId, subClass, stats, health);
 
         const iceConnectedAt = peerIceConnectedAtRef.current.get(remoteId);
         if (
           iceConnectedAt != null &&
-          now - iceConnectedAt >= AUDIO_STRICT_CONFIRM_TIMEOUT_MS &&
-          subClass !== "OK"
+          now - iceConnectedAt >= AUDIO_STRICT_CONFIRM_TIMEOUT_MS
         ) {
           void attemptPeerAudioStrictRecovery(remoteId, subClass, stats);
         }
@@ -1968,9 +2031,10 @@ export function usePeerConnections({
     },
     [
       attemptPeerAudioStrictRecovery,
-      getPeerMedia,
+      classifyPeerAudioSubClass,
       localAudioTrackRef,
       localStreamRef,
+      publishPeerAudioSubClass,
       touchPeerSignal,
     ]
   );
@@ -2006,8 +2070,21 @@ export function usePeerConnections({
             `mode=${health.playbackActiveMode} strict=0 ${formatVoiceModeSuffix()}`
         );
       }
+
+      if (!health.audioConfirmedStrict) {
+        const pc = pcsRef.current.get(remoteId);
+        const iceConnected =
+          pc != null &&
+          isTransportMediaConnected(pc.connectionState, pc.iceConnectionState);
+        if (iceConnected) {
+          const subClass = classifyPeerAudioSubClass(remoteId, { health });
+          if (subClass !== "OK") {
+            publishPeerAudioSubClass(remoteId, subClass, null, health);
+          }
+        }
+      }
     },
-    [touchPeerSignal]
+    [classifyPeerAudioSubClass, publishPeerAudioSubClass, touchPeerSignal]
   );
 
   const handlePlaybackUnconfirmedTimeout = useCallback((remoteId: string) => {
@@ -2036,48 +2113,15 @@ export function usePeerConnections({
 
     const pc = pcsRef.current.get(remoteId);
     const marks = getPeerPipelineMarks(remoteId);
-    const media = getPeerMedia(remoteId);
     const iceConnected =
       pc != null &&
       (pc.iceConnectionState === "connected" ||
         pc.iceConnectionState === "completed");
     if (iceConnected && !marks.audio_confirmed_strict) {
-      const health = remotePlaybackHealthRef.current.get(remoteId);
-      const subClass = classifyOneWayAudioSubClass({
-        iceConnected: true,
-        remoteTrackReceived:
-          marks.remote_track_received || media.remoteTracksCount > 0,
-        inboundDeltaBytes: 0,
-        inboundDeltaPackets: 0,
-        playSuccess: health?.playSuccess === true,
-        playFailed: health?.playFailedAt != null,
-        playbackStrict: false,
-        currentTimeAdvanced: health?.currentTimeAdvanced === true,
-        paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-        level: health?.level ?? 0,
-        outboundDeltaBytes: 0,
-        senderTrackReadyState: "unknown",
-        senderTrackMuted: false,
-        senderTrackEnabled: true,
-      });
-      const logKey = `${remoteId}:${subClass}`;
-      if (subClass !== "OK" && !oneWayAudioLoggedRef.current.has(logKey)) {
-        oneWayAudioLoggedRef.current.add(logKey);
-        logVoiceOneWayAudioSubClass({
-          remoteDeviceId: remoteId,
-          subClass,
-          iceConnected: true,
-          remoteTrackReceived:
-            marks.remote_track_received || media.remoteTracksCount > 0,
-          audioConfirmedStrict: false,
-          inboundDeltaBytes: 0,
-          outboundDeltaBytes: 0,
-          currentTimeAdvanced: health?.currentTimeAdvanced === true,
-          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-          trackLive:
-            marks.remote_track_received || media.remoteTracksCount > 0,
-          playFailed: health?.playFailedAt != null,
-        });
+      const health = remotePlaybackHealthRef.current.get(remoteId) ?? null;
+      const subClass = classifyPeerAudioSubClass(remoteId, { health });
+      if (subClass !== "OK") {
+        publishPeerAudioSubClass(remoteId, subClass, null, health);
       }
     }
 
@@ -2124,7 +2168,11 @@ export function usePeerConnections({
           force: true,
         });
       });
-  }, [hasLiveRemoteAudioStream]);
+  }, [
+    classifyPeerAudioSubClass,
+    hasLiveRemoteAudioStream,
+    publishPeerAudioSubClass,
+  ]);
 
   const setPeerMeta = useCallback(
     (
@@ -2255,30 +2303,14 @@ export function usePeerConnections({
 
       let subClass: OneWayAudioSubClass | null = diag?.subClass ?? null;
       if (!subClass && iceConnected && !marks.audio_confirmed_strict) {
-        const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
-        const pc = pcsRef.current.get(remoteId);
-        const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
         const trackOk =
           marks.remote_track_received || mesh.remoteTracksCount > 0;
-        subClass = classifyOneWayAudioSubClass({
-          iceConnected,
+        const classified = classifyPeerAudioSubClass(remoteId, {
+          health: health ?? null,
+          playbackStrict: marks.audio_confirmed_strict,
           remoteTrackReceived: trackOk,
-          inboundDeltaBytes: diag?.inboundDeltaBytes ?? 0,
-          inboundDeltaPackets: 0,
-          playSuccess: health?.playSuccess === true,
-          playFailed: health?.playFailedAt != null,
-          playbackStrict: health?.audioConfirmedStrict === true,
-          currentTimeAdvanced: health?.currentTimeAdvanced === true,
-          paused: health?.playSuccess === true && !health?.audioConfirmedStrict,
-          level: health?.level ?? 0,
-          outboundDeltaBytes: diag?.outboundDeltaBytes ?? 0,
-          senderTrackReadyState:
-            sender?.track?.readyState ?? localTrack?.readyState ?? "none",
-          senderTrackMuted: sender?.track?.muted ?? localTrack?.muted ?? false,
-          senderTrackEnabled:
-            sender?.track?.enabled ?? localTrack?.enabled ?? false,
         });
-        if (subClass === "OK") subClass = null;
+        subClass = classified !== "OK" ? classified : null;
       }
 
       const signalingIssue = detectSignalingAsymmetry({
@@ -2343,7 +2375,7 @@ export function usePeerConnections({
         updatedAt: Date.now(),
       };
     },
-    [buildMeshPeerSummary, deviceId, localAudioTrackRef, localStreamRef]
+    [buildMeshPeerSummary, classifyPeerAudioSubClass, deviceId]
   );
 
   const syncPeerPairDiagnostics = useCallback(
@@ -8177,11 +8209,18 @@ export function usePeerConnections({
   ]);
 
   useEffect(() => {
-    if (!micReady || !signalReady) return;
+    if (!signalReady) return;
 
     const timer = window.setInterval(() => {
       if (isDocumentHidden()) return;
       for (const remoteId of getRemoteIds()) {
+        const pc = pcsRef.current.get(remoteId);
+        if (
+          !pc ||
+          !isTransportMediaConnected(pc.connectionState, pc.iceConnectionState)
+        ) {
+          continue;
+        }
         void pollPeerAudioDiagnostics(remoteId);
       }
     }, AUDIO_STATS_POLL_INTERVAL_MS);
@@ -8189,7 +8228,7 @@ export function usePeerConnections({
     return () => {
       window.clearInterval(timer);
     };
-  }, [getRemoteIds, micReady, pollPeerAudioDiagnostics, signalReady]);
+  }, [getRemoteIds, pollPeerAudioDiagnostics, signalReady]);
 
   useEffect(() => {
     if (membersSyncRevision <= 0) return;
