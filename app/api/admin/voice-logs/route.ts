@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("voice_connection_logs")
     .select(
-      "id, session_id, device_id, os, member_count, route, used_turn, connection_state, voice_route, time_to_connect_ms, created_at"
+      "id, session_id, device_id, os, member_count, route, used_turn, voice_route, connection_state, time_to_connect_ms, created_at"
     )
     .order("created_at", { ascending: false })
     .limit(limit);

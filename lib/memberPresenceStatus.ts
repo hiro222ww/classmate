@@ -1,6 +1,8 @@
 import { debugConsoleLog } from "@/lib/debugVoiceLog";
 import {
   resolveMemberParticipationForUi,
+  sanitizePresenceForUi,
+  type InternalMemberStatus,
   type UnifiedMemberStatus,
 } from "@/lib/memberStatus";
 import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
@@ -936,66 +938,18 @@ function normalizedEffective(source: ParticipationSource) {
     .toLowerCase();
 }
 
-export function resolveParticipationStatus(params: {
+function buildUiMemberStatusInput(params: {
   source: ParticipationSource;
   currentSessionId?: string | null;
   freshMs?: number;
   previous?: UiParticipationStatus | null;
+  previousInternal?: InternalMemberStatus | null;
   fetchFailed?: boolean;
   localExitedCall?: boolean;
   context?: "home" | "room";
   deviceId?: string;
   inSessionMembers?: boolean;
-  lastInSessionAt?: number | null;
-  isMe?: boolean;
-}): UiParticipationStatus {
-  const {
-    source,
-    currentSessionId,
-    freshMs = PRESENCE_FRESH_MS_HOME,
-    previous = null,
-    fetchFailed = false,
-    localExitedCall = false,
-    context = "home",
-    deviceId = "",
-    inSessionMembers = true,
-    lastInSessionAt,
-    isMe = false,
-  } = params;
-
-  const { participation } = resolveMemberParticipationForUi({
-    context,
-    deviceId,
-    inSessionMembers,
-    explicitLeaveSeen: localExitedCall,
-    localExitedCall,
-    isMe,
-    is_in_call: source.is_in_call,
-    screen: source.screen,
-    last_seen_at: source.last_seen_at,
-    presenceSessionId:
-      source.presence_session_id ?? source.session_id ?? null,
-    currentSessionId,
-    effective_status: source.effective_status ?? source.status ?? null,
-    lastInSessionAt,
-    previousParticipation: previous,
-    fetchFailed,
-    freshMs,
-  });
-
-  return participation;
-}
-
-export function resolveParticipationDisplay(params: {
-  source: ParticipationSource;
-  currentSessionId?: string | null;
-  freshMs?: number;
-  previous?: UiParticipationStatus | null;
-  fetchFailed?: boolean;
-  localExitedCall?: boolean;
-  context?: "home" | "room";
-  deviceId?: string;
-  inSessionMembers?: boolean;
+  inClassMembership?: boolean;
   lastInSessionAt?: number | null;
   isMe?: boolean;
 }) {
@@ -1004,55 +958,112 @@ export function resolveParticipationDisplay(params: {
     currentSessionId,
     freshMs = PRESENCE_FRESH_MS_HOME,
     previous = null,
+    previousInternal = null,
     fetchFailed = false,
     localExitedCall = false,
     context = "home",
     deviceId = "",
-    inSessionMembers = true,
+    inSessionMembers = false,
+    inClassMembership = true,
     lastInSessionAt,
     isMe = false,
   } = params;
 
-  return resolveMemberParticipationForUi({
+  const uiSource = sanitizePresenceForUi(source, freshMs);
+
+  return {
     context,
     deviceId,
     inSessionMembers,
+    inClassMembership,
     explicitLeaveSeen: localExitedCall,
     localExitedCall,
     isMe,
-    is_in_call: source.is_in_call,
-    screen: source.screen,
+    is_in_call: uiSource.is_in_call,
+    screen: uiSource.screen,
     last_seen_at: source.last_seen_at,
     presenceSessionId:
-      source.presence_session_id ?? source.session_id ?? null,
+      uiSource.presence_session_id ?? uiSource.session_id ?? null,
     currentSessionId,
-    effective_status: source.effective_status ?? source.status ?? null,
+    effective_status: uiSource.effective_status ?? uiSource.status ?? null,
     lastInSessionAt,
+    previousInternal,
     previousParticipation: previous,
     fetchFailed,
     freshMs,
-  });
+  };
+}
+
+export function resolveParticipationStatus(params: {
+  source: ParticipationSource;
+  currentSessionId?: string | null;
+  freshMs?: number;
+  previous?: UiParticipationStatus | null;
+  previousInternal?: InternalMemberStatus | null;
+  fetchFailed?: boolean;
+  localExitedCall?: boolean;
+  context?: "home" | "room";
+  deviceId?: string;
+  inSessionMembers?: boolean;
+  inClassMembership?: boolean;
+  lastInSessionAt?: number | null;
+  isMe?: boolean;
+}): UiParticipationStatus {
+  const { participation } = resolveMemberParticipationForUi(
+    buildUiMemberStatusInput(params)
+  );
+  return participation;
+}
+
+export function resolveParticipationDisplay(params: {
+  source: ParticipationSource;
+  currentSessionId?: string | null;
+  freshMs?: number;
+  previous?: UiParticipationStatus | null;
+  previousInternal?: InternalMemberStatus | null;
+  fetchFailed?: boolean;
+  localExitedCall?: boolean;
+  context?: "home" | "room";
+  deviceId?: string;
+  inSessionMembers?: boolean;
+  inClassMembership?: boolean;
+  lastInSessionAt?: number | null;
+  isMe?: boolean;
+}) {
+  return resolveMemberParticipationForUi(buildUiMemberStatusInput(params));
 }
 
 export function participationStatusLabel(
   status: UiParticipationStatus,
   context: "home" | "room",
-  unified?: UnifiedMemberStatus
+  unified?: UnifiedMemberStatus,
+  internal?: InternalMemberStatus
 ): string {
+  if (internal) {
+    if (internal === "in_voice") return "通話中";
+    if (internal === "connecting_voice") {
+      return context === "room" ? "接続準備中" : "接続中";
+    }
+    if (internal === "in_room") return "待機中";
+    if (internal === "in_session") {
+      return context === "room" ? "入室中" : "入室中";
+    }
+    if (internal === "member_only") return "所属中";
+    return "オフライン";
+  }
   if (unified) {
     if (unified === "in_call") return "通話中";
     if (unified === "connecting") {
-      return context === "room" ? "接続準備中" : "接続処理中";
+      return context === "room" ? "接続準備中" : "接続中";
     }
-    if (unified === "in_session") {
-      return context === "room" ? "入室中" : "待機中";
-    }
-    if (unified === "waiting") return "待機中";
-    return context === "home" ? "オフライン" : "オフライン";
+    if (unified === "in_room") return "待機中";
+    if (unified === "in_session") return context === "room" ? "入室中" : "入室中";
+    if (unified === "member_only") return "所属中";
+    return "オフライン";
   }
   if (status === "in_call") return "通話中";
   if (status === "waiting") return "待機中";
-  return context === "home" ? "オフライン" : "オフライン";
+  return "オフライン";
 }
 
 export function participationStatusStyle(status: UiParticipationStatus) {
@@ -1305,11 +1316,11 @@ export function resolveCallMemberStatus(params: {
   ) {
     if (screen === "room" || screen === "home") {
       return {
-        text: "待機中",
-        color: "#6b7280",
-        chipBg: "#f3f4f6",
-        chipText: "#6b7280",
-        reason: "session_member_in_room",
+        text: "接続準備中",
+        color: "#92400e",
+        chipBg: "#fffbeb",
+        chipText: "#b45309",
+        reason: "session_member_no_voice_state",
         source: "memberStatus",
       };
     }

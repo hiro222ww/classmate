@@ -19,13 +19,18 @@ type VoiceConnectionLogRow = {
 };
 
 function isTurnRow(r: VoiceConnectionLogRow) {
-  const route = String(r.route ?? "").trim();
-  return r.used_turn === true || route === "relay" || route === "turn";
+  const route = String(r.route ?? "").trim().toLowerCase();
+  return route === "relay" || route === "turn";
 }
 
 function isP2pRow(r: VoiceConnectionLogRow) {
-  const route = String(r.route ?? "").trim();
-  return route === "host" || route === "srflx" || route === "p2p";
+  const route = String(r.route ?? "").trim().toLowerCase();
+  return (
+    route === "host" ||
+    route === "srflx" ||
+    route === "prflx" ||
+    route === "p2p"
+  );
 }
 
 function isFailedRow(r: VoiceConnectionLogRow) {
@@ -34,6 +39,7 @@ function isFailedRow(r: VoiceConnectionLogRow) {
 
   return (
     state === "failed" ||
+    state.startsWith("failed:") ||
     state === "disconnected" ||
     phase === "failed" ||
     phase === "disconnected"

@@ -40,6 +40,45 @@ type VoiceMetrics = {
   hourly?: HourlyMetric[];
 };
 
+function parseVoiceFailureState(state: string | null | undefined): {
+  voiceClass: string | null;
+  offer: string | null;
+  answer: string | null;
+  ice: string | null;
+  audio: string | null;
+  closeReason: string | null;
+  remotes: string | null;
+} {
+  const raw = String(state ?? "").trim();
+  if (!raw.startsWith("failed:class=")) {
+    return {
+      voiceClass: null,
+      offer: null,
+      answer: null,
+      ice: null,
+      audio: null,
+      closeReason: null,
+      remotes: null,
+    };
+  }
+  const parts = raw.split("|");
+  const read = (key: string) => {
+    const part = parts.find((p) => p.startsWith(`${key}=`));
+    return part ? part.slice(key.length + 1) : null;
+  };
+  const classPart = parts[0] ?? "";
+  const voiceClass = classPart.replace("failed:class=", "") || null;
+  return {
+    voiceClass,
+    offer: read("offer"),
+    answer: read("answer"),
+    ice: read("ice"),
+    audio: read("audio"),
+    closeReason: read("close"),
+    remotes: read("remotes"),
+  };
+}
+
 type VoiceLog = {
   id?: string;
   session_id?: string | null;
@@ -48,32 +87,10 @@ type VoiceLog = {
   member_count?: number | null;
   route?: string | null;
   used_turn?: boolean | null;
+  voice_route?: string | null;
   connection_state?: string | null;
   time_to_connect_ms?: number | null;
   created_at?: string | null;
-};
-
-function parseVoiceFailureClass(log: VoiceLog): string | null {
-  const state = String(log.connection_state ?? "").trim();
-  if (state.startsWith("failed:")) {
-    return state.slice("failed:".length).toUpperCase() || null;
-  }
-  const voiceRoute = String(
-    (log as { voice_route?: string | null }).voice_route ?? ""
-  ).trim();
-  if (voiceRoute.startsWith("fail:")) {
-    return voiceRoute.slice("fail:".length).toUpperCase() || null;
-  }
-  if (state === "failed") return "?";
-  return null;
-}
-
-const VOICE_FAILURE_HINTS: Record<string, string> = {
-  A: "members / remoteIds",
-  B: "signaling / offer / answer",
-  C: "ICE / TURN",
-  D: "audio / track",
-  E: "cleanup / close",
 };
 
 const defaultSettings: VoiceSettings = {
@@ -514,10 +531,13 @@ export default function AdminVoicePage() {
                 const state = String(
                   log.connection_state ?? "unknown"
                 );
-                const failureClass = parseVoiceFailureClass(log);
-                const failureHint = failureClass
-                  ? VOICE_FAILURE_HINTS[failureClass] ?? failureClass
-                  : null;
+                const failure = parseVoiceFailureState(state);
+                const voiceRoute = String(log.voice_route ?? "").trim();
+                const failClass =
+                  failure.voiceClass ??
+                  (voiceRoute.startsWith("fail-")
+                    ? voiceRoute.replace("fail-", "")
+                    : null);
 
                 const usedTurn =
                   log.used_turn === true ||
@@ -548,20 +568,8 @@ export default function AdminVoicePage() {
                       {usedTurn
                         ? "TURN"
                         : "P2P/不明"}{" "}
-                      / {failureClass ? `failed (${failureClass})` : state}
+                      / {state}
                     </div>
-
-                    {failureHint ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#b45309",
-                          fontWeight: 800,
-                        }}
-                      >
-                        分類 {failureClass}: {failureHint}
-                      </div>
-                    ) : null}
 
                     <div
                       style={{
@@ -591,6 +599,33 @@ export default function AdminVoicePage() {
                           ).toLocaleString()
                         : ""}
                     </div>
+
+                    {failClass ? (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#991b1b",
+                          fontWeight: 800,
+                        }}
+                      >
+                        失敗分類: {failClass}（A=members B=signaling C=ICE
+                        D=audio E=cleanup）
+                      </div>
+                    ) : null}
+
+                    {failure.offer != null ? (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#6b7280",
+                        }}
+                      >
+                        offer={failure.offer} answer={failure.answer} ice=
+                        {failure.ice} audio={failure.audio} close=
+                        {failure.closeReason ?? "-"} remotes=
+                        {failure.remotes ?? "-"}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

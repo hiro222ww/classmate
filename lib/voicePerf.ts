@@ -234,20 +234,50 @@ export function markVoicePeerClose(
   logVoicePipelineClassification(remoteId, `close reason=${reason}`);
 }
 
-export function getVoicePeerPipelineSnapshot(remoteId: string) {
+export type VoiceConnectionFailureContext = {
+  voiceClass: VoicePipelineFailureClass;
+  offerSent: boolean;
+  answerReceived: boolean;
+  iceConnected: boolean;
+  audioConfirmed: boolean;
+  peerCloseReason: string | null;
+  remoteIdsSnapshot: string;
+};
+
+export function getVoiceConnectionFailureContext(
+  remoteId: string,
+  opts?: {
+    peerCloseReason?: string | null;
+    remoteIdsSnapshot?: string[];
+  }
+): VoiceConnectionFailureContext {
   const remote = compactDeviceId(remoteId);
   const bucket = peerMarks.get(remote);
   const has = (event: string) => bucket?.has(event) ?? false;
 
   return {
-    failureClass: classifyVoicePipelineFailure(remoteId),
+    voiceClass: classifyVoicePipelineFailure(remoteId),
     offerSent: has("offer_sent"),
-    offerReceived: has("offer_received"),
-    answerSent: has("answer_sent"),
     answerReceived: has("answer_received"),
     iceConnected: has("ice_connected"),
-    audioConfirmed: has("audio_confirmed"),
-    peerClosed: has("peer_closed"),
-    peerConnectionCreated: has("peer_connection_created"),
+    audioConfirmed: has("audio_confirmed") || has("audio_play_success"),
+    peerCloseReason: opts?.peerCloseReason ?? null,
+    remoteIdsSnapshot: (opts?.remoteIdsSnapshot ?? [])
+      .map((id) => compactDeviceId(id))
+      .join(",") || "-",
   };
+}
+
+export function formatVoiceFailureConnectionState(
+  ctx: VoiceConnectionFailureContext
+): string {
+  return (
+    `failed:class=${ctx.voiceClass}|` +
+    `offer=${ctx.offerSent ? 1 : 0}|` +
+    `answer=${ctx.answerReceived ? 1 : 0}|` +
+    `ice=${ctx.iceConnected ? 1 : 0}|` +
+    `audio=${ctx.audioConfirmed ? 1 : 0}|` +
+    `close=${ctx.peerCloseReason ?? "-"}|` +
+    `remotes=${ctx.remoteIdsSnapshot}`
+  );
 }

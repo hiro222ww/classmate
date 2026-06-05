@@ -90,11 +90,9 @@ export async function POST(req: Request) {
       : null;
 
     const usedTurn =
-      body.usedTurn === true ||
       route === "turn" ||
       localCandidateType === "relay" ||
-      remoteCandidateType === "relay" ||
-      voiceRoute === "turn";
+      remoteCandidateType === "relay";
 
     const { error } = await supabaseAdmin.from("voice_connection_logs").insert({
       session_id: sessionId,

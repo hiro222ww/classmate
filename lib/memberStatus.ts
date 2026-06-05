@@ -9,41 +9,49 @@ import {
   isPresenceFresh,
   isRecentPlaySuccess,
   PRESENCE_FRESH_MS_HOME,
-  PRESENCE_STALE_GRACE_MS,
   type UiParticipationStatus,
 } from "@/lib/memberPresenceStatus";
 
 export type MemberStatusContext = "home" | "room" | "call";
 
-/** UI-only status ladder (Home / Room / Call). Not used for peer connection targets. */
+/** UI-only internal ladder. Not used for voice connection targets. */
+export type InternalMemberStatus =
+  | "in_voice"
+  | "connecting_voice"
+  | "in_room"
+  | "in_session"
+  | "member_only"
+  | "offline";
+
+/** Legacy unified bucket for pill mapping. */
 export type UnifiedMemberStatus =
   | "in_call"
   | "connecting"
   | "in_session"
-  | "waiting"
+  | "in_room"
+  | "member_only"
   | "offline";
 
 export type MemberStatusEvidence = {
   explicitLeaveSeen: boolean;
-  missingFromSessionMembers: boolean;
   inSessionMembers: boolean;
+  inClassMembership: boolean;
+  freshPresence: boolean;
+  stalePresence: boolean;
   presenceOfflineForMs: number | null;
   peerState: string | null;
   audioConfirmedRecently: boolean;
-  stableMode: boolean;
-  is_in_call: boolean | null | undefined;
   screen: string | null;
 };
 
 export type ResolveMemberStatusInput = {
   context: MemberStatusContext;
   deviceId: string;
-  /** Listed in session_members / visible session roster for this screen. */
   inSessionMembers: boolean;
+  inClassMembership?: boolean;
   explicitLeaveSeen?: boolean;
   localExitedCall?: boolean;
   isMe?: boolean;
-  /** Viewer is on /call (self must not downgrade to waiting from presence). */
   viewerOnCallScreen?: boolean;
   is_in_call?: boolean | null;
   screen?: string | null;
@@ -51,14 +59,13 @@ export type ResolveMemberStatusInput = {
   presenceSessionId?: string | null;
   currentSessionId?: string | null;
   effective_status?: string | null;
-  /** Last time member was seen in session_members (ms). */
   lastInSessionAt?: number | null;
+  previousInternal?: InternalMemberStatus | null;
   previous?: UnifiedMemberStatus | null;
   previousParticipation?: UiParticipationStatus | null;
   fetchFailed?: boolean;
   freshMs?: number;
   nowMs?: number;
-  /** Call-only peer / audio hints for strict in_call UI */
   peerState?: CallPeerState;
   effectivePeerState?: EffectivePeerState;
   hasPc?: boolean;
@@ -74,31 +81,60 @@ function parseTs(value?: string | null): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-function presenceGraceMs(): number {
+function voiceUiGraceMs(): number {
   return isStableVoiceJoinMode()
     ? STABLE_REMOTE_PEER_GRACE_MS
-    : PRESENCE_STALE_GRACE_MS;
+    : 15_000;
 }
 
-function normalizedEffective(raw?: string | null): string {
-  return String(raw ?? "").trim().toLowerCase();
+export function sanitizePresenceForUi<T extends {
+  is_in_call?: boolean | null;
+  screen?: string | null;
+  last_seen_at?: string | null;
+  effective_status?: string | null;
+  status?: string | null;
+}>(source: T, freshMs: number): T {
+  if (isPresenceFresh(source.last_seen_at, freshMs)) {
+    return source;
+  }
+  return {
+    ...source,
+    is_in_call: false,
+    screen: null,
+    effective_status: null,
+    status: null,
+  };
 }
 
 export function participationToUnified(
   status: UiParticipationStatus | null | undefined
 ): UnifiedMemberStatus | null {
   if (status === "in_call") return "in_call";
-  if (status === "waiting") return "waiting";
+  if (status === "waiting") return "in_session";
   if (status === "offline") return "offline";
   return null;
 }
 
-/** Maps unified UI status to pill color bucket. Connecting is not "in_call" green. */
+export function internalToUnified(
+  status: InternalMemberStatus
+): UnifiedMemberStatus {
+  if (status === "in_voice") return "in_call";
+  if (status === "connecting_voice") return "connecting";
+  if (status === "in_room") return "in_room";
+  if (status === "in_session") return "in_session";
+  if (status === "member_only") return "member_only";
+  return "offline";
+}
+
 export function unifiedToParticipation(
   status: UnifiedMemberStatus
 ): UiParticipationStatus {
   if (status === "in_call") return "in_call";
-  if (status === "connecting" || status === "in_session" || status === "waiting") {
+  if (
+    status === "connecting" ||
+    status === "in_session" ||
+    status === "in_room"
+  ) {
     return "waiting";
   }
   return "offline";
@@ -106,42 +142,26 @@ export function unifiedToParticipation(
 
 function buildEvidence(
   input: ResolveMemberStatusInput,
-  nowMs: number
+  nowMs: number,
+  fresh: boolean,
+  stale: boolean
 ): MemberStatusEvidence {
   const lastSeen = parseTs(input.last_seen_at);
   return {
     explicitLeaveSeen:
       input.explicitLeaveSeen === true || input.localExitedCall === true,
-    missingFromSessionMembers: !input.inSessionMembers,
     inSessionMembers: input.inSessionMembers,
+    inClassMembership: input.inClassMembership === true,
+    freshPresence: fresh,
+    stalePresence: stale,
     presenceOfflineForMs:
       lastSeen != null ? Math.max(0, nowMs - lastSeen) : null,
     peerState: input.peerState ?? null,
     audioConfirmedRecently:
       input.audioConfirmedRecently === true ||
       isRecentPlaySuccess(input.lastPlaySuccessAt, nowMs),
-    stableMode: isStableVoiceJoinMode(),
-    is_in_call: input.is_in_call,
-    screen: String(input.screen ?? "").trim() || null,
+    screen: fresh ? String(input.screen ?? "").trim() || null : null,
   };
-}
-
-/** Never preserve in_call across grace without fresh voice evidence in this tick. */
-function clampPreservedStatus(status: UnifiedMemberStatus): UnifiedMemberStatus {
-  if (status === "in_call") return "in_session";
-  return status;
-}
-
-function shouldPreservePreviousStatus(
-  previous: UnifiedMemberStatus | null | undefined,
-  nowMs: number,
-  lastInSessionAt: number | null | undefined
-): boolean {
-  if (!previous || previous === "offline") return false;
-  if (previous === "in_call") return false;
-  const anchor = lastInSessionAt ?? null;
-  if (anchor == null) return false;
-  return nowMs - anchor < presenceGraceMs();
 }
 
 function hasStrongInCallEvidence(
@@ -166,170 +186,161 @@ function hasConnectingEvidence(input: ResolveMemberStatusInput): boolean {
   );
 }
 
+function shouldPreserveVoiceUiStatus(
+  previous: InternalMemberStatus,
+  input: ResolveMemberStatusInput,
+  nowMs: number
+): boolean {
+  if (previous !== "in_voice" && previous !== "connecting_voice") {
+    return false;
+  }
+  if (input.context !== "call") return false;
+  if (
+    hasStrongInCallEvidence(input, nowMs) ||
+    hasConnectingEvidence(input)
+  ) {
+    return true;
+  }
+  const anchor = input.lastInSessionAt ?? null;
+  if (anchor == null) return false;
+  return nowMs - anchor < voiceUiGraceMs();
+}
+
 /**
- * UI display status only. Connection target selection (getRemoteIds / closePeer)
- * uses separate stable-mode logic and must not call this.
+ * UI display only. Voice connection (getRemoteIds / closePeer) must not call this.
  */
-export function resolveUnifiedMemberStatus(
+export function resolveInternalMemberStatus(
   input: ResolveMemberStatusInput
-): { status: UnifiedMemberStatus; reason: string; evidence: MemberStatusEvidence } {
+): {
+  internal: InternalMemberStatus;
+  reason: string;
+  evidence: MemberStatusEvidence;
+} {
   const nowMs = input.nowMs ?? Date.now();
   const freshMs = input.freshMs ?? PRESENCE_FRESH_MS_HOME;
-  const evidence = buildEvidence(input, nowMs);
-  const screen = String(input.screen ?? "").trim();
-  const previous =
-    input.previous ?? participationToUnified(input.previousParticipation);
-  const stable = isStableVoiceJoinMode();
-  const effective = normalizedEffective(input.effective_status);
+  const fresh = isPresenceFresh(input.last_seen_at, freshMs);
+  const stale = parseTs(input.last_seen_at) != null && !fresh;
+  const freshScreen = fresh ? String(input.screen ?? "").trim() : "";
+  const evidence = buildEvidence(input, nowMs, fresh, stale);
+  const previousInternal = input.previousInternal ?? null;
 
   if (input.explicitLeaveSeen || input.localExitedCall) {
-    return { status: "waiting", reason: "explicit_leave", evidence };
+    return { internal: "in_room", reason: "explicit_leave", evidence };
   }
 
-  if (input.isMe && input.viewerOnCallScreen) {
-    return { status: "in_call", reason: "self_on_call_screen", evidence };
-  }
-
-  if (input.isMe && (input.context === "room" || screen === "room")) {
-    return { status: "in_session", reason: "self_in_room", evidence };
-  }
-
-  if (!input.inSessionMembers) {
-    if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
-      return {
-        status: clampPreservedStatus(previous!),
-        reason: "missing_session_grace",
-        evidence,
-      };
-    }
-    return {
-      status: "offline",
-      reason: "missing_from_session_members",
-      evidence,
-    };
+  if (input.isMe && input.viewerOnCallScreen && input.context === "call") {
+    return { internal: "in_voice", reason: "self_on_call_screen", evidence };
   }
 
   if (hasStrongInCallEvidence(input, nowMs)) {
-    return { status: "in_call", reason: "peer_or_audio_connected", evidence };
+    return { internal: "in_voice", reason: "voice_connected", evidence };
   }
 
-  if (hasConnectingEvidence(input)) {
-    return { status: "connecting", reason: "peer_connecting", evidence };
-  }
-
-  if (screen === "room" || screen === "home" || screen === "offline") {
-    if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
-      return {
-        status: clampPreservedStatus(previous!),
-        reason: "presence_grace",
-        evidence,
-      };
-    }
+  if (hasConnectingEvidence(input) && input.context === "call") {
     return {
-      status: input.context === "room" ? "in_session" : "waiting",
-      reason: "screen_room_or_home",
+      internal: "connecting_voice",
+      reason: "voice_connecting",
       evidence,
     };
   }
 
   if (
-    screen === "call" &&
-    isPresenceFresh(input.last_seen_at, freshMs) &&
-    !hasStrongInCallEvidence(input, nowMs)
+    previousInternal &&
+    shouldPreserveVoiceUiStatus(previousInternal, input, nowMs)
   ) {
-    if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
-      return {
-        status: clampPreservedStatus(previous!),
-        reason: "screen_call_grace",
-        evidence,
-      };
-    }
     return {
-      status: "in_session",
-      reason: "screen_call_no_voice",
+      internal: previousInternal,
+      reason: "voice_ui_presence_grace",
       evidence,
     };
   }
 
-  const presenceWouldDowngrade =
-    input.is_in_call === false ||
-    effective === "waiting" ||
-    effective === "room";
+  if (input.isMe && input.context === "room") {
+    return { internal: "in_room", reason: "self_in_room", evidence };
+  }
 
-  if (stable && input.inSessionMembers && presenceWouldDowngrade) {
-    if (shouldPreservePreviousStatus(previous, nowMs, input.lastInSessionAt)) {
+  if (fresh && freshScreen === "room") {
+    return { internal: "in_room", reason: "fresh_presence_room", evidence };
+  }
+
+  if (fresh && freshScreen === "call") {
+    if (input.context === "call") {
       return {
-        status: clampPreservedStatus(previous!),
-        reason: "stable_presence_grace",
+        internal: "connecting_voice",
+        reason: "fresh_call_screen_connecting",
         evidence,
       };
     }
-    return {
-      status: "in_session",
-      reason: "session_member_stable",
-      evidence,
-    };
-  }
-
-  const lastSeen = parseTs(input.last_seen_at);
-  const staleButGraceful =
-    input.fetchFailed ||
-    (lastSeen != null &&
-      nowMs - lastSeen <= freshMs + PRESENCE_STALE_GRACE_MS);
-
-  if (staleButGraceful && previous && previous !== "offline") {
-    return {
-      status: clampPreservedStatus(previous),
-      reason: "stale_presence_grace",
-      evidence,
-    };
+    if (input.inSessionMembers) {
+      return {
+        internal: "in_session",
+        reason: "fresh_call_screen_auxiliary",
+        evidence,
+      };
+    }
   }
 
   if (input.inSessionMembers) {
     return {
-      status: input.context === "room" ? "in_session" : "waiting",
-      reason: "session_member_default",
+      internal: "in_session",
+      reason: "session_member_no_fresh_room_presence",
       evidence,
     };
   }
 
-  return { status: "offline", reason: "offline_default", evidence };
+  if (input.inClassMembership) {
+    return { internal: "member_only", reason: "class_member_only", evidence };
+  }
+
+  return { internal: "offline", reason: "offline", evidence };
 }
 
 export function getMemberStatusLabel(
-  status: UnifiedMemberStatus,
-  context: MemberStatusContext
+  internal: InternalMemberStatus,
+  context: MemberStatusContext,
+  opts?: { isMe?: boolean }
 ): string {
-  if (status === "in_call") return "通話中";
-  if (status === "connecting") {
-    return context === "call" ? "接続処理中" : "接続準備中";
+  const isMe = opts?.isMe === true;
+
+  if (internal === "in_voice") return "通話中";
+  if (internal === "connecting_voice") {
+    return context === "call" ? "接続処理中" : "接続中";
   }
-  if (status === "in_session") {
-    return context === "room" ? "入室中" : "待機中";
+  if (internal === "in_room") {
+    if (isMe && context === "room") return "入室中";
+    return "待機中";
   }
-  if (status === "waiting") return "待機中";
-  return context === "home" ? "オフライン" : "オフライン";
+  if (internal === "in_session") {
+    if (context === "room") return "入室中";
+    if (context === "call") return "接続準備中";
+    return "入室中";
+  }
+  if (internal === "member_only") return "所属中";
+  return "オフライン";
 }
 
 export function logMemberStatusDecide(params: {
   context: MemberStatusContext;
   deviceId: string;
   self: boolean;
+  freshPresence: boolean;
+  stale: boolean;
   screen: string | null;
   inSession: boolean;
   peerState: string | null;
   audioConfirmed: boolean;
-  presence: string | null;
+  internalStatus: InternalMemberStatus;
   label: string;
   reason: string;
-  unified: UnifiedMemberStatus;
 }) {
   debugConsoleLog(
-    `[member-status] decide member=${String(params.deviceId).slice(-4)} ` +
-      `self=${params.self} screen=${params.screen ?? "-"} ` +
-      `inSession=${params.inSession} peerState=${params.peerState ?? "-"} ` +
-      `audioConfirmed=${params.audioConfirmed} presence=${params.presence ?? "-"} ` +
-      `label=${params.label} reason=${params.reason} unified=${params.unified}`
+    `[member-status] decide context=${params.context} ` +
+      `member=${String(params.deviceId).slice(-4)} self=${params.self} ` +
+      `freshPresence=${params.freshPresence} stale=${params.stale} ` +
+      `screen=${params.screen ?? "-"} inSession=${params.inSession} ` +
+      `peerState=${params.peerState ?? "-"} audioConfirmed=${params.audioConfirmed} ` +
+      `internalStatus=${params.internalStatus} label=${params.label} ` +
+      `reason=${params.reason}`
   );
 }
 
@@ -338,32 +349,54 @@ export function resolveMemberParticipationForUi(
 ): {
   participation: UiParticipationStatus;
   unified: UnifiedMemberStatus;
+  internal: InternalMemberStatus;
   label: string;
   reason: string;
   evidence: MemberStatusEvidence;
 } {
-  const resolved = resolveUnifiedMemberStatus(input);
-  const participation = unifiedToParticipation(resolved.status);
-  const label = getMemberStatusLabel(resolved.status, input.context);
+  const resolved = resolveInternalMemberStatus(input);
+  const unified = internalToUnified(resolved.internal);
+  const participation = unifiedToParticipation(unified);
+  const label = getMemberStatusLabel(resolved.internal, input.context, {
+    isMe: input.isMe,
+  });
 
   logMemberStatusDecide({
     context: input.context,
     deviceId: input.deviceId,
     self: input.isMe === true,
-    screen: String(input.screen ?? "").trim() || null,
+    freshPresence: resolved.evidence.freshPresence,
+    stale: resolved.evidence.stalePresence,
+    screen: resolved.evidence.screen,
     inSession: input.inSessionMembers,
     peerState: input.peerState ?? null,
     audioConfirmed: resolved.evidence.audioConfirmedRecently,
-    presence: String(input.is_in_call ?? ""),
+    internalStatus: resolved.internal,
     label,
     reason: resolved.reason,
-    unified: resolved.status,
   });
 
   return {
     participation,
-    unified: resolved.status,
+    unified,
+    internal: resolved.internal,
     label,
+    reason: resolved.reason,
+    evidence: resolved.evidence,
+  };
+}
+
+/** @deprecated Use resolveInternalMemberStatus */
+export function resolveUnifiedMemberStatus(
+  input: ResolveMemberStatusInput
+): {
+  status: UnifiedMemberStatus;
+  reason: string;
+  evidence: MemberStatusEvidence;
+} {
+  const resolved = resolveInternalMemberStatus(input);
+  return {
+    status: internalToUnified(resolved.internal),
     reason: resolved.reason,
     evidence: resolved.evidence,
   };

@@ -79,7 +79,6 @@ import {
   mapPresenceApiRow,
   participationStatusLabel,
   participationStatusStyle,
-  isPresenceFresh,
   PRESENCE_FRESH_MS_ROOM,
   resolveParticipationDisplay,
   type ParticipationSource,
@@ -331,22 +330,10 @@ async function rematchRoomSession(params: {
 
 function mergeRoomMemberPresenceSource(
   member: MemberRow,
-  presence?: PresenceRow,
-  sessionMemberIds?: ReadonlySet<string>
+  presence?: PresenceRow
 ): ParticipationSource {
-  const did = String(member.device_id ?? "").trim();
-  const inSession = sessionMemberIds ? sessionMemberIds.has(did) : true;
-  const presenceFresh =
-    !!presence &&
-    isPresenceFresh(presence.last_seen_at, PRESENCE_FRESH_MS_ROOM);
-  const usePresence = inSession && presenceFresh;
-
   return {
-    is_in_call: member.is_in_call === true
-      ? true
-      : usePresence
-        ? presence?.is_in_call
-        : undefined,
+    is_in_call: member.is_in_call === true ? true : presence?.is_in_call,
     screen: member.screen ?? presence?.screen ?? null,
     session_id: presence?.session_id ?? member.presence_session_id ?? null,
     presence_session_id:
@@ -368,7 +355,7 @@ function resolveRoomMemberDisplay(
   isMe: boolean,
   viewerDeviceId: string,
   lastInSessionAt?: number | null,
-  sessionMemberIds?: ReadonlySet<string>
+  previousInternal?: import("@/lib/memberStatus").InternalMemberStatus | null
 ) {
   const did = String(member.device_id ?? "").trim();
   const viewerId = String(viewerDeviceId ?? "").trim();
@@ -381,20 +368,23 @@ function resolveRoomMemberDisplay(
     return {
       status: "waiting" as const,
       label: "待機中",
+      internal: "in_room" as const,
       used: "local_exited_call",
       reason: "localExitedCall",
     };
   }
 
   const display = resolveParticipationDisplay({
-    source: mergeRoomMemberPresenceSource(member, presence, sessionMemberIds),
+    source: mergeRoomMemberPresenceSource(member, presence),
     currentSessionId: sessionId,
     freshMs: PRESENCE_FRESH_MS_ROOM,
     previous,
+    previousInternal: previousInternal ?? null,
     localExitedCall,
     context: "room",
     deviceId: did,
     inSessionMembers: true,
+    inClassMembership: false,
     lastInSessionAt,
     isMe,
   });
@@ -413,6 +403,7 @@ function resolveRoomMemberDisplay(
   return {
     status: display.participation,
     label: display.label,
+    internal: display.internal,
     used,
     reason: display.reason,
   };
@@ -568,7 +559,6 @@ export default function RoomClient() {
   );
 
   const [members, setMembers] = useState<MemberRow[]>([]);
-  const membersRef = useRef<MemberRow[]>([]);
   const memberEmptyStreakRef = useRef(0);
   const inviteJoinGraceUntilRef = useRef(0);
   const hasClassMembershipHintRef = useRef(false);
@@ -598,6 +588,10 @@ export default function RoomClient() {
   const statusFailCountRef = useRef(0);
   const prevMemberStatusRef = useRef<Record<string, UiParticipationStatus>>({});
   const lastInSessionAtRef = useRef<Record<string, number>>({});
+  const sessionMemberIdsForPresenceRef = useRef<Set<string>>(new Set());
+  const prevMemberInternalRef = useRef<
+    Record<string, import("@/lib/memberStatus").InternalMemberStatus>
+  >({});
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -915,21 +909,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     };
   }, [deviceId, classId]);
 
-  useEffect(() => {
-    membersRef.current = members;
-  }, [members]);
-
-  const sessionMemberIdSet = useMemo(() => {
-    return new Set(
-      members
-        .map((m) => String(m.device_id ?? "").trim())
-        .filter(Boolean)
-    );
-  }, [members]);
-
   const visibleMembers = useMemo(() => {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
+
+  useEffect(() => {
+    sessionMemberIdsForPresenceRef.current = new Set(
+      visibleMembers
+        .map((m) => String(m.device_id ?? "").trim())
+        .filter(Boolean)
+    );
+  }, [visibleMembers]);
 
   useEffect(() => {
     const viewerId = String(deviceId ?? "").trim();
@@ -956,6 +946,10 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     if (!sessionId) return;
 
     const nextStatuses: Record<string, UiParticipationStatus> = {};
+    const nextInternals: Record<
+      string,
+      import("@/lib/memberStatus").InternalMemberStatus
+    > = {};
     const nowMs = Date.now();
     const nextLastInSessionAt: Record<string, number> = {
       ...lastInSessionAtRef.current,
@@ -976,10 +970,11 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         isMe,
         deviceId,
         nextLastInSessionAt[did],
-        sessionMemberIdSet
+        prevMemberInternalRef.current[did] ?? null
       );
 
       nextStatuses[did] = display.status;
+      nextInternals[did] = display.internal;
 
       const prevStatus = prevMemberStatusRef.current[did] ?? null;
       if (prevStatus !== display.status) {
@@ -1019,7 +1014,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     }
     lastInSessionAtRef.current = nextLastInSessionAt;
     prevMemberStatusRef.current = nextStatuses;
-  }, [visibleMembers, presenceMap, sessionId, deviceId, sessionMemberIdSet]);
+    prevMemberInternalRef.current = nextInternals;
+  }, [visibleMembers, presenceMap, sessionId, deviceId]);
 
   const fetchStatus = useCallback(
     async (opts?: { force?: boolean; fast?: boolean }) => {
@@ -1167,12 +1163,10 @@ if (!res.ok || !json?.ok) {
           return;
         }
 
-        const inCallUiCount = incomingMembers.filter(
-          (m) => m.is_in_call === true
-        ).length;
+        const inCallCount = incomingMembers.filter((m) => m.is_in_call === true).length;
         console.log(
           `[room] fetchMembers success session=${sessionId.slice(-6)} class=${classId.slice(-6)} ` +
-            `sessionMembers=${incomingMembers.length} inCallUi=${inCallUiCount} ` +
+            `memberCount=${incomingMembers.length} inCall=${inCallCount} ` +
             `deviceIds=${compactMemberDeviceIds(incomingMembers)}`
         );
 
@@ -1294,11 +1288,9 @@ if (!res.ok || !json?.ok) {
         const list = Array.isArray(json?.presence) ? json.presence : [];
         const nextMap: Record<string, PresenceRow> = {};
 
-        const sessionIds = new Set(
-          membersRef.current
-            .map((m) => String(m.device_id ?? "").trim())
-            .filter(Boolean)
-        );
+        const sessionMemberIds = sessionMemberIdsForPresenceRef.current;
+        let ignoredNonMember = 0;
+        let ignoredStale = 0;
 
         for (const row of list) {
           const mapped = mapPresenceApiRow(
@@ -1308,28 +1300,29 @@ if (!res.ok || !json?.ok) {
           if (!mapped) continue;
 
           const did = String(mapped.device_id ?? "").trim();
-          const fresh = isPresenceFresh(
-            mapped.last_seen_at,
-            PRESENCE_FRESH_MS_ROOM
-          );
-          if (!fresh && !sessionIds.has(did)) {
+          if (!did) continue;
+
+          if (sessionMemberIds.size > 0 && !sessionMemberIds.has(did)) {
+            ignoredNonMember += 1;
             continue;
           }
 
-          nextMap[mapped.device_id] = mapped;
-        }
+          const seen = mapped.last_seen_at;
+          const t = seen ? new Date(seen).getTime() : NaN;
+          const fresh =
+            Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_ROOM;
+          if (!fresh) {
+            ignoredStale += 1;
+            continue;
+          }
 
-        const staleIds = Object.values(nextMap)
-          .filter((row) => {
-            const seen = row.last_seen_at;
-            if (!seen) return true;
-            return !isPresenceFresh(seen, PRESENCE_FRESH_MS_ROOM);
-          })
-          .map((row) => String(row.device_id ?? "").slice(-4));
+          nextMap[did] = mapped;
+        }
 
         console.log(
           `[room] presence map session=${sessionId.slice(-6)} count=${Object.keys(nextMap).length} ` +
-            `stale=${staleIds.length}${staleIds.length ? ` ids=${staleIds.join(",")}` : ""}`
+            `ignoredNonMember=${ignoredNonMember} ignoredStale=${ignoredStale} ` +
+            `sessionMembers=${sessionMemberIds.size}`
         );
 
         setPresenceMap((prev) => {
@@ -2000,7 +1993,7 @@ if (!shouldAutoStart) return;
                       isMe,
                       deviceId,
                       lastInSessionAtRef.current[did] ?? Date.now(),
-                      sessionMemberIdSet
+                      prevMemberInternalRef.current[did] ?? null
                     );
                     const pill = participationStatusStyle(memberDisplay.status);
 

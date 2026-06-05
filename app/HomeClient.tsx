@@ -157,7 +157,9 @@ function resolveHomeMemberParticipation(
   sessionId: string | null | undefined,
   previous: UiParticipationStatus | null,
   fetchFailed = false,
-  lastInSessionAt?: number | null
+  lastInSessionAt?: number | null,
+  inSessionMembers = false,
+  previousInternal?: import("@/lib/memberStatus").InternalMemberStatus | null
 ): UiParticipationStatus {
   const deviceId = String(member.device_id ?? "").trim();
   const localExitedCall = hasLocalLeftCall(sessionId, deviceId);
@@ -167,11 +169,13 @@ function resolveHomeMemberParticipation(
     currentSessionId: sessionId,
     freshMs: PRESENCE_FRESH_MS_HOME,
     previous,
+    previousInternal,
     fetchFailed,
     localExitedCall,
     context: "home",
     deviceId,
-    inSessionMembers: true,
+    inSessionMembers,
+    inClassMembership: true,
     lastInSessionAt,
   });
 }
@@ -181,7 +185,8 @@ function deriveClassParticipationLabel(
   members: ClassMember[],
   presenceMap: Record<string, PresenceRow>,
   prevStatuses: Record<string, UiParticipationStatus>,
-  lastInSessionAtMap: Record<string, number> = {}
+  lastInSessionAtMap: Record<string, number> = {},
+  sessionMemberIds: Set<string> = new Set()
 ): string | null {
   if (!String(sessionId ?? "").trim()) return null;
 
@@ -192,17 +197,20 @@ function deriveClassParticipationLabel(
     const deviceId = String(member.device_id ?? "").trim();
     if (!deviceId) continue;
 
-    const status = resolveHomeMemberParticipation(
-      member,
-      presenceMap[deviceId],
-      sessionId,
-      prevStatuses[deviceId] ?? null,
-      false,
-      lastInSessionAtMap[deviceId] ?? Date.now()
-    );
+    const display = resolveParticipationDisplay({
+      source: mergeMemberPresenceSource(member, presenceMap[deviceId]),
+      currentSessionId: sessionId,
+      freshMs: PRESENCE_FRESH_MS_HOME,
+      previous: prevStatuses[deviceId] ?? null,
+      context: "home",
+      deviceId,
+      inSessionMembers: sessionMemberIds.has(deviceId),
+      inClassMembership: true,
+      lastInSessionAt: lastInSessionAtMap[deviceId],
+    });
 
-    if (status === "in_call") inCall += 1;
-    else if (status === "waiting") waiting += 1;
+    if (display.internal === "in_voice") inCall += 1;
+    else if (display.internal === "in_room") waiting += 1;
   }
 
   if (inCall > 0) return "通話中";
@@ -215,7 +223,8 @@ function summarizeMemberParticipation(
   presenceMap: Record<string, PresenceRow>,
   sessionId: string | null | undefined,
   prevStatuses: Record<string, UiParticipationStatus>,
-  lastInSessionAtMap: Record<string, number> = {}
+  lastInSessionAtMap: Record<string, number> = {},
+  sessionMemberIds: Set<string> = new Set()
 ) {
   let inCall = 0;
   let waiting = 0;
@@ -224,17 +233,20 @@ function summarizeMemberParticipation(
     const deviceId = String(member.device_id ?? "").trim();
     if (!deviceId) continue;
 
-    const status = resolveHomeMemberParticipation(
-      member,
-      presenceMap[deviceId],
-      sessionId,
-      prevStatuses[deviceId] ?? null,
-      false,
-      lastInSessionAtMap[deviceId] ?? Date.now()
-    );
+    const display = resolveParticipationDisplay({
+      source: mergeMemberPresenceSource(member, presenceMap[deviceId]),
+      currentSessionId: sessionId,
+      freshMs: PRESENCE_FRESH_MS_HOME,
+      previous: prevStatuses[deviceId] ?? null,
+      context: "home",
+      deviceId,
+      inSessionMembers: sessionMemberIds.has(deviceId),
+      inClassMembership: true,
+      lastInSessionAt: lastInSessionAtMap[deviceId],
+    });
 
-    if (status === "in_call") inCall += 1;
-    else if (status === "waiting") waiting += 1;
+    if (display.internal === "in_voice") inCall += 1;
+    else if (display.internal === "in_room") waiting += 1;
   }
 
   return { inCall, waiting };
@@ -344,6 +356,10 @@ export default function HomeClient() {
   >({});
   const lastInSessionAtByClassRef = useRef<
     Record<string, Record<string, number>>
+  >({});
+  const sessionMemberIdsByClassRef = useRef<Record<string, Set<string>>>({});
+  const prevMemberInternalRef = useRef<
+    Record<string, Record<string, import("@/lib/memberStatus").InternalMemberStatus>>
   >({});
   const prevMessageIdsRef = useRef<Record<string, number>>({});
   const inviteRetryTimerRef = useRef<number | null>(null);
@@ -752,6 +768,8 @@ try {
   console.warn("[home] members load failed", classId, e);
 }
 
+let sessionMemberIds = new Set<string>();
+
 if (sessionId) {
   try {
     const statusQs = new URLSearchParams({
@@ -767,11 +785,13 @@ if (sessionId) {
     if (statusJson?.ok && Array.isArray(statusJson.members)) {
       const statusMembers = statusJson.members as ClassMember[];
       const statusByDevice = new Map<string, ClassMember>();
+      sessionMemberIds = new Set<string>();
 
       for (const row of statusMembers) {
         const did = String(row.device_id ?? "").trim();
         if (!did) continue;
         statusByDevice.set(did, row);
+        sessionMemberIds.add(did);
       }
 
       const merged: ClassMember[] = [];
@@ -830,9 +850,33 @@ try {
       : [];
 
   const presenceMap: Record<string, PresenceRow> = {};
+  let ignoredNonMember = 0;
+  let ignoredStale = 0;
   for (const raw of presenceItems) {
     const mapped = mapPresenceApiRow(raw as Record<string, unknown>, sessionId);
-    if (mapped) presenceMap[mapped.device_id] = mapped;
+    if (!mapped) continue;
+    const did = String(mapped.device_id ?? "").trim();
+    if (!did) continue;
+    if (sessionMemberIds.size > 0 && !sessionMemberIds.has(did)) {
+      ignoredNonMember += 1;
+      continue;
+    }
+    const seen = mapped.last_seen_at;
+    const t = seen ? new Date(seen).getTime() : NaN;
+    const fresh =
+      Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_HOME;
+    if (!fresh) {
+      ignoredStale += 1;
+      continue;
+    }
+    presenceMap[did] = mapped;
+  }
+  if (ignoredNonMember > 0 || ignoredStale > 0) {
+    console.log(
+      `[home] presence filtered class=${classId.slice(-6)} ` +
+        `ignoredNonMember=${ignoredNonMember} ignoredStale=${ignoredStale} ` +
+        `kept=${Object.keys(presenceMap).length}`
+    );
   }
   presence = Object.values(presenceMap);
 } catch (e) {
@@ -848,6 +892,7 @@ return {
   members,
   presence,
   fetchFailed,
+  sessionMemberIds,
 };
     } catch (e) {
       console.warn("[home] partial members/presence load failed", classId, e);
@@ -857,6 +902,7 @@ return {
         members: null,
         presence: null,
         fetchFailed: true,
+        sessionMemberIds: new Set<string>(),
       };
     }
   })
@@ -870,8 +916,16 @@ return {
           string,
           Record<string, UiParticipationStatus>
         > = {};
+        const nextMemberInternalByClass: Record<
+          string,
+          Record<string, import("@/lib/memberStatus").InternalMemberStatus>
+        > = {};
 
         for (const row of results) {
+          const sessionMemberIds =
+            row.sessionMemberIds ?? new Set<string>();
+          sessionMemberIdsByClassRef.current[row.classId] = sessionMemberIds;
+
           if (row.fetchFailed || row.members == null || row.presence == null) {
             nextMembersByClass[row.classId] =
               prevMembersRef.current[row.classId] ??
@@ -914,24 +968,45 @@ return {
             const memberId = String(member.device_id ?? "").trim();
             if (!memberId) continue;
 
-            lastInSessionMap[memberId] = nowMs;
+            const inSession = sessionMemberIds.has(memberId);
+            if (inSession) {
+              lastInSessionMap[memberId] = nowMs;
+            }
 
-            const status = resolveHomeMemberParticipation(
-              member,
-              presenceMap[memberId],
-              sessionId || null,
-              prevStatuses[memberId] ?? null,
-              row.fetchFailed,
-              lastInSessionMap[memberId]
-            );
+            const display = resolveParticipationDisplay({
+              source: mergeMemberPresenceSource(
+                member,
+                presenceMap[memberId]
+              ),
+              currentSessionId: sessionId || null,
+              freshMs: PRESENCE_FRESH_MS_HOME,
+              previous: prevStatuses[memberId] ?? null,
+              previousInternal:
+                prevMemberInternalRef.current[row.classId]?.[memberId] ?? null,
+              fetchFailed: row.fetchFailed,
+              localExitedCall: hasLocalLeftCall(sessionId, memberId),
+              context: "home",
+              deviceId: memberId,
+              inSessionMembers: inSession,
+              inClassMembership: true,
+              lastInSessionAt: inSession
+                ? lastInSessionMap[memberId]
+                : undefined,
+            });
+            const status = display.participation;
             statusMap[memberId] = status;
+            if (!nextMemberInternalByClass[row.classId]) {
+              nextMemberInternalByClass[row.classId] = {};
+            }
+            nextMemberInternalByClass[row.classId][memberId] =
+              display.internal;
 
             const prevStatus = prevStatuses[memberId] ?? null;
             if (prevStatus !== status) {
               logParticipationStatusDecision({
                 context: "home",
                 deviceId: memberId,
-                label: participationStatusLabel(status, "home"),
+                label: display.label,
                 status,
                 used: member.is_in_call
                   ? "is_in_call"
@@ -957,6 +1032,8 @@ return {
           }
 
           nextMemberStatusByClass[row.classId] = statusMap;
+          prevMemberInternalRef.current[row.classId] =
+            nextMemberInternalByClass[row.classId] ?? {};
           lastInSessionAtByClassRef.current[row.classId] = lastInSessionMap;
         }
 
@@ -973,33 +1050,57 @@ return {
           const prevStatusMap = prevStatusesAll[classId] ?? {};
           const lastInSessionAtMap =
             lastInSessionAtByClassRef.current[classId] ?? {};
+          const sessionMemberIds =
+            sessionMemberIdsByClassRef.current[classId] ?? new Set<string>();
 
           for (const member of members) {
             const memberId = String(member.device_id ?? "").trim();
             if (!memberId || memberId === deviceId) continue;
 
-            const prevStatus =
-              prevStatusMap[memberId] ??
-              resolveHomeMemberParticipation(
-                member,
-                prevPresenceMap[memberId],
-                sessionId || null,
-                null,
-                false,
-                lastInSessionAtMap[memberId]
-              );
-            const nextStatus =
-              nextMemberStatusByClass[classId]?.[memberId] ??
-              resolveHomeMemberParticipation(
-                member,
-                presenceMap[memberId],
-                sessionId || null,
-                prevStatus,
-                false,
-                lastInSessionAtMap[memberId] ?? Date.now()
-              );
+            const inSession = sessionMemberIds.has(memberId);
+            const prevDisplay =
+              prevStatusMap[memberId] != null
+                ? {
+                    participation: prevStatusMap[memberId]!,
+                    internal:
+                      prevMemberInternalRef.current[classId]?.[memberId] ??
+                      null,
+                  }
+                : null;
+            const prevStatus = prevDisplay?.participation ?? null;
+            const nextDisplay =
+              nextMemberStatusByClass[classId]?.[memberId] != null
+                ? {
+                    participation:
+                      nextMemberStatusByClass[classId]![memberId]!,
+                    internal:
+                      prevMemberInternalRef.current[classId]?.[memberId] ??
+                      null,
+                  }
+                : resolveParticipationDisplay({
+                    source: mergeMemberPresenceSource(
+                      member,
+                      presenceMap[memberId]
+                    ),
+                    currentSessionId: sessionId || null,
+                    freshMs: PRESENCE_FRESH_MS_HOME,
+                    previous: prevStatus,
+                    previousInternal: prevDisplay?.internal ?? null,
+                    context: "home",
+                    deviceId: memberId,
+                    inSessionMembers: inSession,
+                    inClassMembership: true,
+                    lastInSessionAt: inSession
+                      ? lastInSessionAtMap[memberId]
+                      : undefined,
+                  });
+            const nextStatus = nextDisplay.participation;
 
-            if (prevStatus !== "in_call" && nextStatus === "in_call") {
+            if (
+              prevStatus !== "in_call" &&
+              nextStatus === "in_call" &&
+              nextDisplay.internal === "in_voice"
+            ) {
               pushBrowserNotification(
                 notificationsEnabled,
                 "通話が始まりました",
@@ -1780,12 +1881,15 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                 lastInSessionAtByClassRef.current[c.id] ?? {};
               const classLabel = formatClassLabel(c);
               const sessionId = String(c.session_id ?? "").trim() || null;
+              const sessionMemberIds =
+                sessionMemberIdsByClassRef.current[c.id] ?? new Set<string>();
               const participationLabel = deriveClassParticipationLabel(
                 sessionId,
                 members,
                 presenceMap,
                 prevStatuses,
-                lastInSessionAtMap
+                lastInSessionAtMap,
+                sessionMemberIds
               );
               const classStatusLabel =
                 participationLabel ??
@@ -1803,7 +1907,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                 presenceMap,
                 sessionId,
                 prevStatuses,
-                lastInSessionAtMap
+                lastInSessionAtMap,
+                sessionMemberIds
               );
               const onlineSummary =
                 inCall > 0
@@ -2033,7 +2138,9 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                       <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                         {members.map((m) => {
                           const isMe = m.device_id === deviceId;
-                          const memberDeviceId = normalizeMemberDeviceId(m.device_id);
+                          const memberDeviceId = String(m.device_id ?? "").trim();
+                          const inSession =
+                            sessionMemberIds.has(memberDeviceId);
                           const memberDisplay = resolveParticipationDisplay({
                             source: mergeMemberPresenceSource(
                               m,
@@ -2042,11 +2149,17 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                             currentSessionId: sessionId,
                             freshMs: PRESENCE_FRESH_MS_HOME,
                             previous: prevStatuses[m.device_id] ?? null,
+                            previousInternal:
+                              prevMemberInternalRef.current[c.id]?.[
+                                m.device_id
+                              ] ?? null,
                             context: "home",
-                            deviceId: String(m.device_id ?? "").trim(),
-                            inSessionMembers: true,
-                            lastInSessionAt:
-                              lastInSessionAtMap[m.device_id] ?? Date.now(),
+                            deviceId: memberDeviceId,
+                            inSessionMembers: inSession,
+                            inClassMembership: true,
+                            lastInSessionAt: inSession
+                              ? lastInSessionAtMap[m.device_id]
+                              : undefined,
                             isMe,
                           });
                           const participation = memberDisplay.participation;

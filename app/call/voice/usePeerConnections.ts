@@ -56,16 +56,16 @@ import {
   getP2pCheckingGraceMs,
 } from "@/lib/voiceJoinTiming";
 import {
-  getVoicePeerPipelineSnapshot,
+  formatVoiceFailureConnectionState,
+  getVoiceConnectionFailureContext,
   logVoicePerfPipeline,
   logVoicePipelineClassification,
   markVoicePeerClose,
   markVoicePerf,
 } from "@/lib/voicePerf";
 import {
-  countVoiceConnectionMembers,
-  getVoiceConnectionRemoteIds,
-  isViewerInVoiceConnection,
+  getSessionMemberRemoteDeviceIds,
+  isLocalVoiceParticipant,
 } from "@/lib/voiceSessionMembers";
 import {
   createRemotePeerGraceRefs,
@@ -872,6 +872,8 @@ export function usePeerConnections({
   const membersRef = useRef(members);
   membersRef.current = members;
   const remotePeerGraceRefsRef = useRef(createRemotePeerGraceRefs());
+  const voiceSessionMemberIdsRef = useRef<Set<string>>(new Set());
+  const lastPeerCloseReasonRef = useRef<Map<string, string>>(new Map());
   const deferredMemberCloseTimersRef = useRef<Map<string, number>>(new Map());
   const onVoiceCleanupRef = useRef(onVoiceCleanup);
   const emitPeerStatesRef = useRef<() => void>(() => {});
@@ -880,9 +882,21 @@ export function usePeerConnections({
   deviceIdRef.current = deviceId;
   resetSessionVoiceCache(sessionId);
 
+  useEffect(() => {
+    voiceSessionMemberIdsRef.current.clear();
+    lastPeerCloseReasonRef.current.clear();
+  }, [sessionId]);
+
   const inCallMemberCount = useMemo(() => {
-    return countVoiceConnectionMembers(members, deviceId);
-  }, [members, deviceId]);
+    if (isStableVoiceJoinMode()) {
+      return Math.max(1, members.length || 1);
+    }
+    const inCallIds = members
+      .filter((m) => m.is_in_call === true)
+      .map((m) => String(m.device_id ?? "").trim())
+      .filter(Boolean);
+    return Math.max(1, inCallIds.length || members.length || 1);
+  }, [members]);
   onVoiceCleanupRef.current = onVoiceCleanup;
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -1439,13 +1453,41 @@ export function usePeerConnections({
     return members;
   }, [members]);
 
+  useEffect(() => {
+    if (!isStableVoiceJoinMode()) return;
+    const selfId = String(deviceId ?? "").trim();
+    for (const member of members) {
+      const id = String(member.device_id ?? "").trim();
+      if (!id || id === selfId) continue;
+      if (remotePeerGraceRefsRef.current.explicitRemoved.has(id)) continue;
+      voiceSessionMemberIdsRef.current.add(id);
+    }
+  }, [members, deviceId, membersSyncRevision]);
+
   const getSessionMemberRemoteIds = useCallback(() => {
-    return getVoiceConnectionRemoteIds(activeMembers, deviceId);
+    const selfId = String(deviceId ?? "").trim();
+    const fromMembers = getSessionMemberRemoteDeviceIds(activeMembers, selfId);
+    if (!isStableVoiceJoinMode()) return fromMembers;
+
+    const merged = new Set(fromMembers);
+    for (const id of voiceSessionMemberIdsRef.current) {
+      if (!id || id === selfId) continue;
+      if (remotePeerGraceRefsRef.current.explicitRemoved.has(id)) continue;
+      merged.add(id);
+    }
+    return Array.from(merged);
   }, [activeMembers, deviceId]);
 
   const getStrictRemoteIds = useCallback(() => {
-    return getVoiceConnectionRemoteIds(activeMembers, deviceId);
-  }, [activeMembers, deviceId]);
+    if (isStableVoiceJoinMode()) {
+      return getSessionMemberRemoteIds();
+    }
+    const selfId = String(deviceId ?? "").trim();
+    return activeMembers
+      .filter((m) => m.is_in_call === true)
+      .map((m) => String(m.device_id ?? "").trim())
+      .filter((id) => id && id !== selfId);
+  }, [activeMembers, deviceId, getSessionMemberRemoteIds]);
 
   const getRemoteIds = useCallback(() => {
     const strict = getStrictRemoteIds();
@@ -1723,7 +1765,9 @@ export function usePeerConnections({
       return {
         remoteDeviceId: remoteId,
         memberExists: !!member,
-        isInCall: member?.is_in_call === true,
+        isInCall: isStableVoiceJoinMode()
+          ? !!member
+          : member?.is_in_call === true,
         isOfferOwner: deviceId < remoteId,
         pcExists: isUsablePeerConnection(pc),
         signalingState: pc?.signalingState ?? null,
@@ -1760,19 +1804,30 @@ export function usePeerConnections({
 
   const isRemoteInCall = useCallback(
     (remoteId: string) => {
-      if (isStableVoiceJoinMode()) {
-        return getRemoteIds().includes(remoteId);
-      }
       const strict = getStrictRemoteIds();
       if (strict.includes(remoteId)) return true;
+
+      if (isStableVoiceJoinMode()) {
+        const decision = shouldCloseRemotePeerNow(
+          remoteId,
+          strict,
+          remotePeerGraceRefsRef.current
+        );
+        return (
+          !decision.closeNow &&
+          (decision.via === "grace_active" ||
+            decision.via === "session_member_grace")
+        );
+      }
+
       const decision = shouldCloseRemotePeerNow(
         remoteId,
         strict,
         remotePeerGraceRefsRef.current
       );
-      return !decision.closeNow;
+      return !decision.closeNow && decision.via === "grace_active";
     },
-    [getRemoteIds, getStrictRemoteIds]
+    [getStrictRemoteIds]
   );
 
   const peerNeedsPc = useCallback((remoteId: string) => {
@@ -1800,10 +1855,14 @@ export function usePeerConnections({
         const memberDeviceIds = members
           .map((m) => String(m.device_id ?? "").trim())
           .filter(Boolean);
-        const inCallMemberDeviceIds = members
-          .filter((m) => m.is_in_call === true)
-          .map((m) => String(m.device_id ?? "").trim())
-          .filter(Boolean);
+        const inCallMemberDeviceIds = isStableVoiceJoinMode()
+          ? members
+              .map((m) => String(m.device_id ?? "").trim())
+              .filter(Boolean)
+          : members
+              .filter((m) => m.is_in_call === true)
+              .map((m) => String(m.device_id ?? "").trim())
+              .filter(Boolean);
         const remoteIds = getRemoteIds();
         const peerIds = Array.from(
           new Set([...remoteIds, ...Array.from(pcsRef.current.keys())])
@@ -2196,24 +2255,22 @@ export function usePeerConnections({
 
         const startedAt = connectStartedAtRef.current.get(remoteId);
         const timeToConnectMs = startedAt ? Date.now() - startedAt : null;
-        const remoteIds = getVoiceConnectionRemoteIds(membersRef.current, deviceId);
-        const pipeline = getVoicePeerPipelineSnapshot(remoteId);
-        const failureClass = phase === "failed" ? pipeline.failureClass : "OK";
-        const closeEvidence = getClosePeerEvidence(
-          remoteId,
-          remotePeerGraceRefsRef.current,
-          membersRef.current
-        );
 
-        if (phase === "failed") {
-          debugConsoleLog(
-            `[voice-perf] admin-failed class=${failureClass} remote=${compactDeviceId(remoteId)} ` +
-              `remoteIds=${remoteIds.map((id) => compactDeviceId(id)).join(",") || "-"} ` +
-              `offerSent=${pipeline.offerSent} answerReceived=${pipeline.answerReceived} ` +
-              `iceConnected=${pipeline.iceConnected} route=${result.route} ` +
-              `audioConfirmed=${pipeline.audioConfirmed} closeReason=${closeEvidence.lastPresenceState}`
-          );
-        }
+        const remoteIdsSnapshot = getRemoteIds();
+        const failureCtx =
+          phase === "failed"
+            ? getVoiceConnectionFailureContext(remoteId, {
+                peerCloseReason:
+                  lastPeerCloseReasonRef.current.get(remoteId) ?? null,
+                remoteIdsSnapshot,
+              })
+            : null;
+        const connectionState =
+          phase === "failed" && failureCtx
+            ? formatVoiceFailureConnectionState(failureCtx)
+            : phase === "connected"
+              ? pc.connectionState
+              : "failed";
 
         await fetch("/api/voice-connection-log", {
           method: "POST",
@@ -2227,18 +2284,25 @@ export function usePeerConnections({
             localCandidateType: result.localType,
             remoteCandidateType: result.remoteType,
             voiceRoute:
-              phase === "failed"
-                ? `fail:${failureClass}`
+              phase === "failed" && failureCtx
+                ? `fail-${failureCtx.voiceClass}`
                 : voiceRouteRef.current,
-            connectionState:
-              phase === "connected"
-                ? pc.connectionState
-                : `failed:${failureClass}`,
+            connectionState,
             timeToConnectMs,
             os: osRef.current,
-            memberCount: membersRef.current.length,
+            memberCount: members.length,
           }),
         });
+
+        if (phase === "failed" && failureCtx) {
+          debugConsoleLog(
+            `[voice-peer] connection-failed-log class=${failureCtx.voiceClass} ` +
+              `remote=${compactDeviceId(remoteId)} offer=${failureCtx.offerSent ? 1 : 0} ` +
+              `answer=${failureCtx.answerReceived ? 1 : 0} ice=${failureCtx.iceConnected ? 1 : 0} ` +
+              `audio=${failureCtx.audioConfirmed ? 1 : 0} close=${failureCtx.peerCloseReason ?? "-"} ` +
+              `remotes=${failureCtx.remoteIdsSnapshot}`
+          );
+        }
 
         if (phase === "connected") {
           loggedConnectedRef.current.add(logKey);
@@ -2247,7 +2311,7 @@ export function usePeerConnections({
         console.warn("[call] voice log failed", e);
       }
     },
-    [deviceId, getCurrentConnectionId, sessionId]
+    [deviceId, getCurrentConnectionId, getRemoteIds, members.length, sessionId]
   );
 
   const upsertRemoteAudio = useCallback(
@@ -2595,6 +2659,7 @@ export function usePeerConnections({
     ) => {
       const shouldClearConnectionId = opts?.clearConnectionId ?? false;
       const reason = String(opts?.reason ?? "").trim() || "missing_reason";
+      lastPeerCloseReasonRef.current.set(remoteId, reason);
       if (reason === "missing_reason") {
         console.warn(
           `[voice-peer] close missing reason remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
@@ -4573,7 +4638,8 @@ export function usePeerConnections({
     (remoteId: string, triggerReason: string) => {
       clearNoStreamNoOfferTimer(remoteId);
 
-      const localInCall = isViewerInVoiceConnection(deviceId, members);
+      const selfMember = members.find((m) => m.device_id === deviceId);
+      const localInCall = isLocalVoiceParticipant(selfMember);
       const remoteInCall = isRemoteInCall(remoteId);
       if (!localInCall || !remoteInCall) return;
 
@@ -6524,6 +6590,7 @@ export function usePeerConnections({
 
       if (row.signal_type === "leave") {
         markRemotePeerExplicitRemoved(remotePeerGraceRefsRef.current, remoteId);
+        voiceSessionMemberIdsRef.current.delete(remoteId);
         closePeer(remoteId, { clearConnectionId: true, reason: "leave_signal" });
         return;
       }
@@ -7268,19 +7335,35 @@ export function usePeerConnections({
     const strict = getStrictRemoteIds();
     const remoteIds = getRemoteIds();
     const graceCount = remoteIds.length - strict.length;
+    const sessionMemberIds = getSessionMemberRemoteIds();
+    const uiInCall = members.filter((m) => m.is_in_call === true).length;
     debugConsoleLog(
       `[voice-peer] remote-ids-snapshot stable=${isStableVoiceJoinMode()} ` +
         `strict=${strict.length} grace=${graceCount} total=${remoteIds.length} ` +
+        `sessionMembers=${sessionMemberIds.length} uiInCall=${uiInCall} ` +
         `strictIds=${strict.map((id) => compactDeviceId(id)).join(",") || "-"} ` +
         `allIds=${remoteIds.map((id) => compactDeviceId(id)).join(",") || "-"} ` +
         `members=${members
           .map(
             (m) =>
-              `${String(m.device_id ?? "").slice(-4)}:inCall=${m.is_in_call === true ? 1 : 0}`
+              `${String(m.device_id ?? "").slice(-4)}:inCall=${m.is_in_call === true ? 1 : 0}:screen=${String(m.screen ?? "-")}`
           )
           .join("|")}`
     );
-  }, [getRemoteIds, getStrictRemoteIds, members, membersSyncRevision]);
+    if (isStableVoiceJoinMode() && remoteIds.length < 1 && sessionMemberIds.length > 0) {
+      debugConsoleLog(
+        `[voice-peer] remote-ids-warning class=A reason=session_members_present_but_remoteIds_empty ` +
+          `sessionMemberIds=${sessionMemberIds.map((id) => compactDeviceId(id)).join(",")}`
+      );
+      logVoicePipelineClassification(undefined, "remote-ids-empty-with-session-members");
+    }
+  }, [
+    getRemoteIds,
+    getSessionMemberRemoteIds,
+    getStrictRemoteIds,
+    members,
+    membersSyncRevision,
+  ]);
 
   useEffect(() => {
     membersCountRef.current = members.length;
