@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { markAutoCallOnce } from "@/lib/autoCallOnce";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { DevModeSwitcher } from "@/components/DevModeSwitcher";
@@ -858,6 +859,13 @@ return;
 
       if (!classId || !sessionId) {
         throw new Error("match_join_missing_ids");
+      }
+
+      if (!matchBody.openJoinedClass) {
+        const autoCallDeviceId = String(deviceId || getDeviceId() || "").trim();
+        if (autoCallDeviceId) {
+          markAutoCallOnce(sessionId, autoCallDeviceId);
+        }
       }
 
       const roomUrl =

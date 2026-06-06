@@ -69,6 +69,7 @@ import {
   hasLocalLeftCall,
   sanitizeLocalLeftCallAfterReload,
 } from "@/lib/localCallExit";
+import { consumeAutoCallOnce, markAutoCallOnce } from "@/lib/autoCallOnce";
 import {
   getCurrentPath,
   getNavigationType,
@@ -582,7 +583,7 @@ export default function RoomClient() {
   });
 
   const joinedSessionKeyRef = useRef<string | null>(null);
-  const autoMovedRef = useRef<string | null>(null);
+  const autoCallAttemptedRef = useRef(false);
 
   const [showDevBanner, setShowDevBanner] = useState(false);
   const [devBannerLabel, setDevBannerLabel] = useState("");
@@ -1631,6 +1632,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       hasClassMembershipHintRef.current = true;
       inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
       markJoinedClassesStale(classId);
+      markAutoCallOnce(sessionId, deviceId);
     }
 
     console.log("[room join] request", {
@@ -1889,34 +1891,44 @@ void fetchStatus({ force: true });
   }, [sessionId, classId, pathname, fetchStatus]);
 
   useEffect(() => {
-    if (!sessionId || !classId) return;
+    if (!sessionId || !classId || !deviceId) return;
     if (pathname !== "/room") return;
     if (!autojoin) return;
+    if (autoCallAttemptedRef.current) return;
 
-    const selfJoined = visibleMembers.some(
-  (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
-);
-
-const shouldAutoStart =
-  !err &&
-  selfJoined &&
-  (status === "active" || memberCount >= 2);
-
-if (!shouldAutoStart) return;
-    const moveKey = `${sessionId}:${classId}:first-auto-call`;
-    if (autoMovedRef.current === moveKey) return;
-
-    if (typeof window !== "undefined") {
-      const storageKey = `classmate_auto_call_moved:${moveKey}`;
-
-      if (sessionStorage.getItem(storageKey) === "1") {
-        return;
-      }
-
-      sessionStorage.setItem(storageKey, "1");
+    if (openJoinedClass) {
+      console.log("[room-auto-call] skip reason=open_joined_class");
+      return;
     }
 
-    autoMovedRef.current = moveKey;
+    if (getNavigationType() === "reload") {
+      console.log("[room-auto-call] skip reason=reload");
+      return;
+    }
+
+    if (hasLocalLeftCall(sessionId, deviceId)) {
+      console.log("[room-auto-call] skip reason=return_from_call");
+      return;
+    }
+
+    const selfJoined = visibleMembers.some(
+      (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
+    );
+
+    const shouldAutoStart =
+      !err &&
+      selfJoined &&
+      (status === "active" || memberCount >= 2);
+
+    if (!shouldAutoStart) return;
+
+    if (!consumeAutoCallOnce(sessionId, deviceId)) {
+      console.log("[room-auto-call] skip reason=flag_missing|already_consumed");
+      return;
+    }
+
+    autoCallAttemptedRef.current = true;
+    console.log("[room-auto-call] allow reason=initial_match_once");
 
     const callHref = withDev(
       `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
@@ -1931,9 +1943,13 @@ if (!shouldAutoStart) return;
     memberCount,
     sessionId,
     classId,
+    deviceId,
     pathname,
     router,
     autojoin,
+    openJoinedClass,
+    err,
+    visibleMembers,
   ]);
 
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
@@ -1981,12 +1997,7 @@ if (!shouldAutoStart) return;
                       : "このクラスに招待されています",
                     "参加中のメンバーと会話を始めましょう",
                   ]
-                : autoMovedRef.current ===
-                    `${sessionId}:${classId}:first-auto-call` ||
-                  (typeof window !== "undefined" &&
-                    sessionStorage.getItem(
-                      `classmate_auto_call_moved:${sessionId}:${classId}:first-auto-call`
-                    ) === "1")
+                : autoCallAttemptedRef.current
                   ? ["通話開始ボタンを押して、通話を開始してください。"]
                   : status === "forming"
                     ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]

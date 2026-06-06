@@ -36,11 +36,17 @@ import {
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
+import { markAutoCallOnce } from "@/lib/autoCallOnce";
+import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import {
   clearLocallyHiddenClass,
   isLocallyHiddenClass,
-  markLocallyHiddenClass,
 } from "@/lib/localHiddenClasses";
+import {
+  clearClassLeftLocally,
+  isClassLeftLocally,
+  markClassLeftLocally,
+} from "@/lib/leftClassMembership";
 import { isUserProfileComplete } from "@/lib/profileClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import {
@@ -376,7 +382,6 @@ export default function HomeClient() {
   const openClassRef = useRef<(target: MineClass) => Promise<void>>(async () => {});
   const handledPushOpenClassIdRef = useRef<string | null>(null);
   const leavingClassIdsRef = useRef<Set<string>>(new Set());
-  const classesBeforeLeaveRef = useRef<MineClass[] | null>(null);
 
   const [mounted, setMounted] = useState(false);
   const [inAppToasts, setInAppToasts] = useState<InAppToastItem[]>([]);
@@ -434,6 +439,17 @@ export default function HomeClient() {
             continue;
           }
 
+          if (isClassLeftLocally(id)) {
+            if (reason === "leave_rollback") {
+              clearClassLeftLocally(id);
+            } else {
+              console.log(
+                `[home] class-hidden reason=class_leave_success class=${id.slice(-6)}`
+              );
+              continue;
+            }
+          }
+
           if (isLocallyHiddenClass(id)) {
             console.log(
               `[home] ignore-local-hidden reason=active_membership class=${id.slice(-6)}`
@@ -441,8 +457,8 @@ export default function HomeClient() {
             console.log(
               `[home] clear-local-hidden reason=server_membership_exists class=${id.slice(-6)}`
             );
+            clearLocallyHiddenClass(id);
           }
-          clearLocallyHiddenClass(id);
           nextClasses.push(c);
         }
 
@@ -458,7 +474,7 @@ export default function HomeClient() {
             : [];
           for (const billableId of billableIds) {
             const hid = String(billableId ?? "").trim();
-            if (!hid) continue;
+            if (!hid || isClassLeftLocally(hid)) continue;
             if (isLocallyHiddenClass(hid)) {
               console.log(
                 `[home] clear-local-hidden reason=billable_membership_mismatch class=${hid.slice(-6)}`
@@ -906,7 +922,12 @@ if (sessionId) {
   }
 }
 
-if (viewerId && sessionMemberIds.has(viewerId) && isLocallyHiddenClass(classId)) {
+if (
+  viewerId &&
+  sessionMemberIds.has(viewerId) &&
+  isLocallyHiddenClass(classId) &&
+  !isClassLeftLocally(classId)
+) {
   console.log(
     `[home] clear-local-hidden reason=session_members_exists class=${classId.slice(-6)}`
   );
@@ -1488,6 +1509,7 @@ return () => {
       const id = String(c.id ?? "").trim();
       if (!id) continue;
       if (leavingClassIdsRef.current.has(id)) continue;
+      if (isClassLeftLocally(id)) continue;
 
       const prev = byId.get(id);
       const prevTime = prev?.created_at ? new Date(prev.created_at).getTime() : 0;
@@ -1683,6 +1705,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         );
       }
 
+      clearClassLeftLocally(classId);
       router.push(buildRoomUrl(classId, sessionId, { openJoinedClass: true }));
     } catch (e: any) {
       console.error("[home openClass] error =", e);
@@ -1787,6 +1810,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         return;
       }
 
+      clearClassLeftLocally(classId);
+      markAutoCallOnce(sessionId, currentDeviceId);
       router.push(buildRoomUrl(classId, sessionId));
     } catch (e: any) {
       console.error("[home quick free] error =", e);
@@ -1796,11 +1821,41 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     }
   }
 
-  async function leaveClass(target: MineClass) {
+  function removeClassFromHomeState(classId: string) {
+    setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
+    setMembersByClass((prev) => {
+      const next = { ...prev };
+      delete next[classId];
+      return next;
+    });
+    setPresenceByClass((prev) => {
+      const next = { ...prev };
+      delete next[classId];
+      return next;
+    });
+    prevMembersRef.current = { ...prevMembersRef.current };
+    delete prevMembersRef.current[classId];
+    prevPresenceRef.current = { ...prevPresenceRef.current };
+    delete prevPresenceRef.current[classId];
+    delete prevMemberStatusRef.current[classId];
+  }
+
+  async function leaveClass(
+    target: MineClass,
+    opts: { source: string }
+  ) {
     const classId = String(target.id ?? "").trim();
     const title = formatClassLabel(target);
 
     if (!classId) return;
+
+    if (opts.source !== CLASS_LEAVE_CONFIRMED_SOURCE) {
+      console.log("[home-leave] blocked reason=missing_confirmed_source", {
+        classId: classId.slice(-6),
+        source: opts.source || "-",
+      });
+      return;
+    }
 
     if (leavingClassIdsRef.current.has(classId)) {
       return;
@@ -1818,27 +1873,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
     leavingClassIdsRef.current.add(classId);
     setLeavingClassId(classId);
-    console.log("[home-leave] optimistic-remove", { classId, deviceId: currentDeviceId });
 
-    classesBeforeLeaveRef.current = classes;
-    setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
-    setMembersByClass((prev) => {
-      const next = { ...prev };
-      delete next[classId];
-      return next;
+    console.log("[home-leave] request", {
+      classId,
+      deviceId: currentDeviceId,
+      source: CLASS_LEAVE_CONFIRMED_SOURCE,
     });
-    setPresenceByClass((prev) => {
-      const next = { ...prev };
-      delete next[classId];
-      return next;
-    });
-    prevMembersRef.current = { ...prevMembersRef.current };
-    delete prevMembersRef.current[classId];
-    prevPresenceRef.current = { ...prevPresenceRef.current };
-    delete prevPresenceRef.current[classId];
-    delete prevMemberStatusRef.current[classId];
-
-    console.log("[home-leave] request", { classId, deviceId: currentDeviceId });
 
     try {
       const res = await fetch("/api/class/leave", {
@@ -1847,6 +1887,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         body: JSON.stringify({
           deviceId: currentDeviceId,
           classId,
+          source: CLASS_LEAVE_CONFIRMED_SOURCE,
         }),
         cache: "no-store",
       });
@@ -1863,24 +1904,26 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       const alreadyLeft = errorCode === "not_member";
 
       if (res.ok && json?.ok) {
+        markClassLeftLocally(classId);
+        removeClassFromHomeState(classId);
         console.log(
-          `[class-leave] membership-updated class=${classId.slice(-6)} status=left device=${currentDeviceId.slice(-6)}`
+          `[home-leave] success class=${classId.slice(-6)} source=${CLASS_LEAVE_CONFIRMED_SOURCE}`
         );
-        console.log(
-          `[home] class-hidden reason=class_leave_success class=${classId.slice(-6)}`
-        );
-        markLocallyHiddenClass(classId);
-        classesBeforeLeaveRef.current = null;
         return;
       }
 
       if (alreadyLeft) {
-        console.log("[home-leave] already-left", {
-          classId,
-          deviceId: currentDeviceId,
-          status: res.status,
+        markClassLeftLocally(classId);
+        removeClassFromHomeState(classId);
+        console.log("[home-leave] success class=", classId.slice(-6), {
+          note: "already-left",
         });
-        classesBeforeLeaveRef.current = null;
+        return;
+      }
+
+      if (errorCode === "missing_confirmed_source") {
+        console.log("[home-leave] blocked reason=missing_confirmed_source");
+        alert("クラス退出は確認ボタンからのみ実行できます。");
         return;
       }
 
@@ -1891,14 +1934,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         error: errorCode || raw,
       });
 
-      clearLocallyHiddenClass(classId);
-      const snapshot = classesBeforeLeaveRef.current;
-      if (snapshot) {
-        setClasses(snapshot);
-      } else {
-        void fetchJoinedClasses("leave_rollback", { deviceId: currentDeviceId });
-      }
-      classesBeforeLeaveRef.current = null;
+      clearClassLeftLocally(classId);
+      void fetchJoinedClasses("leave_rollback", { deviceId: currentDeviceId });
       alert(errorCode || `leave_failed (${res.status})`);
     } catch (e: any) {
       console.warn("[home-leave] failed", {
@@ -1906,14 +1943,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         deviceId: currentDeviceId,
         error: e?.message ?? "unknown_error",
       });
-      clearLocallyHiddenClass(classId);
-      const snapshot = classesBeforeLeaveRef.current;
-      if (snapshot) {
-        setClasses(snapshot);
-      } else {
-        void fetchJoinedClasses("leave_rollback", { deviceId: currentDeviceId });
-      }
-      classesBeforeLeaveRef.current = null;
+      clearClassLeftLocally(classId);
+      void fetchJoinedClasses("leave_rollback", { deviceId: currentDeviceId });
       alert(e?.message || "leave_failed");
     } finally {
       leavingClassIdsRef.current.delete(classId);
@@ -2367,7 +2398,13 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
                   <button
                     type="button"
-                    onClick={() => void leaveClass(c)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void leaveClass(c, {
+                        source: CLASS_LEAVE_CONFIRMED_SOURCE,
+                      });
+                    }}
                     disabled={leaving}
                     style={{
                       marginTop: 10,

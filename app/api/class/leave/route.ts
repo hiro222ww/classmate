@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 
 /**
@@ -17,6 +18,18 @@ export async function POST(req: Request) {
 
     const deviceId = String(body?.deviceId ?? "").trim();
     const classId = String(body?.classId ?? "").trim();
+    const source = String(body?.source ?? "").trim();
+
+    if (source !== CLASS_LEAVE_CONFIRMED_SOURCE) {
+      console.log("[home-leave] blocked reason=missing_confirmed_source", {
+        classId: classId ? classId.slice(-6) : "-",
+        source: source || "-",
+      });
+      return NextResponse.json(
+        { ok: false, error: "missing_confirmed_source" },
+        { status: 403 }
+      );
+    }
 
     if (!deviceId) {
       return NextResponse.json(
@@ -142,6 +155,9 @@ export async function POST(req: Request) {
       );
     }
 
+    console.log(
+      `[home-leave] success class=${classId.slice(-6)} device=${deviceId.slice(-6)} source=${source}`
+    );
     console.log(
       `[class-leave] membership-updated class=${classId.slice(-6)} status=left device=${deviceId.slice(-6)}`
     );
