@@ -1590,9 +1590,11 @@ return () => {
         return;
       }
 
+      const hintSessionId = String(target.session_id ?? "").trim();
       const openBody = buildMatchJoinRequestBody({
         deviceId: currentDeviceId,
         openJoinedClassId: target.id,
+        sessionId: hintSessionId || null,
         topicKey: target.topic_key,
         worldKey: target.world_key ?? "default",
         capacity: 5,
@@ -1697,11 +1699,26 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         return;
       }
 
-      const staleSessionId = String(target.session_id ?? "").trim();
-      if (staleSessionId && staleSessionId !== sessionId) {
+      const selectionReason = String(
+        json?.selectionReason ?? json?.selection_reason ?? ""
+      ).trim();
+      if (hintSessionId && hintSessionId !== sessionId) {
         console.log(
-          `[home openClass] discard-stale-session oldSession=${staleSessionId} ` +
-            `newSession=${sessionId} reason=api_resolved`
+          `[home openClass] discard-stale-session oldSession=${hintSessionId.slice(-6)} ` +
+            `newSession=${sessionId.slice(-6)} reason=${selectionReason || "api_resolved"}`
+        );
+        if (
+          selectionReason.includes("stale") &&
+          !selectionReason.includes("ignore_recruitment_ttl_stale")
+        ) {
+          console.warn(
+            "[home openClass] unexpected session switch — stale-only reason without member reuse"
+          );
+        }
+      } else if (hintSessionId && hintSessionId === sessionId) {
+        console.log(
+          `[home openClass] reuse-hint-session session=${sessionId.slice(-6)} ` +
+            `reason=${selectionReason || "hint_reused"}`
         );
       }
 

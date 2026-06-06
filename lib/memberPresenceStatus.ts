@@ -1259,7 +1259,18 @@ export function resolveCallMemberStatus(params: {
   const onCallScreen = params.viewerOnCallScreen !== false;
 
   if (params.isMe) {
-    if (onCallScreen && !params.localExitedCall) {
+    if (params.localExitedCall) {
+      return {
+        text: "待機中",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
+        reason: "explicit_leave",
+        source: "participation",
+      };
+    }
+
+    if (onCallScreen) {
       return {
         text: params.isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
         color: "#6b7280",
@@ -1267,28 +1278,6 @@ export function resolveCallMemberStatus(params: {
         chipText: params.isMuted ? "#991b1b" : "#1d4ed8",
         reason: "self_on_call_screen",
         source: "isMe",
-      };
-    }
-
-    if (params.localExitedCall) {
-      return {
-        text: "待機中",
-        color: "#6b7280",
-        chipBg: "#f3f4f6",
-        chipText: "#6b7280",
-        reason: "localExitedCall",
-        source: "participation",
-      };
-    }
-
-    if (forceWaiting && !skipParticipationDowngrade) {
-      return {
-        text: "待機中",
-        color: "#6b7280",
-        chipBg: "#f3f4f6",
-        chipText: "#6b7280",
-        reason: screen === "room" ? "screen_room" : "is_in_call_false",
-        source: "participation",
       };
     }
 

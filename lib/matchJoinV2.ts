@@ -809,6 +809,7 @@ export async function matchJoinV2Post(req: Request) {
     let resolvedSessionCreatedAt = row.session_created_at ?? null;
     let resolvedCreatedNewSession = Boolean(row.created_new_session);
     let resolvedReused = Boolean(row.reused);
+    let resolvedSelectionReason = "";
 
     if (openJoinedClass && forcedClassId) {
       const resolved = await resolveOpenJoinedClassSession({
@@ -821,6 +822,7 @@ export async function matchJoinV2Post(req: Request) {
         deviceId,
         requestedCapacity,
         recruitmentSessionTtlMinutes,
+        hintSessionId: forcedSessionId || resolvedSessionId,
       });
 
       if (!resolved.ok) return resolved.response;
@@ -830,10 +832,12 @@ export async function matchJoinV2Post(req: Request) {
       resolvedSessionCreatedAt = resolved.sessionCreatedAt;
       resolvedCreatedNewSession = resolved.createdNewSession;
       resolvedReused = resolved.reused;
+      resolvedSelectionReason = resolved.selectionReason;
 
       console.log(
         `[class-session] match-join-resolve class=${tailMatchId(String(row.class_id))} ` +
           `rpc=${tailMatchId(rpcSessionId)} resolved=${tailMatchId(resolvedSessionId)} ` +
+          `hint=${tailMatchId(forcedSessionId || "-")} ` +
           `createdNew=${resolvedCreatedNewSession} reused=${resolvedReused} ` +
           `reason=${resolved.selectionReason}`
       );
@@ -1023,6 +1027,7 @@ export async function matchJoinV2Post(req: Request) {
       expiredCount: Number(row.expired_count ?? 0),
       candidateSessionCount: Number(row.candidate_session_count ?? 0),
       createdNewSession: resolvedCreatedNewSession,
+      selectionReason: resolvedSelectionReason || null,
       createdNewClass,
       raceMerged,
       joinStateOk: joinState.ok,

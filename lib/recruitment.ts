@@ -121,6 +121,8 @@ export function evaluateOpenJoinedSessionReuse(params: {
   recruitmentSessionTtlMinutes?: number | null;
   /** openJoinedClass: join active sessions that already have members. */
   allowJoinActiveWithoutMembership?: boolean;
+  /** openJoinedClass: session_members がいれば recruitment TTL stale でも再利用可 */
+  ignoreRecruitmentTtlWhenHasMembers?: boolean;
 }): { reusable: boolean; reason: OpenJoinedSessionInvalidReason | null } {
   const status = normalizeSessionStatus(params.sessionStatus);
   const ttl =
@@ -150,7 +152,16 @@ export function evaluateOpenJoinedSessionReuse(params: {
   }
 
   if (isRecruitingSessionStatus(status)) {
-    if (!isRecruitmentSessionFresh(params.sessionCreatedAt, ttl)) {
+    const recruitmentTtlStale = !isRecruitmentSessionFresh(
+      params.sessionCreatedAt,
+      ttl
+    );
+    if (
+      recruitmentTtlStale &&
+      !(
+        params.ignoreRecruitmentTtlWhenHasMembers && params.memberCount > 0
+      )
+    ) {
       return { reusable: false, reason: "stale" };
     }
     return { reusable: true, reason: null };
@@ -175,12 +186,25 @@ export function isSessionJoinableForOpenClass(params: {
     deviceIsSessionMember: true,
     recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
     allowJoinActiveWithoutMembership: true,
+    ignoreRecruitmentTtlWhenHasMembers: true,
   });
 
   return {
     joinable: evaluation.reusable,
     reason: evaluation.reason,
   };
+}
+
+/** stale alone must not force a new session when members are still in the session. */
+export function shouldCreateNewOpenClassSession(
+  reason: OpenJoinedSessionInvalidReason | null | undefined,
+  memberCount: number
+): boolean {
+  if (!reason) return false;
+  if (reason === "stale" && memberCount > 0) return false;
+  return ["closed", "expired", "ended", "cutoff", "empty", "unknown"].includes(
+    reason
+  );
 }
 
 export function pickClassDisplaySession(

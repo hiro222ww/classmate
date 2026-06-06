@@ -4,6 +4,7 @@ import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions"
 import {
   evaluateOpenJoinedSessionReuse,
   isSessionJoinableForOpenClass,
+  shouldCreateNewOpenClassSession,
   type OpenJoinedSessionInvalidReason,
 } from "@/lib/recruitment";
 import { tailMatchId } from "@/lib/matchJoinLogging";
@@ -28,6 +29,7 @@ type ResolveParams = {
   deviceId: string;
   requestedCapacity: number;
   recruitmentSessionTtlMinutes: number | null;
+  hintSessionId?: string | null;
 };
 
 type ResolveOk = {
@@ -176,11 +178,31 @@ async function ensureJoinableSessionOrCreate(params: {
   let memberCount = params.memberCount;
   let selectionReason = params.selectionReason;
 
-  if (!localCheck.joinable) {
+  const reuseDespiteStale =
+    !localCheck.joinable &&
+    localCheck.reason === "stale" &&
+    memberCount > 0;
+
+  if (!localCheck.joinable && !reuseDespiteStale) {
     console.log(
       `[match-join] existing-session invalid reason=${localCheck.reason ?? "unknown"} ` +
         `session=${tailMatchId(sessionId)} class=${tailMatchId(params.classId)}`
     );
+  } else if (reuseDespiteStale) {
+    console.log(
+      `[class-session] reuse session=${tailMatchId(sessionId)} ` +
+        `reason=reuse_members_ignore_recruitment_ttl_stale members=${memberCount} ` +
+        `class=${tailMatchId(params.classId)}`
+    );
+    return {
+      ok: true,
+      sessionId,
+      sessionStatus,
+      sessionCreatedAt,
+      createdNewSession: false,
+      reused: true,
+      selectionReason: `${selectionReason}_ignore_recruitment_ttl_stale`,
+    };
   } else {
     const live = await loadSessionJoinability(
       sessionId,
@@ -200,6 +222,26 @@ async function ensureJoinableSessionOrCreate(params: {
       };
     }
 
+    if (
+      live.joinable.reason === "stale" &&
+      memberCount > 0
+    ) {
+      console.log(
+        `[class-session] reuse session=${tailMatchId(sessionId)} ` +
+          `reason=reuse_members_ignore_recruitment_ttl_stale members=${memberCount} ` +
+          `class=${tailMatchId(params.classId)} source=live_db`
+      );
+      return {
+        ok: true,
+        sessionId,
+        sessionStatus,
+        sessionCreatedAt,
+        createdNewSession: false,
+        reused: true,
+        selectionReason: `${selectionReason}_ignore_recruitment_ttl_stale`,
+      };
+    }
+
     console.log(
       `[match-join] existing-session invalid reason=${live.joinable.reason ?? "unknown"} ` +
         `session=${tailMatchId(sessionId)} class=${tailMatchId(params.classId)} ` +
@@ -207,11 +249,29 @@ async function ensureJoinableSessionOrCreate(params: {
     );
   }
 
+  const createReason: OpenJoinedSessionInvalidReason | null =
+    localCheck.reason ?? null;
+  if (!shouldCreateNewOpenClassSession(createReason, memberCount)) {
+    console.log(
+      `[class-session] blocked-new-session reason=${createReason} ` +
+        `members=${memberCount} class=${tailMatchId(params.classId)}`
+    );
+    return {
+      ok: true,
+      sessionId,
+      sessionStatus,
+      sessionCreatedAt,
+      createdNewSession: false,
+      reused: true,
+      selectionReason: `${selectionReason}_blocked_new_session_${createReason}`,
+    };
+  }
+
   const created = await createFormingSession({
     classId: params.classId,
     className: params.className,
     requestedCapacity: params.requestedCapacity,
-    reason: localCheck.reason ?? "no_valid_active_session",
+    reason: createReason ?? "no_valid_active_session",
   });
 
   if (!created.ok) return created;
@@ -235,6 +295,7 @@ export async function resolveOpenJoinedClassSession(
   await expireStaleRecruitmentSessions(supabase, {
     classIds: [params.classId],
     ttlMinutes: params.recruitmentSessionTtlMinutes,
+    keepSessionsWithMembers: true,
   });
 
   const classSessions = await listClassSessionsWithMembers(
@@ -243,12 +304,16 @@ export async function resolveOpenJoinedClassSession(
     deviceId
   );
 
+  const hintSessionId = String(
+    params.hintSessionId ?? params.sessionId ?? ""
+  ).trim();
+
   const canonical = pickCanonicalOpenJoinedSession({
     sessions: classSessions,
     deviceId,
     matchDeadlineAt: params.matchDeadlineAt,
     recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
-    preferredSessionId: params.sessionId,
+    preferredSessionId: hintSessionId || null,
   });
 
   if (canonical) {
@@ -288,6 +353,7 @@ export async function resolveOpenJoinedClassSession(
       deviceIsSessionMember: rpcSession.deviceIsMember,
       recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
       allowJoinActiveWithoutMembership: true,
+      ignoreRecruitmentTtlWhenHasMembers: true,
     });
 
     if (evaluation.reusable) {

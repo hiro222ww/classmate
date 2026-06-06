@@ -228,7 +228,13 @@ export function resolveInternalMemberStatus(
     return { internal: "in_room", reason: "explicit_leave", evidence };
   }
 
-  if (input.isMe && input.viewerOnCallScreen && input.context === "call") {
+  if (
+    input.isMe &&
+    input.viewerOnCallScreen &&
+    input.context === "call" &&
+    !input.explicitLeaveSeen &&
+    !input.localExitedCall
+  ) {
     return { internal: "in_voice", reason: "self_on_call_screen", evidence };
   }
 

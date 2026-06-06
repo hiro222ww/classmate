@@ -111,6 +111,53 @@ export function logClassSessionsDebug(
   );
 }
 
+function buildOpenJoinedCandidate(
+  session: ClassSessionRow,
+  matchDeadlineAt: string | null | undefined,
+  ttl: number | null | undefined
+): CanonicalSessionPick | null {
+  const status = normalizeSessionStatus(session.status);
+  if (status === "closed" || status === "expired" || status === "ended") {
+    return null;
+  }
+  if (isDeadlinePassed(matchDeadlineAt ?? null) && status === "active") {
+    return null;
+  }
+
+  const evaluation = evaluateOpenJoinedSessionReuse({
+    sessionStatus: session.status,
+    sessionCreatedAt: session.createdAt,
+    matchDeadlineAt,
+    memberCount: session.memberCount,
+    deviceIsSessionMember: session.deviceIsMember,
+    recruitmentSessionTtlMinutes: ttl,
+    allowJoinActiveWithoutMembership: true,
+    ignoreRecruitmentTtlWhenHasMembers: true,
+  });
+
+  if (!evaluation.reusable) return null;
+  if (session.memberCount >= session.capacity) return null;
+
+  let reason: CanonicalSessionPick["reason"];
+  if (status === "active" && session.deviceIsMember) {
+    reason = "reuse_active_member";
+  } else if (status === "active" && session.memberCount > 0) {
+    reason = "reuse_active_with_members";
+  } else if (session.memberCount > 0) {
+    reason = "reuse_recruiting_most_members";
+  } else {
+    reason = "reuse_recruiting_newest";
+  }
+
+  return {
+    sessionId: session.id,
+    sessionStatus: session.status,
+    sessionCreatedAt: session.createdAt,
+    memberCount: session.memberCount,
+    reason,
+  };
+}
+
 export function pickCanonicalOpenJoinedSession(params: {
   sessions: ClassSessionRow[];
   deviceId: string;
@@ -118,47 +165,41 @@ export function pickCanonicalOpenJoinedSession(params: {
   recruitmentSessionTtlMinutes?: number | null;
   preferredSessionId?: string | null;
 }): CanonicalSessionPick | null {
-  const deviceId = String(params.deviceId ?? "").trim();
   const ttl = params.recruitmentSessionTtlMinutes;
-  const deadlinePassed = isDeadlinePassed(params.matchDeadlineAt ?? null);
+  const preferredId = String(params.preferredSessionId ?? "").trim();
+
+  if (preferredId) {
+    const preferred = params.sessions.find((session) => session.id === preferredId);
+    if (preferred) {
+      const preferredPick = buildOpenJoinedCandidate(
+        preferred,
+        params.matchDeadlineAt,
+        ttl
+      );
+      if (preferredPick) {
+        return {
+          ...preferredPick,
+          reason: "reuse_requested_session",
+        };
+      }
+    }
+  }
 
   const candidates: Array<{
     session: ClassSessionRow;
-    reason: CanonicalSessionPick["reason"];
+    pick: CanonicalSessionPick;
     score: number;
   }> = [];
 
   for (const session of params.sessions) {
+    const pick = buildOpenJoinedCandidate(
+      session,
+      params.matchDeadlineAt,
+      ttl
+    );
+    if (!pick) continue;
+
     const status = normalizeSessionStatus(session.status);
-    if (status === "closed" || status === "expired" || status === "ended") {
-      continue;
-    }
-    if (deadlinePassed && status === "active") continue;
-
-    const evaluation = evaluateOpenJoinedSessionReuse({
-      sessionStatus: session.status,
-      sessionCreatedAt: session.createdAt,
-      matchDeadlineAt: params.matchDeadlineAt,
-      memberCount: session.memberCount,
-      deviceIsSessionMember: session.deviceIsMember,
-      recruitmentSessionTtlMinutes: ttl,
-      allowJoinActiveWithoutMembership: true,
-    });
-
-    if (!evaluation.reusable) continue;
-    if (session.memberCount >= session.capacity) continue;
-
-    let reason: CanonicalSessionPick["reason"];
-    if (status === "active" && session.deviceIsMember) {
-      reason = "reuse_active_member";
-    } else if (status === "active" && session.memberCount > 0) {
-      reason = "reuse_active_with_members";
-    } else if (session.memberCount > 0) {
-      reason = "reuse_recruiting_most_members";
-    } else {
-      reason = "reuse_recruiting_newest";
-    }
-
     const createdMs = session.createdAt
       ? new Date(session.createdAt).getTime()
       : 0;
@@ -169,34 +210,13 @@ export function pickCanonicalOpenJoinedSession(params: {
       (10 - statusRank(status)) * 100 -
       createdMs / 1_000_000;
 
-    candidates.push({ session, reason, score });
+    candidates.push({ session, pick, score });
   }
 
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
-
-  if (
-    params.preferredSessionId &&
-    best.session.id === params.preferredSessionId
-  ) {
-    return {
-      sessionId: best.session.id,
-      sessionStatus: best.session.status,
-      sessionCreatedAt: best.session.createdAt,
-      memberCount: best.session.memberCount,
-      reason: "reuse_requested_session",
-    };
-  }
-
-  return {
-    sessionId: best.session.id,
-    sessionStatus: best.session.status,
-    sessionCreatedAt: best.session.createdAt,
-    memberCount: best.session.memberCount,
-    reason: best.reason,
-  };
+  return candidates[0].pick;
 }
 
 export async function pruneSplitClassSessionMemberships(params: {

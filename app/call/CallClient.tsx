@@ -1163,16 +1163,15 @@ export default function CallClient() {
       const memberId = String(member.device_id ?? "").trim();
       const viewerId = String(deviceId ?? "").trim();
       const isMe = memberId === viewerId && !!viewerId;
-      const selfLeftCall =
-        !!viewerId &&
-        !!sessionId &&
-        (hasLocalLeftCall(sessionId, viewerId) ||
-          localExitedPeersRef.current.has(viewerId));
-      const localExitedCall =
-        localExitedPeersRef.current.has(memberId) ||
-        hasLocalLeftCall(sessionId, memberId) ||
-        (isMe && selfLeftCall);
-      const isInCall = member.is_in_call === true && !localExitedCall;
+      const selfExplicitlyLeft =
+        isMe && localExitedPeersRef.current.has(viewerId);
+      const localExitedCall = isMe
+        ? selfExplicitlyLeft
+        : localExitedPeersRef.current.has(memberId) ||
+          hasLocalLeftCall(sessionId, memberId);
+      const isInCall = isMe
+        ? !selfExplicitlyLeft
+        : member.is_in_call === true && !localExitedCall;
 
       if (!micReady) {
         if (isMe) {
@@ -1236,13 +1235,13 @@ export default function CallClient() {
         return waitingForMic;
       }
 
-      if (isMe && selfLeftCall) {
+      if (isMe && selfExplicitlyLeft) {
         const waiting = {
           text: "待機中",
           color: "#6b7280",
           chipBg: "#f3f4f6",
           chipText: "#6b7280",
-          reason: "localExitedCall",
+          reason: "explicit_leave",
           source: "participation",
         };
         const prevText = prevCallStatusRef.current[memberId];
@@ -1259,13 +1258,43 @@ export default function CallClient() {
               screen: member.screen ?? "room",
               peerState: peerStates[memberId] ?? "idle",
               localExitedCall: true,
-              selfLeftCall: true,
               isMe: true,
             },
           });
           prevCallStatusRef.current[memberId] = waiting.text;
         }
         return waiting;
+      }
+
+      if (isMe) {
+        const selfStatus = {
+          text: userMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+          color: "#6b7280",
+          chipBg: userMuted ? "#fef2f2" : "#eff6ff",
+          chipText: userMuted ? "#991b1b" : "#1d4ed8",
+          reason: "self_on_call_screen",
+          source: "isMe",
+        };
+        const prevText = prevCallStatusRef.current[memberId];
+        if (prevText !== selfStatus.text) {
+          logParticipationStatusDecision({
+            context: "call",
+            deviceId: memberId,
+            label: selfStatus.text,
+            status: "in_call",
+            used: selfStatus.source,
+            reason: selfStatus.reason,
+            sources: {
+              is_in_call: member.is_in_call ?? null,
+              screen: "call",
+              peerState: peerStates[memberId] ?? "idle",
+              micReady: true,
+              isMe: true,
+            },
+          });
+          prevCallStatusRef.current[memberId] = selfStatus.text;
+        }
+        return selfStatus;
       }
 
       const peerState = peerStates[memberId] ?? "idle";
@@ -1343,8 +1372,8 @@ export default function CallClient() {
         isMuted: userMuted,
         isInCall,
         inSessionMember: true,
-        viewerOnCallScreen: true,
-        screen: localExitedCall ? "room" : member.screen,
+        viewerOnCallScreen: isMe ? true : true,
+        screen: isMe ? "call" : localExitedCall ? "room" : member.screen,
         localExitedCall,
         peerState,
         effectivePeerState: effective.effectivePeerState,
@@ -1417,7 +1446,6 @@ export default function CallClient() {
             wasPeerConnected,
             remoteAudioVerified,
             localExitedCall,
-            selfLeftCall,
             isMe,
           },
         });
