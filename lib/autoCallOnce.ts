@@ -38,6 +38,9 @@ export const AUTO_CALL_STABLE_DELAY_MS = 2000;
 /** Minimum time count>=2 must hold before arming auto-call timer. */
 export const AUTO_CALL_MEMBERS_STABLE_MS = 1500;
 
+/** Block manual/auto Call briefly after session resolve redirect. */
+export const RECENT_REMATCH_CALL_BLOCK_MS = 2000;
+
 export function hasAutoCallOnce(sessionId: string, deviceId: string): boolean {
   if (typeof window === "undefined") return false;
   const key = autoCallOnceStorageKey(sessionId, deviceId);
@@ -46,5 +49,21 @@ export function hasAutoCallOnce(sessionId: string, deviceId: string): boolean {
     return sessionStorage.getItem(key) === "1";
   } catch {
     return false;
+  }
+}
+
+/** Move one-time auto-call permission to a resolved session id. */
+export function transferAutoCallOnce(
+  fromSessionId: string,
+  toSessionId: string,
+  deviceId: string
+) {
+  if (!hasAutoCallOnce(fromSessionId, deviceId)) return;
+  markAutoCallOnce(toSessionId, deviceId);
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(autoCallOnceStorageKey(fromSessionId, deviceId));
+  } catch {
+    // ignore
   }
 }

@@ -72,9 +72,11 @@ import {
 import {
   AUTO_CALL_MEMBERS_STABLE_MS,
   AUTO_CALL_STABLE_DELAY_MS,
+  RECENT_REMATCH_CALL_BLOCK_MS,
   consumeAutoCallOnce,
   hasAutoCallOnce,
   markAutoCallOnce,
+  transferAutoCallOnce,
 } from "@/lib/autoCallOnce";
 import {
   getCurrentPath,
@@ -649,6 +651,41 @@ export default function RoomClient() {
     () => typeof document === "undefined" || !document.hidden
   );
   const [autoCallRecheckTick, setAutoCallRecheckTick] = useState(0);
+  const [roomSessionReady, setRoomSessionReady] = useState(false);
+  const [sessionResolving, setSessionResolving] = useState(false);
+  const [callBlockTick, setCallBlockTick] = useState(0);
+  const roomLifecycleReadyRef = useRef(false);
+  const sessionResolvingRef = useRef(false);
+  const recentRematchUntilRef = useRef(0);
+
+  const setLifecycleReady = useCallback((ready: boolean) => {
+    roomLifecycleReadyRef.current = ready;
+    setRoomSessionReady(ready);
+  }, []);
+
+  const setResolving = useCallback((resolving: boolean) => {
+    sessionResolvingRef.current = resolving;
+    setSessionResolving(resolving);
+  }, []);
+
+  const scheduleRecentRematchUnblock = useCallback(() => {
+    const remaining = recentRematchUntilRef.current - Date.now();
+    if (remaining > 0) {
+      window.setTimeout(() => {
+        setCallBlockTick((tick) => tick + 1);
+      }, remaining + 50);
+    }
+  }, []);
+
+  const isCallStartBlocked = useCallback((): string | null => {
+    if (sessionResolvingRef.current || !roomLifecycleReadyRef.current) {
+      return "session_resolving";
+    }
+    if (Date.now() < recentRematchUntilRef.current) {
+      return "recent_rematch";
+    }
+    return null;
+  }, []);
 
   const [showDevBanner, setShowDevBanner] = useState(false);
   const [devBannerLabel, setDevBannerLabel] = useState("");
@@ -745,8 +782,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     presenceMapSeen2Ref.current = false;
     lastSuccessfulFetchOpGenRef.current = 0;
     autoCallAttemptedRef.current = false;
+    setLifecycleReady(false);
+    setResolving(false);
     cancelAutoCallTimer("session_changed");
-  }, [sessionId, classId, deviceId, cancelAutoCallTimer]);
+  }, [
+    sessionId,
+    classId,
+    deviceId,
+    cancelAutoCallTimer,
+    setLifecycleReady,
+    setResolving,
+  ]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -1328,6 +1374,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     async (opts?: { force?: boolean; fast?: boolean }) => {
       if (!sessionId || !classId) return;
       if (pathname !== "/room") return;
+      if (sessionResolvingRef.current || !roomLifecycleReadyRef.current) {
+        return;
+      }
       if (isClassLeftLocally(classId)) {
         logRoomAsyncIgnored(classId, "class_left", "fetchStatus");
         return;
@@ -1546,6 +1595,7 @@ if (!res.ok || !json?.ok) {
   useEffect(() => {
     if (!classId || !sessionId || !deviceId) return;
     if (pathname !== "/room") return;
+    if (!roomSessionReady || sessionResolving) return;
 
     async function sendPresence() {
       if (isClassLeftLocally(classId)) {
@@ -1609,11 +1659,12 @@ if (!res.ok || !json?.ok) {
       document.removeEventListener("visibilitychange", onPresenceVisibility);
       if (timer) window.clearInterval(timer);
     };
-  }, [classId, sessionId, deviceId, pathname]);
+  }, [classId, sessionId, deviceId, pathname, roomSessionReady, sessionResolving]);
 
   useEffect(() => {
     if (!classId) return;
     if (pathname !== "/room") return;
+    if (!roomSessionReady || sessionResolving) return;
 
     let cancelled = false;
 
@@ -1727,7 +1778,14 @@ if (!res.ok || !json?.ok) {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [classId, sessionId, pathname, shouldAbortRoomAsync]);
+  }, [
+    classId,
+    sessionId,
+    pathname,
+    shouldAbortRoomAsync,
+    roomSessionReady,
+    sessionResolving,
+  ]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1761,15 +1819,11 @@ if (!res.ok || !json?.ok) {
 
   if (!sessionId || !deviceId) {
   joinedSessionKeyRef.current = null;
-
-  if (sessionId) {
-    void fetchStatus({ force: true });
-  }
-
+  setLifecycleReady(false);
   return;
 }
 
-  if (!displayName) return; // ←これ追加（最重要）
+  if (!displayName) return;
 
 const rawName = displayName;
 const name = rawName === "You" ? "参加者" : rawName;
@@ -1778,6 +1832,8 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   if (joinedSessionKeyRef.current === joinKey) {
   console.log("[room join] skip duplicate");
+  setLifecycleReady(true);
+  setResolving(false);
   return;
 }
 
@@ -1790,10 +1846,54 @@ const name = rawName === "You" ? "参加者" : rawName;
     isClassLeftLocally(classId) ||
     (typeof window !== "undefined" && window.location.pathname !== "/room");
 
+  async function redirectToResolvedSession(params: {
+    oldSessionId: string;
+    nextSessionId: string;
+    nextClassId: string;
+    reason: string;
+  }) {
+    console.log(
+      `[room-session] resolve-before-start reason=${params.reason} ` +
+        `oldSession=${params.oldSessionId.slice(-6)}`
+    );
+
+    bumpRoomAsync("session_resolved");
+    cancelAutoCallTimer("recent_rematch");
+    joinedSessionKeyRef.current = null;
+    setLifecycleReady(false);
+
+    recentRematchUntilRef.current =
+      Date.now() + RECENT_REMATCH_CALL_BLOCK_MS;
+    scheduleRecentRematchUnblock();
+
+    if (hasAutoCallOnce(params.oldSessionId, deviceId)) {
+      transferAutoCallOnce(
+        params.oldSessionId,
+        params.nextSessionId,
+        deviceId
+      );
+    }
+
+    console.log(
+      `[room-session] resolved-joinable-session newSession=${params.nextSessionId.slice(-6)}`
+    );
+
+    router.replace(
+      withDev(
+        `/room?autojoin=1&classId=${encodeURIComponent(params.nextClassId)}` +
+          `&sessionId=${encodeURIComponent(params.nextSessionId)}`
+      )
+    );
+  }
+
   async function join() {
   try {
+    setResolving(true);
+    cancelAutoCallTimer("session_resolving");
+
     if (shouldAbortJoin()) {
       logRoomAsyncIgnored(classId, "op_stale", "join");
+      setResolving(false);
       return;
     }
     if (!deviceId) {
@@ -1870,6 +1970,7 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     if (shouldAbortJoin()) {
       logRoomAsyncIgnored(classId, "op_stale", "join_before_session_join");
+      setResolving(false);
       return;
     }
 
@@ -1922,6 +2023,7 @@ const name = rawName === "You" ? "参加者" : rawName;
 
         if (error === "membership_left") {
           logRoomAsyncIgnored(classId, "class_left", "session_join");
+          setResolving(false);
           return;
         }
 
@@ -1935,11 +2037,13 @@ const name = rawName === "You" ? "参加者" : rawName;
 
         if (error === "session_closed" || error === "recruitment_closed") {
   if (shouldAbortJoin()) {
-    logRoomAsyncIgnored(classId, "op_stale", "join_before_rematch");
+    logRoomAsyncIgnored(classId, "op_stale", "join_before_resolve");
+    setResolving(false);
     return;
   }
   if (isClassLeftLocally(classId)) {
     logRoomRematchBlocked(classId);
+    setResolving(false);
     return;
   }
 
@@ -1951,6 +2055,7 @@ const name = rawName === "You" ? "参加者" : rawName;
   });
 
   if (blocked || shouldAbortJoin()) {
+    setResolving(false);
     return;
   }
 
@@ -1962,15 +2067,9 @@ const name = rawName === "You" ? "参加者" : rawName;
     rematchJson?.classId ?? rematchJson?.class_id ?? classId
   ).trim();
 
-  const nextSessionStatus = String(
-    rematchJson?.sessionStatus ?? rematchJson?.session_status ?? ""
-  ).trim();
-
-  if (
-    nextClassId &&
-    isClassLeftLocally(nextClassId)
-  ) {
+  if (nextClassId && isClassLeftLocally(nextClassId)) {
     logRoomRematchBlocked(nextClassId);
+    setResolving(false);
     return;
   }
 
@@ -1981,22 +2080,17 @@ const name = rawName === "You" ? "参加者" : rawName;
     nextClassId &&
     !shouldAbortJoin()
   ) {
-    console.log("[room join] rematch redirect", {
-      fromSessionId: sessionId,
-      toSessionId: nextSessionId,
-      sessionStatus: nextSessionStatus,
+    redirectToResolvedSession({
+      oldSessionId: sessionId,
+      nextSessionId,
+      nextClassId,
+      reason: String(error),
     });
-
-    router.replace(
-      withDev(
-        `/room?autojoin=1&classId=${encodeURIComponent(nextClassId)}` +
-          `&sessionId=${encodeURIComponent(nextSessionId)}`
-      )
-    );
     return;
   }
 
   if (shouldAbortJoin() || isClassLeftLocally(classId)) {
+    setResolving(false);
     return;
   }
 
@@ -2022,7 +2116,10 @@ const name = rawName === "You" ? "参加者" : rawName;
         throw new Error("参加に失敗しました");
       }
 
-      if (shouldAbortJoin()) return;
+      if (shouldAbortJoin()) {
+        setResolving(false);
+        return;
+      }
 
       console.log(
         `[room-session] join-success device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
@@ -2032,6 +2129,8 @@ const name = rawName === "You" ? "参加者" : rawName;
       );
 
       joinedSessionKeyRef.current = joinKey;
+      setLifecycleReady(true);
+      setResolving(false);
 
       hasClassMembershipHintRef.current = true;
       inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
@@ -2081,6 +2180,8 @@ void fetchStatus({ force: true });
 
       // ✅ 失敗時は再試行できるように固定しない
       joinedSessionKeyRef.current = null;
+      setLifecycleReady(false);
+      setResolving(false);
 
       setErr(e?.message ?? "参加に失敗しました");
     }
@@ -2103,11 +2204,17 @@ void fetchStatus({ force: true });
   openJoinedClass,
   invite,
   bumpRoomAsync,
+  setLifecycleReady,
+  setResolving,
+  scheduleRecentRematchUnblock,
+  cancelAutoCallTimer,
+  router,
 ]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
+    if (!roomSessionReady || sessionResolving) return;
 
     void fetchStatus({ force: true, fast: true });
 
@@ -2132,11 +2239,19 @@ void fetchStatus({ force: true });
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [sessionId, classId, pathname, fetchStatus]);
+  }, [
+    sessionId,
+    classId,
+    pathname,
+    fetchStatus,
+    roomSessionReady,
+    sessionResolving,
+  ]);
 
   useEffect(() => {
     if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
+    if (!roomSessionReady || sessionResolving) return;
 
     const channel = supabase
       .channel(`room-session-members-${sessionId}`)
@@ -2158,13 +2273,30 @@ void fetchStatus({ force: true });
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [sessionId, classId, pathname, fetchStatus]);
+  }, [
+    sessionId,
+    classId,
+    pathname,
+    fetchStatus,
+    roomSessionReady,
+    sessionResolving,
+  ]);
 
   useEffect(() => {
     if (!sessionId || !classId || !deviceId) return;
     if (pathname !== "/room") return;
     if (!autojoin) return;
     if (autoCallAttemptedRef.current) return;
+
+    if (sessionResolving || !roomSessionReady) {
+      cancelAutoCallTimer("session_resolving");
+      return;
+    }
+
+    if (Date.now() < recentRematchUntilRef.current) {
+      cancelAutoCallTimer("recent_rematch");
+      return;
+    }
 
     if (openJoinedClass) {
       console.log("[room-auto-call] skip reason=open_joined_class");
@@ -2342,7 +2474,10 @@ void fetchStatus({ force: true });
     status,
     pageVisible,
     autoCallRecheckTick,
+    callBlockTick,
     cancelAutoCallTimer,
+    roomSessionReady,
+    sessionResolving,
   ]);
 
   useEffect(() => {
@@ -2392,7 +2527,9 @@ void fetchStatus({ force: true });
           lines={
             err
               ? [err]
-              : invite
+              : sessionResolving
+                ? ["ルームを準備しています…"]
+                : invite
                 ? [
                     inviter
                       ? `${inviter}さんに招待されています`
@@ -2409,16 +2546,27 @@ void fetchStatus({ force: true });
           }
           onBack={() => router.push(withDev("/class/select"))}
           onHome={goHome}
-          onStartCall={() =>
+          onStartCall={() => {
+            const blockReason = isCallStartBlocked();
+            if (blockReason) {
+              console.log(`[room-call-start] blocked reason=${blockReason}`);
+              return;
+            }
             router.push(
               withDev(
                 `/call?sessionId=${encodeURIComponent(
                   sessionId
                 )}&classId=${encodeURIComponent(classId)}`
               )
-            )
+            );
+          }}
+          startDisabled={
+            !sessionId ||
+            !classId ||
+            sessionResolving ||
+            !roomSessionReady ||
+            Date.now() < recentRematchUntilRef.current
           }
-          startDisabled={!sessionId || !classId}
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
