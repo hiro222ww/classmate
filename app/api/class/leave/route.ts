@@ -92,12 +92,16 @@ export async function POST(req: Request) {
 
     const closedSessionIds: string[] = [];
 
+    let sessionMembersRemoved = 0;
+
     if (sessionIds.length > 0) {
-      const { error: sessionMembersErr } = await supabaseAdmin
-        .from("session_members")
-        .delete()
-        .eq("device_id", deviceId)
-        .in("session_id", sessionIds);
+      const { data: removedMemberRows, error: sessionMembersErr } =
+        await supabaseAdmin
+          .from("session_members")
+          .delete()
+          .eq("device_id", deviceId)
+          .in("session_id", sessionIds)
+          .select("session_id");
 
       if (sessionMembersErr) {
         return NextResponse.json(
@@ -110,6 +114,8 @@ export async function POST(req: Request) {
         );
       }
 
+      sessionMembersRemoved = removedMemberRows?.length ?? 0;
+
       for (const sessionId of sessionIds) {
         const closeRes = await closeEmptySessionIfNeeded(
           supabaseAdmin,
@@ -121,11 +127,12 @@ export async function POST(req: Request) {
       }
     }
 
-    const { error: presenceErr } = await supabaseAdmin
+    const { data: removedPresenceRows, error: presenceErr } = await supabaseAdmin
       .from("class_presence")
       .delete()
       .eq("device_id", deviceId)
-      .eq("class_id", classId);
+      .eq("class_id", classId)
+      .select("class_id");
 
     if (presenceErr) {
       return NextResponse.json(
@@ -155,8 +162,14 @@ export async function POST(req: Request) {
       );
     }
 
+    const presenceRemoved = removedPresenceRows?.length ?? 0;
+
     console.log(
       `[home-leave] success class=${classId.slice(-6)} device=${deviceId.slice(-6)} source=${source}`
+    );
+    console.log(
+      `[class-leave] cleanup session_members_removed=${sessionMembersRemoved} ` +
+        `presence_removed=${presenceRemoved} class=${classId.slice(-6)} device=${deviceId.slice(-6)}`
     );
     console.log(
       `[class-leave] membership-updated class=${classId.slice(-6)} status=left device=${deviceId.slice(-6)}`
@@ -167,6 +180,8 @@ export async function POST(req: Request) {
       classId,
       removedSessionIds: sessionIds,
       closedSessionIds,
+      sessionMembersRemoved,
+      presenceRemoved,
     });
   } catch (e: any) {
     return NextResponse.json(

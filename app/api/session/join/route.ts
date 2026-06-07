@@ -201,6 +201,38 @@ export async function POST(req: Request) {
     const session = ensured.session;
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
 
+    if (session.classId) {
+      const { data: classMembership, error: membershipErr } =
+        await supabaseAdmin
+          .from("class_memberships")
+          .select("class_id")
+          .eq("device_id", deviceId)
+          .eq("class_id", session.classId)
+          .maybeSingle();
+
+      if (membershipErr) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "membership_lookup_failed",
+            detail: membershipErr.message,
+          },
+          { status: 500 }
+        );
+      }
+
+      if (!classMembership && !invite) {
+        console.log(
+          `[session-join] rejected reason=membership_left class=${tailJoinId(session.classId)} ` +
+            `device=${tailJoinId(deviceId)} session=${tailJoinId(sessionId)}`
+        );
+        return NextResponse.json(
+          { ok: false, error: "membership_left" },
+          { status: 403 }
+        );
+      }
+    }
+
     const rejoinEligibility = await loadRejoinEligibility({
       deviceId,
       classId: session.classId,

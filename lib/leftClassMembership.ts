@@ -8,6 +8,39 @@ function storageKey(classId: string) {
   return `${KEY_PREFIX}:${classId}`;
 }
 
+export function tailLeftClassId(classId: string) {
+  const value = String(classId ?? "").trim();
+  if (!value) return "-";
+  return value.length <= 6 ? value : value.slice(-6);
+}
+
+export function logRoomAsyncIgnored(
+  classId: string,
+  reason: string,
+  context?: string
+) {
+  console.log(
+    `[room-async] ignored reason=${reason} class=${tailLeftClassId(classId)}` +
+      (context ? ` context=${context}` : "")
+  );
+}
+
+export function logRoomRematchBlocked(classId: string, reason = "class_left") {
+  console.log(
+    `[room-rematch] blocked reason=${reason} class=${tailLeftClassId(classId)}`
+  );
+}
+
+export function logHomeOpenClassBlocked(classId: string) {
+  console.log(
+    `[home-openClass] blocked reason=class_left class=${tailLeftClassId(classId)}`
+  );
+}
+
+export function isClassLeftBlocked(classId: string): boolean {
+  return isClassLeftLocally(classId);
+}
+
 /** Mark class as left after confirmed leave API success (or already-left). */
 export function markClassLeftLocally(classId: string) {
   const id = String(classId ?? "").trim();

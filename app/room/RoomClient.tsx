@@ -86,6 +86,11 @@ import {
   type ParticipationSource,
   type UiParticipationStatus,
 } from "@/lib/memberPresenceStatus";
+import {
+  isClassLeftLocally,
+  logRoomAsyncIgnored,
+  logRoomRematchBlocked,
+} from "@/lib/leftClassMembership";
 
 type MemberRow = {
   device_id?: string;
@@ -295,7 +300,26 @@ async function rematchRoomSession(params: {
   deviceId: string;
   classId: string;
   openJoinedClassId?: string | null;
+  shouldAbort?: () => boolean;
 }) {
+  const classId = String(params.classId ?? "").trim();
+  if (!classId || isClassLeftLocally(classId)) {
+    logRoomRematchBlocked(classId || params.classId);
+    return {
+      rematchRes: null,
+      rematchJson: { ok: false, error: "class_left" } as Record<string, unknown>,
+      blocked: true as const,
+    };
+  }
+  if (params.shouldAbort?.()) {
+    logRoomAsyncIgnored(classId, "op_stale", "rematch");
+    return {
+      rematchRes: null,
+      rematchJson: { ok: false, error: "aborted" } as Record<string, unknown>,
+      blocked: true as const,
+    };
+  }
+
   const { worldKey, topicKey } = await resolveClassMatchKeys(
     params.deviceId,
     params.classId
@@ -327,7 +351,30 @@ async function rematchRoomSession(params: {
     error: rematchJson?.error,
   });
 
-  return { rematchRes, rematchJson };
+  const nextClassId = String(
+    rematchJson?.classId ?? rematchJson?.class_id ?? classId
+  ).trim();
+  if (
+    params.shouldAbort?.() ||
+    isClassLeftLocally(classId) ||
+    (nextClassId && isClassLeftLocally(nextClassId))
+  ) {
+    if (
+      isClassLeftLocally(classId) ||
+      (nextClassId && isClassLeftLocally(nextClassId))
+    ) {
+      logRoomRematchBlocked(nextClassId || classId);
+    } else {
+      logRoomAsyncIgnored(classId, "op_stale", "rematch_response");
+    }
+    return {
+      rematchRes,
+      rematchJson: { ...(rematchJson ?? {}), ok: false, error: "class_left" },
+      blocked: true as const,
+    };
+  }
+
+  return { rematchRes, rematchJson, blocked: false as const };
 }
 
 function mergeRoomMemberPresenceSource(
@@ -595,6 +642,39 @@ export default function RoomClient() {
   const prevMemberInternalRef = useRef<
     Record<string, import("@/lib/memberStatus").InternalMemberStatus>
   >({});
+  const roomOpGenRef = useRef(0);
+
+  const bumpRoomAsync = useCallback((reason: string) => {
+    roomOpGenRef.current += 1;
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        `[room-async] bump reason=${reason} gen=${roomOpGenRef.current}`
+      );
+    }
+  }, []);
+
+  const shouldAbortRoomAsync = useCallback(
+    (gen: number, cid: string, context: string): boolean => {
+      if (gen !== roomOpGenRef.current) {
+        logRoomAsyncIgnored(cid, "op_stale", context);
+        return true;
+      }
+      if (isClassLeftLocally(cid)) {
+        logRoomAsyncIgnored(cid, "class_left", context);
+        return true;
+      }
+      if (
+        typeof window !== "undefined" &&
+        window.location.pathname !== "/room"
+      ) {
+        logRoomAsyncIgnored(cid, "not_on_room", context);
+        return true;
+      }
+      return false;
+    },
+    []
+  );
+
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -624,8 +704,20 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   });
 }
 
+  useEffect(() => {
+    bumpRoomAsync("session_changed");
+  }, [sessionId, classId, bumpRoomAsync]);
+
+  useEffect(() => {
+    return () => {
+      bumpRoomAsync("unmount");
+    };
+  }, [bumpRoomAsync]);
+
   /** Return to Home — keeps session_members and class_memberships; presence only. */
   const goHome = useCallback(() => {
+    bumpRoomAsync("return_home");
+
     const did = String(deviceId ?? "").trim();
     const cid = String(classId ?? "").trim();
 
@@ -664,7 +756,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     }
 
     router.push(withDev("/"));
-  }, [classId, deviceId, router, sessionId]);
+  }, [bumpRoomAsync, classId, deviceId, router, sessionId]);
 
   useEffect(() => {
     const id = String(getDeviceId() ?? "").trim();
@@ -1085,6 +1177,10 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
   const selfRejoinSessionIfMissing = useCallback(async (): Promise<boolean> => {
     if (!sessionId || !classId || !deviceId) return true;
+    if (isClassLeftLocally(classId)) {
+      logRoomAsyncIgnored(classId, "class_left", "self_rejoin");
+      return false;
+    }
 
     const checkQs = new URLSearchParams({
       sessionId,
@@ -1141,10 +1237,15 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         | null;
 
       if (!joinRes.ok || !joinJson?.ok) {
-        console.warn(
-          `[session-members] self-rejoin failed context=room device=${deviceId.slice(-4)} ` +
-            `session=${sessionId.slice(-6)} error=${String(joinJson?.error ?? joinRes.status)}`
-        );
+        const joinError = String(joinJson?.error ?? joinRes.status);
+        if (joinError === "membership_left") {
+          logRoomAsyncIgnored(classId, "class_left", "self_rejoin");
+        } else {
+          console.warn(
+            `[session-members] self-rejoin failed context=room device=${deviceId.slice(-4)} ` +
+              `session=${sessionId.slice(-6)} error=${joinError}`
+          );
+        }
         return false;
       }
 
@@ -1165,11 +1266,20 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     async (opts?: { force?: boolean; fast?: boolean }) => {
       if (!sessionId || !classId) return;
       if (pathname !== "/room") return;
+      if (isClassLeftLocally(classId)) {
+        logRoomAsyncIgnored(classId, "class_left", "fetchStatus");
+        return;
+      }
       if (!opts?.force && typeof document !== "undefined" && document.hidden) {
         return;
       }
 
+      const opGen = roomOpGenRef.current;
+
       const rejoinOk = await selfRejoinSessionIfMissing();
+      if (shouldAbortRoomAsync(opGen, classId, "fetchStatus_after_rejoin")) {
+        return;
+      }
       if (!rejoinOk) {
         console.warn(
           `[session-members] fetchStatus deferred context=room reason=self_rejoin_failed ` +
@@ -1198,6 +1308,10 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           },
           { kind: "members", maxAttempts: 3 }
         );
+
+        if (shouldAbortRoomAsync(opGen, classId, "fetchStatus_response")) {
+          return;
+        }
 
         const rawText = await res.text().catch(() => "");
         let json: SessionStatusResponse | null = null;
@@ -1309,6 +1423,9 @@ if (!res.ok || !json?.ok) {
         });
 
         if (redirectRemoved) {
+          if (shouldAbortRoomAsync(opGen, classId, "fetchStatus_redirect")) {
+            return;
+          }
           setErr("このクラスから退出済みです。");
           logNavigationIntent("removed_from_session", "RoomClient.fetchMembers");
           logRouteChange(getCurrentPath(), "/", "removed_from_session");
@@ -1340,7 +1457,16 @@ if (!res.ok || !json?.ok) {
         window.clearTimeout(timer);
       }
     },
-    [sessionId, classId, pathname, topicTitle, deviceId, router, selfRejoinSessionIfMissing]
+    [
+      sessionId,
+      classId,
+      pathname,
+      topicTitle,
+      deviceId,
+      router,
+      selfRejoinSessionIfMissing,
+      shouldAbortRoomAsync,
+    ]
   );
 
   useEffect(() => {
@@ -1348,6 +1474,10 @@ if (!res.ok || !json?.ok) {
     if (pathname !== "/room") return;
 
     async function sendPresence() {
+      if (isClassLeftLocally(classId)) {
+        logRoomAsyncIgnored(classId, "class_left", "presence");
+        return;
+      }
       const res = await fetch("/api/class/presence", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1416,10 +1546,15 @@ if (!res.ok || !json?.ok) {
     async function loadPresence(opts?: { force?: boolean }) {
       if (!classId) return;
       if (pathname !== "/room") return;
+      if (isClassLeftLocally(classId)) {
+        logRoomAsyncIgnored(classId, "class_left", "loadPresence");
+        return;
+      }
       if (!opts?.force && typeof document !== "undefined" && document.hidden) {
         return;
       }
 
+      const opGen = roomOpGenRef.current;
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 8000);
 
@@ -1436,6 +1571,9 @@ if (!res.ok || !json?.ok) {
 
         const json = await readJsonSafe(res);
         if (cancelled) return;
+        if (shouldAbortRoomAsync(opGen, classId, "loadPresence_response")) {
+          return;
+        }
         if (!json?.ok) return;
 
         const list = Array.isArray(json?.presence) ? json.presence : [];
@@ -1511,7 +1649,7 @@ if (!res.ok || !json?.ok) {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [classId, sessionId, pathname]);
+  }, [classId, sessionId, pathname, shouldAbortRoomAsync]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1566,10 +1704,20 @@ const name = rawName === "You" ? "参加者" : rawName;
 }
 
   let cancelled = false;
+  const joinOpGen = roomOpGenRef.current;
 
+  const shouldAbortJoin = () =>
+    cancelled ||
+    joinOpGen !== roomOpGenRef.current ||
+    isClassLeftLocally(classId) ||
+    (typeof window !== "undefined" && window.location.pathname !== "/room");
 
   async function join() {
   try {
+    if (shouldAbortJoin()) {
+      logRoomAsyncIgnored(classId, "op_stale", "join");
+      return;
+    }
     if (!deviceId) {
       logInviteJoinClient("failed", {
         classId,
@@ -1642,6 +1790,11 @@ const name = rawName === "You" ? "参加者" : rawName;
       openJoinedClass,
     });
 
+    if (shouldAbortJoin()) {
+      logRoomAsyncIgnored(classId, "op_stale", "join_before_session_join");
+      return;
+    }
+
     const res = await fetch(
       `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
       {
@@ -1689,6 +1842,11 @@ const name = rawName === "You" ? "参加者" : rawName;
           );
         }
 
+        if (error === "membership_left") {
+          logRoomAsyncIgnored(classId, "class_left", "session_join");
+          return;
+        }
+
         if (error === "session_full") {
           throw new Error("このクラスは満員です");
         }
@@ -1698,11 +1856,25 @@ const name = rawName === "You" ? "参加者" : rawName;
         }
 
         if (error === "session_closed" || error === "recruitment_closed") {
-  const { rematchRes, rematchJson } = await rematchRoomSession({
+  if (shouldAbortJoin()) {
+    logRoomAsyncIgnored(classId, "op_stale", "join_before_rematch");
+    return;
+  }
+  if (isClassLeftLocally(classId)) {
+    logRoomRematchBlocked(classId);
+    return;
+  }
+
+  const { rematchRes, rematchJson, blocked } = await rematchRoomSession({
     deviceId,
     classId,
     openJoinedClassId: classId,
+    shouldAbort: shouldAbortJoin,
   });
+
+  if (blocked || shouldAbortJoin()) {
+    return;
+  }
 
   const nextSessionId = String(
     rematchJson?.sessionId ?? rematchJson?.session_id ?? ""
@@ -1716,7 +1888,21 @@ const name = rawName === "You" ? "参加者" : rawName;
     rematchJson?.sessionStatus ?? rematchJson?.session_status ?? ""
   ).trim();
 
-  if (rematchRes.ok && rematchJson?.ok && nextSessionId && nextClassId) {
+  if (
+    nextClassId &&
+    isClassLeftLocally(nextClassId)
+  ) {
+    logRoomRematchBlocked(nextClassId);
+    return;
+  }
+
+  if (
+    rematchRes?.ok &&
+    rematchJson?.ok &&
+    nextSessionId &&
+    nextClassId &&
+    !shouldAbortJoin()
+  ) {
     console.log("[room join] rematch redirect", {
       fromSessionId: sessionId,
       toSessionId: nextSessionId,
@@ -1729,6 +1915,10 @@ const name = rawName === "You" ? "参加者" : rawName;
           `&sessionId=${encodeURIComponent(nextSessionId)}`
       )
     );
+    return;
+  }
+
+  if (shouldAbortJoin() || isClassLeftLocally(classId)) {
     return;
   }
 
@@ -1754,7 +1944,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         throw new Error("参加に失敗しました");
       }
 
-      if (cancelled) return;
+      if (shouldAbortJoin()) return;
 
       console.log(
         `[room-session] join-success device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
@@ -1809,7 +1999,7 @@ setErr("");
 await fetchStatus({ force: true, fast: true });
 void fetchStatus({ force: true });
     } catch (e: any) {
-      if (cancelled) return;
+      if (shouldAbortJoin()) return;
 
       // ✅ 失敗時は再試行できるように固定しない
       joinedSessionKeyRef.current = null;
@@ -1822,6 +2012,7 @@ void fetchStatus({ force: true });
 
   return () => {
     cancelled = true;
+    bumpRoomAsync("join_cleanup");
   };
 }, [
   sessionId,
@@ -1833,6 +2024,7 @@ void fetchStatus({ force: true });
   searchParams,
   openJoinedClass,
   invite,
+  bumpRoomAsync,
 ]);
 
   useEffect(() => {

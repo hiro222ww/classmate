@@ -745,6 +745,17 @@ export async function matchJoinV2Post(req: Request) {
       const membershipCheck = await hasMembership(deviceId, forcedClassId);
       if (!membershipCheck.ok) return membershipCheck.response;
 
+      if (openJoinedClass && !membershipCheck.isMember) {
+        console.log(
+          `[match-join] blocked reason=membership_left class=${tailMatchId(forcedClassId)} ` +
+            `device=${tailMatchId(deviceId)}`
+        );
+        return NextResponse.json(
+          { ok: false, error: "membership_left" },
+          { status: 403 }
+        );
+      }
+
       if (
         !membershipCheck.isMember &&
         isDeadlinePassed(existingClass.match_deadline_at ?? null)

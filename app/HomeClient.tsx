@@ -45,6 +45,7 @@ import {
 import {
   clearClassLeftLocally,
   isClassLeftLocally,
+  logHomeOpenClassBlocked,
   markClassLeftLocally,
 } from "@/lib/leftClassMembership";
 import { isUserProfileComplete } from "@/lib/profileClient";
@@ -1584,6 +1585,11 @@ return () => {
     try {
       setOpeningClassId(target.id);
 
+      if (isClassLeftLocally(target.id)) {
+        logHomeOpenClassBlocked(target.id);
+        return;
+      }
+
       const currentDeviceId = String(getDeviceId() ?? "").trim();
       if (!currentDeviceId) {
         alert("device_id_missing");
@@ -1648,6 +1654,11 @@ return () => {
             json?.message ??
               "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
           );
+          return;
+        }
+
+        if (json?.error === "membership_left") {
+          logHomeOpenClassBlocked(target.id);
           return;
         }
 
@@ -1720,6 +1731,11 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           `[home openClass] reuse-hint-session session=${sessionId.slice(-6)} ` +
             `reason=${selectionReason || "hint_reused"}`
         );
+      }
+
+      if (isClassLeftLocally(classId)) {
+        logHomeOpenClassBlocked(classId);
+        return;
       }
 
       clearClassLeftLocally(classId);
