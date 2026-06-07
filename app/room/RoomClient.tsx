@@ -69,7 +69,13 @@ import {
   hasLocalLeftCall,
   sanitizeLocalLeftCallAfterReload,
 } from "@/lib/localCallExit";
-import { consumeAutoCallOnce, markAutoCallOnce } from "@/lib/autoCallOnce";
+import {
+  AUTO_CALL_MEMBERS_STABLE_MS,
+  AUTO_CALL_STABLE_DELAY_MS,
+  consumeAutoCallOnce,
+  hasAutoCallOnce,
+  markAutoCallOnce,
+} from "@/lib/autoCallOnce";
 import {
   getCurrentPath,
   getNavigationType,
@@ -631,6 +637,18 @@ export default function RoomClient() {
 
   const joinedSessionKeyRef = useRef<string | null>(null);
   const autoCallAttemptedRef = useRef(false);
+  const autoCallTimerRef = useRef<number | null>(null);
+  const autoCallArmKeyRef = useRef<string | null>(null);
+  const membersCount2SinceRef = useRef<number | null>(null);
+  const membersCount2StreakRef = useRef(0);
+  const presenceMapSeen2Ref = useRef(false);
+  const lastSuccessfulFetchOpGenRef = useRef(0);
+  const autoCallMemberIdsRef = useRef<string[]>([]);
+  const roomIdentityRef = useRef({ sessionId: "", classId: "", deviceId: "" });
+  const [pageVisible, setPageVisible] = useState(
+    () => typeof document === "undefined" || !document.hidden
+  );
+  const [autoCallRecheckTick, setAutoCallRecheckTick] = useState(0);
 
   const [showDevBanner, setShowDevBanner] = useState(false);
   const [devBannerLabel, setDevBannerLabel] = useState("");
@@ -643,6 +661,15 @@ export default function RoomClient() {
     Record<string, import("@/lib/memberStatus").InternalMemberStatus>
   >({});
   const roomOpGenRef = useRef(0);
+
+  const cancelAutoCallTimer = useCallback((reason: string) => {
+    if (autoCallTimerRef.current !== null) {
+      window.clearTimeout(autoCallTimerRef.current);
+      autoCallTimerRef.current = null;
+      console.log(`[room-auto-call] cancel reason=${reason}`);
+    }
+    autoCallArmKeyRef.current = null;
+  }, []);
 
   const bumpRoomAsync = useCallback((reason: string) => {
     roomOpGenRef.current += 1;
@@ -703,6 +730,35 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     return prev;
   });
 }
+
+  useEffect(() => {
+    roomIdentityRef.current = {
+      sessionId: String(sessionId ?? "").trim(),
+      classId: String(classId ?? "").trim(),
+      deviceId: String(deviceId ?? "").trim(),
+    };
+  }, [sessionId, classId, deviceId]);
+
+  useEffect(() => {
+    membersCount2SinceRef.current = null;
+    membersCount2StreakRef.current = 0;
+    presenceMapSeen2Ref.current = false;
+    lastSuccessfulFetchOpGenRef.current = 0;
+    autoCallAttemptedRef.current = false;
+    cancelAutoCallTimer("session_changed");
+  }, [sessionId, classId, deviceId, cancelAutoCallTimer]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const visible = !document.hidden;
+      setPageVisible(visible);
+      if (!visible) {
+        cancelAutoCallTimer("page_hidden");
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [cancelAutoCallTimer]);
 
   useEffect(() => {
     bumpRoomAsync("session_changed");
@@ -1064,6 +1120,12 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   const visibleMembers = useMemo(() => {
     return dedupeMembers(members, deviceId, displayName);
   }, [members, deviceId, displayName]);
+
+  useEffect(() => {
+    autoCallMemberIdsRef.current = visibleMembers
+      .map((m) => String(m.device_id ?? "").trim())
+      .filter(Boolean);
+  }, [visibleMembers]);
 
   useEffect(() => {
     sessionMemberIdsForPresenceRef.current = new Set(
@@ -1433,6 +1495,18 @@ if (!res.ok || !json?.ok) {
           return;
         }
 
+        lastSuccessfulFetchOpGenRef.current = opGen;
+
+        if (incomingMembers.length >= 2) {
+          membersCount2StreakRef.current += 1;
+          if (membersCount2SinceRef.current === null) {
+            membersCount2SinceRef.current = Date.now();
+          }
+        } else {
+          membersCount2StreakRef.current = 0;
+          membersCount2SinceRef.current = null;
+        }
+
         const inCallCount = incomingMembers.filter((m) => m.is_in_call === true).length;
         console.log(
           `[session-members] context=room session=${sessionId.slice(-6)} ` +
@@ -1615,6 +1689,10 @@ if (!res.ok || !json?.ok) {
             `ignoredNonMember=${ignoredNonMember} ignoredStale=${ignoredStale} ` +
             `sessionMembers=${sessionMemberIds.size}`
         );
+
+        if (sessionMemberIds.size >= 2) {
+          presenceMapSeen2Ref.current = true;
+        }
 
         setPresenceMap((prev) => {
           const prevStr = JSON.stringify(prev);
@@ -2103,36 +2181,154 @@ void fetchStatus({ force: true });
       return;
     }
 
-    const selfJoined = visibleMembers.some(
-      (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
-    );
-
-    const shouldAutoStart =
-      !err &&
-      selfJoined &&
-      (status === "active" || memberCount >= 2);
-
-    if (!shouldAutoStart) return;
-
-    if (!consumeAutoCallOnce(sessionId, deviceId)) {
+    if (!hasAutoCallOnce(sessionId, deviceId)) {
       console.log("[room-auto-call] skip reason=flag_missing|already_consumed");
       return;
     }
 
-    autoCallAttemptedRef.current = true;
-    console.log("[room-auto-call] allow reason=initial_match_once");
+    if (!pageVisible) {
+      cancelAutoCallTimer("page_hidden");
+      return;
+    }
 
-    const callHref = withDev(
-      `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(
-        classId
-      )}`
+    if (err) {
+      cancelAutoCallTimer("members_unstable");
+      return;
+    }
+
+    const joinedPrefix = `${sessionId}:${classId}:${deviceId}:`;
+    if (!(joinedSessionKeyRef.current ?? "").startsWith(joinedPrefix)) {
+      cancelAutoCallTimer("members_unstable");
+      return;
+    }
+
+    if (lastSuccessfulFetchOpGenRef.current !== roomOpGenRef.current) {
+      cancelAutoCallTimer("op_stale");
+      return;
+    }
+
+    const myId = String(deviceId).trim();
+    const memberIds = autoCallMemberIdsRef.current;
+    const selfJoined = memberIds.includes(myId);
+    const remoteJoined = memberIds.some((id) => id !== myId);
+    const countReady = memberIds.length >= 2;
+
+    if (!selfJoined || !remoteJoined || !countReady) {
+      cancelAutoCallTimer("members_unstable");
+      return;
+    }
+
+    const stableSince = membersCount2SinceRef.current;
+    const streak = membersCount2StreakRef.current;
+    const membersStable =
+      streak >= 2 ||
+      (stableSince !== null &&
+        Date.now() - stableSince >= AUTO_CALL_MEMBERS_STABLE_MS);
+
+    if (!membersStable) {
+      cancelAutoCallTimer("members_unstable");
+      if (
+        stableSince !== null &&
+        memberIds.length >= 2 &&
+        autoCallTimerRef.current === null
+      ) {
+        const remaining =
+          AUTO_CALL_MEMBERS_STABLE_MS - (Date.now() - stableSince);
+        if (remaining > 0) {
+          const recheckId = window.setTimeout(() => {
+            setAutoCallRecheckTick((tick) => tick + 1);
+          }, remaining + 50);
+          return () => window.clearTimeout(recheckId);
+        }
+      }
+      return;
+    }
+
+    if (!presenceMapSeen2Ref.current) {
+      cancelAutoCallTimer("members_unstable");
+      return;
+    }
+
+    const armKey = `${sessionId}:${classId}:${deviceId}`;
+    if (autoCallTimerRef.current !== null) {
+      return;
+    }
+
+    autoCallArmKeyRef.current = armKey;
+    console.log(
+      `[room-auto-call] arm reason=initial_match_once delayMs=${AUTO_CALL_STABLE_DELAY_MS}`
     );
-    logNavigationIntent("room_auto_call", "RoomClient.auto_start");
-    logRouteChange(getCurrentPath(), callHref, "room_auto_call");
-    router.replace(callHref);
+
+    autoCallTimerRef.current = window.setTimeout(() => {
+      autoCallTimerRef.current = null;
+      autoCallArmKeyRef.current = null;
+
+      const identity = roomIdentityRef.current;
+      const currentArmKey = `${identity.sessionId}:${identity.classId}:${identity.deviceId}`;
+      if (currentArmKey !== armKey) {
+        console.log("[room-auto-call] cancel reason=session_changed");
+        return;
+      }
+
+      if (autoCallAttemptedRef.current) return;
+
+      if (document.hidden) {
+        console.log("[room-auto-call] cancel reason=page_hidden");
+        return;
+      }
+
+      if (lastSuccessfulFetchOpGenRef.current !== roomOpGenRef.current) {
+        console.log("[room-auto-call] cancel reason=op_stale");
+        return;
+      }
+
+      const joinedKeyPrefix = `${identity.sessionId}:${identity.classId}:${identity.deviceId}:`;
+      if (!(joinedSessionKeyRef.current ?? "").startsWith(joinedKeyPrefix)) {
+        console.log("[room-auto-call] cancel reason=members_unstable");
+        return;
+      }
+
+      const ids = autoCallMemberIdsRef.current;
+      const viewerId = String(identity.deviceId).trim();
+      const viewerJoined = ids.includes(viewerId);
+      const peerJoined = ids.some((id) => id !== viewerId);
+      if (ids.length < 2 || !viewerJoined || !peerJoined) {
+        console.log("[room-auto-call] cancel reason=members_unstable");
+        return;
+      }
+
+      const since = membersCount2SinceRef.current;
+      const countStreak = membersCount2StreakRef.current;
+      const stillStable =
+        countStreak >= 2 ||
+        (since !== null && Date.now() - since >= AUTO_CALL_MEMBERS_STABLE_MS);
+      if (!stillStable || !presenceMapSeen2Ref.current) {
+        console.log("[room-auto-call] cancel reason=members_unstable");
+        return;
+      }
+
+      if (!consumeAutoCallOnce(identity.sessionId, identity.deviceId)) {
+        console.log("[room-auto-call] skip reason=flag_missing|already_consumed");
+        return;
+      }
+
+      autoCallAttemptedRef.current = true;
+      console.log("[room-auto-call] allow reason=initial_match_stable");
+
+      const callHref = withDev(
+        `/call?sessionId=${encodeURIComponent(identity.sessionId)}&classId=${encodeURIComponent(
+          identity.classId
+        )}`
+      );
+      logNavigationIntent("room_auto_call", "RoomClient.auto_start");
+      logRouteChange(getCurrentPath(), callHref, "room_auto_call");
+      router.replace(callHref);
+    }, AUTO_CALL_STABLE_DELAY_MS);
+
+    return () => {
+      // Keep timer across routine member/presence updates; session_changed cancels explicitly.
+    };
   }, [
-    status,
-    memberCount,
     sessionId,
     classId,
     deviceId,
@@ -2142,7 +2338,21 @@ void fetchStatus({ force: true });
     openJoinedClass,
     err,
     visibleMembers,
+    memberCount,
+    status,
+    pageVisible,
+    autoCallRecheckTick,
+    cancelAutoCallTimer,
   ]);
+
+  useEffect(() => {
+    return () => {
+      if (autoCallTimerRef.current !== null) {
+        window.clearTimeout(autoCallTimerRef.current);
+        autoCallTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
 

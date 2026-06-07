@@ -32,6 +32,12 @@ export function consumeAutoCallOnce(sessionId: string, deviceId: string): boolea
   }
 }
 
+/** Delay after readiness before navigating to Call (initial match only). */
+export const AUTO_CALL_STABLE_DELAY_MS = 2000;
+
+/** Minimum time count>=2 must hold before arming auto-call timer. */
+export const AUTO_CALL_MEMBERS_STABLE_MS = 1500;
+
 export function hasAutoCallOnce(sessionId: string, deviceId: string): boolean {
   if (typeof window === "undefined") return false;
   const key = autoCallOnceStorageKey(sessionId, deviceId);
