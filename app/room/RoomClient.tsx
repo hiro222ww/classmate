@@ -638,6 +638,8 @@ export default function RoomClient() {
   });
 
   const joinedSessionKeyRef = useRef<string | null>(null);
+  const joinInFlightKeyRef = useRef<string | null>(null);
+  const joinInFlightPromiseRef = useRef<Promise<void> | null>(null);
   const autoCallAttemptedRef = useRef(false);
   const autoCallTimerRef = useRef<number | null>(null);
   const autoCallArmKeyRef = useRef<string | null>(null);
@@ -708,14 +710,29 @@ export default function RoomClient() {
     autoCallArmKeyRef.current = null;
   }, []);
 
-  const bumpRoomAsync = useCallback((reason: string) => {
-    roomOpGenRef.current += 1;
-    if (process.env.NODE_ENV === "development") {
-      console.log(
-        `[room-async] bump reason=${reason} gen=${roomOpGenRef.current}`
-      );
-    }
+  const clearJoinInFlight = useCallback((expectedKey?: string | null) => {
+    const current = joinInFlightKeyRef.current;
+    if (!current) return;
+    if (expectedKey && current !== expectedKey) return;
+    console.log(`[room-join] in-flight clear key=${current}`);
+    joinInFlightKeyRef.current = null;
+    joinInFlightPromiseRef.current = null;
   }, []);
+
+  const bumpRoomAsync = useCallback(
+    (reason: string) => {
+      if (reason !== "join_cleanup") {
+        clearJoinInFlight();
+      }
+      roomOpGenRef.current += 1;
+      if (process.env.NODE_ENV === "development") {
+        console.log(
+          `[room-async] bump reason=${reason} gen=${roomOpGenRef.current}`
+        );
+      }
+    },
+    [clearJoinInFlight]
+  );
 
   const shouldAbortRoomAsync = useCallback(
     (gen: number, cid: string, context: string): boolean => {
@@ -1886,7 +1903,10 @@ const name = rawName === "You" ? "参加者" : rawName;
     );
   }
 
-  async function join() {
+  const buildJoinInFlightKey = () =>
+    `${classId}:${sessionId}:${deviceId}:${openJoinedClass}`;
+
+  async function runJoinWork() {
   try {
     setResolving(true);
     cancelAutoCallTimer("session_resolving");
@@ -2187,6 +2207,26 @@ void fetchStatus({ force: true });
     }
   }
 
+  async function join(): Promise<void> {
+    const inFlightKey = buildJoinInFlightKey();
+    const existing = joinInFlightPromiseRef.current;
+    if (joinInFlightKeyRef.current === inFlightKey && existing) {
+      console.log(
+        `[room-join] skip reason=join_in_flight key=${inFlightKey}`
+      );
+      return existing;
+    }
+
+    console.log(`[room-join] in-flight start key=${inFlightKey}`);
+    joinInFlightKeyRef.current = inFlightKey;
+
+    const promise = runJoinWork().finally(() => {
+      clearJoinInFlight(inFlightKey);
+    });
+    joinInFlightPromiseRef.current = promise;
+    return promise;
+  }
+
   void join();
 
   return () => {
@@ -2208,6 +2248,7 @@ void fetchStatus({ force: true });
   setResolving,
   scheduleRecentRematchUnblock,
   cancelAutoCallTimer,
+  clearJoinInFlight,
   router,
 ]);
 
