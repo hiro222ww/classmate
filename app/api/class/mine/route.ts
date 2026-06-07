@@ -10,9 +10,13 @@ import { getClassSlotsForDevice } from "@/lib/classMembershipSlots";
 import {
   getClassStatusLabel,
   isDeadlinePassed,
-  pickClassDisplaySession,
-  type RecruitmentSessionRow,
 } from "@/lib/recruitment";
+import {
+  listClassSessionsWithMembers,
+  pickCanonicalOpenJoinedSession,
+  logClassSessionsDebug,
+} from "@/lib/classSessionSelection";
+import { formatClassSessionSelectionReason } from "@/lib/openJoinedClassSession";
 import { getRecruitmentSessionTtlMinutes, getRecruitmentSessionTtlSetting } from "@/lib/recruitmentSettings";
 import { fetchActiveMeetingPlansForClasses } from "@/lib/meetingPlan";
 import { fetchActiveCallRequestsForClasses } from "@/lib/callRequest";
@@ -216,39 +220,8 @@ export async function GET(req: Request) {
     await expireStaleRecruitmentSessions(supabaseAdmin, {
       classIds,
       ttlMinutes: recruitmentSessionTtlMinutes,
+      keepSessionsWithMembers: true,
     });
-
-    const { data: sessionRows, error: sessionsErr } = await supabaseAdmin
-      .from("sessions")
-      .select("id,class_id,status,created_at")
-      .in("class_id", classIds)
-      .in("status", ["forming", "waiting", "active"]);
-
-    if (sessionsErr) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "class_mine_sessions_failed",
-          detail: sessionsErr.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    const sessionsByClass = new Map<string, RecruitmentSessionRow[]>();
-
-    for (const row of sessionRows ?? []) {
-      const classId = String((row as { class_id?: unknown }).class_id ?? "").trim();
-      if (!classId) continue;
-
-      const list = sessionsByClass.get(classId) ?? [];
-      list.push({
-        id: String((row as { id?: unknown }).id ?? "").trim(),
-        status: String((row as { status?: unknown }).status ?? "").trim(),
-        created_at: (row as { created_at?: string | null }).created_at ?? null,
-      });
-      sessionsByClass.set(classId, list);
-    }
 
     const sessionMap = new Map<
       string,
@@ -261,35 +234,66 @@ export async function GET(req: Request) {
       }
     >();
 
+    let sessionRowCount = 0;
+
     for (const classId of classIds) {
       const classRow = classMap.get(classId) as
         | { match_deadline_at?: string | null }
         | undefined;
-      const picked = pickClassDisplaySession(
-        sessionsByClass.get(classId) ?? [],
-        recruitmentSessionTtlMinutes,
-        { matchDeadlineAt: classRow?.match_deadline_at ?? null }
-      );
 
-      if (!picked) {
+      const classSessions = await listClassSessionsWithMembers(
+        supabaseAdmin,
+        classId,
+        normalizedDeviceId
+      );
+      sessionRowCount += classSessions.length;
+
+      const canonical = pickCanonicalOpenJoinedSession({
+        sessions: classSessions,
+        deviceId: normalizedDeviceId,
+        matchDeadlineAt: classRow?.match_deadline_at ?? null,
+        recruitmentSessionTtlMinutes,
+        preferredSessionId: null,
+      });
+
+      if (!canonical) {
+        logClassSessionsDebug(classId, classSessions);
         console.log(
           `[home] class-visible-without-active-session class=${tailId(classId)}`
         );
         continue;
       }
 
+      logClassSessionsDebug(classId, classSessions, {
+        selectedSessionId: canonical.sessionId,
+        reason: formatClassSessionSelectionReason(
+          canonical.reason,
+          canonical.memberCount
+        ),
+      });
+
+      const selectionReason = formatClassSessionSelectionReason(
+        canonical.reason,
+        canonical.memberCount
+      );
+      console.log(
+        `[class-session] selected session=${tailId(canonical.sessionId)} ` +
+          `reason=${selectionReason} members=${canonical.memberCount} ` +
+          `class=${tailId(classId)} source=class_mine`
+      );
+
       const statusLabel = resolveMembershipStatusLabel({
         hasActiveSession: true,
-        sessionStatus: picked.status,
+        sessionStatus: canonical.sessionStatus,
         matchDeadlineAt: classRow?.match_deadline_at ?? null,
-        sessionCreatedAt: picked.created_at,
+        sessionCreatedAt: canonical.sessionCreatedAt,
         recruitmentSessionTtlMinutes,
       });
 
       sessionMap.set(classId, {
-        id: picked.id,
-        status: picked.status,
-        created_at: picked.created_at,
+        id: canonical.sessionId,
+        status: canonical.sessionStatus,
+        created_at: canonical.sessionCreatedAt,
         status_label: statusLabel,
         is_recruiting: statusLabel === "募集中",
       });
@@ -398,7 +402,7 @@ export async function GET(req: Request) {
         classSlots: slotsRes.ok ? slotsRes.classSlots : null,
         classRowCount: classRows?.length ?? 0,
         topicRowCount: topicRows.length,
-        sessionRowCount: sessionRows?.length ?? 0,
+        sessionRowCount,
         joinFailedCount: classes.filter((c) => !c.join_ok).length,
         billableClassIds: membershipSnapshot?.billableClassIds ?? [],
         legacyClassIds: membershipSnapshot?.legacyClassIds ?? [],

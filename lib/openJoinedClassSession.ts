@@ -47,14 +47,28 @@ type ResolveErr = {
   response: NextResponse;
 };
 
+export function formatClassSessionSelectionReason(
+  reason: string,
+  memberCount: number
+): string {
+  if (memberCount > 0 && reason.startsWith("reuse")) {
+    return "reuse_existing_members_session";
+  }
+  return reason;
+}
+
 export async function createFormingSession(params: {
   classId: string;
   className: string;
   requestedCapacity: number;
-  reason: OpenJoinedSessionInvalidReason | "no_valid_active_session";
+  reason: OpenJoinedSessionInvalidReason | "no_valid_active_session" | "no_joinable_session";
 }) {
+  const logReason =
+    params.reason === "no_valid_active_session"
+      ? "no_joinable_session"
+      : params.reason;
   console.log(
-    `[class-session] create-new reason=${params.reason} class=${tailMatchId(params.classId)}`
+    `[class-session] create-new reason=${logReason} class=${tailMatchId(params.classId)}`
   );
 
   const { data, error } = await supabase
@@ -271,7 +285,7 @@ async function ensureJoinableSessionOrCreate(params: {
     classId: params.classId,
     className: params.className,
     requestedCapacity: params.requestedCapacity,
-    reason: createReason ?? "no_valid_active_session",
+    reason: createReason ?? "no_joinable_session",
   });
 
   if (!created.ok) return created;
@@ -321,9 +335,13 @@ export async function resolveOpenJoinedClassSession(
       selectedSessionId: canonical.sessionId,
       reason: canonical.reason,
     });
+    const selectionReason = formatClassSessionSelectionReason(
+      canonical.reason,
+      canonical.memberCount
+    );
     console.log(
       `[class-session] selected session=${tailMatchId(canonical.sessionId)} ` +
-        `reason=${canonical.reason} members=${canonical.memberCount} ` +
+        `reason=${selectionReason} members=${canonical.memberCount} ` +
         `class=${tailMatchId(params.classId)}`
     );
 
@@ -337,7 +355,10 @@ export async function resolveOpenJoinedClassSession(
       memberCount: canonical.memberCount,
       requestedCapacity: params.requestedCapacity,
       recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
-      selectionReason: canonical.reason,
+      selectionReason: formatClassSessionSelectionReason(
+        canonical.reason,
+        canonical.memberCount
+      ),
     });
   }
 
@@ -386,7 +407,7 @@ export async function resolveOpenJoinedClassSession(
     classId: params.classId,
     className: params.className,
     requestedCapacity: params.requestedCapacity,
-    reason: "no_valid_active_session",
+    reason: "no_joinable_session",
   });
 
   if (!created.ok) return created;

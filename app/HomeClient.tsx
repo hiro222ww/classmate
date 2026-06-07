@@ -48,6 +48,11 @@ import {
   logHomeOpenClassBlocked,
   markClassLeftLocally,
 } from "@/lib/leftClassMembership";
+import {
+  clearHomeClassSessionHint,
+  readHomeClassSessionHint,
+  storeHomeClassSessionHint,
+} from "@/lib/homeClassSessionHint";
 import { isUserProfileComplete } from "@/lib/profileClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import {
@@ -460,6 +465,11 @@ export default function HomeClient() {
             );
             clearLocallyHiddenClass(id);
           }
+          const sessionId = String(c.session_id ?? "").trim();
+          if (sessionId) {
+            storeHomeClassSessionHint(id, sessionId, c.session_status);
+          }
+
           nextClasses.push(c);
         }
 
@@ -1596,7 +1606,18 @@ return () => {
         return;
       }
 
-      const hintSessionId = String(target.session_id ?? "").trim();
+      let hintSessionId = String(target.session_id ?? "").trim();
+      if (!hintSessionId) {
+        const fallbackHint = readHomeClassSessionHint(target.id);
+        if (fallbackHint) {
+          hintSessionId = fallbackHint;
+          console.log(
+            `[home openClass] fallback-hint-session class=${String(target.id).slice(-6)} ` +
+              `session=${fallbackHint.slice(-6)}`
+          );
+        }
+      }
+
       const openBody = buildMatchJoinRequestBody({
         deviceId: currentDeviceId,
         openJoinedClassId: target.id,
@@ -1608,7 +1629,7 @@ return () => {
 
       console.log(
         `[home openClass] resolve-joinable-session class=${String(target.id).slice(-6)} ` +
-          `hintSession=${String(target.session_id ?? "").slice(-6) || "-"}`
+          `hintSession=${hintSessionId.slice(-6) || "-"}`
       );
 
       console.log("[home openClass] match-join-v2 request body =", openBody);
@@ -1739,6 +1760,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       }
 
       clearClassLeftLocally(classId);
+      storeHomeClassSessionHint(classId, sessionId, resolvedStatus);
       router.push(buildRoomUrl(classId, sessionId, { openJoinedClass: true }));
     } catch (e: any) {
       console.error("[home openClass] error =", e);
@@ -1855,6 +1877,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   }
 
   function removeClassFromHomeState(classId: string) {
+    clearHomeClassSessionHint(classId);
     setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
     setMembersByClass((prev) => {
       const next = { ...prev };
