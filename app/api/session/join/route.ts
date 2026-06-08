@@ -19,6 +19,7 @@ import { getAdmissionStatus } from "@/lib/admissionWindow";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 import type { JoinStateSource } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
+import { logRoomJoinPerf } from "@/lib/roomJoinPerf";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -107,7 +108,38 @@ type JoinBody = {
   openJoinedClass?: unknown;
 };
 
+async function refreshRoomPresence(params: {
+  classId: string;
+  sessionId: string;
+  deviceId: string;
+  sessionStatus: string;
+}) {
+  const now = new Date().toISOString();
+  const presenceStatus =
+    params.sessionStatus === "active" ? "active" : "waiting";
+  await supabaseAdmin.from("class_presence").upsert(
+    {
+      class_id: params.classId,
+      device_id: params.deviceId,
+      session_id: params.sessionId,
+      screen: "room",
+      status: presenceStatus,
+      last_seen_at: now,
+      updated_at: now,
+    },
+    { onConflict: "class_id,device_id" }
+  );
+}
+
 export async function POST(req: Request) {
+  const routeStartMs = Date.now();
+  let ensureMembershipMs = 0;
+  let sessionMembersUpsertMs = 0;
+  let presenceMs = 0;
+  let sessionFetchMs = 0;
+  let classFetchMs = 0;
+  let repairMs = 0;
+
   try {
     const url = new URL(req.url);
     const body = (await req.json().catch(() => ({}))) as JoinBody;
@@ -201,7 +233,65 @@ export async function POST(req: Request) {
     const session = ensured.session;
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
 
+    {
+      const memberLookupStartMs = Date.now();
+      const { data: existingSessionMemberEarly, error: existingSessionMemberEarlyErr } =
+        await supabaseAdmin
+          .from("session_members")
+          .select("device_id")
+          .eq("session_id", sessionId)
+          .eq("device_id", deviceId)
+          .maybeSingle();
+      sessionFetchMs += Date.now() - memberLookupStartMs;
+
+      const classIdForFastPath = String(session.classId ?? "").trim();
+      if (
+        !existingSessionMemberEarlyErr &&
+        existingSessionMemberEarly &&
+        classIdForFastPath
+      ) {
+        const countStartMs = Date.now();
+        const { count: memberCountEarly } = await supabaseAdmin
+          .from("session_members")
+          .select("device_id", { count: "exact", head: true })
+          .eq("session_id", sessionId);
+        sessionFetchMs += Date.now() - countStartMs;
+
+        const presenceStartMs = Date.now();
+        await refreshRoomPresence({
+          classId: classIdForFastPath,
+          sessionId,
+          deviceId,
+          sessionStatus: session.status,
+        });
+        presenceMs += Date.now() - presenceStartMs;
+
+        logRoomJoinPerf({
+          totalMs: Date.now() - routeStartMs,
+          path: "existing_session_member",
+          ensureMembershipMs,
+          sessionMembersUpsertMs,
+          presenceMs,
+          sessionFetchMs,
+          classFetchMs,
+          repairMs,
+        });
+
+        return NextResponse.json({
+          ok: true,
+          sessionId,
+          classId: classIdForFastPath,
+          status: session.status,
+          capacity: session.capacity,
+          memberCount: Number(memberCountEarly ?? 0),
+          alreadyInSession: true,
+          fastPath: "existing_session_member",
+        });
+      }
+    }
+
     if (session.classId) {
+      const classLookupStartMs = Date.now();
       const { data: classMembership, error: membershipErr } =
         await supabaseAdmin
           .from("class_memberships")
@@ -209,6 +299,7 @@ export async function POST(req: Request) {
           .eq("device_id", deviceId)
           .eq("class_id", session.classId)
           .maybeSingle();
+      classFetchMs += Date.now() - classLookupStartMs;
 
       if (membershipErr) {
         return NextResponse.json(
@@ -282,10 +373,12 @@ export async function POST(req: Request) {
       }
     }
 
+    const repairStartMs = Date.now();
     await expireStaleRecruitmentSessions(supabaseAdmin, {
       classIds: session.classId ? [session.classId] : undefined,
       ttlMinutes: recruitmentSessionTtlMinutes,
     });
+    repairMs += Date.now() - repairStartMs;
 
     if (blocksNewJoinSessionStatus(session.status) && !canRejoin) {
       const { data: existingSessionMemberRow, error: existingSessionMemberErr } =
@@ -388,11 +481,13 @@ export async function POST(req: Request) {
       );
     }
 
+    const profileStartMs = Date.now();
     const { data: profile, error: profileErr } = await supabaseAdmin
       .from("user_profiles")
       .select("display_name")
       .eq("device_id", deviceId)
       .maybeSingle();
+    classFetchMs += Date.now() - profileStartMs;
 
     if (profileErr) {
       console.log("[session/join profileErr]", profileErr);
@@ -484,6 +579,7 @@ export async function POST(req: Request) {
       joinSource = "restore";
     }
 
+    const ensureStartMs = Date.now();
     const joinState = await ensureClassSessionMembership({
       classId,
       sessionId,
@@ -491,6 +587,12 @@ export async function POST(req: Request) {
       source: joinSource,
       displayName,
     });
+    ensureMembershipMs = Date.now() - ensureStartMs;
+    if (joinState.ok) {
+      sessionMembersUpsertMs = joinState.sessionMemberUpserted
+        ? ensureMembershipMs
+        : 0;
+    }
 
     if (!joinState.ok) {
       const httpStatus =
@@ -514,10 +616,12 @@ export async function POST(req: Request) {
       return NextResponse.json(joinState, { status: httpStatus });
     }
 
+    const memberRowsStartMs = Date.now();
     const { data: memberRows, count } = await supabaseAdmin
       .from("session_members")
       .select("device_id", { count: "exact" })
       .eq("session_id", sessionId);
+    sessionFetchMs += Date.now() - memberRowsStartMs;
 
     const memberIds = (memberRows ?? [])
       .map((row) => String(row.device_id ?? "").trim())
@@ -531,6 +635,17 @@ export async function POST(req: Request) {
         `class=${classId.slice(-6)} device=${deviceId.slice(-4)} ` +
         `openJoinedClass=${openJoinedClass ? 1 : 0} source=${joinSource}`
     );
+
+    logRoomJoinPerf({
+      totalMs: Date.now() - routeStartMs,
+      path: "full_join",
+      ensureMembershipMs,
+      sessionMembersUpsertMs,
+      presenceMs,
+      sessionFetchMs,
+      classFetchMs,
+      repairMs,
+    });
 
     return NextResponse.json({
       ok: true,

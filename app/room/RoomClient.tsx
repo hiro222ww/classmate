@@ -147,6 +147,7 @@ type SessionJoinResponse = {
   capacity?: number;
   memberCount?: number;
   alreadyInSession?: boolean;
+  fastPath?: string;
   error?: string;
 };
 
@@ -532,6 +533,14 @@ function resolveRoomMemberDisplay(
   };
 }
 
+function buildRoomMembersFetchFingerprint(
+  sessionId: string,
+  classId: string,
+  members: MemberRow[]
+): string {
+  return `${sessionId}|${classId}|${members.length}|${compactMemberDeviceIds(members)}`;
+}
+
 function applyRoomLocalLeftOverride(
   member: MemberRow,
   sessionId: string
@@ -687,6 +696,11 @@ export default function RoomClient() {
   const memberLastInListAtRef = useRef<Map<string, number>>(new Map());
   const fetchStatusInFlightRef = useRef<Promise<void> | null>(null);
   const fetchStatusPendingRef = useRef(false);
+  const membersRef = useRef<MemberRow[]>([]);
+  const roomMembersFetchFingerprintRef = useRef("");
+  const roomPostJoinFetchKeyRef = useRef<string | null>(null);
+  const roomFastReadyKeyRef = useRef<string | null>(null);
+  const inviteJoinDoneKeyRef = useRef<string | null>(null);
   const inviteJoinGraceUntilRef = useRef(0);
   const hasClassMembershipHintRef = useRef(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -1027,11 +1041,19 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [sessionId, classId, deviceId]);
 
   useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
+
+  useEffect(() => {
     membersCount2SinceRef.current = null;
     membersCount2StreakRef.current = 0;
     presenceMapSeen2Ref.current = false;
     lastSuccessfulFetchOpGenRef.current = 0;
     autoCallAttemptedRef.current = false;
+    roomMembersFetchFingerprintRef.current = "";
+    roomPostJoinFetchKeyRef.current = null;
+    roomFastReadyKeyRef.current = null;
+    inviteJoinDoneKeyRef.current = null;
     setLifecycleReady(false);
     setResolving(false);
     cancelAutoCallTimer("session_changed");
@@ -1650,6 +1672,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       force?: boolean;
       fast?: boolean;
       afterJoinPending?: boolean;
+      forFastReady?: boolean;
       reason?: string;
     }) => {
       const fetchReason = opts?.reason ?? "manual";
@@ -1659,9 +1682,24 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         return;
       }
       if (
-        sessionResolvingRef.current ||
-        (!roomLifecycleReadyRef.current && !opts?.afterJoinPending)
+        !opts?.forFastReady &&
+        (sessionResolvingRef.current ||
+          (!roomLifecycleReadyRef.current && !opts?.afterJoinPending))
       ) {
+        return;
+      }
+      if (
+        !opts?.force &&
+        !opts?.forFastReady &&
+        fetchReason === "manual" &&
+        roomLifecycleReadyRef.current &&
+        roomMembersFetchFingerprintRef.current.startsWith(
+          `${sessionId}|${classId}|`
+        )
+      ) {
+        console.log(
+          `[room-perf] fetchStatus skip=ready_manual_suppressed reason=${fetchReason}`
+        );
         return;
       }
       if (isClassLeftLocally(classId)) {
@@ -1920,6 +1958,11 @@ if (!res.ok || !json?.ok) {
         }
 
         setMemberCount(Math.max(displayMemberCount, 0));
+        roomMembersFetchFingerprintRef.current = buildRoomMembersFetchFingerprint(
+          sessionId,
+          classId,
+          incomingMembers
+        );
         clearSoftConnectionError("status");
       } catch (e: any) {
         if (e?.name !== "AbortError") setSoftConnectionError("status");
@@ -1955,6 +1998,101 @@ if (!res.ok || !json?.ok) {
       isBlockedClosedSession,
     ]
   );
+
+  const probeRoomFastReady = useCallback(async (): Promise<boolean> => {
+    if (!sessionId || !classId || !deviceId || !displayName) return false;
+
+    const fastKey = `${classId}:${sessionId}:${deviceId}`;
+    if (roomFastReadyKeyRef.current === fastKey) return true;
+
+    const totalStartMs = Date.now();
+    const networkStartMs = Date.now();
+
+    try {
+      const qs = new URLSearchParams({
+        sessionId,
+        classId,
+        lite: "1",
+        fast: "1",
+      });
+      qs.set("viewerDeviceId", deviceId);
+
+      const res = await fetch(`/api/session/status?${qs.toString()}`, {
+        cache: "no-store",
+      });
+      const networkMs = Date.now() - networkStartMs;
+      const parseStartMs = Date.now();
+      const rawText = await res.text().catch(() => "");
+      let json: SessionStatusResponse | null = null;
+
+      try {
+        json = rawText ? (JSON.parse(rawText) as SessionStatusResponse) : null;
+      } catch {
+        json = null;
+      }
+      const parseMs = Date.now() - parseStartMs;
+
+      if (!res.ok || !json?.ok) return false;
+
+      const incomingMembers = (Array.isArray(json.members) ? json.members : []).map(
+        (member) => applyRoomLocalLeftOverride(member, sessionId)
+      );
+      const selfIn =
+        incomingMembers.some(
+          (member) => String(member.device_id ?? "").trim() === deviceId
+        ) || json.viewerState?.inSessionMembers === true;
+
+      if (!selfIn || incomingMembers.length < 1) return false;
+
+      const applyStartMs = Date.now();
+      setMembers(incomingMembers);
+      setMemberCount(incomingMembers.length);
+      if (json.session?.status) setStatus(String(json.session.status));
+      if (!topicTitle && json.session?.topic) {
+        setTopicTitle(String(json.session.topic).trim() || "ルーム");
+      }
+      if (Number.isFinite(Number(json.session?.capacity))) {
+        setCapacity(Number(json.session?.capacity));
+      }
+      hasClassMembershipHintRef.current = true;
+      roomMembersFetchFingerprintRef.current = buildRoomMembersFetchFingerprint(
+        sessionId,
+        classId,
+        incomingMembers
+      );
+      setLifecycleReady(true);
+      setResolving(false);
+      roomFastReadyKeyRef.current = fastKey;
+
+      if (roomLifecycleStartRef.current != null) {
+        console.log(
+          `[room-perf] ready ms=${Date.now() - roomLifecycleStartRef.current} path=fast_ready`
+        );
+        roomLifecycleStartRef.current = null;
+      }
+
+      const applyMs = Date.now() - applyStartMs;
+      console.log(
+        `[room-perf] join networkMs=${networkMs} parseMs=${parseMs} applyMs=${applyMs} ` +
+          `totalMs=${Date.now() - totalStartMs} path=fast_ready_probe`
+      );
+      console.log(
+        `[room-ready] fast-path members=${incomingMembers.length} self=1 ` +
+          `session=${sessionId.slice(-6)} device=${deviceId.slice(-4)}`
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }, [
+    classId,
+    deviceId,
+    displayName,
+    sessionId,
+    setLifecycleReady,
+    setResolving,
+    topicTitle,
+  ]);
 
   useEffect(() => {
     if (!classId || !sessionId || !deviceId) return;
@@ -2372,8 +2510,18 @@ const name = rawName === "You" ? "参加者" : rawName;
     setMemberCount((prev) => Math.max(prev, 1));
     setErr("");
 
-    await fetchStatus({ force: true, fast: true, afterJoinPending: true });
-    void fetchStatus({ force: true, afterJoinPending: true });
+    const postJoinKey = `${classId}:${sessionId}`;
+    if (roomPostJoinFetchKeyRef.current !== postJoinKey) {
+      roomPostJoinFetchKeyRef.current = postJoinKey;
+      await fetchStatus({
+        force: true,
+        fast: true,
+        afterJoinPending: true,
+        reason: "post_join",
+      });
+    } else {
+      console.log("[room-perf] fetchStatus skip=post_join_coalesced");
+    }
 
     const reportedCount = Number(json?.memberCount ?? 0);
     if (reportedCount <= 0) {
@@ -2393,7 +2541,9 @@ const name = rawName === "You" ? "参加者" : rawName;
   const joinStartMs = Date.now();
 
   try {
-    setResolving(true);
+    if (!roomLifecycleReadyRef.current) {
+      setResolving(true);
+    }
     cancelAutoCallTimer("session_resolving");
 
     if (shouldAbortJoin()) {
@@ -2469,6 +2619,11 @@ const name = rawName === "You" ? "参加者" : rawName;
       inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
       markJoinedClassesStale(classId);
       markAutoCallOnce(sessionId, deviceId);
+      inviteJoinDoneKeyRef.current = joinKey;
+      console.log(
+        "[room-join] invite-join-done session_join=fast_expected " +
+          `class=${classId.slice(-6)} session=${sessionId.slice(-6)}`
+      );
     }
 
     console.log("[room join] request", {
@@ -2489,6 +2644,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       return;
     }
 
+    const joinNetworkStartMs = Date.now();
     const res = await fetch(
       `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
       {
@@ -2508,8 +2664,9 @@ const name = rawName === "You" ? "参加者" : rawName;
         cache: "no-store",
       }
     );
-    console.log(`[room-perf] join ms=${Date.now() - joinStartMs}`);
+    const joinNetworkMs = Date.now() - joinNetworkStartMs;
 
+      const joinParseStartMs = Date.now();
       const rawText = await res.text().catch(() => "");
       let json: SessionJoinResponse | null = null;
 
@@ -2518,6 +2675,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       } catch {
         json = null;
       }
+      const joinParseMs = Date.now() - joinParseStartMs;
 
       if (!res.ok || !json?.ok) {
         const error = json?.error || rawText;
@@ -2666,7 +2824,14 @@ const name = rawName === "You" ? "参加者" : rawName;
 
       joinResultOk = true;
       joinResultStatus = String(json?.status ?? "ok");
+      const joinApplyStartMs = Date.now();
       await applyJoinSuccess(json);
+      const joinApplyMs = Date.now() - joinApplyStartMs;
+      console.log(
+        `[room-perf] join networkMs=${joinNetworkMs} parseMs=${joinParseMs} ` +
+          `applyMs=${joinApplyMs} totalMs=${Date.now() - joinStartMs} ` +
+          `fastPath=${json?.alreadyInSession ? 1 : 0}`
+      );
     } catch (e: any) {
       if (shouldAbortJoin() && !canApplyJoinResult(joinTarget)) {
         logJoinIgnoredResult("op_stale");
@@ -2693,6 +2858,16 @@ const name = rawName === "You" ? "参加者" : rawName;
   }
 
   async function handleSkippedJoinSettled() {
+    const selfReady =
+      roomLifecycleReadyRef.current &&
+      membersRef.current.some(
+        (member) => String(member.device_id ?? "").trim() === deviceId
+      );
+    if (selfReady) {
+      console.log("[room-members] skip reason=members_already_ready");
+      return;
+    }
+
     console.log(`[room-members] wait reason=join_result_pending`);
     if (isBlockedClosedSession(sessionId)) {
       console.log(
@@ -2702,12 +2877,16 @@ const name = rawName === "You" ? "参加者" : rawName;
     }
     if (!canApplyJoinResult(joinTarget)) return;
 
-    if (joinedSessionKeyRef.current === joinKey) {
-      await fetchStatus({ force: true, fast: true, afterJoinPending: true });
-      return;
+    const postJoinKey = `${classId}:${sessionId}`;
+    if (roomPostJoinFetchKeyRef.current !== postJoinKey) {
+      roomPostJoinFetchKeyRef.current = postJoinKey;
+      await fetchStatus({
+        force: true,
+        fast: true,
+        afterJoinPending: true,
+        reason: "join_pending_settled",
+      });
     }
-
-    await fetchStatus({ force: true, fast: true, afterJoinPending: true });
 
     if (joinedSessionKeyRef.current !== joinKey) {
       scheduleJoinRetry("stale_join_result", 500, joinKey);
@@ -2756,7 +2935,12 @@ const name = rawName === "You" ? "参加者" : rawName;
   }
 
   retryJoinRef.current = join;
-  void join();
+
+  void (async () => {
+    await probeRoomFastReady();
+    if (cancelled) return;
+    await join();
+  })();
 
   return () => {
     cancelled = true;
@@ -2787,6 +2971,7 @@ const name = rawName === "You" ? "参加者" : rawName;
   isBlockedClosedSession,
   scheduleJoinRetry,
   selfRejoinSessionIfMissing,
+  probeRoomFastReady,
   router,
 ]);
 
@@ -2795,10 +2980,19 @@ const name = rawName === "You" ? "参加者" : rawName;
     if (pathname !== "/room") return;
     if (!roomSessionReady || sessionResolving) return;
 
-    void fetchStatus({ force: true, fast: true });
+    const postJoinKey = `${classId}:${sessionId}`;
+    if (roomPostJoinFetchKeyRef.current === postJoinKey) {
+      console.log("[room-perf] fetchStatus skip=initial_sync_post_join_done");
+    } else {
+      void fetchStatus({ force: true, fast: true, reason: "initial_sync" });
+    }
 
     const presenceSync = window.setTimeout(() => {
-      void fetchStatus({ force: true });
+      if (roomMembersFetchFingerprintRef.current.startsWith(`${sessionId}|${classId}|`)) {
+        console.log("[room-perf] fetchStatus skip=presence_sync_ready");
+        return;
+      }
+      void fetchStatus({ force: true, reason: "presence_sync_delayed" });
     }, 1500);
 
     const interval = window.setInterval(() => {
