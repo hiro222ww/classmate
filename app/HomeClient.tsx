@@ -388,6 +388,8 @@ export default function HomeClient() {
   const openClassRef = useRef<(target: MineClass) => Promise<void>>(async () => {});
   const handledPushOpenClassIdRef = useRef<string | null>(null);
   const leavingClassIdsRef = useRef<Set<string>>(new Set());
+  const fetchJoinedClassesGenRef = useRef(0);
+  const leftSucceededClassIdsRef = useRef<Set<string>>(new Set());
 
   const [mounted, setMounted] = useState(false);
   const [inAppToasts, setInAppToasts] = useState<InAppToastItem[]>([]);
@@ -401,7 +403,8 @@ export default function HomeClient() {
         expectedClassId?: string | null;
       }
     ) => {
-      console.log("[home] fetchJoinedClasses start", { reason });
+      const fetchGen = fetchJoinedClassesGenRef.current;
+      console.log(`[home-fetch] start gen=${fetchGen} reason=${reason}`);
 
       const id = String(
         opts?.deviceId ?? deviceId ?? getDeviceId() ?? ""
@@ -432,6 +435,14 @@ export default function HomeClient() {
           return;
         }
 
+        const currentGen = fetchJoinedClassesGenRef.current;
+        if (fetchGen !== currentGen) {
+          console.log(
+            `[home-fetch] ignored reason=stale_after_leave gen=${fetchGen} currentGen=${currentGen}`
+          );
+          return;
+        }
+
         const rawClasses = Array.isArray(classesJson.classes)
           ? (classesJson.classes as MineClass[])
           : [];
@@ -439,30 +450,40 @@ export default function HomeClient() {
         const nextClasses: MineClass[] = [];
         let localHiddenDetected = false;
         for (const c of rawClasses) {
-          const id = String(c.id ?? "").trim();
-          if (!id) continue;
+          const classId = String(c.id ?? "").trim();
+          if (!classId) continue;
 
-          if (leavingClassIdsRef.current.has(id)) {
-            continue;
-          }
-
-          if (isLocallyHiddenClass(id)) {
-            localHiddenDetected = true;
+          if (leftSucceededClassIdsRef.current.has(classId)) {
             console.log(
-              `[home] localHiddenDetected class=${id.slice(-6)} action=clear reason=server_active_membership`
+              `[home-leave] rollback reason=server_still_active class=${classId.slice(-6)}`
             );
-            clearLocallyHiddenClass(id);
+            leftSucceededClassIdsRef.current.delete(classId);
+            clearClassLeftLocally(classId);
+            clearLocallyHiddenClass(classId);
+          } else {
+            if (leavingClassIdsRef.current.has(classId)) {
+              continue;
+            }
+
+            if (isLocallyHiddenClass(classId)) {
+              localHiddenDetected = true;
+              console.log(
+                `[home] localHiddenDetected class=${classId.slice(-6)} action=clear reason=server_active_membership`
+              );
+              clearLocallyHiddenClass(classId);
+            }
+
+            if (isClassLeftLocally(classId)) {
+              console.log(
+                `[home] clear-local-left reason=server_active_membership class=${classId.slice(-6)}`
+              );
+              clearClassLeftLocally(classId);
+            }
           }
 
-          if (isClassLeftLocally(id)) {
-            console.log(
-              `[home] clear-local-left reason=server_active_membership class=${id.slice(-6)}`
-            );
-            clearClassLeftLocally(id);
-          }
           const sessionId = String(c.session_id ?? "").trim();
           if (sessionId) {
-            storeHomeClassSessionHint(id, sessionId, c.session_status);
+            storeHomeClassSessionHint(classId, sessionId, c.session_status);
           }
 
           nextClasses.push(c);
@@ -526,6 +547,25 @@ export default function HomeClient() {
             `classIds=${classIds.map((id) => id.slice(-6)).join(",") || "-"} reason=${reason}`
         );
 
+        const applyClasses = nextClasses.filter((c) => {
+          const classId = String(c.id ?? "").trim();
+          if (!classId) return false;
+          if (leftSucceededClassIdsRef.current.has(classId)) {
+            console.log(`[home-leave] suppress class=${classId.slice(-6)}`);
+            return false;
+          }
+          return true;
+        });
+
+        for (const suppressedId of [...leftSucceededClassIdsRef.current]) {
+          const stillInRaw = rawClasses.some(
+            (row) => String(row.id ?? "").trim() === suppressedId
+          );
+          if (!stillInRaw) {
+            leftSucceededClassIdsRef.current.delete(suppressedId);
+          }
+        }
+
         setClasses((prev) => {
           const forceApply =
             reason === "invite_success" ||
@@ -536,14 +576,17 @@ export default function HomeClient() {
           if (
             !forceApply &&
             prev.length > 0 &&
-            nextClasses.length === 0 &&
+            applyClasses.length === 0 &&
             slotCount <= 0
           ) {
             console.warn("[home] ignore empty classes snapshot once");
-            return prev;
+            return prev.filter(
+              (c) =>
+                !leftSucceededClassIdsRef.current.has(String(c.id ?? "").trim())
+            );
           }
 
-          return nextClasses;
+          return applyClasses;
         });
 
         const expectedClassId = String(opts?.expectedClassId ?? "").trim();
@@ -1893,6 +1936,14 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     }
   }
 
+  function recordLeaveSuccess(classId: string) {
+    fetchJoinedClassesGenRef.current += 1;
+    leftSucceededClassIdsRef.current.add(classId);
+    console.log(`[home-leave] suppress class=${classId.slice(-6)}`);
+    removeClassFromHomeState(classId);
+    console.log(`[home-leave] success class=${classId.slice(-6)}`);
+  }
+
   function removeClassFromHomeState(classId: string) {
     markClassLeftLocally(classId);
     clearHomeClassSessionHint(classId);
@@ -1978,17 +2029,14 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       const alreadyLeft = errorCode === "not_member";
 
       if (res.ok && json?.ok) {
-        removeClassFromHomeState(classId);
-        console.log(
-          `[home-leave] success class=${classId.slice(-6)} source=${CLASS_LEAVE_CONFIRMED_SOURCE}`
-        );
+        recordLeaveSuccess(classId);
         return;
       }
 
       if (alreadyLeft) {
-        removeClassFromHomeState(classId);
-        console.log("[home-leave] success class=", classId.slice(-6), {
-          note: "already-left",
+        recordLeaveSuccess(classId);
+        console.log("[home-leave] note=already-left", {
+          classId: classId.slice(-6),
         });
         return;
       }
