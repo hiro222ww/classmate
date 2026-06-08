@@ -437,6 +437,7 @@ export default function HomeClient() {
           : [];
 
         const nextClasses: MineClass[] = [];
+        let localHiddenDetected = false;
         for (const c of rawClasses) {
           const id = String(c.id ?? "").trim();
           if (!id) continue;
@@ -445,25 +446,19 @@ export default function HomeClient() {
             continue;
           }
 
-          if (isClassLeftLocally(id)) {
-            if (reason === "leave_rollback") {
-              clearClassLeftLocally(id);
-            } else {
-              console.log(
-                `[home] class-hidden reason=class_leave_success class=${id.slice(-6)}`
-              );
-              continue;
-            }
-          }
-
           if (isLocallyHiddenClass(id)) {
+            localHiddenDetected = true;
             console.log(
-              `[home] ignore-local-hidden reason=active_membership class=${id.slice(-6)}`
-            );
-            console.log(
-              `[home] clear-local-hidden reason=server_membership_exists class=${id.slice(-6)}`
+              `[home] localHiddenDetected class=${id.slice(-6)} action=clear reason=server_active_membership`
             );
             clearLocallyHiddenClass(id);
+          }
+
+          if (isClassLeftLocally(id)) {
+            console.log(
+              `[home] clear-local-left reason=server_active_membership class=${id.slice(-6)}`
+            );
+            clearClassLeftLocally(id);
           }
           const sessionId = String(c.session_id ?? "").trim();
           if (sessionId) {
@@ -477,38 +472,43 @@ export default function HomeClient() {
           String(c.id ?? "").trim()
         );
 
-        const billableCount = Number(classesJson.membership_count_billable ?? 0);
-        const membershipCount = Number(classesJson.debug?.membershipCount ?? 0);
-        if (billableCount > 0 && nextClasses.length === 0) {
-          const billableIds = Array.isArray(classesJson.debug?.billableClassIds)
-            ? (classesJson.debug.billableClassIds as string[])
-            : [];
-          for (const billableId of billableIds) {
-            const hid = String(billableId ?? "").trim();
-            if (!hid || isClassLeftLocally(hid)) continue;
-            if (isLocallyHiddenClass(hid)) {
-              console.log(
-                `[home] clear-local-hidden reason=billable_membership_mismatch class=${hid.slice(-6)}`
-              );
-            }
-            clearLocallyHiddenClass(hid);
-          }
-          console.warn(
-            `[home] joined-classes mismatch billable=${billableCount} visible=0 ` +
-              `memberships=${membershipCount} hidden=${JSON.stringify(
-                classesJson.debug?.visibility?.hidden ?? []
-              )}`
+        const slotCount = Number(classesJson.membership_count_billable ?? 0);
+        const visibleClassIdsFromApi = Array.isArray(
+          classesJson.debug?.visibility?.visibleClassIds
+        )
+          ? (classesJson.debug.visibility.visibleClassIds as string[])
+          : classIds;
+        const slotCountClassIds = Array.isArray(
+          classesJson.debug?.visibility?.slotCountClassIds
+        )
+          ? (classesJson.debug.visibility.slotCountClassIds as string[])
+          : visibleClassIdsFromApi;
+
+        if (localHiddenDetected) {
+          console.log("[home] localHiddenDetected=1 action=cleared_for_server_membership");
+        }
+
+        const visibleEqualsSlot =
+          visibleClassIdsFromApi.length === slotCountClassIds.length &&
+          visibleClassIdsFromApi.every(
+            (cid, index) => cid === slotCountClassIds[index]
           );
-          if (
-            reason === "mount" ||
-            reason === "focus" ||
-            reason === "visibility" ||
-            reason === "return_home"
-          ) {
-            window.setTimeout(() => {
-              void fetchJoinedClasses("membership_mismatch_retry", { deviceId: id });
-            }, 300);
-          }
+        console.log(
+          `[class-slots] device=${id.slice(-6)} limit=${String(classesJson.class_slots ?? "-")} ` +
+            `count=${slotCount} slotCountClassIds=${slotCountClassIds.map((cid) => cid.slice(-6)).join(",") || "-"} ` +
+            `visibleClassIds=${visibleClassIdsFromApi.map((cid) => cid.slice(-6)).join(",") || "-"} source=home_client`
+        );
+        console.log(
+          visibleEqualsSlot
+            ? `[class-slots] invariant-ok visibleEqualsSlot=1`
+            : `[class-slots] invariant-violation visibleEqualsSlot=0`
+        );
+
+        if (slotCount > 0 && nextClasses.length === 0) {
+          console.warn(
+            `[home] joined-classes mismatch slotCount=${slotCount} visible=0 ` +
+              `slotCountClassIds=${slotCountClassIds.map((cid) => cid.slice(-6)).join(",") || "-"}`
+          );
         }
 
         if (classesJson.recruitment_session_ttl_unlimited === true) {
@@ -537,8 +537,7 @@ export default function HomeClient() {
             !forceApply &&
             prev.length > 0 &&
             nextClasses.length === 0 &&
-            billableCount <= 0 &&
-            membershipCount <= 0
+            slotCount <= 0
           ) {
             console.warn("[home] ignore empty classes snapshot once");
             return prev;
@@ -1520,7 +1519,6 @@ return () => {
       const id = String(c.id ?? "").trim();
       if (!id) continue;
       if (leavingClassIdsRef.current.has(id)) continue;
-      if (isClassLeftLocally(id)) continue;
 
       const prev = byId.get(id);
       const prevTime = prev?.created_at ? new Date(prev.created_at).getTime() : 0;
@@ -1896,6 +1894,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   }
 
   function removeClassFromHomeState(classId: string) {
+    markClassLeftLocally(classId);
     clearHomeClassSessionHint(classId);
     setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
     setMembersByClass((prev) => {
@@ -1979,7 +1978,6 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       const alreadyLeft = errorCode === "not_member";
 
       if (res.ok && json?.ok) {
-        markClassLeftLocally(classId);
         removeClassFromHomeState(classId);
         console.log(
           `[home-leave] success class=${classId.slice(-6)} source=${CLASS_LEAVE_CONFIRMED_SOURCE}`
@@ -1988,7 +1986,6 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       }
 
       if (alreadyLeft) {
-        markClassLeftLocally(classId);
         removeClassFromHomeState(classId);
         console.log("[home-leave] success class=", classId.slice(-6), {
           note: "already-left",

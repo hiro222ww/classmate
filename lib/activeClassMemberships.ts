@@ -28,10 +28,28 @@ export type HomeClassVisibilityRow = {
 };
 
 export type HomeClassVisibilityDebug = {
+  deviceId?: string;
+  plan?: { slotLimit: number | null };
   activeMembershipClassIds: string[];
   visibleClassIds: string[];
   slotCountClassIds: string[];
+  leftClassIds: string[];
+  excludedReasons: Record<string, string>;
+  localHiddenDetected?: boolean;
   hidden: HomeClassVisibilityRow[];
+};
+
+export type HomeClassSlotContext = {
+  deviceId: string;
+  slotLimit: number;
+  activeMembershipClassIds: string[];
+  visibleClassIds: string[];
+  slotCountClassIds: string[];
+  slotCount: number;
+  leftClassIds: string[];
+  excludedReasons: Record<string, string>;
+  snapshot: ActiveMembershipSnapshot;
+  rows: ActiveClassMembershipRow[];
 };
 
 function tailId(id: string) {
@@ -143,6 +161,67 @@ export function buildActiveMembershipSnapshot(
   };
 }
 
+/** Home visible + slot-count source of truth: active billable class_memberships only. */
+export function resolveHomeVisibleBillableClassIds(
+  rows: ActiveClassMembershipRow[]
+): {
+  visibleClassIds: string[];
+  slotCountClassIds: string[];
+  excludedReasons: Record<string, string>;
+} {
+  const visibleClassIds: string[] = [];
+  const excludedReasons: Record<string, string> = {};
+
+  for (const row of rows) {
+    if (!row.isBillable) {
+      excludedReasons[row.classId] = "legacy_entry_class";
+      continue;
+    }
+    visibleClassIds.push(row.classId);
+  }
+
+  return {
+    visibleClassIds,
+    slotCountClassIds: [...visibleClassIds],
+    excludedReasons,
+  };
+}
+
+export function logHomeClassSlotsSnapshot(
+  context: Pick<
+    HomeClassSlotContext,
+    | "deviceId"
+    | "slotLimit"
+    | "visibleClassIds"
+    | "slotCountClassIds"
+    | "slotCount"
+  >,
+  source = "server"
+) {
+  const visibleIds = context.visibleClassIds.map(tailId).join(",") || "-";
+  const slotIds = context.slotCountClassIds.map(tailId).join(",") || "-";
+  const invariantOk =
+    context.visibleClassIds.length === context.slotCountClassIds.length &&
+    context.visibleClassIds.every(
+      (id, index) => id === context.slotCountClassIds[index]
+    );
+
+  console.log(
+    `[class-slots] device=${tailId(context.deviceId)} limit=${context.slotLimit} ` +
+      `count=${context.slotCount} slotCountClassIds=${slotIds} ` +
+      `visibleClassIds=${visibleIds} source=${source}`
+  );
+
+  if (invariantOk) {
+    console.log(`[class-slots] invariant-ok visibleEqualsSlot=1`);
+  } else {
+    console.warn(
+      `[class-slots] invariant-violation visibleEqualsSlot=0 ` +
+        `visible=${visibleIds} slot=${slotIds}`
+    );
+  }
+}
+
 export async function getActiveMembershipSnapshot(
   sb: SupabaseClient,
   deviceId: string
@@ -156,11 +235,17 @@ export async function getActiveMembershipSnapshot(
   }
 
   const snapshot = buildActiveMembershipSnapshot(fetched.rows);
+  const resolved = resolveHomeVisibleBillableClassIds(fetched.rows);
 
-  console.log(
-    `[class-slots] count activeMemberships=${snapshot.billableCount} ` +
-      `legacy=${snapshot.legacyCount} total=${snapshot.totalCount} ` +
-      `classIds=${snapshot.billableClassIds.map(tailId).join(",") || "-"}`
+  logHomeClassSlotsSnapshot(
+    {
+      deviceId: String(deviceId ?? "").trim(),
+      slotLimit: -1,
+      visibleClassIds: resolved.visibleClassIds,
+      slotCountClassIds: resolved.slotCountClassIds,
+      slotCount: resolved.visibleClassIds.length,
+    },
+    "membership_snapshot"
   );
 
   return { ok: true, snapshot };
@@ -211,10 +296,19 @@ export function buildHomeClassVisibilityDebug(params: {
     });
   }
 
+  const excludedReasons: Record<string, string> = {};
+  for (const row of hidden) {
+    if (row.reason) {
+      excludedReasons[row.classId] = row.reason;
+    }
+  }
+
   return {
     activeMembershipClassIds: params.rows.map((row) => row.classId),
     visibleClassIds: params.visibleClassIds,
-    slotCountClassIds: params.rows.filter((row) => row.isBillable).map((row) => row.classId),
+    slotCountClassIds: [...params.visibleClassIds],
+    leftClassIds: [],
+    excludedReasons,
     hidden,
   };
 }

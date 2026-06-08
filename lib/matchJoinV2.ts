@@ -14,7 +14,7 @@ import {
   GENDER_RESTRICTED_TOPIC_MESSAGE,
   genderRestrictionBlocksJoin,
 } from "@/lib/genderRestriction";
-import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
+import { evaluateClassSlotsLimit } from "@/lib/classMembershipSlots";
 import {
   blockNewJoinIfAdmissionClosed,
   canRejoinFromEligibility,
@@ -671,52 +671,52 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
-    const slotsRes = await getClassSlots(deviceId);
-    if (!slotsRes.ok) return slotsRes.response;
-    const classSlots = slotsRes.classSlots;
-
-    const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
-    if (!billableRes.ok) {
+    const slotEval = await evaluateClassSlotsLimit(supabase, deviceId, {
+      joiningClassId: forcedClassId || null,
+    });
+    if (!slotEval.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "memberships_lookup_failed",
-          detail: billableRes.error,
+          detail: slotEval.error,
         },
         { status: 500 }
       );
     }
 
-    const membershipSnapshot = billableRes.snapshot;
-    const allMembershipIdsBefore = membershipSnapshot.billableClassIds;
+    const slotContext = slotEval.context;
+    const classSlots = slotContext.slotLimit;
+    const membershipSnapshot = slotContext.snapshot;
+    const allMembershipIdsBefore = slotContext.slotCountClassIds;
 
-    console.log(
-      `[class-slots] count activeMemberships=${membershipSnapshot.billableCount} ` +
-        `limit=${classSlots} classIds=${membershipSnapshot.billableClassIds.map((id) => id.slice(-6)).join(",") || "-"}`
-    );
-
-    if (!forcedClassId && membershipSnapshot.billableCount >= classSlots) {
+    if (!slotEval.allowed) {
       console.log(
-        `[match-join] reject class_slot_limit active=${membershipSnapshot.billableCount} limit=${classSlots}`
+        `[match-join] reject class_slot_limit active=${slotContext.slotCount} limit=${classSlots}`
       );
       console.warn("[class/match-join-v2] class_slots_limit", {
         deviceId,
         classSlots,
-        billableCount: membershipSnapshot.billableCount,
+        slotCount: slotContext.slotCount,
+        visibleClassIds: slotContext.visibleClassIds,
+        slotCountClassIds: slotContext.slotCountClassIds,
         totalMembershipCount: membershipSnapshot.totalCount,
         legacyMembershipCount: membershipSnapshot.legacyCount,
         billableClassIds: membershipSnapshot.billableClassIds,
         legacyClassIds: membershipSnapshot.legacyClassIds,
+        excludedReasons: slotContext.excludedReasons,
       });
 
       return NextResponse.json(
         {
           ok: false,
           error: "class_slots_limit",
-          currentCount: membershipSnapshot.billableCount,
+          currentCount: slotContext.slotCount,
           totalMembershipCount: membershipSnapshot.totalCount,
           legacyMembershipCount: membershipSnapshot.legacyCount,
           classSlots,
+          visibleClassIds: slotContext.visibleClassIds,
+          slotCountClassIds: slotContext.slotCountClassIds,
         },
         { status: 400 }
       );
@@ -1048,10 +1048,10 @@ export async function matchJoinV2Post(req: Request) {
       selfAge,
       alreadyJoined: Boolean(row.already_joined),
       reused: resolvedReused,
-      currentCount: Number(
-        row.current_count ?? membershipSnapshot.billableCount
-      ),
-      billableMembershipCount: membershipSnapshot.billableCount,
+      currentCount: Number(row.current_count ?? slotContext.slotCount),
+      billableMembershipCount: slotContext.slotCount,
+      visibleClassIds: slotContext.visibleClassIds,
+      slotCountClassIds: slotContext.slotCountClassIds,
       totalMembershipCount: membershipSnapshot.totalCount,
       legacyMembershipCount: membershipSnapshot.legacyCount,
       classSlots,

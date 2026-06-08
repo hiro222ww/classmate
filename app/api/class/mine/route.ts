@@ -3,10 +3,9 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 import {
   buildHomeClassVisibilityDebug,
-  fetchActiveClassMemberships,
-  getActiveMembershipSnapshot,
+  resolveHomeVisibleBillableClassIds,
 } from "@/lib/activeClassMemberships";
-import { getClassSlotsForDevice } from "@/lib/classMembershipSlots";
+import { getHomeClassSlotContext } from "@/lib/classMembershipSlots";
 import {
   getClassStatusLabel,
   isDeadlinePassed,
@@ -73,25 +72,26 @@ export async function GET(req: Request) {
       );
     }
 
-    const membershipRes = await fetchActiveClassMemberships(
+    const slotCtxRes = await getHomeClassSlotContext(
       supabaseAdmin,
       normalizedDeviceId
     );
 
-    if (!membershipRes.ok) {
+    if (!slotCtxRes.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "class_mine_membership_failed",
-          detail: membershipRes.error,
+          detail: slotCtxRes.error,
         },
         { status: 500 }
       );
     }
 
-    const membershipRows = membershipRes.rows;
+    const slotContext = slotCtxRes.context;
+    const membershipRows = slotContext.rows;
+    const classIds = slotContext.visibleClassIds;
     const billableMembershipRows = membershipRows.filter((row) => row.isBillable);
-    const classIds = billableMembershipRows.map((row) => row.classId);
 
     console.log(
       `[home] joined-classes source=class_memberships count=${classIds.length} ` +
@@ -106,36 +106,41 @@ export async function GET(req: Request) {
     }
 
     if (classIds.length === 0) {
-      const snapshotRes = await getActiveMembershipSnapshot(
-        supabaseAdmin,
-        normalizedDeviceId
-      );
-      const [slotsRes] = await Promise.all([
-        getClassSlotsForDevice(supabaseAdmin, normalizedDeviceId),
-      ]);
+      const visibility = buildHomeClassVisibilityDebug({
+        rows: membershipRows,
+        visibleClassIds: [],
+      });
 
       return NextResponse.json({
         ok: true,
         classes: [],
-        class_slots: slotsRes.ok ? slotsRes.classSlots : null,
-        membership_count_billable: snapshotRes.ok
-          ? snapshotRes.snapshot.billableCount
-          : 0,
-        membership_count_total: snapshotRes.ok
-          ? snapshotRes.snapshot.totalCount
-          : 0,
-        membership_count_legacy: snapshotRes.ok
-          ? snapshotRes.snapshot.legacyCount
-          : 0,
+        class_slots: slotContext.slotLimit,
+        membership_count_billable: slotContext.slotCount,
+        membership_count_total: slotContext.snapshot.totalCount,
+        membership_count_legacy: slotContext.snapshot.legacyCount,
         debug: {
           membershipCount: membershipRows.length,
           visibleClassCount: 0,
-          billableMembershipCount: 0,
-          legacyMembershipCount: membershipRows.filter((row) => row.isLegacy).length,
-          visibility: buildHomeClassVisibilityDebug({
-            rows: membershipRows,
-            visibleClassIds: [],
-          }),
+          billableMembershipCount: slotContext.slotCount,
+          legacyMembershipCount: slotContext.snapshot.legacyCount,
+          classSlots: slotContext.slotLimit,
+          visibility: {
+            ...visibility,
+            deviceId: normalizedDeviceId,
+            plan: { slotLimit: slotContext.slotLimit },
+            excludedReasons: slotContext.excludedReasons,
+          },
+          ...(debugMemberships
+            ? {
+                deviceId: normalizedDeviceId,
+                plan: { slotLimit: slotContext.slotLimit },
+                activeMembershipClassIds: slotContext.activeMembershipClassIds,
+                visibleClassIds: slotContext.visibleClassIds,
+                slotCountClassIds: slotContext.slotCountClassIds,
+                leftClassIds: slotContext.leftClassIds,
+                excludedReasons: slotContext.excludedReasons,
+              }
+            : {}),
         },
       });
     }
@@ -364,20 +369,23 @@ export async function GET(req: Request) {
       };
     });
 
-    const [slotsRes, snapshotRes] = await Promise.all([
-      getClassSlotsForDevice(supabaseAdmin, normalizedDeviceId),
-      getActiveMembershipSnapshot(supabaseAdmin, normalizedDeviceId),
-    ]);
+    const visibleClassIds = classes.map((c) => String(c.id));
+    const resolvedVisible = resolveHomeVisibleBillableClassIds(membershipRows);
+    if (visibleClassIds.length !== resolvedVisible.visibleClassIds.length) {
+      console.warn("[class/mine] visible-class mismatch", {
+        rendered: visibleClassIds.map(tailId),
+        expected: resolvedVisible.visibleClassIds.map(tailId),
+      });
+    }
 
-    const membershipSnapshot = snapshotRes.ok ? snapshotRes.snapshot : null;
     const visibility = buildHomeClassVisibilityDebug({
       rows: membershipRows,
-      visibleClassIds: classes.map((c) => String(c.id)),
+      visibleClassIds,
     });
 
     console.log("[class/mine] slot snapshot", {
-      classSlots: slotsRes.ok ? slotsRes.classSlots : null,
-      billableCount: membershipSnapshot?.billableCount ?? null,
+      classSlots: slotContext.slotLimit,
+      slotCount: slotContext.slotCount,
       visibleClassCount: classes.length,
       hidden: visibility.hidden.map((row) => ({
         classId: tailId(row.classId),
@@ -388,27 +396,39 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       classes,
-      class_slots: slotsRes.ok ? slotsRes.classSlots : null,
-      membership_count_billable: membershipSnapshot?.billableCount ?? null,
-      membership_count_total: membershipSnapshot?.totalCount ?? null,
-      membership_count_legacy: membershipSnapshot?.legacyCount ?? null,
+      class_slots: slotContext.slotLimit,
+      membership_count_billable: slotContext.slotCount,
+      membership_count_total: slotContext.snapshot.totalCount,
+      membership_count_legacy: slotContext.snapshot.legacyCount,
       recruitment_session_ttl_minutes: recruitmentSessionTtlMinutes,
       recruitment_session_ttl_unlimited: recruitmentSessionTtlSetting.unlimited,
       debug: {
         membershipCount: membershipRows.length,
         visibleClassCount: classes.length,
-        billableMembershipCount: membershipSnapshot?.billableCount ?? null,
-        legacyMembershipCount: membershipSnapshot?.legacyCount ?? null,
-        classSlots: slotsRes.ok ? slotsRes.classSlots : null,
+        billableMembershipCount: slotContext.slotCount,
+        legacyMembershipCount: slotContext.snapshot.legacyCount,
+        classSlots: slotContext.slotLimit,
         classRowCount: classRows?.length ?? 0,
         topicRowCount: topicRows.length,
         sessionRowCount,
         joinFailedCount: classes.filter((c) => !c.join_ok).length,
-        billableClassIds: membershipSnapshot?.billableClassIds ?? [],
-        legacyClassIds: membershipSnapshot?.legacyClassIds ?? [],
-        visibility,
+        billableClassIds: slotContext.slotCountClassIds,
+        legacyClassIds: slotContext.snapshot.legacyClassIds,
+        visibility: {
+          ...visibility,
+          deviceId: normalizedDeviceId,
+          plan: { slotLimit: slotContext.slotLimit },
+          excludedReasons: slotContext.excludedReasons,
+        },
         ...(debugMemberships
           ? {
+              deviceId: normalizedDeviceId,
+              plan: { slotLimit: slotContext.slotLimit },
+              activeMembershipClassIds: slotContext.activeMembershipClassIds,
+              visibleClassIds: slotContext.visibleClassIds,
+              slotCountClassIds: slotContext.slotCountClassIds,
+              leftClassIds: slotContext.leftClassIds,
+              excludedReasons: slotContext.excludedReasons,
               memberships: membershipRows,
               visibleClasses: classes.map((c) => ({
                 id: c.id,
