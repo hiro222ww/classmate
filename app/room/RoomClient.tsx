@@ -641,6 +641,9 @@ export default function RoomClient() {
   const joinedSessionKeyRef = useRef<string | null>(null);
   const joinInFlightKeyRef = useRef<string | null>(null);
   const joinInFlightPromiseRef = useRef<Promise<void> | null>(null);
+  const joinRetryTimerRef = useRef<number | null>(null);
+  const joinSelfRejoinTimerRef = useRef<number | null>(null);
+  const retryJoinRef = useRef<(() => Promise<void>) | null>(null);
   const autoCallAttemptedRef = useRef(false);
   const autoCallTimerRef = useRef<number | null>(null);
   const autoCallArmKeyRef = useRef<string | null>(null);
@@ -755,6 +758,50 @@ export default function RoomClient() {
       return false;
     },
     []
+  );
+
+  const canApplyJoinResult = useCallback(
+    (target: { classId: string; sessionId: string; deviceId: string }) => {
+      if (typeof window !== "undefined" && window.location.pathname !== "/room") {
+        return false;
+      }
+      if (isClassLeftLocally(target.classId)) {
+        return false;
+      }
+      const current = roomIdentityRef.current;
+      return (
+        current.classId === String(target.classId ?? "").trim() &&
+        current.sessionId === String(target.sessionId ?? "").trim() &&
+        current.deviceId === String(target.deviceId ?? "").trim()
+      );
+    },
+    []
+  );
+
+  const scheduleJoinRetry = useCallback(
+    (reason: string, delayMs: number, joinKey: string) => {
+      if (joinRetryTimerRef.current != null) {
+        window.clearTimeout(joinRetryTimerRef.current);
+      }
+      console.log(`[room-join] retry reason=${reason} delayMs=${delayMs}`);
+      joinRetryTimerRef.current = window.setTimeout(() => {
+        joinRetryTimerRef.current = null;
+        if (joinedSessionKeyRef.current === joinKey) return;
+        const identity = roomIdentityRef.current;
+        if (
+          !identity.sessionId ||
+          !identity.classId ||
+          !identity.deviceId ||
+          isClassLeftLocally(identity.classId)
+        ) {
+          return;
+        }
+        joinedSessionKeyRef.current = null;
+        setLifecycleReady(false);
+        void retryJoinRef.current?.();
+      }, delayMs);
+    },
+    [setLifecycleReady]
   );
 
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
@@ -1304,7 +1351,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     prevMemberInternalRef.current = nextInternals;
   }, [visibleMembers, presenceMap, sessionId, deviceId]);
 
-  const selfRejoinSessionIfMissing = useCallback(async (): Promise<boolean> => {
+  const selfRejoinSessionIfMissing = useCallback(async (
+    reason = "missing_membership"
+  ): Promise<boolean> => {
     if (!sessionId || !classId || !deviceId) return true;
     if (isClassLeftLocally(classId)) {
       logRoomAsyncIgnored(classId, "class_left", "self_rejoin");
@@ -1339,7 +1388,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const name = rawName === "You" ? "参加者" : rawName;
 
     console.log(
-      `[session-members] self-rejoin start context=room device=${deviceId.slice(-4)} ` +
+      `[session-members] self-rejoin start reason=${reason} context=room device=${deviceId.slice(-4)} ` +
         `session=${sessionId.slice(-6)} class=${classId.slice(-6)}`
     );
 
@@ -1392,10 +1441,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [classId, deviceId, displayName, openJoinedClass, sessionId]);
 
   const fetchStatus = useCallback(
-    async (opts?: { force?: boolean; fast?: boolean }) => {
+    async (opts?: {
+      force?: boolean;
+      fast?: boolean;
+      afterJoinPending?: boolean;
+    }) => {
       if (!sessionId || !classId) return;
       if (pathname !== "/room") return;
-      if (sessionResolvingRef.current || !roomLifecycleReadyRef.current) {
+      if (
+        sessionResolvingRef.current ||
+        (!roomLifecycleReadyRef.current && !opts?.afterJoinPending)
+      ) {
         return;
       }
       if (isClassLeftLocally(classId)) {
@@ -1861,11 +1917,28 @@ const name = rawName === "You" ? "参加者" : rawName;
   let cancelled = false;
   const joinOpGen = roomOpGenRef.current;
 
+  const joinTarget = { classId, sessionId, deviceId };
+
   const shouldAbortJoin = () =>
     cancelled ||
     joinOpGen !== roomOpGenRef.current ||
     isClassLeftLocally(classId) ||
     (typeof window !== "undefined" && window.location.pathname !== "/room");
+
+  const logJoinIgnoredResult = (reason: string) => {
+    console.log(`[room-join] ignored-result reason=${reason}`);
+  };
+
+  const logJoinResult = (params: {
+    ok: boolean;
+    status?: string;
+    error?: string;
+  }) => {
+    console.log(
+      `[room-join] result ok=${params.ok ? 1 : 0} ` +
+        `status=${params.status ?? "-"} error=${params.error ?? "-"}`
+    );
+  };
 
   async function redirectToResolvedSession(params: {
     oldSessionId: string;
@@ -1910,14 +1983,89 @@ const name = rawName === "You" ? "参加者" : rawName;
   const buildJoinInFlightKey = () =>
     `${classId}:${sessionId}:${deviceId}:${openJoinedClass}`;
 
+  async function applyJoinSuccess(json: SessionJoinResponse) {
+    console.log(
+      `[room-session] join-success device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
+        `session=${sessionId.slice(-6)} urlSession=${sessionId.slice(-6)} ` +
+        `joinedSession=${String(json?.sessionId ?? sessionId).slice(-6)} ` +
+        `openJoinedClass=${openJoinedClass ? 1 : 0} memberCount=${json?.memberCount ?? "-"}`
+    );
+
+    joinedSessionKeyRef.current = joinKey;
+    setLifecycleReady(true);
+    setResolving(false);
+
+    hasClassMembershipHintRef.current = true;
+    inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
+
+    if (invite) {
+      logInviteRoute("join-success", { classId, sessionId, invite: true });
+      storeInviteRouteState({
+        classId,
+        sessionId,
+        invite: true,
+        storedAt: Date.now(),
+      });
+    }
+
+    logInviteJoinClient("success", {
+      classId,
+      sessionId,
+      deviceId,
+      step: invite ? "invite+session_join" : "session_join",
+    });
+
+    setMembers((prev) => {
+      const exists = prev.some(
+        (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
+      );
+
+      if (exists) return prev;
+
+      return [
+        {
+          device_id: deviceId,
+          display_name: name,
+          joined_at: new Date().toISOString(),
+        },
+        ...prev,
+      ];
+    });
+
+    setMemberCount((prev) => Math.max(prev, 1));
+    setErr("");
+
+    await fetchStatus({ force: true, fast: true, afterJoinPending: true });
+    void fetchStatus({ force: true, afterJoinPending: true });
+
+    const reportedCount = Number(json?.memberCount ?? 0);
+    if (reportedCount <= 0) {
+      console.log(`[room-members] invalid-zero-after-join`);
+      const rejoinOk = await selfRejoinSessionIfMissing("missing_after_join");
+      if (rejoinOk) {
+        setLifecycleReady(true);
+        await fetchStatus({ force: true, fast: true, afterJoinPending: true });
+      }
+    }
+  }
+
   async function runJoinWork() {
+  let joinResultOk = false;
+  let joinResultStatus = "pending";
+  let joinResultError = "";
+
   try {
     setResolving(true);
     cancelAutoCallTimer("session_resolving");
 
     if (shouldAbortJoin()) {
       logRoomAsyncIgnored(classId, "op_stale", "join");
+      if (!canApplyJoinResult(joinTarget)) {
+        logJoinIgnoredResult("op_stale");
+        scheduleJoinRetry("stale_join_result", 500, joinKey);
+      }
       setResolving(false);
+      joinResultError = "op_stale";
       return;
     }
     if (!deviceId) {
@@ -1994,7 +2142,12 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     if (shouldAbortJoin()) {
       logRoomAsyncIgnored(classId, "op_stale", "join_before_session_join");
+      if (!canApplyJoinResult(joinTarget)) {
+        logJoinIgnoredResult("op_stale");
+        scheduleJoinRetry("stale_join_result", 500, joinKey);
+      }
       setResolving(false);
+      joinResultError = "op_stale";
       return;
     }
 
@@ -2048,6 +2201,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         if (error === "membership_left") {
           logRoomAsyncIgnored(classId, "class_left", "session_join");
           setResolving(false);
+          joinResultError = "membership_left";
           return;
         }
 
@@ -2062,7 +2216,12 @@ const name = rawName === "You" ? "参加者" : rawName;
         if (error === "session_closed" || error === "recruitment_closed") {
   if (shouldAbortJoin()) {
     logRoomAsyncIgnored(classId, "op_stale", "join_before_resolve");
+    if (!canApplyJoinResult(joinTarget)) {
+      logJoinIgnoredResult("op_stale");
+      scheduleJoinRetry("stale_join_result", 500, joinKey);
+    }
     setResolving(false);
+    joinResultError = "op_stale";
     return;
   }
   if (isClassLeftLocally(classId)) {
@@ -2140,74 +2299,62 @@ const name = rawName === "You" ? "参加者" : rawName;
         throw new Error("参加に失敗しました");
       }
 
-      if (shouldAbortJoin()) {
+      const staleAfterResponse = shouldAbortJoin();
+      const applyDespiteStale = canApplyJoinResult(joinTarget);
+
+      if (staleAfterResponse && !applyDespiteStale) {
+        logJoinIgnoredResult("op_stale");
+        scheduleJoinRetry("stale_join_result", 500, joinKey);
         setResolving(false);
+        joinResultError = "op_stale";
         return;
       }
 
-      console.log(
-        `[room-session] join-success device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
-          `session=${sessionId.slice(-6)} urlSession=${sessionId.slice(-6)} ` +
-          `joinedSession=${String(json?.sessionId ?? sessionId).slice(-6)} ` +
-          `openJoinedClass=${openJoinedClass ? 1 : 0} memberCount=${json?.memberCount ?? "-"}`
-      );
-
-      joinedSessionKeyRef.current = joinKey;
-      setLifecycleReady(true);
-      setResolving(false);
-
-      hasClassMembershipHintRef.current = true;
-      inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
-
-      if (invite) {
-        logInviteRoute("join-success", { classId, sessionId, invite: true });
-        storeInviteRouteState({
-          classId,
-          sessionId,
-          invite: true,
-          storedAt: Date.now(),
-        });
+      if (staleAfterResponse && applyDespiteStale) {
+        console.log("[room-join] apply-result despite=op_stale");
       }
 
-      logInviteJoinClient("success", {
-        classId,
-        sessionId,
-        deviceId,
-        step: invite ? "invite+session_join" : "session_join",
-      });
-
-setMembers((prev) => {
-  const exists = prev.some(
-    (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
-  );
-
-  if (exists) return prev;
-
-  return [
-    {
-      device_id: deviceId,
-      display_name: name,
-      joined_at: new Date().toISOString(),
-    },
-    ...prev,
-  ];
-});
-
-setMemberCount((prev) => Math.max(prev, 1));
-
-// エラークリアして最新取得
-setErr("");
-await fetchStatus({ force: true, fast: true });
-void fetchStatus({ force: true });
+      joinResultOk = true;
+      joinResultStatus = String(json?.status ?? "ok");
+      await applyJoinSuccess(json);
     } catch (e: any) {
-      if (shouldAbortJoin()) return;
+      if (shouldAbortJoin() && !canApplyJoinResult(joinTarget)) {
+        logJoinIgnoredResult("op_stale");
+        scheduleJoinRetry("stale_join_result", 500, joinKey);
+        joinResultError = "op_stale";
+        return;
+      }
 
-      // ✅ 失敗時は再試行できるように固定しない
+      joinResultOk = false;
+      joinResultError = String(e?.message ?? "join_failed");
+
       joinedSessionKeyRef.current = null;
       setLifecycleReady(false);
       setResolving(false);
 
       setErr(e?.message ?? "参加に失敗しました");
+    } finally {
+      logJoinResult({
+        ok: joinResultOk,
+        status: joinResultStatus,
+        error: joinResultError,
+      });
+    }
+  }
+
+  async function handleSkippedJoinSettled() {
+    console.log(`[room-members] wait reason=join_result_pending`);
+    if (!canApplyJoinResult(joinTarget)) return;
+
+    if (joinedSessionKeyRef.current === joinKey) {
+      await fetchStatus({ force: true, fast: true, afterJoinPending: true });
+      return;
+    }
+
+    await fetchStatus({ force: true, fast: true, afterJoinPending: true });
+
+    if (joinedSessionKeyRef.current !== joinKey) {
+      scheduleJoinRetry("stale_join_result", 500, joinKey);
     }
   }
 
@@ -2218,7 +2365,9 @@ void fetchStatus({ force: true });
       console.log(
         `[room-join] skip reason=join_in_flight key=${inFlightKey}`
       );
-      return existing;
+      return existing.finally(() => {
+        void handleSkippedJoinSettled();
+      });
     }
 
     console.log(`[room-join] in-flight start key=${inFlightKey}`);
@@ -2226,16 +2375,38 @@ void fetchStatus({ force: true });
 
     const promise = runJoinWork().finally(() => {
       clearJoinInFlight(inFlightKey);
+      if (joinSelfRejoinTimerRef.current != null) {
+        window.clearTimeout(joinSelfRejoinTimerRef.current);
+      }
+      joinSelfRejoinTimerRef.current = window.setTimeout(() => {
+        joinSelfRejoinTimerRef.current = null;
+        if (!canApplyJoinResult(joinTarget)) return;
+        if (joinedSessionKeyRef.current === joinKey) return;
+        void selfRejoinSessionIfMissing("missing_after_join").then((ok) => {
+          if (!ok) return;
+          setLifecycleReady(true);
+          void fetchStatus({ force: true, fast: true, afterJoinPending: true });
+        });
+      }, 500);
     });
     joinInFlightPromiseRef.current = promise;
     return promise;
   }
 
+  retryJoinRef.current = join;
   void join();
 
   return () => {
     cancelled = true;
     bumpRoomAsync("join_cleanup");
+    if (joinRetryTimerRef.current != null) {
+      window.clearTimeout(joinRetryTimerRef.current);
+      joinRetryTimerRef.current = null;
+    }
+    if (joinSelfRejoinTimerRef.current != null) {
+      window.clearTimeout(joinSelfRejoinTimerRef.current);
+      joinSelfRejoinTimerRef.current = null;
+    }
   };
 }, [
   sessionId,
@@ -2253,6 +2424,9 @@ void fetchStatus({ force: true });
   scheduleRecentRematchUnblock,
   cancelAutoCallTimer,
   clearJoinInFlight,
+  canApplyJoinResult,
+  scheduleJoinRetry,
+  selfRejoinSessionIfMissing,
   router,
 ]);
 
