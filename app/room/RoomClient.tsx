@@ -685,6 +685,8 @@ export default function RoomClient() {
   const memberEmptyStreakRef = useRef(0);
   const memberDropStreakRef = useRef(0);
   const memberLastInListAtRef = useRef<Map<string, number>>(new Map());
+  const fetchStatusInFlightRef = useRef<Promise<void> | null>(null);
+  const fetchStatusPendingRef = useRef(false);
   const inviteJoinGraceUntilRef = useRef(0);
   const hasClassMembershipHintRef = useRef(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -1648,7 +1650,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       force?: boolean;
       fast?: boolean;
       afterJoinPending?: boolean;
+      reason?: string;
     }) => {
+      const fetchReason = opts?.reason ?? "manual";
       if (!sessionId || !classId) return;
       if (pathname !== "/room") return;
       if (isBlockedClosedSession(sessionId)) {
@@ -1668,6 +1672,11 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         return;
       }
 
+      if (fetchStatusInFlightRef.current && !opts?.force) {
+        fetchStatusPendingRef.current = true;
+        return fetchStatusInFlightRef.current;
+      }
+
       const fetchStatusStartMs = Date.now();
       const opGen = roomOpGenRef.current;
 
@@ -1683,6 +1692,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         return;
       }
 
+      const runFetch = async () => {
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 8000);
 
@@ -1905,10 +1915,20 @@ if (!res.ok || !json?.ok) {
         if (e?.name !== "AbortError") setSoftConnectionError("status");
       } finally {
         console.log(
-          `[room-perf] fetchStatus ms=${Date.now() - fetchStatusStartMs}`
+          `[room-perf] fetchStatus ms=${Date.now() - fetchStatusStartMs} reason=${fetchReason}`
         );
         window.clearTimeout(timer);
+        fetchStatusInFlightRef.current = null;
+        if (fetchStatusPendingRef.current) {
+          fetchStatusPendingRef.current = false;
+          void fetchStatus({ force: true, fast: opts?.fast, reason: "pending_coalesce" });
+        }
       }
+      };
+
+      const promise = runFetch();
+      fetchStatusInFlightRef.current = promise;
+      return promise;
     },
     [
       sessionId,

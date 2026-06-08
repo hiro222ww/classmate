@@ -43,6 +43,13 @@ import {
   logMemberSource,
   mergeSessionMembersPreservingRemoved,
 } from "@/lib/sessionMemberListMerge";
+import {
+  CALL_READY_STUCK_MS,
+  logCallReadyCheck,
+  logCallReadyStuck,
+  resolveCallReadyStuckReason,
+  type CallReadinessSnapshot,
+} from "@/lib/callReadiness";
 import { logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
   installCallPageDiagnostics,
@@ -89,7 +96,6 @@ import {
 import "@/lib/voiceConnectionDiagnostics";
 import {
   isStableVoiceJoinMode,
-  shouldUseFastSessionStatus,
   STABLE_PRESENCE_SYNC_MAX_DELAY_MS,
   STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS,
 } from "@/lib/stableVoiceJoin";
@@ -246,6 +252,16 @@ export default function CallClient() {
   const firstFastMembersAtRef = useRef<number | null>(null);
   const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
+  const voiceReadinessRef = useRef({
+    remoteIds: [] as string[],
+    settingsReady: false,
+    signalReady: false,
+    turnReady: false,
+    voiceEnabled: true,
+  });
+  const callReadySinceRef = useRef<number | null>(null);
+  const callReadyStuckLoggedRef = useRef(false);
+  const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -567,17 +583,15 @@ export default function CallClient() {
       }
 
       fetchingRef.current = true;
-      const useFast = shouldUseFastSessionStatus(opts);
+      const useFast = true;
 
       try {
         const qs = new URLSearchParams({
           sessionId,
           classId,
           lite: "1",
+          fast: "1",
         });
-        if (useFast) {
-          qs.set("fast", "1");
-        }
         if (deviceId) {
           qs.set("viewerDeviceId", deviceId);
         }
@@ -1663,6 +1677,99 @@ export default function CallClient() {
     }
   }, []);
 
+  const handleVoiceReadinessSnapshot = useCallback(
+    (snapshot: {
+      remoteIds: string[];
+      settingsReady: boolean;
+      signalReady: boolean;
+      turnReady: boolean;
+      voiceEnabled: boolean;
+    }) => {
+      voiceReadinessRef.current = snapshot;
+    },
+    []
+  );
+
+  const buildCallReadinessSnapshot = useCallback((): CallReadinessSnapshot => {
+    const voice = voiceReadinessRef.current;
+    return {
+      sessionId,
+      classId,
+      deviceId,
+      members: members.length,
+      remoteIds: voice.remoteIds.length,
+      micReady,
+      signalReady: voice.signalReady,
+      settingsReady: voice.settingsReady,
+      turnReady: voice.turnReady,
+      voiceEnabled: voice.voiceEnabled,
+      callLayerMounted: Boolean(deviceId && sessionId),
+    };
+  }, [classId, deviceId, members.length, micReady, sessionId]);
+
+  const runCallReadinessRecheck = useCallback(
+    (reason: string) => {
+      const snap = buildCallReadinessSnapshot();
+      logCallReadyCheck(snap, reason);
+      const stuckReason = resolveCallReadyStuckReason(snap);
+      const peersConnected = Object.values(peerStates).some(
+        (state) => state === "connected"
+      );
+      if (!stuckReason || peersConnected) {
+        callReadySinceRef.current = null;
+        callReadyStuckLoggedRef.current = false;
+        setShowCallStuckReconnect(false);
+        return;
+      }
+      if (callReadySinceRef.current == null) {
+        callReadySinceRef.current = Date.now();
+        return;
+      }
+      const stuckMs = Date.now() - callReadySinceRef.current;
+      if (stuckMs < CALL_READY_STUCK_MS) return;
+      if (!callReadyStuckLoggedRef.current) {
+        callReadyStuckLoggedRef.current = true;
+        logCallReadyStuck(stuckReason, snap, stuckMs);
+      }
+      setShowCallStuckReconnect(true);
+    },
+    [buildCallReadinessSnapshot, peerStates]
+  );
+
+  useEffect(() => {
+    callReadySinceRef.current = null;
+    callReadyStuckLoggedRef.current = false;
+    setShowCallStuckReconnect(false);
+  }, [sessionId, classId, deviceId]);
+
+  useEffect(() => {
+    runCallReadinessRecheck("initial");
+    const timer = window.setInterval(() => {
+      runCallReadinessRecheck("interval");
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [
+    micReady,
+    members.length,
+    membersSyncRevision,
+    peerStates,
+    runCallReadinessRecheck,
+  ]);
+
+  const handleCallStuckReconnect = useCallback(() => {
+    const snap = buildCallReadinessSnapshot();
+    logCallReadyCheck(snap, "manual_reconnect");
+    callReadySinceRef.current = Date.now();
+    callReadyStuckLoggedRef.current = false;
+    setShowCallStuckReconnect(false);
+    for (const member of members) {
+      const remoteId = String(member.device_id ?? "").trim();
+      if (!remoteId || remoteId === deviceId) continue;
+      void manualPeerHardResetRef.current(remoteId);
+    }
+    void fetchMembers("readiness_reconnect", { fast: true });
+  }, [buildCallReadinessSnapshot, deviceId, fetchMembers, members]);
+
   const voiceMembers = useMemo(() => {
     return buildVoiceConnectionMembers(members, {
       sessionId,
@@ -1713,6 +1820,7 @@ export default function CallClient() {
         onPeerDiagnosticsChange={setPeerDiagnostics}
         onVoiceCleanup={handleVoiceCleanup}
         onManualPeerHardResetReady={handleManualPeerHardResetReady}
+        onReadinessSnapshot={handleVoiceReadinessSnapshot}
       />
 
       <div
@@ -1741,6 +1849,29 @@ export default function CallClient() {
               }}
             >
               {callInfo}
+            </div>
+          ) : null}
+          {showCallStuckReconnect ? (
+            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
+                接続処理が長時間続いています
+              </span>
+              <button
+                type="button"
+                onClick={() => handleCallStuckReconnect()}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #f59e0b",
+                  background: "#fffbeb",
+                  color: "#b45309",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                再接続
+              </button>
             </div>
           ) : null}
           {meetingPlan && !meetingPlan.is_past ? (

@@ -375,8 +375,15 @@ export async function GET(req: Request) {
       );
     }
 
+    const perfStart = Date.now();
+    let membershipMs = 0;
+    let profilesMs = 0;
+    let presenceMs = 0;
+    let otherMs = 0;
+
     const sb = admin();
 
+    const membershipStart = Date.now();
     const sessionRes = await getSession(sb, sessionIdRaw);
     if (!sessionRes.ok) {
       const msg = sessionRes.error?.message ?? "session_lookup_failed";
@@ -421,29 +428,40 @@ export async function GET(req: Request) {
           .filter(Boolean)
       )
     );
-
-    const profileMapRes = await getProfileMap(sb, deviceIds);
-    if (!profileMapRes.ok) {
-      return NextResponse.json(
-        { ok: false, error: profileMapRes.error.message },
-        { status: 500 }
-      );
-    }
+    membershipMs = Date.now() - membershipStart;
 
     let members;
 
     if (fast) {
+      const profilesStart = Date.now();
+      const profileMapRes = await getProfileMap(sb, deviceIds);
+      profilesMs = Date.now() - profilesStart;
+      if (!profileMapRes.ok) {
+        return NextResponse.json(
+          { ok: false, error: profileMapRes.error.message },
+          { status: 500 }
+        );
+      }
       members = buildMembersFast(
         rawMembersRes.members,
         profileMapRes.profileMap
       );
     } else {
-      const presenceMapRes = await getPresenceMap(
-        sb,
-        deviceIds,
-        sessionIdRaw,
-        classIdRaw
-      );
+      const enrichStart = Date.now();
+      const [profileMapRes, presenceMapRes] = await Promise.all([
+        getProfileMap(sb, deviceIds),
+        getPresenceMap(sb, deviceIds, sessionIdRaw, classIdRaw),
+      ]);
+      const enrichMs = Date.now() - enrichStart;
+      profilesMs = Math.round(enrichMs * 0.45);
+      presenceMs = enrichMs - profilesMs;
+
+      if (!profileMapRes.ok) {
+        return NextResponse.json(
+          { ok: false, error: profileMapRes.error.message },
+          { status: 500 }
+        );
+      }
       if (!presenceMapRes.ok) {
         return NextResponse.json(
           { ok: false, error: presenceMapRes.error.message },
@@ -470,11 +488,12 @@ export async function GET(req: Request) {
       | undefined;
 
     if (viewerDeviceId) {
+      const viewerStart = Date.now();
       const inMemberList = members.some(
         (m) => String(m.device_id ?? "").trim() === viewerDeviceId
       );
 
-      if (fast) {
+      if (fast || lite) {
         viewerState = {
           hasClassMembership: true,
           inSessionMembers: inMemberList,
@@ -509,6 +528,7 @@ export async function GET(req: Request) {
         );
 
         if (!lite) {
+          const auditStart = Date.now();
           await auditJoinStateInvariants(sb, {
             classId: classIdRaw,
             sessionId: sessionIdRaw,
@@ -516,11 +536,14 @@ export async function GET(req: Request) {
             sessionClassId,
             requestedClassId: classIdRaw,
           });
+          otherMs += Date.now() - auditStart;
         }
       }
+      otherMs += Date.now() - viewerStart;
     }
 
     if (!lite && !fast) {
+      const auditAllStart = Date.now();
       for (const deviceId of deviceIds.slice(0, 20)) {
         await auditJoinStateInvariants(sb, {
           classId: classIdRaw,
@@ -529,7 +552,23 @@ export async function GET(req: Request) {
           sessionClassId,
         });
       }
+      otherMs += Date.now() - auditAllStart;
     }
+
+    const totalMs = Date.now() - perfStart;
+    const messagesMs = 0;
+    const unattributed = Math.max(
+      0,
+      totalMs - membershipMs - profilesMs - presenceMs - messagesMs - otherMs
+    );
+    otherMs += unattributed;
+
+    console.log(
+      `[api-session-status-perf] totalMs=${totalMs} membershipMs=${membershipMs} ` +
+        `presenceMs=${presenceMs} profilesMs=${profilesMs} messagesMs=${messagesMs} ` +
+        `otherMs=${otherMs} lite=${lite ? 1 : 0} fast=${fast ? 1 : 0} ` +
+        `members=${members.length} session=${sessionIdRaw.slice(-6)} class=${classIdRaw.slice(-6)}`
+    );
 
     console.log(
       `[session-status] members count=${members.length} fast=${fast} lite=${lite} ` +

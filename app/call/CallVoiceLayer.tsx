@@ -66,6 +66,13 @@ type CallVoiceLayerProps = {
   onManualPeerHardResetReady?: (
     reset: (remoteId: string) => void | Promise<void>
   ) => void;
+  onReadinessSnapshot?: (snapshot: {
+    remoteIds: string[];
+    settingsReady: boolean;
+    signalReady: boolean;
+    turnReady: boolean;
+    voiceEnabled: boolean;
+  }) => void;
 };
 
 export default function CallVoiceLayer({
@@ -86,6 +93,7 @@ export default function CallVoiceLayer({
   onPeerDiagnosticsChange,
   onVoiceCleanup,
   onManualPeerHardResetReady,
+  onReadinessSnapshot,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
@@ -138,6 +146,7 @@ export default function CallVoiceLayer({
     onPeerStatesChange,
     onPeerDiagnosticsChange,
     onVoiceCleanup,
+    onReadinessSnapshot,
   });
 
   useEffect(() => {
@@ -147,6 +156,10 @@ export default function CallVoiceLayer({
       device: compactDeviceId(deviceId),
       members: membersRef.current.length,
     });
+    console.log(
+      `[voice-layer] mount session=${compactSessionId(sessionId)} ` +
+        `device=${compactDeviceId(deviceId)} members=${membersRef.current.length}`
+    );
     debugConsoleLog(
       `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)} members=${membersRef.current.length}`
     );

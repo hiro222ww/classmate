@@ -1166,16 +1166,16 @@ export function logVoiceStartCheck(params: {
   micReady: boolean;
   shouldCreatePeer: boolean;
   role: "active" | "passive";
+  blockedReason?: VoiceStartBlockedReason | string;
 }) {
   debugConsoleLog(
-    `[voice-start-check] device=${compactDeviceId(params.deviceId)} ` +
-      `remote=${compactDeviceId(params.remoteId)} ` +
+    `[voice-start-check] remote=${compactDeviceId(params.remoteId)} ` +
+      `role=${params.role} shouldCreatePeer=${params.shouldCreatePeer ? 1 : 0} ` +
+      `blockedReason=${params.blockedReason ?? "-"} ` +
       `session=${compactSessionId(params.sessionId)} ` +
       `members=${params.membersCount} remoteIds=${params.remoteIdsCount} ` +
-      `settingsReady=${params.settingsReady} hasTurn=${params.hasTurn} ` +
-      `p2pEnabled=${params.p2pEnabled} icePolicy=${params.icePolicy} ` +
-      `signalReady=${params.signalReady} micReady=${params.micReady} ` +
-      `shouldCreatePeer=${params.shouldCreatePeer} role=${params.role}`
+      `settingsReady=${params.settingsReady ? 1 : 0} hasTurn=${params.hasTurn ? 1 : 0} ` +
+      `signalReady=${params.signalReady ? 1 : 0} micReady=${params.micReady ? 1 : 0}`
   );
 }
 

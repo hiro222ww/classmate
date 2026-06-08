@@ -36,6 +36,7 @@ import {
   voiceDebugLog,
   type VoiceMeshPeerSummaryEntry,
   type PeerStatusDiagnostics,
+  type VoiceStartBlockedReason,
 } from "./voiceDiagnostics";
 import { recordCallReloadContext } from "@/lib/callReloadDiagnostics";
 import { isDocumentHidden } from "@/lib/appLifecycle";
@@ -274,6 +275,13 @@ type UsePeerConnectionsArgs = {
     diagnostics: Record<string, PeerStatusDiagnostics>
   ) => void;
   onVoiceCleanup?: () => void;
+  onReadinessSnapshot?: (snapshot: {
+    remoteIds: string[];
+    settingsReady: boolean;
+    signalReady: boolean;
+    turnReady: boolean;
+    voiceEnabled: boolean;
+  }) => void;
 };
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
@@ -924,6 +932,7 @@ export function usePeerConnections({
   onPeerStatesChange,
   onPeerDiagnosticsChange,
   onVoiceCleanup,
+  onReadinessSnapshot,
 }: UsePeerConnectionsArgs) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef(deviceId);
@@ -945,13 +954,6 @@ export function usePeerConnections({
     voiceSessionMemberIdsRef.current.clear();
     lastPeerCloseReasonRef.current.clear();
   }, [sessionId]);
-
-  useEffect(() => {
-    debugConsoleLog(
-      `[voice-peer] hook-start device=${compactDeviceId(deviceId)} ` +
-        `session=${sessionId.slice(-8)} micReady=${micReady} signalReady=${signalReady}`
-    );
-  }, [deviceId, micReady, sessionId, signalReady]);
 
   const inCallMemberCount = useMemo(() => {
     if (isStableVoiceJoinMode()) {
@@ -1133,6 +1135,9 @@ export function usePeerConnections({
   );
   const preserveRemoteAudioUntilRef = useRef(new Map<string, number>());
   const voiceSettingsReadyRef = useRef(false);
+  const [settingsReadyTick, setSettingsReadyTick] = useState(0);
+  const onReadinessSnapshotRef = useRef(onReadinessSnapshot);
+  onReadinessSnapshotRef.current = onReadinessSnapshot;
 
   const getPeerIceTransportPolicy = useCallback((): RTCIceTransportPolicy => {
     return resolvePeerIceTransportPolicy({
@@ -1551,7 +1556,23 @@ export function usePeerConnections({
 
   const getSessionMemberRemoteIds = useCallback(() => {
     const selfId = String(deviceId ?? "").trim();
-    const fromMembers = getSessionMemberRemoteDeviceIds(activeMembers, selfId);
+    let fromMembers = getSessionMemberRemoteDeviceIds(activeMembers, selfId);
+    if (
+      fromMembers.length === 0 &&
+      members.length > 1 &&
+      isStableVoiceJoinMode()
+    ) {
+      fromMembers = getSessionMemberRemoteDeviceIds(members, selfId);
+      if (fromMembers.length > 0) {
+        console.log(
+          `[voice-peer] remoteIds-rebuild session=${sessionId.slice(-6)} ` +
+            `members=${members.length} rebuilt=${fromMembers.length}`
+        );
+        for (const id of fromMembers) {
+          voiceSessionMemberIdsRef.current.add(id);
+        }
+      }
+    }
     if (!isStableVoiceJoinMode()) return fromMembers;
 
     const merged = new Set(fromMembers);
@@ -1561,7 +1582,7 @@ export function usePeerConnections({
       merged.add(id);
     }
     return Array.from(merged);
-  }, [activeMembers, deviceId]);
+  }, [activeMembers, deviceId, members, sessionId]);
 
   const getStrictRemoteIds = useCallback(() => {
     if (isStableVoiceJoinMode()) {
@@ -1587,6 +1608,37 @@ export function usePeerConnections({
     );
     return ids;
   }, [getSessionMemberRemoteIds, getStrictRemoteIds]);
+
+  const emitReadinessSnapshot = useCallback(
+    (reason: string) => {
+      const remoteIds = getRemoteIds();
+      const turnReady =
+        !relayForcedRef.current || hasTurnIceServer(iceServersRef.current);
+      const snapshot = {
+        remoteIds,
+        settingsReady: voiceSettingsReadyRef.current,
+        signalReady,
+        turnReady,
+        voiceEnabled: !voiceTransportDisabledRef.current,
+      };
+      onReadinessSnapshotRef.current?.(snapshot);
+      debugConsoleLog(
+        `[voice-peer] readiness reason=${reason} remoteIds=${remoteIds.length} ` +
+          `settingsReady=${snapshot.settingsReady ? 1 : 0} signalReady=${snapshot.signalReady ? 1 : 0} ` +
+          `turnReady=${snapshot.turnReady ? 1 : 0} voiceEnabled=${snapshot.voiceEnabled ? 1 : 0}`
+      );
+    },
+    [getRemoteIds, signalReady]
+  );
+
+  useEffect(() => {
+    console.log(
+      `[voice-peer] hook-start session=${sessionId.slice(-6)} device=${compactDeviceId(deviceId)} ` +
+        `micReady=${micReady ? 1 : 0} signalReady=${signalReady ? 1 : 0} ` +
+        `settingsReady=${voiceSettingsReadyRef.current ? 1 : 0}`
+    );
+    emitReadinessSnapshot("hook_start");
+  }, [deviceId, emitReadinessSnapshot, micReady, sessionId, signalReady, settingsReadyTick]);
 
   const clearDeferredMemberCloseTimer = useCallback((remoteId: string) => {
     const timer = deferredMemberCloseTimersRef.current.get(remoteId);
@@ -2572,6 +2624,15 @@ export function usePeerConnections({
         signalReady &&
         micReady &&
         (localTrackLive || receiveOnly);
+      let blockedReason: VoiceStartBlockedReason | string = "-";
+      if (!settingsReady) blockedReason = "settings_not_ready";
+      else if (!signalReady) blockedReason = "signal_not_ready";
+      else if (relayForcedRef.current && !hasTurn) blockedReason = "turn_not_loaded";
+      else if (!isRemoteInCall(remoteId)) blockedReason = "not_in_call";
+      else if (role === "active" && !micReady) blockedReason = "mic_not_ready";
+      else if (role === "active" && !localTrackLive && !receiveOnly) {
+        blockedReason = "local_track_not_live";
+      }
       logVoiceStartCheck({
         deviceId,
         remoteId,
@@ -2586,6 +2647,7 @@ export function usePeerConnections({
         micReady,
         shouldCreatePeer: canCreatePassive || canCreateActive,
         role,
+        blockedReason,
       });
     },
     [
@@ -8014,6 +8076,7 @@ export function usePeerConnections({
       } finally {
         if (alive) {
           voiceSettingsReadyRef.current = true;
+          setSettingsReadyTick((tick) => tick + 1);
           healPeerConnectionsRef.current();
         }
       }
@@ -8213,15 +8276,18 @@ export function usePeerConnections({
 
     healPeerConnections();
     emitMeshSummary("after_join", { immediate: true });
+    emitReadinessSnapshot("offer_effect");
   }, [
     members,
     micReady,
     signalReady,
+    settingsReadyTick,
     deviceId,
     assignConnectionId,
     closePeer,
     emitMeshSummary,
     emitPeerStates,
+    emitReadinessSnapshot,
     emitVoiceStartCheck,
     ensurePeerConnection,
     getCurrentConnectionId,
