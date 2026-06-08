@@ -230,11 +230,18 @@ export function evaluateHintSessionForOpenJoined(params: {
   if (status === "closed") {
     return { reusable: false, reason: "closed", staleReason: null };
   }
-  if (status === "expired") {
-    return { reusable: false, reason: "expired", staleReason: null };
-  }
   if (status === "ended") {
     return { reusable: false, reason: "ended", staleReason: null };
+  }
+  if (status === "expired") {
+    if (params.memberCount <= 0) {
+      return {
+        reusable: true,
+        reason: null,
+        staleReason: "expired_ttl_empty",
+      };
+    }
+    return { reusable: false, reason: "expired", staleReason: null };
   }
   if (isDeadlinePassed(params.matchDeadlineAt ?? null)) {
     return { reusable: false, reason: "cutoff", staleReason: null };
@@ -250,13 +257,23 @@ export function evaluateHintSessionForOpenJoined(params: {
   }
 
   if (status === "active") {
-    if (params.memberCount <= 0) {
-      return { reusable: false, reason: "empty", staleReason: null };
-    }
-    return { reusable: true, reason: null, staleReason: null };
+    return {
+      reusable: true,
+      reason: null,
+      staleReason: params.memberCount <= 0 ? "empty" : null,
+    };
   }
 
   return { reusable: false, reason: "unknown", staleReason: null };
+}
+
+export function isOpenJoinedHintReusableStatus(status: unknown) {
+  const normalized = normalizeSessionStatus(status);
+  return (
+    isRecruitingSessionStatus(normalized) ||
+    normalized === "active" ||
+    normalized === "expired"
+  );
 }
 
 export function pickClassDisplaySession(

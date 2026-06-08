@@ -4,6 +4,8 @@ import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions"
 import {
   evaluateHintSessionForOpenJoined,
   evaluateOpenJoinedSessionReuse,
+  isOpenJoinedHintReusableStatus,
+  isRecruitmentSessionFresh,
   isRecruitingSessionStatus,
   isSessionJoinableForOpenClass,
   normalizeSessionStatus,
@@ -110,6 +112,25 @@ export async function createFormingSession(params: {
   };
 }
 
+function logHintCheck(params: {
+  sessionId: string;
+  classId: string;
+  status: string;
+  memberCount: number;
+  stale: boolean;
+  cutoff: string | null;
+  sameClass: boolean;
+  matchDeadlineAt: string | null;
+}) {
+  console.log(
+    `[class-session] hint-check session=${tailMatchId(params.sessionId)} ` +
+      `status=${params.status} memberCount=${params.memberCount} stale=${params.stale ? 1 : 0} ` +
+      `cutoff=${params.cutoff ?? "-"} sameClass=${params.sameClass ? 1 : 0} ` +
+      `match_deadline_at=${params.matchDeadlineAt ?? "-"} ` +
+      `class=${tailMatchId(params.classId)}`
+  );
+}
+
 function logRejectHintSession(params: {
   sessionId: string;
   classId: string;
@@ -134,13 +155,26 @@ function logRejectHintSession(params: {
   );
 }
 
+type HintSessionLoadResult = {
+  row: ClassSessionRow;
+  sameClass: boolean;
+  sessionClassId: string | null;
+};
+
 async function loadHintSessionRow(
   hintSessionId: string,
+  expectedClassId: string,
   classSessions: ClassSessionRow[],
   deviceId: string
-): Promise<ClassSessionRow | null> {
+): Promise<HintSessionLoadResult | null> {
   const existing = classSessions.find((row) => row.id === hintSessionId);
-  if (existing) return existing;
+  if (existing) {
+    return {
+      row: existing,
+      sameClass: true,
+      sessionClassId: expectedClassId,
+    };
+  }
 
   const { data: sessionRow, error } = await supabase
     .from("sessions")
@@ -149,6 +183,9 @@ async function loadHintSessionRow(
     .maybeSingle();
 
   if (error || !sessionRow?.id) return null;
+
+  const sessionClassId = String(sessionRow.class_id ?? "").trim() || null;
+  const sameClass = sessionClassId === expectedClassId;
 
   const { data: memberRows } = await supabase
     .from("session_members")
@@ -160,13 +197,17 @@ async function loadHintSessionRow(
     .filter(Boolean);
 
   return {
-    id: String(sessionRow.id),
-    status: String(sessionRow.status ?? "forming"),
-    createdAt: sessionRow.created_at ?? null,
-    capacity: Number(sessionRow.capacity ?? 5),
-    memberCount: memberIds.length,
-    memberIds,
-    deviceIsMember: memberIds.includes(deviceId),
+    row: {
+      id: String(sessionRow.id),
+      status: String(sessionRow.status ?? "forming"),
+      createdAt: sessionRow.created_at ?? null,
+      capacity: Number(sessionRow.capacity ?? 5),
+      memberCount: memberIds.length,
+      memberIds,
+      deviceIsMember: memberIds.includes(deviceId),
+    },
+    sameClass,
+    sessionClassId,
   };
 }
 
@@ -178,13 +219,14 @@ async function resolveHintSessionPick(params: {
   matchDeadlineAt: string | null;
   recruitmentSessionTtlMinutes: number | null;
 }): Promise<CanonicalSessionPick | null> {
-  const hintRow = await loadHintSessionRow(
+  const loaded = await loadHintSessionRow(
     params.hintSessionId,
+    params.classId,
     params.classSessions,
     params.deviceId
   );
 
-  if (!hintRow) {
+  if (!loaded) {
     logRejectHintSession({
       sessionId: params.hintSessionId,
       classId: params.classId,
@@ -198,6 +240,45 @@ async function resolveHintSessionPick(params: {
     return null;
   }
 
+  const hintRow = loaded.row;
+  const status = normalizeSessionStatus(hintRow.status);
+  const cutoff =
+    params.recruitmentSessionTtlMinutes != null
+      ? recruitmentSessionCutoffIso(params.recruitmentSessionTtlMinutes)
+      : null;
+  const stale =
+    isOpenJoinedHintReusableStatus(status) &&
+    !isRecruitmentSessionFresh(
+      hintRow.createdAt,
+      params.recruitmentSessionTtlMinutes
+    );
+
+  logHintCheck({
+    sessionId: hintRow.id,
+    classId: params.classId,
+    status,
+    memberCount: hintRow.memberCount,
+    stale,
+    cutoff,
+    sameClass: loaded.sameClass,
+    matchDeadlineAt: params.matchDeadlineAt,
+  });
+
+  if (!loaded.sameClass) {
+    logRejectHintSession({
+      sessionId: hintRow.id,
+      classId: params.classId,
+      reason: "wrong_class",
+      status,
+      memberCount: hintRow.memberCount,
+      matchDeadlineAt: params.matchDeadlineAt,
+      sessionCreatedAt: hintRow.createdAt,
+      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+      staleReason: stale ? "stale" : null,
+    });
+    return null;
+  }
+
   const hintEval = evaluateHintSessionForOpenJoined({
     sessionStatus: hintRow.status,
     sessionCreatedAt: hintRow.createdAt,
@@ -207,25 +288,22 @@ async function resolveHintSessionPick(params: {
   });
 
   if (!hintEval.reusable) {
-    if (hintEval.reason) {
-      logRejectHintSession({
-        sessionId: hintRow.id,
-        classId: params.classId,
-        reason: hintEval.reason,
-        status: normalizeSessionStatus(hintRow.status),
-        memberCount: hintRow.memberCount,
-        matchDeadlineAt: params.matchDeadlineAt,
-        sessionCreatedAt: hintRow.createdAt,
-        recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
-        staleReason: hintEval.staleReason,
-      });
-    }
+    logRejectHintSession({
+      sessionId: hintRow.id,
+      classId: params.classId,
+      reason: hintEval.reason ?? "unknown",
+      status,
+      memberCount: hintRow.memberCount,
+      matchDeadlineAt: params.matchDeadlineAt,
+      sessionCreatedAt: hintRow.createdAt,
+      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+      staleReason: hintEval.staleReason,
+    });
     return null;
   }
 
-  const status = normalizeSessionStatus(hintRow.status);
   const reason: CanonicalSessionPick["reason"] =
-    isRecruitingSessionStatus(status) && hintRow.memberCount === 0
+    isOpenJoinedHintReusableStatus(status) && hintRow.memberCount === 0
       ? "hint_joinable_empty"
       : "reuse_requested_session";
 
@@ -308,6 +386,37 @@ async function loadSessionJoinability(
   };
 }
 
+async function reactivateExpiredHintSessionIfNeeded(params: {
+  sessionId: string;
+  sessionStatus: string;
+  allowHintReuse?: boolean;
+}): Promise<string> {
+  const status = normalizeSessionStatus(params.sessionStatus);
+  if (!params.allowHintReuse || status !== "expired") {
+    return params.sessionStatus;
+  }
+
+  const { error } = await supabase
+    .from("sessions")
+    .update({ status: "forming" })
+    .eq("id", params.sessionId)
+    .eq("status", "expired");
+
+  if (error) {
+    console.warn(
+      `[class-session] reactivate-expired-hint failed session=${tailMatchId(params.sessionId)} ` +
+        `detail=${error.message}`
+    );
+    return params.sessionStatus;
+  }
+
+  console.log(
+    `[class-session] reactivate-expired-hint session=${tailMatchId(params.sessionId)} ` +
+      `status=forming`
+  );
+  return "forming";
+}
+
 function buildStaleReuseReason(params: {
   allowHintReuse?: boolean;
   recruitingStatus: boolean;
@@ -338,11 +447,21 @@ async function ensureJoinableSessionOrCreate(params: {
   allowHintReuse?: boolean;
 }): Promise<ResolveOk | ResolveErr> {
   const sessionId = params.sessionId;
-  const sessionStatus = params.sessionStatus;
+  let sessionStatus = await reactivateExpiredHintSessionIfNeeded({
+    sessionId: params.sessionId,
+    sessionStatus: params.sessionStatus,
+    allowHintReuse: params.allowHintReuse,
+  });
   const sessionCreatedAt = params.sessionCreatedAt;
   const memberCount = params.memberCount;
   const selectionReason = params.selectionReason;
+  const hintReusableStatus = isOpenJoinedHintReusableStatus(sessionStatus);
   const recruitingStatus = isRecruitingSessionStatus(sessionStatus);
+  const hintTerminalReasons: OpenJoinedSessionInvalidReason[] = [
+    "closed",
+    "ended",
+    "cutoff",
+  ];
 
   const localCheck = isSessionJoinableForOpenClass({
     sessionStatus,
@@ -364,9 +483,33 @@ async function ensureJoinableSessionOrCreate(params: {
     };
   }
 
+  if (
+    params.allowHintReuse &&
+    hintReusableStatus &&
+    (!localCheck.reason || !hintTerminalReasons.includes(localCheck.reason))
+  ) {
+    const reuseReason =
+      memberCount === 0 ? "hint_joinable_empty" : selectionReason;
+    console.log(
+      `[class-session] reuse session=${tailMatchId(sessionId)} ` +
+        `reason=${reuseReason} members=${memberCount} ` +
+        `class=${tailMatchId(params.classId)} source=hint_allow ` +
+        `invalidReason=${localCheck.reason ?? "-"}`
+    );
+    return {
+      ok: true,
+      sessionId,
+      sessionStatus,
+      sessionCreatedAt,
+      createdNewSession: false,
+      reused: true,
+      selectionReason: reuseReason,
+    };
+  }
+
   const reuseDespiteStale =
     localCheck.reason === "stale" &&
-    (memberCount > 0 || (params.allowHintReuse && recruitingStatus));
+    (memberCount > 0 || (params.allowHintReuse && hintReusableStatus));
 
   if (reuseDespiteStale) {
     const staleReuseReason = buildStaleReuseReason({
@@ -435,7 +578,7 @@ async function ensureJoinableSessionOrCreate(params: {
     };
   }
 
-  if (params.allowHintReuse && recruitingStatus) {
+  if (params.allowHintReuse && hintReusableStatus) {
     console.log(
       `[class-session] reuse session=${tailMatchId(sessionId)} ` +
         `reason=hint_joinable_empty members=${memberCount} ` +
@@ -503,11 +646,15 @@ export async function resolveOpenJoinedClassSession(
   params: ResolveParams
 ): Promise<ResolveOk | ResolveErr> {
   const deviceId = String(params.deviceId ?? "").trim();
+  const hintSessionId = String(
+    params.hintSessionId ?? params.sessionId ?? ""
+  ).trim();
 
   await expireStaleRecruitmentSessions(supabase, {
     classIds: [params.classId],
     ttlMinutes: params.recruitmentSessionTtlMinutes,
     keepSessionsWithMembers: true,
+    excludeSessionIds: hintSessionId ? [hintSessionId] : [],
   });
 
   const classSessions = await listClassSessionsWithMembers(
@@ -515,10 +662,6 @@ export async function resolveOpenJoinedClassSession(
     params.classId,
     deviceId
   );
-
-  const hintSessionId = String(
-    params.hintSessionId ?? params.sessionId ?? ""
-  ).trim();
 
   if (hintSessionId) {
     const hintPick = await resolveHintSessionPick({
@@ -644,6 +787,20 @@ export async function resolveOpenJoinedClassSession(
         `session=${tailMatchId(params.sessionId)} class=${tailMatchId(params.classId)} ` +
         `status=${params.sessionStatus} members=${rpcSession.memberCount}`
     );
+  }
+
+  if (hintSessionId) {
+    logRejectHintSession({
+      sessionId: hintSessionId,
+      classId: params.classId,
+      reason: "create_fallback_no_valid_active",
+      status: "-",
+      memberCount: 0,
+      matchDeadlineAt: params.matchDeadlineAt,
+      sessionCreatedAt: null,
+      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+      staleReason: "hint_not_reused_before_create_new",
+    });
   }
 
   const created = await createFormingSession({

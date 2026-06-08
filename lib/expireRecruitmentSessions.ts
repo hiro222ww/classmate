@@ -11,8 +11,15 @@ export async function expireStaleRecruitmentSessions(
     classIds?: string[];
     /** Do not expire recruiting sessions that still have session_members. */
     keepSessionsWithMembers?: boolean;
+    /** Client hint sessions to keep joinable (openJoinedClass). */
+    excludeSessionIds?: string[];
   }
 ) {
+  const excludeIds = new Set(
+    (params.excludeSessionIds ?? [])
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean)
+  );
   if (params.ttlMinutes === null) {
     return {
       ok: true,
@@ -70,7 +77,9 @@ export async function expireStaleRecruitmentSessions(
         .map((row) => String(row.session_id ?? "").trim())
         .filter(Boolean)
     );
-    const expireIds = staleIds.filter((id) => !occupied.has(id));
+    const expireIds = staleIds.filter(
+      (id) => !occupied.has(id) && !excludeIds.has(id)
+    );
 
     if (expireIds.length === 0) {
       return { ok: true, error: null, cutoff };
