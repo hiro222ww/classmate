@@ -29,6 +29,7 @@ import {
   logVoiceSignalStaleWarning,
   logVoicePeerPair,
   logVoicePeerRole,
+  logVoiceSettingsReadyChange,
   logVoiceStartBlocked,
   logVoiceStartCheck,
   mapEnsureSkipToVoiceStartBlocked,
@@ -1137,7 +1138,26 @@ export function usePeerConnections({
   );
   const preserveRemoteAudioUntilRef = useRef(new Map<string, number>());
   const voiceSettingsReadyRef = useRef(false);
+  const voiceSettingsScopeRef = useRef("");
   const [settingsReadyTick, setSettingsReadyTick] = useState(0);
+
+  const applyVoiceSettingsReady = useCallback(
+    (next: boolean, reason: string) => {
+      const prev = voiceSettingsReadyRef.current;
+      if (prev === next) return false;
+      voiceSettingsReadyRef.current = next;
+      logVoiceSettingsReadyChange({
+        from: prev,
+        to: next,
+        reason,
+        sessionId,
+        deviceId,
+      });
+      setSettingsReadyTick((tick) => tick + 1);
+      return true;
+    },
+    [deviceId, sessionId]
+  );
   const onReadinessSnapshotRef = useRef(onReadinessSnapshot);
   onReadinessSnapshotRef.current = onReadinessSnapshot;
 
@@ -7975,8 +7995,14 @@ export function usePeerConnections({
   const voiceSettingsLoadedOnceRef = useRef(false);
 
   useEffect(() => {
+    const scope = `${sessionId}|${deviceId}`;
+    if (voiceSettingsScopeRef.current !== scope) {
+      voiceSettingsScopeRef.current = scope;
+      voiceSettingsLoadedOnceRef.current = false;
+      applyVoiceSettingsReady(false, "scope_changed");
+    }
+
     let alive = true;
-    voiceSettingsReadyRef.current = false;
 
     async function loadVoiceSettings() {
       let settingsVoiceEnabled = true;
@@ -8100,8 +8126,7 @@ export function usePeerConnections({
         }
       } finally {
         if (alive) {
-          voiceSettingsReadyRef.current = true;
-          setSettingsReadyTick((tick) => tick + 1);
+          applyVoiceSettingsReady(true, "load_complete");
           healPeerConnectionsRef.current();
         }
       }
@@ -8112,7 +8137,7 @@ export function usePeerConnections({
     return () => {
       alive = false;
     };
-  }, [closePeer, enableTurnFallback, notifyStatus, sessionId]);
+  }, [applyVoiceSettingsReady, closePeer, deviceId, enableTurnFallback, notifyStatus, sessionId]);
 
   useEffect(() => {
     resetVoicePeerPairRegistry(sessionId, deviceId);

@@ -1208,6 +1208,21 @@ export function logVoiceStartBlocked(
   );
 }
 
+export function logVoiceSettingsReadyChange(params: {
+  from: boolean;
+  to: boolean;
+  reason: string;
+  sessionId: string;
+  deviceId: string;
+}) {
+  if (params.from === params.to) return;
+  console.log(
+    `[voice-settings-ready] from=${params.from ? 1 : 0} to=${params.to ? 1 : 0} ` +
+      `reason=${params.reason} session=${compactSessionId(params.sessionId)} ` +
+      `device=${compactDeviceId(params.deviceId)}`
+  );
+}
+
 const VOICE_UNSTABLE_LOG_MIN_INTERVAL_MS = 3000;
 const voiceUnstableLogState = new Map<string, { key: string; atMs: number }>();
 
