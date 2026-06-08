@@ -1152,6 +1152,9 @@ export function mapEnsureSkipToVoiceStartBlocked(
   }
 }
 
+const VOICE_START_CHECK_LOG_MIN_INTERVAL_MS = 1500;
+const voiceStartCheckLogState = new Map<string, { key: string; atMs: number }>();
+
 export function logVoiceStartCheck(params: {
   deviceId: string;
   remoteId: string;
@@ -1168,9 +1171,26 @@ export function logVoiceStartCheck(params: {
   role: "active" | "passive";
   blockedReason?: VoiceStartBlockedReason | string;
 }) {
-  debugConsoleLog(
-    `[voice-start-check] remote=${compactDeviceId(params.remoteId)} ` +
-      `role=${params.role} shouldCreatePeer=${params.shouldCreatePeer ? 1 : 0} ` +
+  const remoteKey = compactDeviceId(params.remoteId);
+  const key =
+    `${remoteKey}|${params.role}|${params.shouldCreatePeer ? 1 : 0}|` +
+    `${params.blockedReason ?? "-"}|${params.settingsReady ? 1 : 0}|` +
+    `${params.signalReady ? 1 : 0}|${params.micReady ? 1 : 0}|` +
+    `${params.remoteIdsCount}`;
+  const now = Date.now();
+  const prev = voiceStartCheckLogState.get(remoteKey);
+  if (
+    prev &&
+    prev.key === key &&
+    now - prev.atMs < VOICE_START_CHECK_LOG_MIN_INTERVAL_MS
+  ) {
+    return;
+  }
+  voiceStartCheckLogState.set(remoteKey, { key, atMs: now });
+
+  console.log(
+    `[voice-start-check] remote=${remoteKey} role=${params.role} ` +
+      `shouldCreatePeer=${params.shouldCreatePeer ? 1 : 0} ` +
       `blockedReason=${params.blockedReason ?? "-"} ` +
       `session=${compactSessionId(params.sessionId)} ` +
       `members=${params.membersCount} remoteIds=${params.remoteIdsCount} ` +
@@ -1183,8 +1203,56 @@ export function logVoiceStartBlocked(
   remoteId: string,
   reason: VoiceStartBlockedReason
 ) {
-  debugConsoleLog(
+  console.log(
     `[voice-start-blocked] remote=${compactDeviceId(remoteId)} reason=${reason}`
+  );
+}
+
+const VOICE_UNSTABLE_LOG_MIN_INTERVAL_MS = 3000;
+const voiceUnstableLogState = new Map<string, { key: string; atMs: number }>();
+
+export function logVoiceUnstable(params: {
+  reason: string;
+  remoteId: string;
+  pc?: boolean;
+  ice?: string;
+  connection?: string;
+  signaling?: string;
+  remoteTrack?: boolean;
+  audioConfirmed?: boolean;
+  audioConfirmedStrict?: boolean;
+  inboundBytesDelta?: number | string;
+  outboundBytesDelta?: number | string;
+  lastRemoteTrackAgeMs?: number | string;
+  lastAudioConfirmAgeMs?: number | string;
+}) {
+  const remote = compactDeviceId(params.remoteId);
+  const key =
+    `${remote}|${params.reason}|${params.pc ? 1 : 0}|${params.ice ?? "-"}|` +
+    `${params.connection ?? "-"}|${params.remoteTrack ? 1 : 0}|` +
+    `${params.audioConfirmedStrict ? 1 : 0}`;
+  const now = Date.now();
+  const prev = voiceUnstableLogState.get(remote);
+  if (
+    prev &&
+    prev.key === key &&
+    now - prev.atMs < VOICE_UNSTABLE_LOG_MIN_INTERVAL_MS
+  ) {
+    return;
+  }
+  voiceUnstableLogState.set(remote, { key, atMs: now });
+
+  console.log(
+    `[voice-unstable] reason=${params.reason} remote=${remote} ` +
+      `pc=${params.pc ? 1 : 0} ice=${params.ice ?? "-"} ` +
+      `connection=${params.connection ?? "-"} signaling=${params.signaling ?? "-"} ` +
+      `remoteTrack=${params.remoteTrack ? 1 : 0} ` +
+      `audioConfirmed=${params.audioConfirmed ? 1 : 0} ` +
+      `audioConfirmedStrict=${params.audioConfirmedStrict ? 1 : 0} ` +
+      `inboundBytesDelta=${params.inboundBytesDelta ?? "-"} ` +
+      `outboundBytesDelta=${params.outboundBytesDelta ?? "-"} ` +
+      `lastRemoteTrackAgeMs=${params.lastRemoteTrackAgeMs ?? "-"} ` +
+      `lastAudioConfirmAgeMs=${params.lastAudioConfirmAgeMs ?? "-"}`
   );
 }
 

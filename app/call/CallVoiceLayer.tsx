@@ -149,6 +149,7 @@ export default function CallVoiceLayer({
     onPeerDiagnosticsChange,
     onVoiceCleanup,
     onReadinessSnapshot,
+    voiceLayerInstanceId: instanceId,
   });
 
   useEffect(() => {
@@ -161,7 +162,8 @@ export default function CallVoiceLayer({
     });
     console.log(
       `[voice-layer] mount session=${compactSessionId(sessionId)} ` +
-        `device=${compactDeviceId(deviceId)} members=${membersRef.current.length}`
+        `device=${compactDeviceId(deviceId)} members=${membersRef.current.length} ` +
+        `instance=${instanceId}`
     );
     debugConsoleLog(
       `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)} members=${membersRef.current.length}`

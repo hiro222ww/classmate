@@ -63,6 +63,7 @@ import {
   installCallPageDiagnostics,
   logCallLifecycle,
   logCallStatusPeer,
+  logVoiceUnstable,
   voiceDebugLog,
   isVoiceLayerDebugEnabled,
   setRemoteAudioPipelinePeerContext,
@@ -144,6 +145,42 @@ type PeerState = "idle" | "connecting" | "connected" | "failed";
 
 const CALL_MEMBERS_POLL_MS = 15_000;
 const CALL_REALTIME_FETCH_DEBOUNCE_MS = 2000;
+const CALL_NOW_MS_TICK_MS = 2000;
+
+function arePeerStatesEqual(
+  a: Record<string, PeerState>,
+  b: Record<string, PeerState>
+): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key, index) => key === bKeys[index] && a[key] === b[key]);
+}
+
+function arePeerDiagnosticsEqual(
+  a: Record<string, PeerStatusDiagnostics>,
+  b: Record<string, PeerStatusDiagnostics>
+): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function mapVoiceUnstableReason(
+  statusReason: string,
+  hasPc: boolean,
+  ice: string,
+  connection: string
+): string {
+  if (!hasPc) return "peer_creation_not_started";
+  if (ice === "failed") return "ice_failed";
+  if (ice === "disconnected") return "ice_disconnected";
+  if (connection === "failed") return "connection_failed";
+  if (statusReason === "remote_audio_play_failed") return "audio_not_confirmed";
+  if (statusReason === "remote_audio_track_ended") return "remote_track_missing";
+  if (statusReason === "remote_audio_no_live_stream") return "remote_track_missing";
+  if (statusReason === "auto_hard_reset_give_up") return "stale_health";
+  if (statusReason === "remote_audio_stalled") return "stale_health";
+  return statusReason || "stale_health";
+}
 
 type SessionStatusResponse = {
   ok?: boolean;
@@ -290,7 +327,7 @@ export default function CallClient() {
 
     const timer = window.setInterval(() => {
       setNowMs(Date.now());
-    }, 500);
+    }, CALL_NOW_MS_TICK_MS);
 
     return () => window.clearInterval(timer);
   }, []);
@@ -1495,6 +1532,39 @@ export default function CallClient() {
         });
       }
 
+      if (status.text === "音声が不安定です" && !isMe) {
+        const lastOnTrackAgeMs =
+          diag?.lastOnTrackAt != null && nowMs > 0
+            ? nowMs - diag.lastOnTrackAt
+            : "-";
+        const lastAudioConfirmAgeMs =
+          diag?.lastPlaybackConfirmedAt != null && nowMs > 0
+            ? nowMs - diag.lastPlaybackConfirmedAt
+            : "-";
+        logVoiceUnstable({
+          reason: mapVoiceUnstableReason(
+            status.reason,
+            diag?.hasPc ?? false,
+            diag?.ice ?? "-",
+            diag?.conn ?? "-"
+          ),
+          remoteId: memberId,
+          pc: diag?.hasPc ?? false,
+          ice: diag?.ice ?? "-",
+          connection: diag?.conn ?? "-",
+          signaling: diag?.sig ?? "-",
+          remoteTrack: diag?.hasRemoteStream ?? false,
+          audioConfirmed:
+            audioHealth?.verified === true ||
+            audioHealth?.audioActuallyPlaying === true,
+          audioConfirmedStrict: audioHealth?.audioConfirmedStrict === true,
+          inboundBytesDelta: "-",
+          outboundBytesDelta: "-",
+          lastRemoteTrackAgeMs: lastOnTrackAgeMs,
+          lastAudioConfirmAgeMs: lastAudioConfirmAgeMs,
+        });
+      }
+
       const prevText = prevCallStatusRef.current[member.device_id];
       if (prevText !== status.text) {
         logParticipationStatusDecision({
@@ -1681,6 +1751,19 @@ export default function CallClient() {
     }
   }, []);
 
+  const handlePeerStatesChange = useCallback((states: Record<string, PeerState>) => {
+    setPeerStates((prev) => (arePeerStatesEqual(prev, states) ? prev : states));
+  }, []);
+
+  const handlePeerDiagnosticsChange = useCallback(
+    (diagnostics: Record<string, PeerStatusDiagnostics>) => {
+      setPeerDiagnostics((prev) =>
+        arePeerDiagnosticsEqual(prev, diagnostics) ? prev : diagnostics
+      );
+    },
+    []
+  );
+
   const handleVoiceReadinessSnapshot = useCallback(
     (snapshot: {
       remoteIds: string[];
@@ -1757,12 +1840,15 @@ export default function CallClient() {
     };
   }, [classId, deviceId, members.length, micReady, remoteMemberIds.length, sessionId]);
 
+  const peerStatesForReadinessRef = useRef(peerStates);
+  peerStatesForReadinessRef.current = peerStates;
+
   const runCallReadinessRecheck = useCallback(
     (reason: string) => {
       const snap = buildCallReadinessSnapshot();
       logCallReadyCheck(snap, reason);
       const stuckReason = resolveCallReadyStuckReason(snap);
-      const peersConnected = Object.values(peerStates).some(
+      const peersConnected = Object.values(peerStatesForReadinessRef.current).some(
         (state) => state === "connected"
       );
       if (!stuckReason || peersConnected) {
@@ -1783,7 +1869,7 @@ export default function CallClient() {
       }
       setShowCallStuckReconnect(true);
     },
-    [buildCallReadinessSnapshot, peerStates]
+    [buildCallReadinessSnapshot]
   );
 
   const runCallReadinessRecheckRef = useRef(runCallReadinessRecheck);
@@ -1803,18 +1889,15 @@ export default function CallClient() {
   }, [sessionId, classId, deviceId]);
 
   useEffect(() => {
-    runCallReadinessRecheck("initial");
+    runCallReadinessRecheckRef.current("initial");
+  }, [sessionId]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
-      runCallReadinessRecheck("interval");
+      runCallReadinessRecheckRef.current("interval");
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [
-    micReady,
-    members.length,
-    membersSyncRevision,
-    peerStates,
-    runCallReadinessRecheck,
-  ]);
+  }, [sessionId]);
 
   const handleCallStuckReconnect = useCallback(() => {
     const snap = buildCallReadinessSnapshot();
@@ -1830,12 +1913,18 @@ export default function CallClient() {
     void fetchMembers("readiness_reconnect", { fast: true });
   }, [buildCallReadinessSnapshot, deviceId, fetchMembers, members]);
 
+  const voiceMembersRef = useRef<Member[]>([]);
   const voiceMembers = useMemo(() => {
-    return buildVoiceConnectionMembers(members, {
+    const next = buildVoiceConnectionMembers(members, {
       sessionId,
       explicitLeftIds: localExitedPeersRef.current,
       stable: isStableVoiceJoinMode(),
     });
+    if (areMembersListEquivalent(voiceMembersRef.current, next)) {
+      return voiceMembersRef.current;
+    }
+    voiceMembersRef.current = next;
+    return next;
   }, [members, sessionId, membersSyncRevision]);
 
   useEffect(() => {
@@ -1861,7 +1950,8 @@ export default function CallClient() {
       `${sessionId.slice(-6)}|${classId.slice(-6)}|${deviceId.slice(-4)}|` +
       `${members.length}|${remoteMemberIds.length}|${micReady ? 1 : 0}|` +
       `${voiceLayerShouldRender ? 1 : 0}|${voiceLayerBlockingReason}`;
-    if (lastCallRenderLogKeyRef.current !== renderKey) {
+    const renderKeyChanged = lastCallRenderLogKeyRef.current !== renderKey;
+    if (renderKeyChanged) {
       lastCallRenderLogKeyRef.current = renderKey;
       logCallRender({
         sessionId,
@@ -1885,8 +1975,8 @@ export default function CallClient() {
         localStreamReady: micReady,
         micReady,
       });
+      runCallReadinessRecheckRef.current("render");
     }
-    runCallReadinessRecheckRef.current("render");
   }, [
     classId,
     deviceId,
@@ -1915,8 +2005,8 @@ export default function CallClient() {
           onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
           onRemoteCountChange={handleRemoteCountChange}
           onStatusChange={setCallInfo}
-          onPeerStatesChange={setPeerStates}
-          onPeerDiagnosticsChange={setPeerDiagnostics}
+          onPeerStatesChange={handlePeerStatesChange}
+          onPeerDiagnosticsChange={handlePeerDiagnosticsChange}
           onVoiceCleanup={handleVoiceCleanup}
           onManualPeerHardResetReady={handleManualPeerHardResetReady}
           onReadinessSnapshot={handleVoiceReadinessSnapshot}

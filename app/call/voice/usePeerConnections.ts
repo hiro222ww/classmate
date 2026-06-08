@@ -282,6 +282,7 @@ type UsePeerConnectionsArgs = {
     turnReady: boolean;
     voiceEnabled: boolean;
   }) => void;
+  voiceLayerInstanceId?: string;
 };
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
@@ -933,6 +934,7 @@ export function usePeerConnections({
   onPeerDiagnosticsChange,
   onVoiceCleanup,
   onReadinessSnapshot,
+  voiceLayerInstanceId = "-",
 }: UsePeerConnectionsArgs) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef(deviceId);
@@ -1631,14 +1633,27 @@ export function usePeerConnections({
     [getRemoteIds, signalReady]
   );
 
+  const hookRunIdRef = useRef(0);
+
   useEffect(() => {
+    hookRunIdRef.current += 1;
     console.log(
-      `[voice-peer] hook-start session=${sessionId.slice(-6)} device=${compactDeviceId(deviceId)} ` +
+      `[voice-peer] hook-start instance=${voiceLayerInstanceId} runId=${hookRunIdRef.current} ` +
+        `session=${sessionId.slice(-6)} device=${compactDeviceId(deviceId)} ` +
         `micReady=${micReady ? 1 : 0} signalReady=${signalReady ? 1 : 0} ` +
-        `settingsReady=${voiceSettingsReadyRef.current ? 1 : 0}`
+        `settingsReady=${voiceSettingsReadyRef.current ? 1 : 0} members=${members.length}`
     );
     emitReadinessSnapshot("hook_start");
-  }, [deviceId, emitReadinessSnapshot, micReady, sessionId, signalReady, settingsReadyTick]);
+  }, [
+    deviceId,
+    emitReadinessSnapshot,
+    micReady,
+    members.length,
+    sessionId,
+    signalReady,
+    settingsReadyTick,
+    voiceLayerInstanceId,
+  ]);
 
   const clearDeferredMemberCloseTimer = useCallback((remoteId: string) => {
     const timer = deferredMemberCloseTimersRef.current.get(remoteId);
@@ -4918,6 +4933,10 @@ export function usePeerConnections({
       const iceTransportPolicy = getPeerIceTransportPolicy();
       peerIcePolicyRef.current.set(remoteId, iceTransportPolicy);
 
+      const role = deviceId < remoteId ? "active" : "passive";
+      console.log(
+        `[voice-peer] create remote=${compactDeviceId(remoteId)} role=${role}`
+      );
       debugConsoleLog(
         `[voice-peer] create-peer remote=${compactDeviceId(remoteId)} ` +
           `connectionId=${compactConnectionId(connectionId)} ` +
@@ -5508,6 +5527,9 @@ export function usePeerConnections({
           connectionId,
           sdp: pc.localDescription,
         });
+        console.log(
+          `[voice-signal] offer-send remote=${compactDeviceId(remoteId)} reason=${reason}`
+        );
         touchPeerSignal(remoteId, "offer_sent");
         markVoicePerf("offer_sent", { remoteId, extra: reason });
         emitMeshSummary("offer_sent", { immediate: true });
@@ -6216,6 +6238,9 @@ export function usePeerConnections({
       if (isOfferOwner) {
         void maybeStartOffer(remoteId);
       } else {
+        console.log(
+          `[voice-peer] passive_wait_offer remote=${compactDeviceId(remoteId)} reason=${reason}`
+        );
         createPeerConnection(remoteId, connectionId);
         setPeerState(remoteId, "connecting");
         if (isEndedStreamReconnectReason(reason)) {
