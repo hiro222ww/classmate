@@ -32,7 +32,8 @@ export type CanonicalSessionPick = {
     | "reuse_recruiting_newest"
     | "reuse_rpc_session"
     | "reuse_requested_session"
-    | "hint_joinable_empty";
+    | "hint_joinable_empty"
+    | "reuse_hint_with_members";
 };
 
 function statusRank(status: string): number {

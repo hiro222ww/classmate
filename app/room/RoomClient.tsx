@@ -305,6 +305,12 @@ async function resolveClassMatchKeys(deviceId: string, classId: string) {
   return { worldKey, topicKey };
 }
 
+const MAX_JOIN_RETRY = 2;
+
+function parseJoinKeySessionId(joinKey: string) {
+  return String(joinKey.split(":")[0] ?? "").trim();
+}
+
 async function rematchRoomSession(params: {
   deviceId: string;
   classId: string;
@@ -695,6 +701,7 @@ export default function RoomClient() {
   const joinInFlightPromiseRef = useRef<Promise<void> | null>(null);
   const joinRetryTimerRef = useRef<number | null>(null);
   const joinSelfRejoinTimerRef = useRef<number | null>(null);
+  const joinRetryCountByKeyRef = useRef<Map<string, number>>(new Map());
   const retryJoinRef = useRef<(() => Promise<void>) | null>(null);
   const blockedClosedSessionIdsRef = useRef<Set<string>>(new Set());
   const rematchPendingRedirectRef = useRef<{
@@ -865,6 +872,7 @@ export default function RoomClient() {
     if (joinRetryTimerRef.current != null) {
       window.clearTimeout(joinRetryTimerRef.current);
       joinRetryTimerRef.current = null;
+      console.log(`[room-join] retry canceled reason=${reason}`);
     }
     if (joinSelfRejoinTimerRef.current != null) {
       window.clearTimeout(joinSelfRejoinTimerRef.current);
@@ -887,21 +895,63 @@ export default function RoomClient() {
 
   const scheduleJoinRetry = useCallback(
     (reason: string, delayMs: number, joinKey: string) => {
+      if (typeof window !== "undefined" && window.location.pathname !== "/room") {
+        console.log(`[room-join] retry blocked reason=stale_session_not_current`);
+        return;
+      }
+
       const identity = roomIdentityRef.current;
+      const targetSessionId = parseJoinKeySessionId(joinKey);
+
+      if (targetSessionId && identity.sessionId !== targetSessionId) {
+        console.log(
+          `[room-join] retry blocked reason=stale_session_not_current ` +
+            `target=${targetSessionId.slice(-6)} current=${identity.sessionId.slice(-6)}`
+        );
+        return;
+      }
+
       if (isBlockedClosedSession(identity.sessionId)) {
         console.log(
           `[room-join] retry blocked reason=old_session_closed session=${identity.sessionId.slice(-6)}`
         );
         return;
       }
+
+      const retryCount = joinRetryCountByKeyRef.current.get(joinKey) ?? 0;
+      if (retryCount >= MAX_JOIN_RETRY) {
+        console.log(
+          `[room-join] retry blocked reason=max_retry_exceeded key=${joinKey.slice(-12)} count=${retryCount}`
+        );
+        return;
+      }
+
       if (joinRetryTimerRef.current != null) {
         window.clearTimeout(joinRetryTimerRef.current);
       }
-      console.log(`[room-join] retry reason=${reason} delayMs=${delayMs}`);
+
+      joinRetryCountByKeyRef.current.set(joinKey, retryCount + 1);
+      console.log(
+        `[room-join] retry reason=${reason} delayMs=${delayMs} attempt=${retryCount + 1}/${MAX_JOIN_RETRY}`
+      );
       joinRetryTimerRef.current = window.setTimeout(() => {
         joinRetryTimerRef.current = null;
+        if (typeof window !== "undefined" && window.location.pathname !== "/room") {
+          console.log(`[room-join] retry blocked reason=stale_session_not_current`);
+          return;
+        }
         if (joinedSessionKeyRef.current === joinKey) return;
         const currentIdentity = roomIdentityRef.current;
+        if (
+          targetSessionId &&
+          currentIdentity.sessionId !== targetSessionId
+        ) {
+          console.log(
+            `[room-join] retry blocked reason=stale_session_not_current ` +
+              `target=${targetSessionId.slice(-6)} current=${currentIdentity.sessionId.slice(-6)}`
+          );
+          return;
+        }
         if (
           !currentIdentity.sessionId ||
           !currentIdentity.classId ||
@@ -914,6 +964,11 @@ export default function RoomClient() {
           console.log(
             `[room-join] retry blocked reason=old_session_closed session=${currentIdentity.sessionId.slice(-6)}`
           );
+          return;
+        }
+        const latestCount = joinRetryCountByKeyRef.current.get(joinKey) ?? 0;
+        if (latestCount > MAX_JOIN_RETRY) {
+          console.log(`[room-join] retry blocked reason=max_retry_exceeded`);
           return;
         }
         joinedSessionKeyRef.current = null;
@@ -993,16 +1048,30 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
   useEffect(() => {
     bumpRoomAsync("session_changed");
-  }, [sessionId, classId, bumpRoomAsync]);
+    roomLifecycleStartRef.current = Date.now();
+    rematchPendingRedirectRef.current = null;
+    joinRetryCountByKeyRef.current.clear();
+    cancelJoinRecoveryTimers("session_changed");
+  }, [sessionId, classId, deviceId, bumpRoomAsync, cancelJoinRecoveryTimers]);
+
+  useEffect(() => {
+    if (pathname === "/room") return;
+    joinRetryCountByKeyRef.current.clear();
+    cancelJoinRecoveryTimers("route_changed");
+  }, [pathname, cancelJoinRecoveryTimers]);
 
   useEffect(() => {
     return () => {
+      joinRetryCountByKeyRef.current.clear();
+      cancelJoinRecoveryTimers("unmount");
       bumpRoomAsync("unmount");
     };
-  }, [bumpRoomAsync]);
+  }, [bumpRoomAsync, cancelJoinRecoveryTimers]);
 
   /** Return to Home — keeps session_members and class_memberships; presence only. */
   const goHome = useCallback(() => {
+    joinRetryCountByKeyRef.current.clear();
+    cancelJoinRecoveryTimers("home_navigation");
     bumpRoomAsync("return_home");
 
     const did = String(deviceId ?? "").trim();
@@ -1043,7 +1112,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     }
 
     router.push(withDev("/"));
-  }, [bumpRoomAsync, classId, deviceId, router, sessionId]);
+  }, [bumpRoomAsync, cancelJoinRecoveryTimers, classId, deviceId, router, sessionId]);
 
   useEffect(() => {
     const id = String(getDeviceId() ?? "").trim();
@@ -2118,6 +2187,7 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     markSessionClosed(params.oldSessionId);
     rematchPendingRedirectRef.current = null;
+    joinRetryCountByKeyRef.current.clear();
     cancelJoinRecoveryTimers("rematch_redirect");
     bumpRoomAsync("session_resolved");
     cancelAutoCallTimer("recent_rematch");
@@ -2161,6 +2231,8 @@ const name = rawName === "You" ? "参加者" : rawName;
     );
 
     joinedSessionKeyRef.current = joinKey;
+    joinRetryCountByKeyRef.current.delete(joinKey);
+    cancelJoinRecoveryTimers("join_success");
     setLifecycleReady(true);
     setResolving(false);
     if (roomLifecycleStartRef.current != null) {
@@ -2598,15 +2670,9 @@ const name = rawName === "You" ? "参加者" : rawName;
 
   return () => {
     cancelled = true;
+    joinRetryCountByKeyRef.current.clear();
+    cancelJoinRecoveryTimers("unmount");
     bumpRoomAsync("join_cleanup");
-    if (joinRetryTimerRef.current != null) {
-      window.clearTimeout(joinRetryTimerRef.current);
-      joinRetryTimerRef.current = null;
-    }
-    if (joinSelfRejoinTimerRef.current != null) {
-      window.clearTimeout(joinSelfRejoinTimerRef.current);
-      joinSelfRejoinTimerRef.current = null;
-    }
   };
 }, [
   sessionId,

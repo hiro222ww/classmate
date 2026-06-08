@@ -4,6 +4,7 @@ import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions"
 import {
   evaluateHintSessionForOpenJoined,
   evaluateOpenJoinedSessionReuse,
+  isDeadlinePassed,
   isOpenJoinedHintReusableStatus,
   isRecruitmentSessionFresh,
   isRecruitingSessionStatus,
@@ -279,6 +280,21 @@ async function resolveHintSessionPick(params: {
     return null;
   }
 
+  if (
+    hintRow.memberCount > 0 &&
+    !isDeadlinePassed(params.matchDeadlineAt ?? null) &&
+    status !== "closed" &&
+    status !== "ended"
+  ) {
+    return {
+      sessionId: hintRow.id,
+      sessionStatus: hintRow.status,
+      sessionCreatedAt: hintRow.createdAt,
+      memberCount: hintRow.memberCount,
+      reason: "reuse_hint_with_members",
+    };
+  }
+
   const hintEval = evaluateHintSessionForOpenJoined({
     sessionStatus: hintRow.status,
     sessionCreatedAt: hintRow.createdAt,
@@ -303,9 +319,11 @@ async function resolveHintSessionPick(params: {
   }
 
   const reason: CanonicalSessionPick["reason"] =
-    isOpenJoinedHintReusableStatus(status) && hintRow.memberCount === 0
-      ? "hint_joinable_empty"
-      : "reuse_requested_session";
+    hintRow.memberCount > 0
+      ? "reuse_hint_with_members"
+      : isOpenJoinedHintReusableStatus(status) && hintRow.memberCount === 0
+        ? "hint_joinable_empty"
+        : "reuse_requested_session";
 
   if (reason === "hint_joinable_empty") {
     console.log(
@@ -456,6 +474,33 @@ async function ensureJoinableSessionOrCreate(params: {
   const memberCount = params.memberCount;
   const selectionReason = params.selectionReason;
   const hintReusableStatus = isOpenJoinedHintReusableStatus(sessionStatus);
+
+  if (
+    params.allowHintReuse &&
+    memberCount > 0 &&
+    !isDeadlinePassed(params.matchDeadlineAt) &&
+    !["closed", "ended"].includes(normalizeSessionStatus(sessionStatus))
+  ) {
+    const reuseReason =
+      selectionReason === "reuse_hint_with_members" ||
+      selectionReason.includes("reuse_hint")
+        ? "reuse_hint_with_members"
+        : selectionReason;
+    console.log(
+      `[class-session] reuse session=${tailMatchId(sessionId)} ` +
+        `reason=${reuseReason} members=${memberCount} ` +
+        `class=${tailMatchId(params.classId)} source=hint_members`
+    );
+    return {
+      ok: true,
+      sessionId,
+      sessionStatus,
+      sessionCreatedAt,
+      createdNewSession: false,
+      reused: true,
+      selectionReason: reuseReason,
+    };
+  }
   const recruitingStatus = isRecruitingSessionStatus(sessionStatus);
   const hintTerminalReasons: OpenJoinedSessionInvalidReason[] = [
     "closed",
@@ -681,10 +726,12 @@ export async function resolveOpenJoinedClassSession(
       const hintSelectionReason =
         hintPick.reason === "hint_joinable_empty"
           ? "hint_joinable_empty"
-          : formatClassSessionSelectionReason(
-              hintPick.reason,
-              hintPick.memberCount
-            );
+          : hintPick.reason === "reuse_hint_with_members"
+            ? "reuse_hint_with_members"
+            : formatClassSessionSelectionReason(
+                hintPick.reason,
+                hintPick.memberCount
+              );
       console.log(
         `[class-session] selected session=${tailMatchId(hintPick.sessionId)} ` +
           `reason=${hintSelectionReason} members=${hintPick.memberCount} ` +
@@ -790,14 +837,68 @@ export async function resolveOpenJoinedClassSession(
   }
 
   if (hintSessionId) {
+    const hintLoaded = await loadHintSessionRow(
+      hintSessionId,
+      params.classId,
+      classSessions,
+      deviceId
+    );
+    const hintStatus = hintLoaded
+      ? normalizeSessionStatus(hintLoaded.row.status)
+      : "-";
+    const hintMemberCount = hintLoaded?.row.memberCount ?? 0;
+
+    if (hintLoaded?.sameClass) {
+      logHintCheck({
+        sessionId: hintSessionId,
+        classId: params.classId,
+        status: hintStatus,
+        memberCount: hintMemberCount,
+        stale: false,
+        cutoff:
+          params.recruitmentSessionTtlMinutes != null
+            ? recruitmentSessionCutoffIso(params.recruitmentSessionTtlMinutes)
+            : null,
+        sameClass: true,
+        matchDeadlineAt: params.matchDeadlineAt,
+      });
+    }
+
+    if (
+      hintLoaded?.sameClass &&
+      hintMemberCount > 0 &&
+      !isDeadlinePassed(params.matchDeadlineAt ?? null) &&
+      hintStatus !== "closed" &&
+      hintStatus !== "ended"
+    ) {
+      console.log(
+        `[class-session] selected session=${tailMatchId(hintSessionId)} ` +
+          `reason=reuse_hint_with_members members=${hintMemberCount} ` +
+          `class=${tailMatchId(params.classId)} source=hint_fallback`
+      );
+      return ensureJoinableSessionOrCreate({
+        classId: params.classId,
+        className: params.className,
+        sessionId: hintLoaded.row.id,
+        sessionStatus: hintLoaded.row.status,
+        sessionCreatedAt: hintLoaded.row.createdAt,
+        matchDeadlineAt: params.matchDeadlineAt,
+        memberCount: hintMemberCount,
+        requestedCapacity: params.requestedCapacity,
+        recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
+        selectionReason: "reuse_hint_with_members",
+        allowHintReuse: true,
+      });
+    }
+
     logRejectHintSession({
       sessionId: hintSessionId,
       classId: params.classId,
       reason: "create_fallback_no_valid_active",
-      status: "-",
-      memberCount: 0,
+      status: hintStatus,
+      memberCount: hintMemberCount,
       matchDeadlineAt: params.matchDeadlineAt,
-      sessionCreatedAt: null,
+      sessionCreatedAt: hintLoaded?.row.createdAt ?? null,
       recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
       staleReason: "hint_not_reused_before_create_new",
     });

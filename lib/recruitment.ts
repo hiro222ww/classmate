@@ -202,6 +202,7 @@ export function shouldCreateNewOpenClassSession(
   sessionStatus?: string | null
 ): boolean {
   if (!reason) return false;
+  if (memberCount > 0) return false;
   if (reason === "stale") return false;
   const status = normalizeSessionStatus(sessionStatus);
   if (reason === "empty" && isRecruitingSessionStatus(status)) return false;
@@ -234,14 +235,18 @@ export function evaluateHintSessionForOpenJoined(params: {
     return { reusable: false, reason: "ended", staleReason: null };
   }
   if (status === "expired") {
-    if (params.memberCount <= 0) {
+    if (params.memberCount > 0) {
       return {
         reusable: true,
         reason: null,
-        staleReason: "expired_ttl_empty",
+        staleReason: "expired_ttl_with_members",
       };
     }
-    return { reusable: false, reason: "expired", staleReason: null };
+    return {
+      reusable: true,
+      reason: null,
+      staleReason: "expired_ttl_empty",
+    };
   }
   if (isDeadlinePassed(params.matchDeadlineAt ?? null)) {
     return { reusable: false, reason: "cutoff", staleReason: null };
