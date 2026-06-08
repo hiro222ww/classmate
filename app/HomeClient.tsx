@@ -66,6 +66,11 @@ import {
   type ParticipationSource,
   type UiParticipationStatus,
 } from "@/lib/memberPresenceStatus";
+import {
+  countPresenceStates,
+  getPresenceFreshMsForContext,
+  logMemberSource,
+} from "@/lib/sessionMemberListMerge";
 
 type Profile = {
   device_id: string;
@@ -1019,6 +1024,12 @@ try {
       Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_HOME;
     if (!fresh) {
       ignoredStale += 1;
+      if (sessionMemberIds.has(did)) {
+        presenceMap[did] = mapped;
+        console.log(
+          `[presence] stale device=${did.slice(-4)} keptInMembers=1 context=home`
+        );
+      }
       continue;
     }
     presenceMap[did] = mapped;
@@ -1208,6 +1219,17 @@ return {
             lastInSessionAtByClassRef.current[classId] ?? {};
           const sessionMemberIds =
             sessionMemberIdsByClassRef.current[classId] ?? new Set<string>();
+          const freshMs = getPresenceFreshMsForContext("home");
+          const presenceCounts = countPresenceStates(members, freshMs);
+          logMemberSource({
+            context: "home",
+            sessionId: sessionId || undefined,
+            sessionMembers: sessionMemberIds.size || members.length,
+            presenceActive: presenceCounts.presenceActive,
+            presenceStale: presenceCounts.presenceStale,
+            displayMembers: members.length,
+            extra: `class=${classId.slice(-6)}`,
+          });
 
           for (const member of members) {
             const memberId = String(member.device_id ?? "").trim();

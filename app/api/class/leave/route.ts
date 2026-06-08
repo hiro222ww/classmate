@@ -115,6 +115,12 @@ export async function POST(req: Request) {
       }
 
       sessionMembersRemoved = removedMemberRows?.length ?? 0;
+      if (sessionMembersRemoved > 0) {
+        console.log(
+          `[session-members] cleanup reason=explicit_leave class=${classId.slice(-6)} ` +
+            `device=${deviceId.slice(-4)} removed=${sessionMembersRemoved}`
+        );
+      }
 
       for (const sessionId of sessionIds) {
         const closeRes = await closeEmptySessionIfNeeded(
@@ -161,6 +167,11 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
+
+    console.log(
+      `[class-membership] left reason=explicit_leave class=${classId.slice(-6)} ` +
+        `device=${deviceId.slice(-4)} source=${source}`
+    );
 
     const presenceRemoved = removedPresenceRows?.length ?? 0;
 

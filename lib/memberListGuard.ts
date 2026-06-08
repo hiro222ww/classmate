@@ -7,6 +7,7 @@ import {
 } from "@/lib/inviteDiagnostics";
 
 export const MEMBER_LIST_EMPTY_STREAK_REQUIRED = 2;
+export const MEMBER_DROP_STREAK_REQUIRED = 3;
 
 export function compactMemberDeviceIds(
   members: Array<{ device_id?: string | null }>
@@ -44,9 +45,11 @@ export function diffMemberDeviceIds(
 export type MemberListApplyDecision = {
   apply: boolean;
   nextEmptyStreak: number;
+  nextMemberDropStreak: number;
   ignoreReason?: string;
   shouldRedirectRemoved: boolean;
   viewerInNext: boolean;
+  unexplainedRemovals: string[];
 };
 
 export function evaluateMemberListApply(params: {
@@ -63,16 +66,36 @@ export function evaluateMemberListApply(params: {
   viewerInSessionMembers?: boolean;
   /** 明示退室操作後のみ true にする */
   explicitLeave?: boolean;
+  memberDropStreak?: number;
+  requiredMemberDropStreak?: number;
+  explicitLeftDeviceIds?: ReadonlySet<string>;
 }): MemberListApplyDecision {
   const required = params.inviteGraceActive
     ? (params.requiredEmptyStreak ?? INVITE_MEMBER_EMPTY_STREAK_REQUIRED)
     : (params.requiredEmptyStreak ?? MEMBER_LIST_EMPTY_STREAK_REQUIRED);
+  const dropRequired =
+    params.requiredMemberDropStreak ?? MEMBER_DROP_STREAK_REQUIRED;
+  const memberDropStreak = params.memberDropStreak ?? 0;
   const viewerId = String(params.viewerDeviceId ?? "").trim();
   const prevCount = params.prevMembers.length;
   const nextCount = params.nextMembers.length;
   const viewerInNext = params.nextMembers.some(
     (m) => String(m.device_id ?? "").trim() === viewerId
   );
+  const { removed } = diffMemberDeviceIds(params.prevMembers, params.nextMembers);
+  const explicitLeft = params.explicitLeftDeviceIds ?? new Set<string>();
+  const unexplainedRemovals = removed.filter((tail) => {
+    const full = params.prevMembers.find(
+      (m) => String(m.device_id ?? "").trim().slice(-4) === tail
+    );
+    const did = String(full?.device_id ?? "").trim();
+    return did ? !explicitLeft.has(did) : true;
+  });
+
+  const baseDecision = {
+    nextMemberDropStreak: memberDropStreak,
+    unexplainedRemovals,
+  };
 
   if (!params.fetchOk) {
     return {
@@ -81,6 +104,7 @@ export function evaluateMemberListApply(params: {
       ignoreReason: "fetch_not_ok",
       shouldRedirectRemoved: false,
       viewerInNext: false,
+      ...baseDecision,
     };
   }
 
@@ -88,17 +112,35 @@ export function evaluateMemberListApply(params: {
     return {
       apply: true,
       nextEmptyStreak: 0,
+      nextMemberDropStreak: 0,
       shouldRedirectRemoved: false,
       viewerInNext,
+      unexplainedRemovals: [],
     };
   }
 
   if (viewerInNext) {
+    if (unexplainedRemovals.length > 0) {
+      const nextDropStreak = memberDropStreak + 1;
+      if (nextDropStreak < dropRequired) {
+        return {
+          apply: false,
+          nextEmptyStreak: 0,
+          nextMemberDropStreak: nextDropStreak,
+          ignoreReason: "partial_member_drop_retry",
+          shouldRedirectRemoved: false,
+          viewerInNext: true,
+          unexplainedRemovals,
+        };
+      }
+    }
     return {
       apply: true,
       nextEmptyStreak: 0,
+      nextMemberDropStreak: 0,
       shouldRedirectRemoved: false,
       viewerInNext: true,
+      unexplainedRemovals,
     };
   }
 
@@ -106,8 +148,10 @@ export function evaluateMemberListApply(params: {
     return {
       apply: true,
       nextEmptyStreak: 0,
+      nextMemberDropStreak: 0,
       shouldRedirectRemoved: true,
       viewerInNext: false,
+      unexplainedRemovals: [],
     };
   }
 
@@ -118,6 +162,7 @@ export function evaluateMemberListApply(params: {
       ignoreReason: "viewer_still_in_session_members",
       shouldRedirectRemoved: false,
       viewerInNext: false,
+      ...baseDecision,
     };
   }
 
@@ -135,14 +180,17 @@ export function evaluateMemberListApply(params: {
         ignoreReason: inviteGrace ? "invite_grace" : "temporary_empty_response",
         shouldRedirectRemoved: false,
         viewerInNext: false,
+        ...baseDecision,
       };
     }
     return {
       apply: true,
       nextEmptyStreak: nextStreak,
+      nextMemberDropStreak: 0,
       shouldRedirectRemoved:
         sessionMemberRemovalConfirmed && !params.hasClassMembershipHint,
       viewerInNext: false,
+      unexplainedRemovals: [],
     };
   }
 
@@ -157,14 +205,17 @@ export function evaluateMemberListApply(params: {
           ignoreReason: inviteGrace ? "invite_grace" : "viewer_missing_retry",
           shouldRedirectRemoved: false,
           viewerInNext: false,
+          ...baseDecision,
         };
       }
     }
     return {
       apply: true,
       nextEmptyStreak: 0,
+      nextMemberDropStreak: 0,
       shouldRedirectRemoved: !(inviteGrace || params.hasClassMembershipHint),
       viewerInNext: false,
+      unexplainedRemovals: [],
     };
   }
 
@@ -174,6 +225,7 @@ export function evaluateMemberListApply(params: {
   return {
     apply: confirmedEmpty,
     nextEmptyStreak: nextStreak,
+    nextMemberDropStreak: memberDropStreak,
     ignoreReason:
       inviteGrace || nextStreak < required ? "invite_grace" : undefined,
     shouldRedirectRemoved:
@@ -181,6 +233,7 @@ export function evaluateMemberListApply(params: {
       sessionMemberRemovalConfirmed &&
       !params.hasClassMembershipHint,
     viewerInNext: false,
+    unexplainedRemovals: [],
   };
 }
 

@@ -289,7 +289,9 @@ export function resolveInternalMemberStatus(
   if (input.inSessionMembers) {
     return {
       internal: "in_session",
-      reason: "session_member_no_fresh_room_presence",
+      reason: stale
+        ? "session_member_stale_presence"
+        : "session_member_no_fresh_room_presence",
       evidence,
     };
   }
@@ -363,9 +365,24 @@ export function resolveMemberParticipationForUi(
   const resolved = resolveInternalMemberStatus(input);
   const unified = internalToUnified(resolved.internal);
   const participation = unifiedToParticipation(unified);
-  const label = getMemberStatusLabel(resolved.internal, input.context, {
+  let label = getMemberStatusLabel(resolved.internal, input.context, {
     isMe: input.isMe,
   });
+
+  if (
+    input.inSessionMembers &&
+    resolved.evidence.stalePresence &&
+    !resolved.evidence.freshPresence &&
+    !resolved.evidence.explicitLeaveSeen
+  ) {
+    if (input.context === "call") {
+      label = "接続不安定";
+    } else if (input.context === "room") {
+      label = "復帰待ち";
+    } else {
+      label = "離席中";
+    }
+  }
 
   logMemberStatusDecide({
     context: input.context,

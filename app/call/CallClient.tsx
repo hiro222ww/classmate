@@ -37,6 +37,12 @@ import {
   logRoomMembersRemoved,
   MEMBER_LIST_EMPTY_STREAK_REQUIRED,
 } from "@/lib/memberListGuard";
+import {
+  countPresenceStates,
+  getPresenceFreshMsForContext,
+  logMemberSource,
+  mergeSessionMembersPreservingRemoved,
+} from "@/lib/sessionMemberListMerge";
 import { logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
   installCallPageDiagnostics,
@@ -236,6 +242,7 @@ export default function CallClient() {
   const localExitedPeersRef = useRef<Set<string>>(new Set());
   const membersSyncRevisionRef = useRef(0);
   const memberEmptyStreakRef = useRef(0);
+  const memberDropStreakRef = useRef(0);
   const firstFastMembersAtRef = useRef<number | null>(null);
   const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
@@ -656,7 +663,7 @@ export default function CallClient() {
         let redirectRemoved = false;
 
         setMembers((prev) => {
-          const mergedMembers = applyCallMemberInCallHysteresis(prev, nextMembers, {
+          const hysteresisMembers = applyCallMemberInCallHysteresis(prev, nextMembers, {
             sessionId,
             viewerDeviceId: deviceId,
             firstFastMembersAt: firstFastMembersAtRef.current,
@@ -665,6 +672,17 @@ export default function CallClient() {
             fetchReason: reason,
           });
 
+          const { merged: mergedMembers } = mergeSessionMembersPreservingRemoved(
+            prev,
+            hysteresisMembers,
+            {
+              sessionId,
+              context: "call",
+              explicitLeftIds: localExitedPeersRef.current,
+              memberLastInListAt: memberLastInCallAtRef.current,
+            }
+          );
+
           const decision = evaluateMemberListApply({
             fetchOk: true,
             reason,
@@ -672,12 +690,17 @@ export default function CallClient() {
             nextMembers: mergedMembers,
             viewerDeviceId: deviceId,
             emptyStreak: memberEmptyStreakRef.current,
+            memberDropStreak: memberDropStreakRef.current,
+            explicitLeftDeviceIds: localExitedPeersRef.current,
             viewerInSessionMembers: json.viewerState?.inSessionMembers,
           });
 
           memberEmptyStreakRef.current = decision.nextEmptyStreak;
+          memberDropStreakRef.current = decision.nextMemberDropStreak;
 
-          const { removed, added } = diffMemberDeviceIds(prev, nextMembers);
+          const { removed, added } = diffMemberDeviceIds(prev, mergedMembers);
+          const freshMs = getPresenceFreshMsForContext("call");
+          const presenceCounts = countPresenceStates(mergedMembers, freshMs);
 
           logRoomMembersBeforeUpdate({
             context: "call",
@@ -695,13 +718,30 @@ export default function CallClient() {
           });
 
           if (!decision.apply) {
-            if (decision.ignoreReason === "temporary_empty_response") {
-              logRoomMembersEmptyIgnored({
+            if (
+              decision.ignoreReason === "temporary_empty_response" ||
+              decision.ignoreReason === "partial_member_drop_retry"
+            ) {
+              if (decision.ignoreReason === "temporary_empty_response") {
+                logRoomMembersEmptyIgnored({
+                  context: "call",
+                  reason,
+                  emptyStreak: decision.nextEmptyStreak,
+                  required: MEMBER_LIST_EMPTY_STREAK_REQUIRED,
+                });
+              }
+              const preserved =
+                mergedMembers.length > nextMembers.length ? mergedMembers : prev;
+              logMemberSource({
                 context: "call",
-                reason,
-                emptyStreak: decision.nextEmptyStreak,
-                required: MEMBER_LIST_EMPTY_STREAK_REQUIRED,
+                sessionId,
+                sessionMembers: nextMembers.length,
+                presenceActive: presenceCounts.presenceActive,
+                presenceStale: presenceCounts.presenceStale,
+                displayMembers: preserved.length,
+                extra: `ignore=${decision.ignoreReason ?? "-"}`,
               });
+              return preserved.length >= prev.length ? preserved : prev;
             }
             return prev;
           }
@@ -715,6 +755,15 @@ export default function CallClient() {
             });
             return prev;
           }
+
+          logMemberSource({
+            context: "call",
+            sessionId,
+            sessionMembers: nextMembers.length,
+            presenceActive: presenceCounts.presenceActive,
+            presenceStale: presenceCounts.presenceStale,
+            displayMembers: mergedMembers.length,
+          });
 
           return mergedMembers.map((m) => {
             const existing = prev.find((x) => x.device_id === m.device_id);

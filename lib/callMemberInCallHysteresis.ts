@@ -1,5 +1,6 @@
 import { debugConsoleLog } from "@/lib/debugVoiceLog";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
+import { SESSION_MEMBER_PRESERVE_MS } from "@/lib/sessionMemberListMerge";
 import {
   isStableVoiceJoinMode,
   STABLE_REMOTE_PEER_GRACE_MS,
@@ -137,21 +138,29 @@ export function applyCallMemberInCallHysteresis<T extends CallMemberInCallRow>(
     ) {
       continue;
     }
-    if (existing.is_in_call !== true) continue;
 
     const lastAt = opts.memberLastInCallAt.get(did);
-    const withinGrace =
+    const withinSessionGrace =
+      lastAt != null && now - lastAt < SESSION_MEMBER_PRESERVE_MS;
+    const withinInCallGrace =
       lastAt != null && now - lastAt < REMOTE_MEMBER_PRESENCE_GRACE_MS;
     const withinFast =
       opts.firstFastMembersAt != null &&
       now - opts.firstFastMembersAt < CALL_MEMBER_IN_CALL_HYSTERESIS_MS;
+    const shouldPreserve =
+      withinSessionGrace ||
+      withinFast ||
+      (existing.is_in_call === true && withinInCallGrace);
 
-    if (withinGrace || withinFast) {
+    if (shouldPreserve) {
       debugConsoleLog(
         `[session-members] missing-member-grace preserve device=${did.slice(-4)} ` +
-          `fetchReason=${opts.fetchReason ?? "-"}`
+          `fetchReason=${opts.fetchReason ?? "-"} inCall=${existing.is_in_call === true ? 1 : 0}`
       );
-      merged.push({ ...existing, is_in_call: true });
+      merged.push({
+        ...existing,
+        is_in_call: existing.is_in_call === true ? true : existing.is_in_call,
+      });
     }
   }
 

@@ -55,6 +55,12 @@ import {
   MEMBER_LIST_EMPTY_STREAK_REQUIRED,
   INVITE_JOIN_GRACE_MS,
 } from "@/lib/memberListGuard";
+import {
+  countPresenceStates,
+  getPresenceFreshMsForContext,
+  logMemberSource,
+  mergeSessionMembersPreservingRemoved,
+} from "@/lib/sessionMemberListMerge";
 import { logDeviceIdInit, logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
   isInviteJoinGraceActive,
@@ -677,6 +683,8 @@ export default function RoomClient() {
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const memberEmptyStreakRef = useRef(0);
+  const memberDropStreakRef = useRef(0);
+  const memberLastInListAtRef = useRef<Map<string, number>>(new Map());
   const inviteJoinGraceUntilRef = useRef(0);
   const hasClassMembershipHintRef = useRef(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
@@ -1729,27 +1737,42 @@ if (!res.ok || !json?.ok) {
         );
 
         let redirectRemoved = false;
+        let displayMemberCount = incomingMembers.length;
 
         const inviteGraceActive = isInviteJoinGraceActive(
           inviteJoinGraceUntilRef.current
         );
 
         setMembers((prev) => {
+          const { merged: mergedMembers } = mergeSessionMembersPreservingRemoved(
+            prev,
+            incomingMembers,
+            {
+              sessionId,
+              context: "room",
+              memberLastInListAt: memberLastInListAtRef.current,
+            }
+          );
+
           const decision = evaluateMemberListApply({
             fetchOk: true,
             reason: "fetchStatus",
             prevMembers: prev,
-            nextMembers: incomingMembers,
+            nextMembers: mergedMembers,
             viewerDeviceId: deviceId,
             emptyStreak: memberEmptyStreakRef.current,
+            memberDropStreak: memberDropStreakRef.current,
             inviteGraceActive,
             hasClassMembershipHint: hasClassMembershipHintRef.current,
             viewerInSessionMembers: json.viewerState?.inSessionMembers,
           });
 
           memberEmptyStreakRef.current = decision.nextEmptyStreak;
+          memberDropStreakRef.current = decision.nextMemberDropStreak;
 
-          const { removed, added } = diffMemberDeviceIds(prev, incomingMembers);
+          const { removed, added } = diffMemberDeviceIds(prev, mergedMembers);
+          const freshMs = getPresenceFreshMsForContext("room");
+          const presenceCounts = countPresenceStates(mergedMembers, freshMs);
 
           logRoomMembersBeforeUpdate({
             context: "room",
@@ -1757,9 +1780,9 @@ if (!res.ok || !json?.ok) {
             sessionId,
             classId,
             currentCount: prev.length,
-            nextCount: incomingMembers.length,
+            nextCount: mergedMembers.length,
             currentIds: compactMemberDeviceIds(prev),
-            nextIds: compactMemberDeviceIds(incomingMembers),
+            nextIds: compactMemberDeviceIds(mergedMembers),
             apply: decision.apply,
             ignoreReason: decision.ignoreReason,
             removed,
@@ -1769,7 +1792,8 @@ if (!res.ok || !json?.ok) {
           if (!decision.apply) {
             if (
               decision.ignoreReason === "invite_grace" ||
-              decision.ignoreReason === "temporary_empty_response"
+              decision.ignoreReason === "temporary_empty_response" ||
+              decision.ignoreReason === "partial_member_drop_retry"
             ) {
               if (decision.ignoreReason === "invite_grace") {
                 logRoomMembersInviteGraceIgnored({
@@ -1780,7 +1804,7 @@ if (!res.ok || !json?.ok) {
                   previousCount: prev.length,
                   emptyStreak: decision.nextEmptyStreak,
                 });
-              } else {
+              } else if (decision.ignoreReason === "temporary_empty_response") {
                 logRoomMembersEmptyIgnored({
                   context: "room",
                   reason: "fetchStatus",
@@ -1788,6 +1812,19 @@ if (!res.ok || !json?.ok) {
                   required: MEMBER_LIST_EMPTY_STREAK_REQUIRED,
                 });
               }
+              const preserved =
+                mergedMembers.length > incomingMembers.length ? mergedMembers : prev;
+              displayMemberCount = preserved.length;
+              logMemberSource({
+                context: "room",
+                sessionId,
+                sessionMembers: incomingMembers.length,
+                presenceActive: presenceCounts.presenceActive,
+                presenceStale: presenceCounts.presenceStale,
+                displayMembers: preserved.length,
+                extra: `ignore=${decision.ignoreReason ?? "-"}`,
+              });
+              return preserved.length >= prev.length ? preserved : prev;
             }
             return prev;
           }
@@ -1802,11 +1839,21 @@ if (!res.ok || !json?.ok) {
             return prev;
           }
 
+          logMemberSource({
+            context: "room",
+            sessionId,
+            sessionMembers: incomingMembers.length,
+            presenceActive: presenceCounts.presenceActive,
+            presenceStale: presenceCounts.presenceStale,
+            displayMembers: mergedMembers.length,
+          });
+          displayMemberCount = mergedMembers.length;
+
           const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
-          const nextNorm = JSON.stringify(normalizeMemberCompare(incomingMembers));
+          const nextNorm = JSON.stringify(normalizeMemberCompare(mergedMembers));
           if (prevNorm === nextNorm) return prev;
-          logMemberDisplayNamesFromApi("room:session/status", incomingMembers);
-          return incomingMembers;
+          logMemberDisplayNamesFromApi("room:session/status", mergedMembers);
+          return mergedMembers;
         });
 
         if (redirectRemoved) {
@@ -1832,10 +1879,15 @@ if (!res.ok || !json?.ok) {
           membersCount2SinceRef.current = null;
         }
 
+        const displayCount = Math.max(
+          incomingMembers.length,
+          memberLastInListAtRef.current.size
+        );
         const inCallCount = incomingMembers.filter((m) => m.is_in_call === true).length;
         console.log(
           `[session-members] context=room session=${sessionId.slice(-6)} ` +
-            `count=${incomingMembers.length} ids=${compactMemberDeviceIds(incomingMembers)} ` +
+            `count=${incomingMembers.length} display=${displayCount} ` +
+            `ids=${compactMemberDeviceIds(incomingMembers)} ` +
             `class=${classId.slice(-6)} inCall=${inCallCount}`
         );
 
@@ -1847,8 +1899,7 @@ if (!res.ok || !json?.ok) {
           setCapacity(Number(json.session?.capacity));
         }
 
-        const nextCount = Number(json.memberCount ?? incomingMembers.length ?? 0);
-        setMemberCount(Math.max(nextCount, 0));
+        setMemberCount(Math.max(displayMemberCount, 0));
         clearSoftConnectionError("status");
       } catch (e: any) {
         if (e?.name !== "AbortError") setSoftConnectionError("status");
@@ -2009,6 +2060,12 @@ if (!res.ok || !json?.ok) {
             Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_ROOM;
           if (!fresh) {
             ignoredStale += 1;
+            if (sessionMemberIds.has(did)) {
+              nextMap[did] = mapped;
+              console.log(
+                `[presence] stale device=${did.slice(-4)} keptInMembers=1 context=room`
+              );
+            }
             continue;
           }
 

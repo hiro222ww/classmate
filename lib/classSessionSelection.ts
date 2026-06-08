@@ -272,8 +272,8 @@ export async function pruneSplitClassSessionMemberships(params: {
   const removed = removedRows?.length ?? 0;
   if (removed > 0) {
     console.log(
-      `[class-session] prune-split class=${tailJoinId(classId)} device=${tailJoinId(deviceId)} ` +
-        `keep=${tailJoinId(keepSessionId)} removed=${removed} ` +
+      `[session-members] cleanup reason=split_session_prune class=${tailJoinId(classId)} ` +
+        `device=${tailJoinId(deviceId)} keep=${tailJoinId(keepSessionId)} removed=${removed} ` +
         `from=${(removedRows ?? [])
           .map((row) => tailJoinId(String(row.session_id ?? "")))
           .join(",")}`
