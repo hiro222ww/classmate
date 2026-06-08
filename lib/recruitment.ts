@@ -198,13 +198,65 @@ export function isSessionJoinableForOpenClass(params: {
 /** stale alone must not force a new session when members are still in the session. */
 export function shouldCreateNewOpenClassSession(
   reason: OpenJoinedSessionInvalidReason | null | undefined,
-  memberCount: number
+  memberCount: number,
+  sessionStatus?: string | null
 ): boolean {
   if (!reason) return false;
-  if (reason === "stale" && memberCount > 0) return false;
-  return ["closed", "expired", "ended", "cutoff", "empty", "unknown"].includes(
-    reason
-  );
+  if (reason === "stale") return false;
+  const status = normalizeSessionStatus(sessionStatus);
+  if (reason === "empty" && isRecruitingSessionStatus(status)) return false;
+  if (reason === "empty" && memberCount > 0) return false;
+  return ["closed", "expired", "ended", "cutoff", "unknown"].includes(reason);
+}
+
+/** openJoinedClass: reuse client hint unless terminal or cutoff. */
+export function evaluateHintSessionForOpenJoined(params: {
+  sessionStatus?: string | null;
+  sessionCreatedAt?: string | null;
+  matchDeadlineAt?: string | null;
+  memberCount: number;
+  recruitmentSessionTtlMinutes?: number | null;
+}): {
+  reusable: boolean;
+  reason: OpenJoinedSessionInvalidReason | "not_found" | null;
+  staleReason: string | null;
+} {
+  const ttl =
+    params.recruitmentSessionTtlMinutes === undefined
+      ? DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES
+      : params.recruitmentSessionTtlMinutes;
+  const status = normalizeSessionStatus(params.sessionStatus);
+
+  if (status === "closed") {
+    return { reusable: false, reason: "closed", staleReason: null };
+  }
+  if (status === "expired") {
+    return { reusable: false, reason: "expired", staleReason: null };
+  }
+  if (status === "ended") {
+    return { reusable: false, reason: "ended", staleReason: null };
+  }
+  if (isDeadlinePassed(params.matchDeadlineAt ?? null)) {
+    return { reusable: false, reason: "cutoff", staleReason: null };
+  }
+
+  if (isRecruitingSessionStatus(status)) {
+    const stale = !isRecruitmentSessionFresh(params.sessionCreatedAt, ttl);
+    return {
+      reusable: true,
+      reason: null,
+      staleReason: stale ? "stale" : null,
+    };
+  }
+
+  if (status === "active") {
+    if (params.memberCount <= 0) {
+      return { reusable: false, reason: "empty", staleReason: null };
+    }
+    return { reusable: true, reason: null, staleReason: null };
+  }
+
+  return { reusable: false, reason: "unknown", staleReason: null };
 }
 
 export function pickClassDisplaySession(

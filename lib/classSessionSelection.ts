@@ -31,7 +31,8 @@ export type CanonicalSessionPick = {
     | "reuse_recruiting_most_members"
     | "reuse_recruiting_newest"
     | "reuse_rpc_session"
-    | "reuse_requested_session";
+    | "reuse_requested_session"
+    | "hint_joinable_empty";
 };
 
 function statusRank(status: string): number {

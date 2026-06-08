@@ -17,6 +17,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
+import { storeHomeClassSessionHint } from "@/lib/homeClassSessionHint";
 import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
@@ -901,6 +902,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           joinedSession !== "-" ? String(joinedSession).slice(-6) : "-"
         } openJoinedClass=${openJoinedClass ? 1 : 0}`
     );
+    if (openJoinedClass) {
+      storeHomeClassSessionHint(classId, sessionId);
+    }
   }, [classId, sessionId, deviceId, openJoinedClass]);
 
   useEffect(() => {

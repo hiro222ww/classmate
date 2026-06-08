@@ -1607,13 +1607,19 @@ return () => {
       }
 
       let hintSessionId = String(target.session_id ?? "").trim();
-      if (!hintSessionId) {
-        const fallbackHint = readHomeClassSessionHint(target.id);
-        if (fallbackHint) {
+      const fallbackHint = readHomeClassSessionHint(target.id);
+      if (fallbackHint) {
+        if (!hintSessionId) {
           hintSessionId = fallbackHint;
           console.log(
             `[home openClass] fallback-hint-session class=${String(target.id).slice(-6)} ` +
               `session=${fallbackHint.slice(-6)}`
+          );
+        } else if (fallbackHint !== hintSessionId) {
+          hintSessionId = fallbackHint;
+          console.log(
+            `[home openClass] fallback-hint-session class=${String(target.id).slice(-6)} ` +
+              `session=${fallbackHint.slice(-6)} mineSession=${String(target.session_id ?? "").slice(-6) || "-"}`
           );
         }
       }
@@ -1740,8 +1746,21 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             `newSession=${sessionId.slice(-6)} reason=${selectionReason || "api_resolved"}`
         );
         if (
+          selectionReason.includes("create_new") ||
+          selectionReason.includes("no_valid_active")
+        ) {
+          console.warn(
+            `[home openClass] hint-rejected-detail class=${classId.slice(-6)} ` +
+              `hintSession=${hintSessionId.slice(-6)} resolvedSession=${sessionId.slice(-6)} ` +
+              `reason=${selectionReason} status=${resolvedStatus || "-"} ` +
+              `memberCount=${String(json?.memberCount ?? json?.member_count ?? "-")} ` +
+              `(see server [class-session] reject-hint-session)`
+          );
+        }
+        if (
           selectionReason.includes("stale") &&
-          !selectionReason.includes("ignore_recruitment_ttl_stale")
+          !selectionReason.includes("ignore_recruitment_ttl_stale") &&
+          !selectionReason.includes("hint_joinable_empty")
         ) {
           console.warn(
             "[home openClass] unexpected session switch — stale-only reason without member reuse"
