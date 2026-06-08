@@ -1674,6 +1674,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
       if (fetchStatusInFlightRef.current && !opts?.force) {
         fetchStatusPendingRef.current = true;
+        console.log(
+          `[room-perf] fetchStatus skip=in_flight reason=${fetchReason}`
+        );
         return fetchStatusInFlightRef.current;
       }
 
@@ -1832,6 +1835,7 @@ if (!res.ok || !json?.ok) {
                 presenceActive: presenceCounts.presenceActive,
                 presenceStale: presenceCounts.presenceStale,
                 displayMembers: preserved.length,
+                displayMemberIds: preserved.map((m) => String(m.device_id ?? "").trim()),
                 extra: `ignore=${decision.ignoreReason ?? "-"}`,
               });
               return preserved.length >= prev.length ? preserved : prev;
@@ -1856,12 +1860,18 @@ if (!res.ok || !json?.ok) {
             presenceActive: presenceCounts.presenceActive,
             presenceStale: presenceCounts.presenceStale,
             displayMembers: mergedMembers.length,
+            displayMemberIds: mergedMembers.map((m) => String(m.device_id ?? "").trim()),
           });
           displayMemberCount = mergedMembers.length;
 
           const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
           const nextNorm = JSON.stringify(normalizeMemberCompare(mergedMembers));
-          if (prevNorm === nextNorm) return prev;
+          if (prevNorm === nextNorm) {
+            console.log(
+              `[room-perf] fetchStatus apply skipped=same_members reason=${fetchReason}`
+            );
+            return prev;
+          }
           logMemberDisplayNamesFromApi("room:session/status", mergedMembers);
           return mergedMembers;
         });
@@ -1921,6 +1931,9 @@ if (!res.ok || !json?.ok) {
         fetchStatusInFlightRef.current = null;
         if (fetchStatusPendingRef.current) {
           fetchStatusPendingRef.current = false;
+          console.log(
+            `[room-perf] fetchStatus coalescedRun reason=pending_coalesce`
+          );
           void fetchStatus({ force: true, fast: opts?.fast, reason: "pending_coalesce" });
         }
       }

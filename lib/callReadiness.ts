@@ -34,10 +34,19 @@ export function resolveCallReadyStuckReason(
   return null;
 }
 
+let lastCallReadyCheckKey = "";
+
 export function logCallReadyCheck(
   snap: CallReadinessSnapshot,
   reason: string
 ) {
+  const key =
+    `${reason}|${snap.sessionId.slice(-6)}|${snap.members}|${snap.remoteIds}|` +
+    `${snap.micReady ? 1 : 0}|${snap.signalReady ? 1 : 0}|${snap.settingsReady ? 1 : 0}|` +
+    `${snap.turnReady ? 1 : 0}|${snap.callLayerMounted ? 1 : 0}`;
+  if (reason === "interval" && key === lastCallReadyCheckKey) return;
+  lastCallReadyCheckKey = key;
+
   console.log(
     `[call-ready-check] session=${snap.sessionId.slice(-6)} ` +
       `class=${snap.classId.slice(-6)} device=${snap.deviceId.slice(-4)} ` +

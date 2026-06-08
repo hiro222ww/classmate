@@ -43,6 +43,13 @@ export function countPresenceStates(
   return { presenceActive, presenceStale };
 }
 
+const MEMBER_SOURCE_LOG_MIN_INTERVAL_MS = 3000;
+
+const memberSourceLogState = new Map<
+  MemberListContext,
+  { key: string; atMs: number }
+>();
+
 export function logMemberSource(params: {
   context: MemberListContext;
   sessionMembers: number;
@@ -50,13 +57,35 @@ export function logMemberSource(params: {
   presenceStale: number;
   displayMembers: number;
   sessionId?: string;
+  displayMemberIds?: string[];
   extra?: string;
 }) {
   const sessionTail = params.sessionId ? params.sessionId.slice(-6) : "-";
+  const memberIds =
+    params.displayMemberIds
+      ?.map((id) => String(id ?? "").trim().slice(-4))
+      .filter(Boolean)
+      .sort()
+      .join(",") ?? "-";
+  const key =
+    `${sessionTail}|${params.sessionMembers}|${params.displayMembers}|` +
+    `${params.presenceActive}|${params.presenceStale}|${memberIds}|${params.extra ?? ""}`;
+  const now = Date.now();
+  const prev = memberSourceLogState.get(params.context);
+  if (
+    prev &&
+    prev.key === key &&
+    now - prev.atMs < MEMBER_SOURCE_LOG_MIN_INTERVAL_MS
+  ) {
+    return;
+  }
+  memberSourceLogState.set(params.context, { key, atMs: now });
+
   console.log(
     `[member-source] context=${params.context} session=${sessionTail} ` +
       `sessionMembers=${params.sessionMembers} presenceActive=${params.presenceActive} ` +
-      `presenceStale=${params.presenceStale} displayMembers=${params.displayMembers}` +
+      `presenceStale=${params.presenceStale} displayMembers=${params.displayMembers} ` +
+      `memberIds=${memberIds}` +
       (params.extra ? ` ${params.extra}` : "")
   );
 }

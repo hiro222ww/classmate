@@ -43,6 +43,7 @@ import {
   logMemberSource,
   mergeSessionMembersPreservingRemoved,
 } from "@/lib/sessionMemberListMerge";
+import { areMembersListEquivalent } from "@/lib/memberListEquality";
 import {
   CALL_READY_STUCK_MS,
   logCallReadyCheck,
@@ -50,6 +51,13 @@ import {
   resolveCallReadyStuckReason,
   type CallReadinessSnapshot,
 } from "@/lib/callReadiness";
+import {
+  computeRemoteMemberIds,
+  logCallMembersDebug,
+  logCallRender,
+  logVoiceLayerRenderCheck,
+  resolveVoiceLayerBlockingReason,
+} from "@/lib/callDiagnostics";
 import { logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
   installCallPageDiagnostics,
@@ -94,11 +102,7 @@ import {
   shouldStartCallMemberInCallHysteresis,
 } from "@/lib/callMemberInCallHysteresis";
 import "@/lib/voiceConnectionDiagnostics";
-import {
-  isStableVoiceJoinMode,
-  STABLE_PRESENCE_SYNC_MAX_DELAY_MS,
-  STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS,
-} from "@/lib/stableVoiceJoin";
+import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
 import { buildVoiceConnectionMembers } from "@/lib/voiceSessionMembers";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
@@ -137,6 +141,9 @@ type Member = {
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
+
+const CALL_MEMBERS_POLL_MS = 15_000;
+const CALL_REALTIME_FETCH_DEBOUNCE_MS = 2000;
 
 type SessionStatusResponse = {
   ok?: boolean;
@@ -261,6 +268,12 @@ export default function CallClient() {
   });
   const callReadySinceRef = useRef<number | null>(null);
   const callReadyStuckLoggedRef = useRef(false);
+  const voiceLayerMountedRef = useRef(false);
+  const lastCallRenderLogKeyRef = useRef("");
+  const callMountAtRef = useRef(Date.now());
+  const renderCountRef = useRef(0);
+  const lastFetchAtRef = useRef<number | null>(null);
+  const realtimeFetchDebounceRef = useRef<number | null>(null);
   const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
@@ -579,6 +592,9 @@ export default function CallClient() {
       if (!sessionId || !classId) return;
       if (fetchingRef.current) {
         pendingFetchReasonRef.current = reason;
+        console.log(
+          `[call-perf] fetchMembers skip=in_flight reason=${reason}`
+        );
         return;
       }
 
@@ -675,6 +691,7 @@ export default function CallClient() {
         );
 
         let redirectRemoved = false;
+        let membersChanged = false;
 
         setMembers((prev) => {
           const hysteresisMembers = applyCallMemberInCallHysteresis(prev, nextMembers, {
@@ -746,16 +763,21 @@ export default function CallClient() {
               }
               const preserved =
                 mergedMembers.length > nextMembers.length ? mergedMembers : prev;
+              const nextDisplay =
+                preserved.length >= prev.length ? preserved : prev;
               logMemberSource({
                 context: "call",
                 sessionId,
                 sessionMembers: nextMembers.length,
                 presenceActive: presenceCounts.presenceActive,
                 presenceStale: presenceCounts.presenceStale,
-                displayMembers: preserved.length,
+                displayMembers: nextDisplay.length,
+                displayMemberIds: nextDisplay.map((m) => m.device_id),
                 extra: `ignore=${decision.ignoreReason ?? "-"}`,
               });
-              return preserved.length >= prev.length ? preserved : prev;
+              if (areMembersListEquivalent(prev, nextDisplay)) return prev;
+              membersChanged = true;
+              return nextDisplay;
             }
             return prev;
           }
@@ -770,22 +792,32 @@ export default function CallClient() {
             return prev;
           }
 
-          logMemberSource({
-            context: "call",
-            sessionId,
-            sessionMembers: nextMembers.length,
-            presenceActive: presenceCounts.presenceActive,
-            presenceStale: presenceCounts.presenceStale,
-            displayMembers: mergedMembers.length,
-          });
-
-          return mergedMembers.map((m) => {
+          const nextDisplay = mergedMembers.map((m) => {
             const existing = prev.find((x) => x.device_id === m.device_id);
             return {
               ...m,
               lastSpokeAt: existing?.lastSpokeAt,
             };
           });
+
+          logMemberSource({
+            context: "call",
+            sessionId,
+            sessionMembers: nextMembers.length,
+            presenceActive: presenceCounts.presenceActive,
+            presenceStale: presenceCounts.presenceStale,
+            displayMembers: nextDisplay.length,
+            displayMemberIds: nextDisplay.map((m) => m.device_id),
+          });
+
+          if (areMembersListEquivalent(prev, nextDisplay)) {
+            console.log(
+              `[call-perf] fetchMembers apply skipped=same_members reason=${reason}`
+            );
+            return prev;
+          }
+          membersChanged = true;
+          return nextDisplay;
         });
 
         if (redirectRemoved) {
@@ -848,6 +880,9 @@ export default function CallClient() {
         const pending = pendingFetchReasonRef.current;
         pendingFetchReasonRef.current = null;
         if (pending) {
+          console.log(
+            `[call-perf] fetchMembers coalescedRun reason=${pending}`
+          );
           void fetchMembers(pending);
         }
       }
@@ -859,58 +894,16 @@ export default function CallClient() {
     membersDisplayedRef.current = false;
     firstFastMembersAtRef.current = null;
     memberLastInCallAtRef.current = new Map();
+    callMountAtRef.current = Date.now();
+    renderCountRef.current = 0;
+    lastFetchAtRef.current = null;
 
-    const useFastInitial = !isStableVoiceJoinMode();
-    void fetchMembers("initial", useFastInitial ? { fast: true } : undefined);
-
-    const timers: number[] = [];
-    const callStartedAt = Date.now();
-    let presenceSyncDone = false;
-
-    const schedulePresenceSync = () => {
-      if (presenceSyncDone) return;
-      const elapsed = Date.now() - callStartedAt;
-
-      if (isStableVoiceJoinMode()) {
-        const micReadyEnough =
-          micReady && elapsed >= STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS;
-        const maxDelayReached = elapsed >= STABLE_PRESENCE_SYNC_MAX_DELAY_MS;
-        if (!micReadyEnough && !maxDelayReached) {
-          timers.push(window.setTimeout(schedulePresenceSync, 500));
-          return;
-        }
-      }
-
-      presenceSyncDone = true;
-      debugConsoleLog(
-        `[call] presence_sync scheduled elapsedMs=${elapsed} micReady=${micReady} stable=${isStableVoiceJoinMode()}`
-      );
-      void fetchMembers("presence_sync");
-    };
-
-    if (isStableVoiceJoinMode()) {
-      timers.push(
-        window.setTimeout(schedulePresenceSync, STABLE_PRESENCE_SYNC_MIN_AFTER_MIC_MS)
-      );
-      timers.push(
-        window.setTimeout(() => {
-          void fetchMembers("sync_5s");
-        }, 15_000)
-      );
-    } else {
-      timers.push(window.setTimeout(schedulePresenceSync, 1500));
-      timers.push(
-        window.setTimeout(() => {
-          void fetchMembers("sync_5s");
-        }, 5000)
-      );
-    }
+    void fetchMembers("initial", { fast: true });
 
     return () => {
       clearRetryTimer();
-      for (const t of timers) window.clearTimeout(t);
     };
-  }, [fetchMembers, clearRetryTimer, sessionId, micReady]);
+  }, [fetchMembers, clearRetryTimer, sessionId]);
 
   useEffect(() => {
     if (!sessionId || !deviceId) return;
@@ -1055,8 +1048,14 @@ export default function CallClient() {
           table: "session_members",
           filter: `session_id=eq.${sessionId}`,
         },
-        async () => {
-          await fetchMembers("session_members_realtime");
+        () => {
+          if (realtimeFetchDebounceRef.current) {
+            window.clearTimeout(realtimeFetchDebounceRef.current);
+          }
+          realtimeFetchDebounceRef.current = window.setTimeout(() => {
+            realtimeFetchDebounceRef.current = null;
+            void fetchMembers("session_members_realtime");
+          }, CALL_REALTIME_FETCH_DEBOUNCE_MS);
         }
       )
       .subscribe((status) => {
@@ -1067,20 +1066,25 @@ export default function CallClient() {
       });
 
     return () => {
+      if (realtimeFetchDebounceRef.current) {
+        window.clearTimeout(realtimeFetchDebounceRef.current);
+        realtimeFetchDebounceRef.current = null;
+      }
       void supabase.removeChannel(channel);
     };
   }, [sessionId, fetchMembers]);
 
   useEffect(() => {
     if (!sessionId) return;
+    if (members.length >= 2) return;
 
     const timer = window.setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
-      void fetchMembers("poll");
-    }, getBackgroundSyncIntervalMs(10_000, 25_000));
+      void fetchMembers("poll_member_shortage");
+    }, CALL_MEMBERS_POLL_MS);
 
     return () => window.clearInterval(timer);
-  }, [sessionId, fetchMembers]);
+  }, [sessionId, fetchMembers, members.length]);
 
   useEffect(() => {
     const memberIds = new Set(members.map((m) => m.device_id));
@@ -1690,6 +1694,52 @@ export default function CallClient() {
     []
   );
 
+  const remoteMemberIdsRef = useRef<string[]>([]);
+  const remoteMemberIds = useMemo(() => {
+    const next = computeRemoteMemberIds(members, deviceId);
+    const prev = remoteMemberIdsRef.current;
+    if (
+      prev.length === next.length &&
+      prev.every((id, index) => id === next[index])
+    ) {
+      return prev;
+    }
+    remoteMemberIdsRef.current = next;
+    return next;
+  }, [members, deviceId]);
+
+  useLayoutEffect(() => {
+    renderCountRef.current += 1;
+  });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const sinceMountMs = Date.now() - callMountAtRef.current;
+      const lastFetchAgeMs =
+        lastFetchAtRef.current != null
+          ? Date.now() - lastFetchAtRef.current
+          : -1;
+      console.log(
+        `[call-render-perf] count=${renderCountRef.current} sinceMountMs=${sinceMountMs} ` +
+          `displayMembers=${members.length} remoteMembers=${remoteMemberIds.length} ` +
+          `fetchInFlight=${fetchingRef.current ? 1 : 0} lastFetchAgeMs=${lastFetchAgeMs}`
+      );
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [members.length, remoteMemberIds.length, sessionId]);
+
+  const voiceLayerBlockingReason = useMemo(
+    () =>
+      resolveVoiceLayerBlockingReason({
+        sessionId,
+        deviceId,
+        membersCount: members.length,
+      }),
+    [deviceId, members.length, sessionId]
+  );
+
+  const voiceLayerShouldRender = voiceLayerBlockingReason === "-";
+
   const buildCallReadinessSnapshot = useCallback((): CallReadinessSnapshot => {
     const voice = voiceReadinessRef.current;
     return {
@@ -1697,15 +1747,15 @@ export default function CallClient() {
       classId,
       deviceId,
       members: members.length,
-      remoteIds: voice.remoteIds.length,
+      remoteIds: Math.max(voice.remoteIds.length, remoteMemberIds.length),
       micReady,
       signalReady: voice.signalReady,
       settingsReady: voice.settingsReady,
       turnReady: voice.turnReady,
       voiceEnabled: voice.voiceEnabled,
-      callLayerMounted: Boolean(deviceId && sessionId),
+      callLayerMounted: voiceLayerMountedRef.current,
     };
-  }, [classId, deviceId, members.length, micReady, sessionId]);
+  }, [classId, deviceId, members.length, micReady, remoteMemberIds.length, sessionId]);
 
   const runCallReadinessRecheck = useCallback(
     (reason: string) => {
@@ -1735,6 +1785,16 @@ export default function CallClient() {
     },
     [buildCallReadinessSnapshot, peerStates]
   );
+
+  const runCallReadinessRecheckRef = useRef(runCallReadinessRecheck);
+  runCallReadinessRecheckRef.current = runCallReadinessRecheck;
+
+  const handleVoiceLayerMountedChange = useCallback((mounted: boolean) => {
+    voiceLayerMountedRef.current = mounted;
+    runCallReadinessRecheckRef.current(
+      mounted ? "voice_layer_mounted" : "voice_layer_unmounted"
+    );
+  }, []);
 
   useEffect(() => {
     callReadySinceRef.current = null;
@@ -1796,32 +1856,73 @@ export default function CallClient() {
     });
   }, [members, voiceMembers, deviceId]);
 
-  if (!deviceId) {
-    return null;
-  }
+  useLayoutEffect(() => {
+    const renderKey =
+      `${sessionId.slice(-6)}|${classId.slice(-6)}|${deviceId.slice(-4)}|` +
+      `${members.length}|${remoteMemberIds.length}|${micReady ? 1 : 0}|` +
+      `${voiceLayerShouldRender ? 1 : 0}|${voiceLayerBlockingReason}`;
+    if (lastCallRenderLogKeyRef.current !== renderKey) {
+      lastCallRenderLogKeyRef.current = renderKey;
+      logCallRender({
+        sessionId,
+        classId,
+        deviceId,
+        displayMembers: members.length,
+        remoteMembers: remoteMemberIds.length,
+        localStreamReady: micReady,
+        micReady,
+        voiceLayerShouldRender,
+        blockingReason: voiceLayerBlockingReason,
+      });
+      logCallMembersDebug({ deviceId, members });
+      logVoiceLayerRenderCheck({
+        shouldRender: voiceLayerShouldRender,
+        blockingReason: voiceLayerBlockingReason,
+        sessionId,
+        deviceId,
+        members: members.length,
+        remoteMembers: remoteMemberIds.length,
+        localStreamReady: micReady,
+        micReady,
+      });
+    }
+    runCallReadinessRecheckRef.current("render");
+  }, [
+    classId,
+    deviceId,
+    members,
+    micReady,
+    remoteMemberIds.length,
+    sessionId,
+    voiceLayerBlockingReason,
+    voiceLayerShouldRender,
+  ]);
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <CallVoiceLayer
-        sessionId={sessionId}
-        deviceId={deviceId}
-        members={voiceMembers}
-        membersSyncRevision={membersSyncRevision}
-        userMuted={userMuted}
-        userMutedRef={userMutedRef}
-        onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
-        onMicReadyChange={handleMicReadyChange}
-        onMicLevelChange={handleMicLevelChange}
-        onRemoteSpeakingChange={handleRemoteSpeakingChange}
-        onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
-        onRemoteCountChange={handleRemoteCountChange}
-        onStatusChange={setCallInfo}
-        onPeerStatesChange={setPeerStates}
-        onPeerDiagnosticsChange={setPeerDiagnostics}
-        onVoiceCleanup={handleVoiceCleanup}
-        onManualPeerHardResetReady={handleManualPeerHardResetReady}
-        onReadinessSnapshot={handleVoiceReadinessSnapshot}
-      />
+      {voiceLayerShouldRender ? (
+        <CallVoiceLayer
+          sessionId={sessionId}
+          deviceId={deviceId}
+          members={voiceMembers}
+          membersSyncRevision={membersSyncRevision}
+          userMuted={userMuted}
+          userMutedRef={userMutedRef}
+          onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
+          onMicReadyChange={handleMicReadyChange}
+          onMicLevelChange={handleMicLevelChange}
+          onRemoteSpeakingChange={handleRemoteSpeakingChange}
+          onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
+          onRemoteCountChange={handleRemoteCountChange}
+          onStatusChange={setCallInfo}
+          onPeerStatesChange={setPeerStates}
+          onPeerDiagnosticsChange={setPeerDiagnostics}
+          onVoiceCleanup={handleVoiceCleanup}
+          onManualPeerHardResetReady={handleManualPeerHardResetReady}
+          onReadinessSnapshot={handleVoiceReadinessSnapshot}
+          onVoiceLayerMountedChange={handleVoiceLayerMountedChange}
+        />
+      ) : null}
 
       <div
         style={{

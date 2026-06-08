@@ -73,6 +73,7 @@ type CallVoiceLayerProps = {
     turnReady: boolean;
     voiceEnabled: boolean;
   }) => void;
+  onVoiceLayerMountedChange?: (mounted: boolean) => void;
 };
 
 export default function CallVoiceLayer({
@@ -94,6 +95,7 @@ export default function CallVoiceLayer({
   onVoiceCleanup,
   onManualPeerHardResetReady,
   onReadinessSnapshot,
+  onVoiceLayerMountedChange,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
@@ -150,6 +152,7 @@ export default function CallVoiceLayer({
   });
 
   useEffect(() => {
+    onVoiceLayerMountedChange?.(true);
     logAppLife("voice-layer-mount", {
       instance: instanceId,
       session: compactSessionId(sessionId),
@@ -164,6 +167,7 @@ export default function CallVoiceLayer({
       `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)} members=${membersRef.current.length}`
     );
     return () => {
+      onVoiceLayerMountedChange?.(false);
       const vis =
         typeof document !== "undefined" ? document.visibilityState : "-";
       logAppLife("voice-layer-unmount", {
@@ -179,7 +183,7 @@ export default function CallVoiceLayer({
       );
       releaseSessionMic("voice_layer_unmount", sessionId);
     };
-  }, [deviceId, instanceId, sessionId]);
+  }, [deviceId, instanceId, onVoiceLayerMountedChange, sessionId]);
 
   useEffect(() => {
     logVoiceClientEnv("voice-layer-mount");
