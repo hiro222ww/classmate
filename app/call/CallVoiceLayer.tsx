@@ -13,6 +13,7 @@ import {
   compactDeviceId,
   type PeerStatusDiagnostics,
 } from "./voice/voiceDiagnostics";
+import type { VoiceSoftResetTriggerReason } from "@/lib/voiceSoftReset";
 import { logVoiceClientEnv, getVoiceMode } from "@/lib/voiceClientEnv";
 
 function compactSessionId(id: string | null | undefined): string {
@@ -74,6 +75,10 @@ type CallVoiceLayerProps = {
     voiceEnabled: boolean;
   }) => void;
   onVoiceLayerMountedChange?: (mounted: boolean) => void;
+  onSoftResetExhausted?: (
+    remoteId: string,
+    reason: VoiceSoftResetTriggerReason
+  ) => void;
 };
 
 export default function CallVoiceLayer({
@@ -96,6 +101,7 @@ export default function CallVoiceLayer({
   onManualPeerHardResetReady,
   onReadinessSnapshot,
   onVoiceLayerMountedChange,
+  onSoftResetExhausted,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
@@ -149,6 +155,7 @@ export default function CallVoiceLayer({
     onPeerDiagnosticsChange,
     onVoiceCleanup,
     onReadinessSnapshot,
+    onSoftResetExhausted,
     voiceLayerInstanceId: instanceId,
   });
 

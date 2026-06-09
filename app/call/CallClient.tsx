@@ -314,6 +314,7 @@ export default function CallClient() {
   const lastFetchAtRef = useRef<number | null>(null);
   const realtimeFetchDebounceRef = useRef<number | null>(null);
   const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
+  const [showVoiceReconnectPrompt, setShowVoiceReconnectPrompt] = useState(false);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -1214,6 +1215,16 @@ export default function CallClient() {
     );
   }, []);
 
+  const handleSoftResetExhausted = useCallback(
+    (remoteId: string, reason: string) => {
+      console.log(
+        `[call-soft-reset] exhausted remote=${remoteId.slice(-4)} reason=${reason}`
+      );
+      setShowVoiceReconnectPrompt(true);
+    },
+    []
+  );
+
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {
       const normalizedHealth =
@@ -1911,6 +1922,7 @@ export default function CallClient() {
     callReadySinceRef.current = null;
     callReadyStuckLoggedRef.current = false;
     setShowCallStuckReconnect(false);
+    setShowVoiceReconnectPrompt(false);
   }, [sessionId, classId, deviceId]);
 
   useEffect(() => {
@@ -1930,6 +1942,7 @@ export default function CallClient() {
     callReadySinceRef.current = Date.now();
     callReadyStuckLoggedRef.current = false;
     setShowCallStuckReconnect(false);
+    setShowVoiceReconnectPrompt(false);
     for (const member of members) {
       const remoteId = String(member.device_id ?? "").trim();
       if (!remoteId || remoteId === deviceId) continue;
@@ -1937,6 +1950,11 @@ export default function CallClient() {
     }
     void fetchMembers("readiness_reconnect", { fast: true });
   }, [buildCallReadinessSnapshot, deviceId, fetchMembers, members]);
+
+  const handleVoiceReconnectPrompt = useCallback(() => {
+    console.log("[call-soft-reset] manual-reconnect-requested");
+    handleCallStuckReconnect();
+  }, [handleCallStuckReconnect]);
 
   const voiceMembersRef = useRef<Member[]>([]);
   const voiceMembers = useMemo(() => {
@@ -2036,6 +2054,7 @@ export default function CallClient() {
           onManualPeerHardResetReady={handleManualPeerHardResetReady}
           onReadinessSnapshot={handleVoiceReadinessSnapshot}
           onVoiceLayerMountedChange={handleVoiceLayerMountedChange}
+          onSoftResetExhausted={handleSoftResetExhausted}
         />
       ) : null}
 
@@ -2087,6 +2106,29 @@ export default function CallClient() {
                 }}
               >
                 再接続
+              </button>
+            </div>
+          ) : null}
+          {showVoiceReconnectPrompt ? (
+            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
+                音声が片方向のままです。接続をやり直してください
+              </span>
+              <button
+                type="button"
+                onClick={() => handleVoiceReconnectPrompt()}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #f59e0b",
+                  background: "#fffbeb",
+                  color: "#b45309",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                接続をやり直す
               </button>
             </div>
           ) : null}

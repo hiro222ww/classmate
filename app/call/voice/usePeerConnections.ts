@@ -77,6 +77,13 @@ import {
   getP2pCheckingGraceMs,
 } from "@/lib/voiceJoinTiming";
 import {
+  evaluateVoiceSoftResetTrigger,
+  isBidirectionalAudioEstablished,
+  MAX_VOICE_SOFT_RESET_ATTEMPTS,
+  shouldBlockVoiceSoftReset,
+  type VoiceSoftResetTriggerReason,
+} from "@/lib/voiceSoftReset";
+import {
   buildVoiceConnectionLogSnapshot,
   formatVoiceFailureConnectionState,
   logVoicePerfPipeline,
@@ -297,6 +304,7 @@ type UsePeerConnectionsArgs = {
     turnReady: boolean;
     voiceEnabled: boolean;
   }) => void;
+  onSoftResetExhausted?: (remoteId: string, reason: VoiceSoftResetTriggerReason) => void;
   voiceLayerInstanceId?: string;
 };
 
@@ -949,6 +957,7 @@ export function usePeerConnections({
   onPeerDiagnosticsChange,
   onVoiceCleanup,
   onReadinessSnapshot,
+  onSoftResetExhausted,
   voiceLayerInstanceId = "-",
 }: UsePeerConnectionsArgs) {
   const sessionIdRef = useRef(sessionId);
@@ -961,6 +970,7 @@ export function usePeerConnections({
   const lastPeerCloseReasonRef = useRef<Map<string, string>>(new Map());
   const deferredMemberCloseTimersRef = useRef<Map<string, number>>(new Map());
   const onVoiceCleanupRef = useRef(onVoiceCleanup);
+  const onSoftResetExhaustedRef = useRef(onSoftResetExhausted);
   const emitPeerStatesRef = useRef<() => void>(() => {});
 
   sessionIdRef.current = sessionId;
@@ -974,6 +984,10 @@ export function usePeerConnections({
     passiveFallbackOfferSentRef.current.clear();
     passiveWaitOfferMetaRef.current.clear();
     activeOfferJoinLoggedRef.current.clear();
+    softResetAttemptCountRef.current.clear();
+    softResetLastAtRef.current.clear();
+    softResetExhaustedNotifiedRef.current.clear();
+    bidirectionalEstablishedRef.current.clear();
     if (deferredHealTimerRef.current != null) {
       window.clearTimeout(deferredHealTimerRef.current);
       deferredHealTimerRef.current = null;
@@ -991,6 +1005,7 @@ export function usePeerConnections({
     return Math.max(1, inCallIds.length || members.length || 1);
   }, [members]);
   onVoiceCleanupRef.current = onVoiceCleanup;
+  onSoftResetExhaustedRef.current = onSoftResetExhausted;
 
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
@@ -1091,6 +1106,10 @@ export function usePeerConnections({
     Map<string, { triggerReason: string; scheduledAt: number; delayMs: number }>
   >(new Map());
   const activeOfferJoinLoggedRef = useRef<Set<string>>(new Set());
+  const softResetAttemptCountRef = useRef<Map<string, number>>(new Map());
+  const softResetLastAtRef = useRef<Map<string, number>>(new Map());
+  const softResetExhaustedNotifiedRef = useRef<Set<string>>(new Set());
+  const bidirectionalEstablishedRef = useRef<Set<string>>(new Set());
   const noStreamNoOfferTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
     Map<
@@ -2200,6 +2219,7 @@ export function usePeerConnections({
       }
 
       if (health.audioConfirmedStrict) {
+        bidirectionalEstablishedRef.current.add(remoteId);
         touchPeerSignal(remoteId, "playback_confirmed");
         markVoicePerf("audio_confirmed_strict", { remoteId });
         markVoicePerf("audio_confirmed", { remoteId });
@@ -6738,6 +6758,197 @@ export function usePeerConnections({
 
   ensurePeerConnectionRef.current = ensurePeerConnection;
 
+  const runPeerSoftReset = useCallback(
+    async (remoteId: string, triggerReason: VoiceSoftResetTriggerReason) => {
+      if (!remoteId || remoteId === deviceId) return;
+      if (triggerReason === "max_attempts") return;
+
+      const marks = getPeerPipelineMarks(remoteId);
+      const hasPlaybackEvidence = hasRemotePlaybackEvidence(remoteId);
+      const audioConfirmedStrict =
+        marks.audio_confirmed_strict ||
+        remotePlaybackHealthRef.current.get(remoteId)?.audioConfirmedStrict ===
+          true;
+
+      if (
+        shouldBlockVoiceSoftReset({ audioConfirmedStrict, hasPlaybackEvidence })
+      ) {
+        bidirectionalEstablishedRef.current.add(remoteId);
+        return;
+      }
+
+      const attempts = softResetAttemptCountRef.current.get(remoteId) ?? 0;
+      if (attempts >= MAX_VOICE_SOFT_RESET_ATTEMPTS) return;
+
+      softResetAttemptCountRef.current.set(remoteId, attempts + 1);
+      softResetLastAtRef.current.set(remoteId, Date.now());
+
+      console.log(
+        `[voice-soft-reset] start remote=${compactDeviceId(remoteId)} ` +
+          `attempt=${attempts + 1}/${MAX_VOICE_SOFT_RESET_ATTEMPTS} ` +
+          `reason=${triggerReason} ${formatVoiceModeSuffix()}`
+      );
+
+      setRemoteAudios((prev) => {
+        if (!prev[remoteId]) return prev;
+        const next = { ...prev };
+        delete next[remoteId];
+        return next;
+      });
+      delete remoteAudiosRef.current[remoteId];
+      remoteStreamsRef.current.delete(remoteId);
+      orphanRemoteAudioRef.current.delete(remoteId);
+      orphanRemoteAudioAtRef.current.delete(remoteId);
+
+      clearPeerWatchdogTimers(remoteId);
+      clearReconnectTimer(remoteId);
+      reconnectPendingRef.current.delete(remoteId);
+      passiveFallbackOfferSentRef.current.delete(remoteId);
+      passiveWaitOfferMetaRef.current.delete(remoteId);
+      peerSignalTimestampsRef.current.set(remoteId, emptyPeerSignalTimestamps());
+      resetVoiceNegotiationSteps(remoteId);
+      resetVoicePeerMarks(remoteId);
+      resetPeerAudioDiagnostics(remoteId);
+      remotePlaybackHealthRef.current.delete(remoteId);
+      offeredPeersRef.current.delete(remoteId);
+      pendingIceRef.current.delete(remoteId);
+      startedPeersRef.current.delete(remoteId);
+      audioStrictRecoveryAttemptedRef.current.delete(remoteId);
+      oneWayAudioLoggedRef.current.forEach((key) => {
+        if (key === remoteId || key.startsWith(`${remoteId}:`)) {
+          oneWayAudioLoggedRef.current.delete(key);
+        }
+      });
+
+      closePeer(remoteId, {
+        clearConnectionId: true,
+        preserveRemoteAudio: false,
+        reason: `soft_reset_${triggerReason}`,
+      });
+
+      const newConnectionId = makeConnectionId(deviceId, remoteId);
+      assignConnectionId(remoteId, newConnectionId, "soft_reset");
+      connectStartedAtRef.current.set(remoteId, Date.now());
+      setPeerState(remoteId, "connecting");
+
+      ensurePeerConnection(remoteId, "soft_reset_rejoin", { force: true });
+      emitPeerStates();
+
+      console.log(
+        `[voice-soft-reset] done remote=${compactDeviceId(remoteId)} ` +
+          `reason=${triggerReason} connectionId=${compactConnectionId(newConnectionId)} ` +
+          `${formatVoiceModeSuffix()}`
+      );
+    },
+    [
+      assignConnectionId,
+      clearPeerWatchdogTimers,
+      clearReconnectTimer,
+      closePeer,
+      deviceId,
+      emitPeerStates,
+      ensurePeerConnection,
+      hasRemotePlaybackEvidence,
+      setPeerState,
+    ]
+  );
+
+  const evaluateAndRunVoiceSoftResetForPeer = useCallback(
+    async (remoteId: string) => {
+      if (!remoteId || remoteId === deviceId) return;
+      if (!micReady || !signalReady) return;
+      if (!isRemoteInCall(remoteId)) return;
+      if (bidirectionalEstablishedRef.current.has(remoteId)) return;
+
+      const joinEpoch = voiceJoinEpochRef.current;
+      if (joinEpoch.sessionId !== sessionId || joinEpoch.startedAt <= 0) return;
+      const joinAgeMs = Date.now() - joinEpoch.startedAt;
+
+      const marks = getPeerPipelineMarks(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId) ?? null;
+      const hasPlaybackEvidence = hasRemotePlaybackEvidence(remoteId);
+      const audioConfirmedStrict =
+        marks.audio_confirmed_strict || health?.audioConfirmedStrict === true;
+
+      if (
+        shouldBlockVoiceSoftReset({ audioConfirmedStrict, hasPlaybackEvidence })
+      ) {
+        bidirectionalEstablishedRef.current.add(remoteId);
+        return;
+      }
+
+      const attempts = softResetAttemptCountRef.current.get(remoteId) ?? 0;
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      if (!pc || !isUsablePeerConnection(pc)) return;
+
+      const stats = await collectPeerRtpStats(pc, remoteId);
+      const media = getPeerMedia(remoteId);
+      const subClass = audioConfirmedStrict
+        ? ("OK" as OneWayAudioSubClass)
+        : classifyPeerAudioSubClass(remoteId, { stats, health });
+      const iceConnected = isTransportMediaConnected(
+        pc.connectionState,
+        pc.iceConnectionState
+      );
+      const remoteTrackReceived =
+        marks.remote_track_received || media.remoteTracksCount > 0;
+
+      if (
+        isBidirectionalAudioEstablished({
+          remoteTrackReceived,
+          inboundDeltaBytes: stats.deltaInboundBytes,
+          outboundDeltaBytes: stats.deltaOutboundBytes,
+          subClass,
+          audioConfirmedStrict,
+          hasPlaybackEvidence,
+        })
+      ) {
+        bidirectionalEstablishedRef.current.add(remoteId);
+        return;
+      }
+
+      const trigger = evaluateVoiceSoftResetTrigger({
+        joinAgeMs,
+        iceConnected,
+        remoteTrackReceived,
+        audioConfirmedStrict,
+        hasPlaybackEvidence,
+        inboundDeltaBytes: stats.deltaInboundBytes,
+        outboundDeltaBytes: stats.deltaOutboundBytes,
+        subClass,
+        softResetAttempts: attempts,
+        lastSoftResetAt: softResetLastAtRef.current.get(remoteId) ?? null,
+      });
+
+      if (!trigger) return;
+
+      if (trigger === "max_attempts") {
+        if (!softResetExhaustedNotifiedRef.current.has(remoteId)) {
+          softResetExhaustedNotifiedRef.current.add(remoteId);
+          console.log(
+            `[voice-soft-reset] exhausted remote=${compactDeviceId(remoteId)} ` +
+              `attempts=${MAX_VOICE_SOFT_RESET_ATTEMPTS} joinAgeMs=${joinAgeMs}`
+          );
+          onSoftResetExhaustedRef.current?.(remoteId, trigger);
+        }
+        return;
+      }
+
+      await runPeerSoftReset(remoteId, trigger);
+    },
+    [
+      classifyPeerAudioSubClass,
+      deviceId,
+      getPeerMedia,
+      hasRemotePlaybackEvidence,
+      isRemoteInCall,
+      micReady,
+      runPeerSoftReset,
+      sessionId,
+      signalReady,
+    ]
+  );
+
   const recoverMissingPc = useCallback(
     (remoteId: string, reason: string) => {
       const holdRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
@@ -8879,6 +9090,7 @@ export function usePeerConnections({
       if (isDocumentHidden()) return;
       flushPendingReconnectRequests();
       for (const remoteId of getRemoteIds()) {
+        void evaluateAndRunVoiceSoftResetForPeer(remoteId);
         evaluateAndRunAutoHardResetForPeer(remoteId);
       }
     }, AUTO_HARD_RESET_EVAL_INTERVAL_MS);
@@ -8888,6 +9100,7 @@ export function usePeerConnections({
     };
   }, [
     evaluateAndRunAutoHardResetForPeer,
+    evaluateAndRunVoiceSoftResetForPeer,
     flushPendingReconnectRequests,
     getRemoteIds,
     micReady,
@@ -8974,6 +9187,10 @@ export function usePeerConnections({
       passiveFallbackOfferSentRef.current.clear();
       passiveWaitOfferMetaRef.current.clear();
       activeOfferJoinLoggedRef.current.clear();
+      softResetAttemptCountRef.current.clear();
+      softResetLastAtRef.current.clear();
+      softResetExhaustedNotifiedRef.current.clear();
+      bidirectionalEstablishedRef.current.clear();
 
       for (const timer of iceCheckingTimersRef.current.values()) {
         window.clearTimeout(timer);
