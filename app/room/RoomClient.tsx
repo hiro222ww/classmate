@@ -17,7 +17,10 @@ import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
-import { storeHomeClassSessionHint } from "@/lib/homeClassSessionHint";
+import {
+  isTerminalSessionStatus,
+  storeHomeClassSessionHint,
+} from "@/lib/homeClassSessionHint";
 import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
@@ -2033,6 +2036,10 @@ if (!res.ok || !json?.ok) {
       const parseMs = Date.now() - parseStartMs;
 
       if (!res.ok || !json?.ok) return false;
+
+      if (isTerminalSessionStatus(json.session?.status)) {
+        return false;
+      }
 
       const incomingMembers = (Array.isArray(json.members) ? json.members : []).map(
         (member) => applyRoomLocalLeftOverride(member, sessionId)

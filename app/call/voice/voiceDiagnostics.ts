@@ -1125,6 +1125,8 @@ export type VoiceStartBlockedReason =
   | "voice_transport_disabled"
   | "passive_awaiting_reconnect_offer"
   | "already_has_pc"
+  | "blocked_by_cooldown"
+  | "blocked_by_reconnect_pending"
   | "unknown";
 
 export function mapEnsureSkipToVoiceStartBlocked(
@@ -1147,6 +1149,12 @@ export function mapEnsureSkipToVoiceStartBlocked(
       return "passive_awaiting_reconnect_offer";
     case "voice_transport_disabled":
       return "voice_transport_disabled";
+    case "already_has_pc":
+      return "already_has_pc";
+    case "blocked_by_cooldown":
+      return "blocked_by_cooldown";
+    case "blocked_by_reconnect_pending":
+      return "blocked_by_reconnect_pending";
     default:
       return "unknown";
   }

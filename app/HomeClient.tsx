@@ -1864,20 +1864,12 @@ return () => {
 
       let hintSessionId = String(target.session_id ?? "").trim();
       const fallbackHint = readHomeClassSessionHint(target.id);
-      if (fallbackHint) {
-        if (!hintSessionId) {
-          hintSessionId = fallbackHint;
-          console.log(
-            `[home openClass] fallback-hint-session class=${String(target.id).slice(-6)} ` +
-              `session=${fallbackHint.slice(-6)}`
-          );
-        } else if (fallbackHint !== hintSessionId) {
-          hintSessionId = fallbackHint;
-          console.log(
-            `[home openClass] fallback-hint-session class=${String(target.id).slice(-6)} ` +
-              `session=${fallbackHint.slice(-6)} mineSession=${String(target.session_id ?? "").slice(-6) || "-"}`
-          );
-        }
+      if (!hintSessionId && fallbackHint) {
+        hintSessionId = fallbackHint;
+        console.log(
+          `[home openClass] fallback-hint-session class=${String(target.id).slice(-6)} ` +
+            `session=${fallbackHint.slice(-6)}`
+        );
       }
 
       if (hintSessionId) {
