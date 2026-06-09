@@ -66,6 +66,9 @@ import { normalizeVoiceTransportSettings } from "@/lib/voiceTransportMode";
 import { fetchWithRetry } from "@/lib/retryableFetch";
 import {
   CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS,
+  HAVE_LOCAL_OFFER_STUCK_MS,
+  NO_STREAM_NO_OFFER_FORCE_MS,
+  VOICE_JOIN_STABILIZATION_MS,
   getConnectedAudioConfirmTimeoutMs,
   getConnectingTurnProbeMs,
   getP2pCheckingGraceMs,
@@ -549,7 +552,7 @@ const CLOSE_FOR_RECONNECT = {
 } as const;
 
 const PASSIVE_WAIT_OFFER_TIMEOUT_MS = 8000;
-const NO_STREAM_NO_OFFER_FORCE_MS = 6000;
+const HEAL_STUCK_OFFER_RECONNECT_MS = 2500;
 
 type StaleSignalRecoverAction = "accept_sync" | "warn_accept_sync" | "reject";
 
@@ -964,6 +967,11 @@ export function usePeerConnections({
   useEffect(() => {
     voiceSessionMemberIdsRef.current.clear();
     lastPeerCloseReasonRef.current.clear();
+    voiceJoinEpochRef.current = { sessionId, startedAt: 0 };
+    if (deferredHealTimerRef.current != null) {
+      window.clearTimeout(deferredHealTimerRef.current);
+      deferredHealTimerRef.current = null;
+    }
   }, [sessionId]);
 
   const inCallMemberCount = useMemo(() => {
@@ -1142,6 +1150,11 @@ export function usePeerConnections({
     new Map()
   );
   const connectedAudioConfirmGraceRef = useRef<Map<string, number>>(new Map());
+  const voiceJoinEpochRef = useRef<{ sessionId: string; startedAt: number }>({
+    sessionId: "",
+    startedAt: 0,
+  });
+  const deferredHealTimerRef = useRef<number | null>(null);
   const turnProviderRef = useRef<string | null>(null);
   const remotePlaybackHealthRef = useRef(
     new Map<string, RemotePlaybackHealth>()
@@ -3073,6 +3086,47 @@ export function usePeerConnections({
       timestamps.lastPlaybackActiveAt != null
     );
   }, []);
+
+  const markVoiceJoinEpochIfNeeded = useCallback(() => {
+    const epoch = voiceJoinEpochRef.current;
+    if (epoch.sessionId !== sessionId || epoch.startedAt <= 0) {
+      voiceJoinEpochRef.current = { sessionId, startedAt: Date.now() };
+      console.log(
+        `[voice-peer] join-stabilization-start session=${sessionId.slice(-6)} ` +
+          `ms=${VOICE_JOIN_STABILIZATION_MS}`
+      );
+    }
+  }, [sessionId]);
+
+  const getVoiceJoinStabilizationRemainingMs = useCallback(() => {
+    const epoch = voiceJoinEpochRef.current;
+    if (epoch.sessionId !== sessionId || epoch.startedAt <= 0) return 0;
+    return Math.max(0, VOICE_JOIN_STABILIZATION_MS - (Date.now() - epoch.startedAt));
+  }, [sessionId]);
+
+  const isVoiceJoinStabilizing = useCallback(() => {
+    return getVoiceJoinStabilizationRemainingMs() > 0;
+  }, [getVoiceJoinStabilizationRemainingMs]);
+
+  const scheduleDeferredHealPeerConnections = useCallback(
+    (reason: string) => {
+      const remaining = getVoiceJoinStabilizationRemainingMs();
+      if (remaining <= 0) {
+        healPeerConnectionsRef.current();
+        return;
+      }
+      if (deferredHealTimerRef.current != null) return;
+      console.log(
+        `[voice-peer] heal-deferred reason=${reason} remainingMs=${remaining} ` +
+          `session=${sessionId.slice(-6)}`
+      );
+      deferredHealTimerRef.current = window.setTimeout(() => {
+        deferredHealTimerRef.current = null;
+        healPeerConnectionsRef.current();
+      }, remaining);
+    },
+    [getVoiceJoinStabilizationRemainingMs, sessionId]
+  );
 
   const isPeerEstablishedForRecovery = useCallback(
     (remoteId: string, pc?: RTCPeerConnection | null) => {
@@ -5975,7 +6029,7 @@ export function usePeerConnections({
           force: true,
           reason: "no_stream_no_offer_timeout",
         });
-      }, NO_STREAM_NO_OFFER_FORCE_MS);
+      }, NO_STREAM_NO_OFFER_FORCE_MS + getVoiceJoinStabilizationRemainingMs());
 
       noStreamNoOfferTimersRef.current.set(remoteId, timer);
     },
@@ -5983,6 +6037,7 @@ export function usePeerConnections({
       clearNoStreamNoOfferTimer,
       deviceId,
       getPeerMedia,
+      getVoiceJoinStabilizationRemainingMs,
       hasLiveRemoteAudioStream,
       isRemoteInCall,
       members,
@@ -7700,16 +7755,34 @@ export function usePeerConnections({
         pc.signalingState === "have-local-offer";
 
       if (stuckOffer) {
-        const startedAt = connectStartedAtRef.current.get(remoteId) ?? Date.now();
-        if (Date.now() - startedAt > 6000) {
+        if (isVoiceJoinStabilizing()) {
+          logHealSkipHealthy(remoteId, "stuck_offer_join_stabilization", pc);
+          continue;
+        }
+
+        const offerAt =
+          timestamps.lastOfferAt ??
+          connectStartedAtRef.current.get(remoteId) ??
+          Date.now();
+        const offerMarks = getPeerPipelineMarks(remoteId);
+        const offerAgeMs = Date.now() - offerAt;
+        const waitingForAnswer =
+          pc.signalingState === "have-local-offer" && !offerMarks.answer_received;
+
+        if (waitingForAnswer && offerAgeMs < HAVE_LOCAL_OFFER_STUCK_MS) {
+          logHealSkipHealthy(remoteId, "stuck_offer_awaiting_answer", pc);
+          continue;
+        }
+
+        if (offerAgeMs > HAVE_LOCAL_OFFER_STUCK_MS) {
           planned.push({
             remoteId,
             action: "retry-offer",
             reason: "stuck_have_local_offer",
-            scheduledInMs: voicePolicy.trackEndedReconnectMs,
+            scheduledInMs: HEAL_STUCK_OFFER_RECONNECT_MS,
             run: () => {
               offeredPeersRef.current.delete(remoteId);
-              scheduleReconnect(remoteId, voicePolicy.trackEndedReconnectMs, {
+              scheduleReconnect(remoteId, HEAL_STUCK_OFFER_RECONNECT_MS, {
                 reason: "heal_stuck_have_local_offer",
                 source: "heal_peer_connections",
               });
@@ -7722,6 +7795,11 @@ export function usePeerConnections({
       if (!hasStream && !offeredPeersRef.current.has(remoteId)) {
         if (transportHealthy && !noStreamDeadlock) {
           logHealSkipHealthy(remoteId, "no_stream_no_offer_pc_connected", pc);
+          continue;
+        }
+
+        if (isVoiceJoinStabilizing()) {
+          logHealSkipHealthy(remoteId, "no_stream_no_offer_join_stabilization", pc);
           continue;
         }
 
@@ -7745,17 +7823,19 @@ export function usePeerConnections({
             lastHealActionAtRef.current.set(remoteId, Date.now());
             scheduleNoStreamNoOfferTimeout(remoteId, "no_stream_no_offer_heal");
 
-            if (deviceId < remoteId) {
+            const isOfferOwner = deviceId < remoteId;
+            if (isOfferOwner) {
               void startPeerOffer(remoteId, { reason: "no_stream_no_offer" });
             } else if (!isUsablePeerConnection(pcsRef.current.get(remoteId))) {
               ensurePeerConnection(remoteId, "no_stream_no_offer_passive", {
                 force: true,
               });
             } else {
-              void startPeerOffer(remoteId, {
-                force: true,
-                reason: "no_stream_no_offer_passive_immediate",
-              });
+              schedulePassiveWaitOfferTimeout(remoteId, "no_stream_no_offer_passive_wait");
+              console.log(
+                `[voice-peer] passive-offer-deferred remote=${compactDeviceId(remoteId)} ` +
+                  `reason=await_active_offer`
+              );
             }
           },
         });
@@ -7892,7 +7972,9 @@ export function usePeerConnections({
     maybeStartOffer,
     micReady,
     peerNeedsPc,
+    isVoiceJoinStabilizing,
     scheduleNoStreamNoOfferTimeout,
+    schedulePassiveWaitOfferTimeout,
     scheduleReconnect,
     sessionId,
     assignConnectionId,
@@ -8455,7 +8537,7 @@ export function usePeerConnections({
       } finally {
         if (alive) {
           applyVoiceSettingsReady(true, "load_complete");
-          healPeerConnectionsRef.current();
+          scheduleDeferredHealPeerConnections("settings_load_complete");
         }
       }
     }
@@ -8465,7 +8547,15 @@ export function usePeerConnections({
     return () => {
       alive = false;
     };
-  }, [applyVoiceSettingsReady, closePeer, deviceId, enableTurnFallback, notifyStatus, sessionId]);
+  }, [
+    applyVoiceSettingsReady,
+    closePeer,
+    deviceId,
+    enableTurnFallback,
+    notifyStatus,
+    scheduleDeferredHealPeerConnections,
+    sessionId,
+  ]);
 
   useEffect(() => {
     resetVoicePeerPairRegistry(sessionId, deviceId);
@@ -8625,6 +8715,10 @@ export function usePeerConnections({
       }
     }
 
+    if (remoteIds.length > 0) {
+      markVoiceJoinEpochIfNeeded();
+    }
+
     for (const remoteId of remoteIds) {
       emitVoiceStartCheck(remoteId);
 
@@ -8652,7 +8746,7 @@ export function usePeerConnections({
       }
     }
 
-    healPeerConnections();
+    scheduleDeferredHealPeerConnections("offer_effect");
     emitMeshSummary("after_join", { immediate: true });
     emitReadinessSnapshot("offer_effect");
   }, [
@@ -8671,11 +8765,12 @@ export function usePeerConnections({
     getCurrentConnectionId,
     getRemoteIds,
     getStrictRemoteIds,
-    healPeerConnections,
     localAudioTrackRef,
     localStreamRef,
+    markVoiceJoinEpochIfNeeded,
     maybeClosePeerForMemberRemoval,
     maybeStartOffer,
+    scheduleDeferredHealPeerConnections,
     userMutedRef,
     voicePolicy.releaseMicOnMute,
   ]);
@@ -8763,12 +8858,12 @@ export function usePeerConnections({
     ) {
       return;
     }
-    healPeerConnections();
+    scheduleDeferredHealPeerConnections("members_updated");
     emitMeshSummary("members_updated", { immediate: true });
   }, [
     membersSyncRevision,
     emitMeshSummary,
-    healPeerConnections,
+    scheduleDeferredHealPeerConnections,
     localAudioTrackRef,
     localStreamRef,
     micReady,

@@ -28,3 +28,12 @@ export function getConnectedAudioConfirmTimeoutMs(memberCount: number): number {
 
 /** Extra wait after remote track + transport are up but strict confirm is still pending. */
 export const CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS = 12_000;
+
+/** Defer aggressive heal / passive force-offer right after Call voice join. */
+export const VOICE_JOIN_STABILIZATION_MS = 2000;
+
+/** Wait for answer/ICE before treating have-local-offer as stuck. */
+export const HAVE_LOCAL_OFFER_STUCK_MS = 12_000;
+
+/** Passive/active deadlock probe before force-offer (after stabilization). */
+export const NO_STREAM_NO_OFFER_FORCE_MS = 9000;
