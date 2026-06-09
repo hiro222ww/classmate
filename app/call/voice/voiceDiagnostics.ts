@@ -630,6 +630,40 @@ export function logVoicePeerCompetition(params: {
   );
 }
 
+export function logVoiceGlare(params: {
+  remoteId: string;
+  localConnectionId?: string | null;
+  inboundConnectionId?: string | null;
+  action: string;
+  reason?: string;
+  sig?: string;
+}) {
+  const remote = compactDeviceId(params.remoteId);
+  console.log(
+    `[voice-glare] detected remote=${remote} ` +
+      `localConnectionId=${compactConnectionId(params.localConnectionId)} ` +
+      `inboundConnectionId=${compactConnectionId(params.inboundConnectionId)} ` +
+      `sig=${params.sig ?? "-"}`
+  );
+  if (params.action === "ignore_remote_offer") {
+    console.log(
+      `[voice-glare] action=${params.action} reason=${params.reason ?? "unknown"}`
+    );
+    return;
+  }
+  console.log(`[voice-glare] action=${params.action}`);
+}
+
+export function logPassiveWaitCancel(params: {
+  remoteId: string;
+  reason: string;
+}) {
+  console.log(
+    `[voice-peer] passive-wait-cancel remote=${compactDeviceId(params.remoteId)} ` +
+      `reason=${params.reason}`
+  );
+}
+
 export function logVoiceEnsureRepeat(params: {
   remoteId: string;
   reason: string;
