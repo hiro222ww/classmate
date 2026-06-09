@@ -1241,6 +1241,7 @@ export default function CallClient() {
           current?.playbackActive === normalizedHealth.playbackActive &&
           current?.playbackActiveMode === normalizedHealth.playbackActiveMode &&
           current?.audioActuallyPlaying === normalizedHealth.audioActuallyPlaying &&
+          current?.audioConfirmedStrict === normalizedHealth.audioConfirmedStrict &&
           current?.trackReady === normalizedHealth.trackReady &&
           current?.playSuccess === normalizedHealth.playSuccess &&
           current?.lastPlaySuccessAt === normalizedHealth.lastPlaySuccessAt &&

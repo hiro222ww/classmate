@@ -69,6 +69,8 @@ import {
   type IceDisconnectedGuardInput,
   type IceDisconnectedSuppressReason,
 } from "@/lib/voiceIceDisconnectedGuard";
+import { shouldRejectEstablishedPeerStaleOffer } from "@/lib/voiceStaleOfferGuard";
+import type { VoiceAudioConfirmCancelReason } from "@/app/call/voice/voiceDiagnostics";
 
 const PRESERVE_REMOTE_AUDIO_WINDOW_MS = 12_000;
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
@@ -319,6 +321,9 @@ type UsePeerConnectionsArgs = {
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
 ];
+
+const AUDIO_CONFIRM_REARM_DEDUPE_MS = 5000;
+const VOICE_START_CHECK_LOG_DEDUPE_MS = 5000;
 
 const voicePolicy = getVoiceModePolicy();
 logVoiceClientEnv("peer-connections-init");
@@ -1188,6 +1193,12 @@ export function usePeerConnections({
   const connectedAudioConfirmTimersRef = useRef<Map<string, number>>(
     new Map()
   );
+  const connectedAudioConfirmArmedAtRef = useRef<Map<string, number>>(
+    new Map()
+  );
+  const voiceStartCheckLastLogRef = useRef<
+    Map<string, { atMs: number; blockedReason: string }>
+  >(new Map());
   const connectedAudioConfirmGraceRef = useRef<Map<string, number>>(new Map());
   const voiceJoinEpochRef = useRef<{ sessionId: string; startedAt: number }>({
     sessionId: "",
@@ -2256,9 +2267,11 @@ export function usePeerConnections({
         if (confirmTimer) {
           window.clearTimeout(confirmTimer);
           connectedAudioConfirmTimersRef.current.delete(remoteId);
+          connectedAudioConfirmArmedAtRef.current.delete(remoteId);
           logVoiceAudioConfirmTimer({
             remoteId,
             phase: "cancel",
+            reason: "already_confirmed",
             sig: pcsRef.current.get(remoteId)?.signalingState,
             conn: pcsRef.current.get(remoteId)?.connectionState,
             ice: pcsRef.current.get(remoteId)?.iceConnectionState,
@@ -2771,22 +2784,35 @@ export function usePeerConnections({
       else if (role === "active" && !localTrackLive && !receiveOnly) {
         blockedReason = "local_track_not_live";
       }
-      logVoiceStartCheck({
-        deviceId,
-        remoteId,
-        sessionId,
-        membersCount: members.length,
-        remoteIdsCount: remoteIds.length,
-        settingsReady,
-        hasTurn,
-        p2pEnabled: p2pEnabledRef.current,
-        icePolicy: getPeerIceTransportPolicy(),
-        signalReady,
-        micReady,
-        shouldCreatePeer: canCreatePassive || canCreateActive,
-        role,
-        blockedReason,
-      });
+
+      const lastLog = voiceStartCheckLastLogRef.current.get(remoteId);
+      const nowMs = Date.now();
+      const shouldLogStartCheck =
+        !lastLog ||
+        lastLog.blockedReason !== String(blockedReason) ||
+        nowMs - lastLog.atMs >= VOICE_START_CHECK_LOG_DEDUPE_MS;
+      if (shouldLogStartCheck) {
+        voiceStartCheckLastLogRef.current.set(remoteId, {
+          atMs: nowMs,
+          blockedReason: String(blockedReason),
+        });
+        logVoiceStartCheck({
+          deviceId,
+          remoteId,
+          sessionId,
+          membersCount: members.length,
+          remoteIdsCount: remoteIds.length,
+          settingsReady,
+          hasTurn,
+          p2pEnabled: p2pEnabledRef.current,
+          icePolicy: getPeerIceTransportPolicy(),
+          signalReady,
+          micReady,
+          shouldCreatePeer: canCreatePassive || canCreateActive,
+          role,
+          blockedReason,
+        });
+      }
     },
     [
       deviceId,
@@ -2908,7 +2934,7 @@ export function usePeerConnections({
       if (holdUntil != null) {
         const remaining = holdUntil - Date.now();
         if (remaining > 0) {
-          p2pDirectFailedHoldRemainingMs = remaining;
+          p2pDirectFailedHoldRemainingMs = Math.ceil(remaining / 5000) * 5000;
         } else {
           p2pDirectFailedHoldUntilRef.current.delete(remoteId);
         }
@@ -2991,6 +3017,7 @@ export function usePeerConnections({
 
   const setPeerState = useCallback(
     (remoteId: string, state: PeerState) => {
+      if (peerStatesRef.current.get(remoteId) === state) return;
       peerStatesRef.current.set(remoteId, state);
       emitPeerStates();
     },
@@ -3212,6 +3239,59 @@ export function usePeerConnections({
       buildIceDisconnectedGuardInput,
       logIceDisconnectedReconnectSuppressed,
     ]
+  );
+
+  const cancelConnectedAudioConfirmTimer = useCallback(
+    (
+      remoteId: string,
+      reason: VoiceAudioConfirmCancelReason,
+      pc?: RTCPeerConnection | null
+    ) => {
+      const timer = connectedAudioConfirmTimersRef.current.get(remoteId);
+      if (!timer) return false;
+
+      window.clearTimeout(timer);
+      connectedAudioConfirmTimersRef.current.delete(remoteId);
+      connectedAudioConfirmArmedAtRef.current.delete(remoteId);
+
+      const activePc = pc ?? pcsRef.current.get(remoteId) ?? null;
+      logVoiceAudioConfirmTimer({
+        remoteId,
+        phase: "cancel",
+        reason,
+        sig: activePc?.signalingState,
+        conn: activePc?.connectionState,
+        ice: activePc?.iceConnectionState,
+      });
+      return true;
+    },
+    []
+  );
+
+  const shouldRejectIncomingStaleOffer = useCallback(
+    (
+      remoteId: string,
+      incomingConnectionId: string,
+      pc?: RTCPeerConnection | null
+    ) => {
+      const activePc = pc ?? pcsRef.current.get(remoteId) ?? null;
+      const media = getPeerMedia(remoteId);
+      const marks = getPeerPipelineMarks(remoteId);
+
+      return shouldRejectEstablishedPeerStaleOffer({
+        currentConnectionId: getCurrentConnectionId(remoteId),
+        incomingConnectionId,
+        conn: activePc?.connectionState ?? "-",
+        ice: activePc?.iceConnectionState ?? "-",
+        sig: activePc?.signalingState ?? "-",
+        remoteTrackReceived: marks.remote_track_received,
+        answerReceived: marks.answer_received,
+        remoteTracksCount: media.remoteTracksCount,
+        hasRemoteStream: media.hasRemoteStream,
+        hasPlaybackEvidence: hasRemotePlaybackEvidence(remoteId),
+      });
+    },
+    [getCurrentConnectionId, getPeerMedia, hasRemotePlaybackEvidence]
   );
 
   const markVoiceJoinEpochIfNeeded = useCallback(() => {
@@ -3969,12 +4049,7 @@ export function usePeerConnections({
       clearPeerWatchdogTimers(remoteId);
       passiveFallbackOfferSentRef.current.delete(remoteId);
       passiveWaitOfferMetaRef.current.delete(remoteId);
-      const connectedAudioTimer =
-        connectedAudioConfirmTimersRef.current.get(remoteId);
-      if (connectedAudioTimer) {
-        window.clearTimeout(connectedAudioTimer);
-        connectedAudioConfirmTimersRef.current.delete(remoteId);
-      }
+      cancelConnectedAudioConfirmTimer(remoteId, "peer_closed", pc);
 
       connectStartedAtRef.current.delete(remoteId);
       peerSnapshotRef.current.delete(remoteId);
@@ -4064,6 +4139,7 @@ export function usePeerConnections({
       }
     },
     [
+      cancelConnectedAudioConfirmTimer,
       clearDeferredMemberCloseTimer,
       clearEndedRemoteAudio,
       clearPeerWatchdogTimers,
@@ -5254,6 +5330,14 @@ export function usePeerConnections({
       }
 
       if (existing && currentId !== connectionId) {
+        if (shouldRejectIncomingStaleOffer(remoteId, connectionId, existing)) {
+          debugConsoleLog(
+            `[voice-peer] stale-offer-rejected remote=${compactDeviceId(remoteId)} ` +
+              `current=${compactConnectionId(currentId)} incoming=${compactConnectionId(connectionId)} ${formatVoiceModeSuffix()}`
+          );
+          return existing;
+        }
+
         const media = getPeerMedia(remoteId);
         const timestamps =
           peerSignalTimestampsRef.current.get(remoteId) ??
@@ -5709,38 +5793,58 @@ export function usePeerConnections({
           syncRemoteAudioFromPc(remoteId, pc, "pc_connected");
           markIceTransportConfirmed(remoteId, pc);
 
-          const prevAudioConfirmTimer =
-            connectedAudioConfirmTimersRef.current.get(remoteId);
-          if (prevAudioConfirmTimer) {
-            window.clearTimeout(prevAudioConfirmTimer);
+          connectedAudioConfirmGraceRef.current.delete(remoteId);
+
+          let skipArmConfirmTimer = false;
+          if (hasRemotePlaybackEvidence(remoteId)) {
+            cancelConnectedAudioConfirmTimer(remoteId, "already_confirmed", pc);
+            skipArmConfirmTimer = true;
+          } else {
+            const prevAudioConfirmTimer =
+              connectedAudioConfirmTimersRef.current.get(remoteId);
+            if (prevAudioConfirmTimer) {
+              const armedAt =
+                connectedAudioConfirmArmedAtRef.current.get(remoteId) ?? 0;
+              const armAgeMs = armedAt > 0 ? Date.now() - armedAt : Infinity;
+              if (armAgeMs < AUDIO_CONFIRM_REARM_DEDUPE_MS) {
+                logVoiceAudioConfirmTimer({
+                  remoteId,
+                  phase: "arm",
+                  reason: "skipped_duplicate_connected",
+                  sig: pc.signalingState,
+                  conn: pc.connectionState,
+                  ice: pc.iceConnectionState,
+                });
+                skipArmConfirmTimer = true;
+              } else {
+                cancelConnectedAudioConfirmTimer(remoteId, "reconnected_pc", pc);
+              }
+            }
+          }
+
+          const audioConfirmTimeoutMs =
+            getConnectedAudioConfirmTimeoutMs(inCallMemberCount);
+
+          if (!skipArmConfirmTimer) {
+            const marks = getPeerPipelineMarks(remoteId);
             logVoiceAudioConfirmTimer({
               remoteId,
-              phase: "cancel",
+              phase: "arm",
+              timeoutMs: audioConfirmTimeoutMs,
               sig: pc.signalingState,
               conn: pc.connectionState,
               ice: pc.iceConnectionState,
+              tracks: getPeerMedia(remoteId).remoteTracksCount,
+              ontrack:
+                (peerSignalTimestampsRef.current.get(remoteId)?.lastOnTrackAt ??
+                  null) != null,
+              offerSent: marks.offer_sent,
+              offerReceived: marks.offer_received,
+              answerSent: marks.answer_sent,
+              answerReceived: marks.answer_received,
             });
+            connectedAudioConfirmArmedAtRef.current.set(remoteId, Date.now());
           }
-          connectedAudioConfirmGraceRef.current.delete(remoteId);
-          const audioConfirmTimeoutMs =
-            getConnectedAudioConfirmTimeoutMs(inCallMemberCount);
-          const marks = getPeerPipelineMarks(remoteId);
-          logVoiceAudioConfirmTimer({
-            remoteId,
-            phase: "arm",
-            timeoutMs: audioConfirmTimeoutMs,
-            sig: pc.signalingState,
-            conn: pc.connectionState,
-            ice: pc.iceConnectionState,
-            tracks: getPeerMedia(remoteId).remoteTracksCount,
-            ontrack:
-              (peerSignalTimestampsRef.current.get(remoteId)?.lastOnTrackAt ??
-                null) != null,
-            offerSent: marks.offer_sent,
-            offerReceived: marks.offer_received,
-            answerSent: marks.answer_sent,
-            answerReceived: marks.answer_received,
-          });
 
           const runConnectedAudioConfirmTimeout = (
             phase: "initial" | "extended"
@@ -5885,13 +5989,15 @@ export function usePeerConnections({
             }
           };
 
-          const audioConfirmTimer = window.setTimeout(() => {
-            runConnectedAudioConfirmTimeout("initial");
-          }, audioConfirmTimeoutMs);
-          connectedAudioConfirmTimersRef.current.set(
-            remoteId,
-            audioConfirmTimer
-          );
+          if (!skipArmConfirmTimer) {
+            const audioConfirmTimer = window.setTimeout(() => {
+              runConnectedAudioConfirmTimeout("initial");
+            }, audioConfirmTimeoutMs);
+            connectedAudioConfirmTimersRef.current.set(
+              remoteId,
+              audioConfirmTimer
+            );
+          }
 
           const sender = pc
             .getSenders()
@@ -5995,6 +6101,7 @@ export function usePeerConnections({
     [
       assignConnectionId,
       buildIceDisconnectedGuardInput,
+      cancelConnectedAudioConfirmTimer,
       clearIceDisconnectedGraceTimer,
       clearPeerWatchdogTimers,
       clearReconnectTimer,
@@ -6008,6 +6115,7 @@ export function usePeerConnections({
       isPeerEstablishedForRecovery,
       isRemoteMediaTransportReady,
       logIceDisconnectedReconnectSuppressed,
+      shouldRejectIncomingStaleOffer,
       userMutedRef,
       localAudioTrackRef,
       localStreamRef,
@@ -6786,8 +6894,6 @@ export function usePeerConnections({
         }
       }
 
-      emitVoiceStartCheck(remoteId);
-
       if (!isOfferOwner && !micReady) {
         // Passive peers can wait for remote offer without a live local mic track.
       } else if (!micReady) {
@@ -6852,6 +6958,8 @@ export function usePeerConnections({
         logEnsureSkipped(remoteId, reason, "already_has_pc");
         return true;
       }
+
+      emitVoiceStartCheck(remoteId);
 
       if (!force && hasUsablePc) {
         const blockReason = getReconnectBlockReason(remoteId);
@@ -8659,6 +8767,28 @@ export function usePeerConnections({
 
       if (row.signal_type === "offer") {
         if (currentConnectionId !== incomingConnectionId) {
+          if (
+            shouldRejectIncomingStaleOffer(
+              remoteId,
+              incomingConnectionId,
+              existingPc
+            )
+          ) {
+            logVoiceSignalIgnored({
+              reason: "stale_offer_established_peer",
+              type: "offer",
+              remote: remoteId,
+              incomingConnectionId,
+              currentConnectionId,
+              pcExists: !!existingPc,
+              sig: existingPc?.signalingState ?? "-",
+              conn: existingPc?.connectionState ?? "-",
+              ice: existingPc?.iceConnectionState ?? "-",
+              hasRemoteStream: media.hasRemoteStream,
+              tracks: media.remoteTracksCount,
+            });
+            return;
+          }
           closePeer(remoteId, CLOSE_FOR_RECONNECT);
           assignConnectionId(remoteId, incomingConnectionId, "offer_received");
           connectStartedAtRef.current.set(remoteId, Date.now());
@@ -8808,7 +8938,13 @@ export function usePeerConnections({
           clearPassiveWaitOfferTimer(remoteId);
           passiveWaitOfferMetaRef.current.delete(remoteId);
 
-          setPeerState(remoteId, "connecting");
+          const offerMarks = getPeerPipelineMarks(remoteId);
+          const establishedRenegotiation =
+            pc.connectionState === "connected" &&
+            (offerMarks.answer_received || offerMarks.remote_track_received);
+          if (!establishedRenegotiation) {
+            setPeerState(remoteId, "connecting");
+          }
 
           logVoiceSignalAnswerCreateStart(remoteId);
           const answer = await pc.createAnswer();
@@ -8930,6 +9066,7 @@ export function usePeerConnections({
       getPeerMedia,
       runPeerHardReset,
       scheduleReconnect,
+      shouldRejectIncomingStaleOffer,
       startPeerOffer,
       sendSignal,
       sessionId,
@@ -9476,6 +9613,8 @@ export function usePeerConnections({
         timerCount += 1;
       }
       connectedAudioConfirmTimersRef.current.clear();
+      connectedAudioConfirmArmedAtRef.current.clear();
+      voiceStartCheckLastLogRef.current.clear();
 
       if (meshSummaryTimerRef.current) {
         window.clearTimeout(meshSummaryTimerRef.current);

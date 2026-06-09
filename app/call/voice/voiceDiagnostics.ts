@@ -655,9 +655,21 @@ export function logVoiceEnsureRepeat(params: {
   );
 }
 
+export type VoiceAudioConfirmCancelReason =
+  | "already_confirmed"
+  | "reconnected_pc"
+  | "duplicate_connected"
+  | "peer_closed"
+  | "connection_changed"
+  | "track_changed"
+  | "peer_removed"
+  | "unmount"
+  | "remote_missing";
+
 export function logVoiceAudioConfirmTimer(params: {
   remoteId: string;
   phase: "arm" | "fire" | "cancel" | "reconnect_scheduled";
+  reason?: string;
   timeoutMs?: number;
   sig?: string;
   conn?: string;
@@ -671,6 +683,7 @@ export function logVoiceAudioConfirmTimer(params: {
 }) {
   console.log(
     `[voice-audio-confirm] phase=${params.phase} remote=${compactDeviceId(params.remoteId)} ` +
+      (params.reason ? `reason=${params.reason} ` : "") +
       `timeoutMs=${params.timeoutMs ?? "-"} sig=${params.sig ?? "-"} ` +
       `conn=${params.conn ?? "-"} ice=${params.ice ?? "-"} ` +
       `tracks=${params.tracks ?? "-"} ontrack=${params.ontrack ? 1 : 0} ` +

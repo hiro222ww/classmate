@@ -387,6 +387,7 @@ export default function RemoteAudio({
   const playFailedAtRef = useRef<number | null>(null);
   const lastAttachAtRef = useRef<number | null>(null);
   const playbackHealthLogAtRef = useRef(0);
+  const lastEmittedPlaybackHealthRef = useRef<RemotePlaybackHealth | null>(null);
   const silentReattachAttemptsRef = useRef(0);
   const lastSilentSuspectLogAtRef = useRef(0);
   const unconfirmedTimeoutFiredRef = useRef(false);
@@ -414,6 +415,26 @@ export default function RemoteAudio({
 
   const emitPlaybackHealth = useCallback(
     (health: RemotePlaybackHealth) => {
+      const prev = lastEmittedPlaybackHealthRef.current;
+      if (
+        prev &&
+        prev.verified === health.verified &&
+        prev.playbackActive === health.playbackActive &&
+        prev.playbackActiveMode === health.playbackActiveMode &&
+        prev.audioActuallyPlaying === health.audioActuallyPlaying &&
+        prev.audioConfirmedStrict === health.audioConfirmedStrict &&
+        prev.trackReady === health.trackReady &&
+        prev.playSuccess === health.playSuccess &&
+        prev.lastPlaySuccessAt === health.lastPlaySuccessAt &&
+        prev.playFailedAt === health.playFailedAt &&
+        prev.lastAttachAt === health.lastAttachAt &&
+        prev.currentTimeAdvanced === health.currentTimeAdvanced &&
+        Math.abs(prev.level - health.level) < 0.02
+      ) {
+        return;
+      }
+      lastEmittedPlaybackHealthRef.current = health;
+
       const now = Date.now();
       if (now - playbackHealthLogAtRef.current >= PLAYBACK_HEALTH_LOG_THROTTLE_MS) {
         playbackHealthLogAtRef.current = now;
@@ -1317,19 +1338,6 @@ export default function RemoteAudio({
 
           if (level > 0.08) {
             onSpeaking?.(remoteId, level);
-          }
-
-          if (level > 0.02 && playSuccessRef.current) {
-            const el = ref.current;
-            if (el) {
-              const health = publishPlaybackHealth(el, {
-                playSuccess: true,
-                currentTime: el.currentTime,
-              });
-              if (health.playbackActive) {
-                logRemotePlaybackActive(health, "meter");
-              }
-            }
           }
 
           raf = requestAnimationFrame(tick);
