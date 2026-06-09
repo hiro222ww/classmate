@@ -71,6 +71,12 @@ import {
   getPresenceFreshMsForContext,
   logMemberSource,
 } from "@/lib/sessionMemberListMerge";
+import {
+  logHomeFirstPaint,
+  logHomeJoinedClasses,
+  logHomeOpenClassPerf,
+  logHomePerf,
+} from "@/lib/homePerf";
 
 type Profile = {
   device_id: string;
@@ -395,6 +401,8 @@ export default function HomeClient() {
   const leavingClassIdsRef = useRef<Set<string>>(new Set());
   const fetchJoinedClassesGenRef = useRef(0);
   const leftSucceededClassIdsRef = useRef<Set<string>>(new Set());
+  const homeMountStartMsRef = useRef<number | null>(null);
+  const homeEnrichStartedRef = useRef(false);
 
   const [mounted, setMounted] = useState(false);
   const [inAppToasts, setInAppToasts] = useState<InAppToastItem[]>([]);
@@ -406,10 +414,14 @@ export default function HomeClient() {
         deviceId?: string;
         throwOnError?: boolean;
         expectedClassId?: string | null;
+        lite?: boolean;
       }
     ) => {
       const fetchGen = fetchJoinedClassesGenRef.current;
-      console.log(`[home-fetch] start gen=${fetchGen} reason=${reason}`);
+      const lite = opts?.lite === true;
+      console.log(
+        `[home-fetch] start gen=${fetchGen} reason=${reason} lite=${lite ? 1 : 0}`
+      );
 
       const id = String(
         opts?.deviceId ?? deviceId ?? getDeviceId() ?? ""
@@ -423,11 +435,23 @@ export default function HomeClient() {
       }
 
       try {
+        const fetchStartMs = Date.now();
+        const mineQs = new URLSearchParams({ deviceId: id });
+        if (lite) {
+          mineQs.set("lite", "1");
+        }
         const classesRes = await fetch(
-          `/api/class/mine?deviceId=${encodeURIComponent(id)}`,
+          `/api/class/mine?${mineQs.toString()}`,
           { cache: "no-store" }
         );
         const classesJson = await readJsonSafe(classesRes);
+        const fetchMs = Date.now() - fetchStartMs;
+        if (reason === "mount" || reason === "enrich") {
+          logHomePerf({
+            totalMs: fetchMs,
+            path: lite ? "client_mine_lite" : "client_mine_full",
+          });
+        }
 
         if (!classesRes.ok || !classesJson?.ok) {
           console.warn("[home] fetchJoinedClasses failed", {
@@ -454,7 +478,8 @@ export default function HomeClient() {
 
         const nextClasses: MineClass[] = [];
         let localHiddenDetected = false;
-        for (const c of rawClasses) {
+        for (const rawClass of rawClasses) {
+          let c = rawClass;
           const classId = String(c.id ?? "").trim();
           if (!classId) continue;
 
@@ -486,7 +511,17 @@ export default function HomeClient() {
             }
           }
 
-          const sessionId = String(c.session_id ?? "").trim();
+          let sessionId = String(c.session_id ?? "").trim();
+          if (!sessionId && lite) {
+            const hintSessionId = readHomeClassSessionHint(classId);
+            if (hintSessionId) {
+              sessionId = hintSessionId;
+              c = {
+                ...c,
+                session_id: hintSessionId,
+              };
+            }
+          }
           if (sessionId) {
             storeHomeClassSessionHint(classId, sessionId, c.session_status);
           }
@@ -577,6 +612,35 @@ export default function HomeClient() {
             reason === "focus" ||
             reason === "visibility" ||
             reason === "manual";
+
+          if (reason === "enrich" && prev.length > 0) {
+            const byId = new Map(
+              prev.map((row) => [String(row.id ?? "").trim(), row])
+            );
+            for (const row of applyClasses) {
+              const classId = String(row.id ?? "").trim();
+              if (!classId) continue;
+              const existing = byId.get(classId);
+              byId.set(
+                classId,
+                existing
+                  ? {
+                      ...existing,
+                      ...row,
+                      session_id:
+                        row.session_id ?? existing.session_id ?? null,
+                      status_label:
+                        row.status_label ?? existing.status_label ?? "所属中",
+                    }
+                  : row
+              );
+            }
+            return Array.from(byId.values()).sort((a, b) => {
+              const at = a.created_at ? new Date(a.created_at).getTime() : 0;
+              const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
+              return bt - at;
+            });
+          }
 
           if (
             !forceApply &&
@@ -698,6 +762,8 @@ export default function HomeClient() {
 
   useEffect(() => {
     let cancelled = false;
+    homeMountStartMsRef.current = Date.now();
+    homeEnrichStartedRef.current = false;
 
     (async () => {
       try {
@@ -720,12 +786,52 @@ export default function HomeClient() {
           return;
         }
 
-        const profileRes = await fetch(
+        const refreshFromQuery =
+          (searchParams.get("refreshClasses") ?? "").trim() === "1";
+        const refreshFromStorage = consumeJoinedClassesRefresh();
+        const fetchReason =
+          refreshFromQuery || refreshFromStorage.pending
+            ? "invite_success"
+            : "mount";
+
+        const profilePromise = fetch(
           `/api/profile?device_id=${encodeURIComponent(id)}`,
           { cache: "no-store" }
-        );
+        ).catch(() => null);
 
-        if (cancelled) return;
+        if (fetchReason === "mount") {
+          await fetchJoinedClasses("mount", {
+            deviceId: id,
+            throwOnError: true,
+            lite: true,
+          });
+        } else {
+          await fetchJoinedClasses(fetchReason, {
+            deviceId: id,
+            throwOnError: true,
+            expectedClassId: refreshFromStorage.classId,
+          });
+        }
+
+        if (!cancelled) {
+          const mountMs =
+            homeMountStartMsRef.current != null
+              ? Date.now() - homeMountStartMsRef.current
+              : 0;
+          logHomeJoinedClasses(mountMs);
+          logHomeFirstPaint(mountMs);
+          setLoading(false);
+
+          if (!homeEnrichStartedRef.current && fetchReason === "mount") {
+            homeEnrichStartedRef.current = true;
+            window.setTimeout(() => {
+              void fetchJoinedClasses("enrich", { deviceId: id });
+            }, 0);
+          }
+        }
+
+        const profileRes = await profilePromise;
+        if (cancelled || !profileRes) return;
 
         if (profileRes.ok) {
           const profileJson = await readJsonSafe(profileRes);
@@ -740,20 +846,6 @@ export default function HomeClient() {
         } else {
           setProfile(null);
         }
-
-        const refreshFromQuery =
-          (searchParams.get("refreshClasses") ?? "").trim() === "1";
-        const refreshFromStorage = consumeJoinedClassesRefresh();
-        const fetchReason =
-          refreshFromQuery || refreshFromStorage.pending
-            ? "invite_success"
-            : "mount";
-
-        await fetchJoinedClasses(fetchReason, {
-          deviceId: id,
-          throwOnError: true,
-          expectedClassId: refreshFromStorage.classId,
-        });
       } catch (e: any) {
         console.error("[home] load error", e);
         if (!cancelled) {
@@ -873,6 +965,7 @@ export default function HomeClient() {
     if (!classes.length) return;
 
     let cancelled = false;
+    const membersDeferMs = 150;
 
 async function loadMembersAndPresence() {
   if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -1309,7 +1402,9 @@ return {
       }
     }
 
-    void loadMembersAndPresence();
+    const initialTimer = window.setTimeout(() => {
+      void loadMembersAndPresence();
+    }, membersDeferMs);
 
 const onVisible = () => {
   if (document.visibilityState === "visible") {
@@ -1323,6 +1418,7 @@ const timer = window.setInterval(loadMembersAndPresence, 20000);
 
 return () => {
   cancelled = true;
+  window.clearTimeout(initialTimer);
   window.clearInterval(timer);
   document.removeEventListener("visibilitychange", onVisible);
 };
@@ -1654,7 +1750,104 @@ return () => {
     setNotificationsEnabled(true);
   }
 
+  async function tryOpenClassWithHintSession(params: {
+    target: MineClass;
+    hintSessionId: string;
+    currentDeviceId: string;
+  }): Promise<boolean> {
+    const classId = String(params.target.id ?? "").trim();
+    const hintSessionId = String(params.hintSessionId ?? "").trim();
+    if (!classId || !hintSessionId) return false;
+
+    const hintStartMs = Date.now();
+    try {
+      const qs = new URLSearchParams({
+        sessionId: hintSessionId,
+        classId,
+        lite: "1",
+        fast: "1",
+      });
+      qs.set("viewerDeviceId", params.currentDeviceId);
+
+      const res = await fetch(`/api/session/status?${qs.toString()}`, {
+        cache: "no-store",
+      });
+      const json = await readJsonSafe(res);
+      const hintSessionMs = Date.now() - hintStartMs;
+
+      if (!res.ok || !json?.ok) {
+        console.log(
+          `[home openClass] hint-session-check-failed class=${classId.slice(-6)} ` +
+            `session=${hintSessionId.slice(-6)} ms=${hintSessionMs}`
+        );
+        return false;
+      }
+
+      const members = Array.isArray(json.members) ? json.members : [];
+      const selfIn =
+        members.some(
+          (member: ClassMember) =>
+            String(member.device_id ?? "").trim() === params.currentDeviceId
+        ) || json.viewerState?.inSessionMembers === true;
+
+      if (!selfIn || members.length < 1) {
+        console.log(
+          `[home openClass] hint-session-not-member class=${classId.slice(-6)} ` +
+            `session=${hintSessionId.slice(-6)} members=${members.length}`
+        );
+        return false;
+      }
+
+      const sessionStatus = String(json.session?.status ?? "")
+        .trim()
+        .toLowerCase();
+      if (
+        sessionStatus === "closed" ||
+        sessionStatus === "ended" ||
+        sessionStatus === "expired"
+      ) {
+        console.log(
+          `[home openClass] hint-session-not-joinable class=${classId.slice(-6)} ` +
+            `session=${hintSessionId.slice(-6)} status=${sessionStatus || "-"}`
+        );
+        return false;
+      }
+
+      if (isClassLeftLocally(classId)) {
+        logHomeOpenClassBlocked(classId);
+        return true;
+      }
+
+      clearClassLeftLocally(classId);
+      storeHomeClassSessionHint(classId, hintSessionId, sessionStatus);
+      console.log(
+        `[home openClass] reuse-hint-session-direct session=${hintSessionId.slice(-6)} ` +
+          `class=${classId.slice(-6)} members=${members.length} hintSessionMs=${hintSessionMs}`
+      );
+
+      const routeStartMs = Date.now();
+      router.push(
+        buildRoomUrl(classId, hintSessionId, { openJoinedClass: true })
+      );
+      logHomeOpenClassPerf({
+        totalMs: Date.now() - hintStartMs,
+        hintSessionMs,
+        matchJoinMs: 0,
+        routeMs: Date.now() - routeStartMs,
+        path: "hint_reuse",
+      });
+      return true;
+    } catch (e) {
+      console.warn("[home openClass] hint-session-check error", e);
+      return false;
+    }
+  }
+
   async function openClass(target: MineClass) {
+    const openStartMs = Date.now();
+    let hintSessionMs = 0;
+    let matchJoinMs = 0;
+
     try {
       setOpeningClassId(target.id);
 
@@ -1687,6 +1880,20 @@ return () => {
         }
       }
 
+      if (hintSessionId) {
+        const hintStartMs = Date.now();
+        const openedViaHint = await tryOpenClassWithHintSession({
+          target,
+          hintSessionId,
+          currentDeviceId,
+        });
+        hintSessionMs = Date.now() - hintStartMs;
+        if (openedViaHint) {
+          return;
+        }
+      }
+
+      const matchJoinStartMs = Date.now();
       const openBody = buildMatchJoinRequestBody({
         deviceId: currentDeviceId,
         openJoinedClassId: target.id,
@@ -1698,7 +1905,7 @@ return () => {
 
       console.log(
         `[home openClass] resolve-joinable-session class=${String(target.id).slice(-6)} ` +
-          `hintSession=${hintSessionId.slice(-6) || "-"}`
+          `hintSession=${hintSessionId.slice(-6) || "-"} fallback=match-join-v2`
       );
 
       console.log("[home openClass] match-join-v2 request body =", openBody);
@@ -1843,7 +2050,16 @@ console.log("[home] resolved ids", { classId, sessionId, json });
 
       clearClassLeftLocally(classId);
       storeHomeClassSessionHint(classId, sessionId, resolvedStatus);
+      matchJoinMs = Date.now() - matchJoinStartMs;
+      const routeStartMs = Date.now();
       router.push(buildRoomUrl(classId, sessionId, { openJoinedClass: true }));
+      logHomeOpenClassPerf({
+        totalMs: Date.now() - openStartMs,
+        hintSessionMs,
+        matchJoinMs,
+        routeMs: Date.now() - routeStartMs,
+        path: "match_join",
+      });
     } catch (e: any) {
       console.error("[home openClass] error =", e);
       alert(e?.message || "open_class_failed");

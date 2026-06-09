@@ -20,6 +20,7 @@ import { getRecruitmentSessionTtlMinutes, getRecruitmentSessionTtlSetting } from
 import { fetchActiveMeetingPlansForClasses } from "@/lib/meetingPlan";
 import { fetchActiveCallRequestsForClasses } from "@/lib/callRequest";
 import { fetchUnreadCountsForClasses } from "@/lib/classMessageReads";
+import { logHomePerf } from "@/lib/homePerf";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,12 @@ function resolveMembershipStatusLabel(params: {
 }
 
 export async function GET(req: Request) {
+  const routeStartMs = Date.now();
+  let membershipsMs = 0;
+  let classesMs = 0;
+  let sessionsMs = 0;
+  let enrichMs = 0;
+
   try {
     const url = new URL(req.url);
 
@@ -64,6 +71,7 @@ export async function GET(req: Request) {
 
     const normalizedDeviceId = String(deviceId).trim();
     const debugMemberships = url.searchParams.get("debugMemberships") === "1";
+    const lite = url.searchParams.get("lite") === "1";
 
     if (!normalizedDeviceId) {
       return NextResponse.json(
@@ -72,10 +80,12 @@ export async function GET(req: Request) {
       );
     }
 
+    const membershipsStartMs = Date.now();
     const slotCtxRes = await getHomeClassSlotContext(
       supabaseAdmin,
       normalizedDeviceId
     );
+    membershipsMs = Date.now() - membershipsStartMs;
 
     if (!slotCtxRes.ok) {
       return NextResponse.json(
@@ -145,6 +155,7 @@ export async function GET(req: Request) {
       });
     }
 
+    const classesStartMs = Date.now();
     const { data: classRows, error: classesErr } = await supabaseAdmin
       .from("classes")
       .select(
@@ -162,6 +173,7 @@ export async function GET(req: Request) {
       `
       )
       .in("id", classIds);
+    classesMs += Date.now() - classesStartMs;
 
     if (classesErr) {
       return NextResponse.json(
@@ -219,6 +231,73 @@ export async function GET(req: Request) {
       topicRows.map((t) => [String(t.topic_key).trim(), t])
     );
 
+    if (lite) {
+      const liteClasses = classIds.map((classId) => {
+        const c = classMap.get(classId) as
+          | {
+              id?: string;
+              name?: string;
+              description?: string;
+              world_key?: string | null;
+              topic_key?: string | null;
+              min_age?: number;
+              is_sensitive?: boolean;
+              is_user_created?: boolean;
+              created_at?: string | null;
+              match_deadline_at?: string | null;
+            }
+          | undefined;
+        const topicKey = String(c?.topic_key ?? "").trim();
+        const topic = topicKey ? topicMap.get(topicKey) : null;
+        const statusLabel = isDeadlinePassed(c?.match_deadline_at ?? null)
+          ? "募集締切"
+          : "所属中";
+
+        return {
+          class_id: classId,
+          join_ok: Boolean(c?.id),
+          id: c?.id ?? classId,
+          name: c?.name ?? "(class not found)",
+          description: c?.description ?? "",
+          world_key: c?.world_key ?? null,
+          topic_key: c?.topic_key ?? null,
+          topic_title: topic?.title ?? null,
+          topic_description: topic?.description ?? null,
+          min_age: Number(c?.min_age ?? 0),
+          is_sensitive: Boolean(c?.is_sensitive),
+          is_user_created: Boolean(c?.is_user_created),
+          created_at: c?.created_at ?? null,
+          match_deadline_at: c?.match_deadline_at ?? null,
+          has_active_session: false,
+          session_id: null,
+          session_status: null,
+          session_created_at: null,
+          status_label: statusLabel,
+          is_recruiting: false,
+          next_meeting_plan: null,
+          active_call_request: null,
+          unread_count: 0,
+        };
+      });
+
+      logHomePerf({
+        totalMs: Date.now() - routeStartMs,
+        membershipsMs,
+        classesMs,
+        path: "mine_lite",
+      });
+
+      return NextResponse.json({
+        ok: true,
+        lite: true,
+        classes: liteClasses,
+        class_slots: slotContext.slotLimit,
+        membership_count_billable: slotContext.slotCount,
+        membership_count_total: slotContext.snapshot.totalCount,
+        membership_count_legacy: slotContext.snapshot.legacyCount,
+      });
+    }
+
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
     const recruitmentSessionTtlSetting = await getRecruitmentSessionTtlSetting();
 
@@ -240,6 +319,7 @@ export async function GET(req: Request) {
     >();
 
     let sessionRowCount = 0;
+    const sessionsStartMs = Date.now();
 
     for (const classId of classIds) {
       const classRow = classMap.get(classId) as
@@ -304,6 +384,9 @@ export async function GET(req: Request) {
       });
     }
 
+    sessionsMs = Date.now() - sessionsStartMs;
+
+    const enrichStartMs = Date.now();
     const meetingPlanMap =
       (await fetchActiveMeetingPlansForClasses(classIds)) ?? new Map();
     const callRequestMap =
@@ -312,6 +395,7 @@ export async function GET(req: Request) {
     const unreadCountMap =
       (await fetchUnreadCountsForClasses(normalizedDeviceId, classIds)) ??
       new Map();
+    enrichMs = Date.now() - enrichStartMs;
 
     const classes = classIds.map((classId) => {
       const c = classMap.get(classId) as
@@ -391,6 +475,15 @@ export async function GET(req: Request) {
         classId: tailId(row.classId),
         reason: row.reason,
       })),
+    });
+
+    logHomePerf({
+      totalMs: Date.now() - routeStartMs,
+      membershipsMs,
+      classesMs,
+      sessionsMs,
+      enrichMs,
+      path: "mine_full",
     });
 
     return NextResponse.json({
