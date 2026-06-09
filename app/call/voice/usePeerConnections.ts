@@ -292,6 +292,7 @@ type UsePeerConnectionsArgs = {
   userMuted: boolean;
   userMutedRef: React.MutableRefObject<boolean>;
   micReady: boolean;
+  micPermissionDeniedRef: React.MutableRefObject<boolean>;
   signalReady: boolean;
   localStreamRef: React.MutableRefObject<MediaStream | null>;
   localAudioTrackRef: React.MutableRefObject<MediaStreamTrack | null>;
@@ -960,6 +961,7 @@ export function usePeerConnections({
   userMuted,
   userMutedRef,
   micReady,
+  micPermissionDeniedRef,
   signalReady,
   localStreamRef,
   localAudioTrackRef,
@@ -2738,12 +2740,32 @@ export function usePeerConnections({
         skipReason,
         extra,
       });
-      logVoiceStartBlocked(
-        remoteId,
-        mapEnsureSkipToVoiceStartBlocked(skipReason)
-      );
+      let blockedReason = mapEnsureSkipToVoiceStartBlocked(skipReason);
+      if (
+        micPermissionDeniedRef.current &&
+        (skipReason === "local_track_not_live" || skipReason === "mic_not_ready")
+      ) {
+        blockedReason = "mic_permission_denied";
+      }
+      logVoiceStartBlocked(remoteId, blockedReason);
     },
-    []
+    [micPermissionDeniedRef]
+  );
+
+  const canSendVoiceOffer = useCallback((): boolean => {
+    return isLocalTrackLive(localAudioTrackRef, localStreamRef);
+  }, [localAudioTrackRef, localStreamRef]);
+
+  const getMicOfferBlockReason = useCallback((): VoiceStartBlockedReason => {
+    if (micPermissionDeniedRef.current) return "mic_permission_denied";
+    return "mic_not_ready";
+  }, [micPermissionDeniedRef]);
+
+  const logMicOfferBlocked = useCallback(
+    (remoteId: string) => {
+      logVoiceStartBlocked(remoteId, getMicOfferBlockReason());
+    },
+    [getMicOfferBlockReason]
   );
 
   const emitVoiceStartCheck = useCallback(
@@ -2780,10 +2802,13 @@ export function usePeerConnections({
       else if (!signalReady) blockedReason = "signal_not_ready";
       else if (relayForcedRef.current && !hasTurn) blockedReason = "turn_not_loaded";
       else if (!isRemoteInCall(remoteId)) blockedReason = "not_in_call";
-      else if (role === "active" && !micReady) blockedReason = "mic_not_ready";
-      else if (role === "active" && !localTrackLive && !receiveOnly) {
-        blockedReason = "local_track_not_live";
-      }
+      else if (!localTrackLive && !receiveOnly) {
+        blockedReason = micPermissionDeniedRef.current
+          ? "mic_permission_denied"
+          : role === "active" && !micReady
+            ? "mic_not_ready"
+            : "local_track_not_live";
+      } else if (role === "active" && !micReady) blockedReason = "mic_not_ready";
 
       const lastLog = voiceStartCheckLastLogRef.current.get(remoteId);
       const nowMs = Date.now();
@@ -2823,6 +2848,7 @@ export function usePeerConnections({
       localStreamRef,
       members.length,
       micReady,
+      micPermissionDeniedRef,
       peerNeedsPc,
       sessionId,
       signalReady,
@@ -6150,10 +6176,8 @@ export function usePeerConnections({
 
       if (!isOfferOwner && !force) return;
 
-      if (
-        !isLocalTrackLive(localAudioTrackRef, localStreamRef) &&
-        (isOfferOwner || !force)
-      ) {
+      if (!canSendVoiceOffer()) {
+        logMicOfferBlocked(remoteId);
         return;
       }
 
@@ -6282,6 +6306,8 @@ export function usePeerConnections({
       markConnectStart,
       sendSignal,
       assignConnectionId,
+      canSendVoiceOffer,
+      logMicOfferBlocked,
       setPeerState,
       touchPeerSignal,
     ]
@@ -6301,6 +6327,11 @@ export function usePeerConnections({
   const runPassiveFallbackOffer = useCallback(
     (remoteId: string, triggerReason: string) => {
       if (passiveFallbackOfferSentRef.current.has(remoteId)) return;
+
+      if (!canSendVoiceOffer()) {
+        logMicOfferBlocked(remoteId);
+        return;
+      }
 
       const pc = pcsRef.current.get(remoteId);
       if (!pc || hasLiveRemoteAudioStream(remoteId)) return;
@@ -6325,7 +6356,7 @@ export function usePeerConnections({
         reason: "passive_wait_fallback_offer",
       });
     },
-    [clearNoStreamNoOfferTimer, hasLiveRemoteAudioStream, startPeerOffer]
+    [canSendVoiceOffer, clearNoStreamNoOfferTimer, hasLiveRemoteAudioStream, logMicOfferBlocked, startPeerOffer]
   );
 
   const schedulePassiveWaitOfferTimeout = useCallback(
@@ -6336,6 +6367,11 @@ export function usePeerConnections({
     ): boolean => {
       if (deviceId < remoteId) return false;
       if (passiveFallbackOfferSentRef.current.has(remoteId)) return false;
+
+      if (!canSendVoiceOffer()) {
+        logMicOfferBlocked(remoteId);
+        return false;
+      }
 
       const existingTimer = passiveWaitOfferTimersRef.current.get(remoteId);
       if (existingTimer != null && !opts?.forceReschedule) {
@@ -6365,8 +6401,10 @@ export function usePeerConnections({
       return true;
     },
     [
+      canSendVoiceOffer,
       clearPassiveWaitOfferTimer,
       deviceId,
+      logMicOfferBlocked,
       runPassiveFallbackOffer,
     ]
   );
@@ -7013,10 +7051,14 @@ export function usePeerConnections({
         );
         createPeerConnection(remoteId, connectionId);
         setPeerState(remoteId, "connecting");
-        schedulePassiveWaitOfferTimeout(remoteId, reason, {
-          initialJoin: !isEndedStreamReconnectReason(reason),
-        });
-        scheduleNoStreamNoOfferTimeout(remoteId, reason);
+        if (canSendVoiceOffer()) {
+          schedulePassiveWaitOfferTimeout(remoteId, reason, {
+            initialJoin: !isEndedStreamReconnectReason(reason),
+          });
+          scheduleNoStreamNoOfferTimeout(remoteId, reason);
+        } else {
+          logMicOfferBlocked(remoteId);
+        }
       }
 
       const createdPc = pcsRef.current.get(remoteId) ?? null;
@@ -7028,16 +7070,22 @@ export function usePeerConnections({
       return ok;
     },
     [
+      assignConnectionId,
+      canSendVoiceOffer,
       clearReconnectTimer,
       closePeer,
       createPeerConnection,
       deviceId,
+      enableTurnFallback,
+      emitVoiceStartCheck,
       getCurrentConnectionId,
+      getP2pDirectFailedHoldRemainingMs,
       getReconnectBlockReason,
       isRemoteInCall,
       localAudioTrackRef,
       localStreamRef,
       logEnsureSkipped,
+      logMicOfferBlocked,
       markConnectStart,
       maybeStartOffer,
       micReady,
@@ -7045,10 +7093,6 @@ export function usePeerConnections({
       schedulePassiveWaitOfferTimeout,
       scheduleNoStreamNoOfferTimeout,
       sendReconnectRequest,
-      assignConnectionId,
-      enableTurnFallback,
-      emitVoiceStartCheck,
-      getP2pDirectFailedHoldRemainingMs,
       setPeerState,
       signalReady,
     ]
@@ -9480,6 +9524,47 @@ export function usePeerConnections({
       window.clearInterval(timer);
     };
   }, [micReady, signalReady, healPeerConnections]);
+
+  const prevCanSendVoiceOfferRef = useRef(false);
+
+  useEffect(() => {
+    const canSend = canSendVoiceOffer();
+    const wasSending = prevCanSendVoiceOfferRef.current;
+    prevCanSendVoiceOfferRef.current = canSend;
+    if (!canSend || wasSending || !signalReady) return;
+
+    for (const remoteId of getRemoteIds()) {
+      if (!isRemoteInCall(remoteId)) continue;
+      console.log(
+        `[voice-peer] start-after-mic-ready remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
+      );
+      if (deviceId < remoteId) {
+        ensurePeerConnection(remoteId, "mic_ready");
+        continue;
+      }
+      if (pcsRef.current.has(remoteId)) {
+        schedulePassiveWaitOfferTimeout(remoteId, "mic_ready", {
+          initialJoin: true,
+          forceReschedule: true,
+        });
+        scheduleNoStreamNoOfferTimeout(remoteId, "mic_ready");
+        continue;
+      }
+      ensurePeerConnection(remoteId, "mic_ready");
+    }
+    scheduleDeferredHealPeerConnections("mic_ready");
+  }, [
+    canSendVoiceOffer,
+    deviceId,
+    ensurePeerConnection,
+    getRemoteIds,
+    isRemoteInCall,
+    micReady,
+    scheduleDeferredHealPeerConnections,
+    scheduleNoStreamNoOfferTimeout,
+    schedulePassiveWaitOfferTimeout,
+    signalReady,
+  ]);
 
   useEffect(() => {
     if (!micReady || !signalReady) return;

@@ -75,6 +75,8 @@ type CallVoiceLayerProps = {
     voiceEnabled: boolean;
   }) => void;
   onVoiceLayerMountedChange?: (mounted: boolean) => void;
+  onMicPermissionDeniedChange?: (denied: boolean) => void;
+  onMicRetryReady?: (retry: () => Promise<boolean>) => void;
   onSoftResetExhausted?: (
     remoteId: string,
     reason: VoiceSoftResetTriggerReason
@@ -101,6 +103,8 @@ export default function CallVoiceLayer({
   onManualPeerHardResetReady,
   onReadinessSnapshot,
   onVoiceLayerMountedChange,
+  onMicPermissionDeniedChange,
+  onMicRetryReady,
   onSoftResetExhausted,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
@@ -145,6 +149,7 @@ export default function CallVoiceLayer({
     userMuted,
     userMutedRef,
     micReady: mic.micInteractionReady,
+    micPermissionDeniedRef: mic.micPermissionDeniedRef,
     signalReady: signaling.signalReady,
     localStreamRef: mic.localStreamRef,
     localAudioTrackRef: mic.localAudioTrackRef,
@@ -158,6 +163,14 @@ export default function CallVoiceLayer({
     onSoftResetExhausted,
     voiceLayerInstanceId: instanceId,
   });
+
+  useEffect(() => {
+    onMicPermissionDeniedChange?.(mic.micPermissionDenied);
+  }, [mic.micPermissionDenied, onMicPermissionDeniedChange]);
+
+  useEffect(() => {
+    onMicRetryReady?.(mic.retryMicPermission);
+  }, [mic.retryMicPermission, onMicRetryReady]);
 
   useEffect(() => {
     onVoiceLayerMountedChange?.(true);

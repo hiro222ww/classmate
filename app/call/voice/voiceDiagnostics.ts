@@ -1311,6 +1311,7 @@ export type VoiceStartBlockedReason =
   | "turn_not_loaded"
   | "signal_not_ready"
   | "mic_not_ready"
+  | "mic_permission_denied"
   | "local_track_not_live"
   | "no_remote_ids"
   | "not_in_call"
@@ -1334,6 +1335,8 @@ export function mapEnsureSkipToVoiceStartBlocked(
       return "signal_not_ready";
     case "mic_not_ready":
       return "mic_not_ready";
+    case "mic_permission_denied":
+      return "mic_permission_denied";
     case "local_track_not_live":
       return "local_track_not_live";
     case "member_not_in_call":

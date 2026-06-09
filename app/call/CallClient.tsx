@@ -315,6 +315,10 @@ export default function CallClient() {
   const realtimeFetchDebounceRef = useRef<number | null>(null);
   const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
   const [showVoiceReconnectPrompt, setShowVoiceReconnectPrompt] = useState(false);
+  const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+  const retryMicPermissionRef = useRef<() => Promise<boolean>>(() =>
+    Promise.resolve(false)
+  );
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -1776,6 +1780,14 @@ export default function CallClient() {
     }
   }, []);
 
+  const handleMicPermissionDeniedChange = useCallback((denied: boolean) => {
+    setMicPermissionDenied(denied);
+  }, []);
+
+  const handleMicRetryReady = useCallback((retry: () => Promise<boolean>) => {
+    retryMicPermissionRef.current = retry;
+  }, []);
+
   const handlePeerStatesChange = useCallback((states: Record<string, PeerState>) => {
     setPeerStates((prev) => (arePeerStatesEqual(prev, states) ? prev : states));
   }, []);
@@ -2044,6 +2056,8 @@ export default function CallClient() {
           userMutedRef={userMutedRef}
           onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
           onMicReadyChange={handleMicReadyChange}
+          onMicPermissionDeniedChange={handleMicPermissionDeniedChange}
+          onMicRetryReady={handleMicRetryReady}
           onMicLevelChange={handleMicLevelChange}
           onRemoteSpeakingChange={handleRemoteSpeakingChange}
           onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
@@ -2548,6 +2562,42 @@ export default function CallClient() {
         }}
       >
         <div style={{ fontWeight: 900, fontSize: 15 }}>音声設定</div>
+
+        {(micPermissionDenied || (!micReady && callInfo.includes("許可"))) && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              fontSize: 13,
+              color: "#92400e",
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>
+              {callInfo || "マイクを許可してください"}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void retryMicPermissionRef.current();
+              }}
+              style={{
+                marginTop: 8,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #d97706",
+                background: "#fff",
+                color: "#92400e",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              再試行
+            </button>
+          </div>
+        )}
 
         <div
           style={{
