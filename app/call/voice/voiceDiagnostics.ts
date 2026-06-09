@@ -1476,6 +1476,7 @@ const DEDUPED_START_BLOCKED_REASONS = new Set<VoiceStartBlockedReason>([
   "blocked_by_cooldown",
   "blocked_by_reconnect_pending",
   "passive_awaiting_reconnect_offer",
+  "mic_permission_denied",
 ]);
 
 export function logVoiceStartBlocked(

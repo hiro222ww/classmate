@@ -2576,7 +2576,10 @@ export default function CallClient() {
             }}
           >
             <div style={{ fontWeight: 800 }}>
-              {callInfo || "マイクを許可してください"}
+              {callInfo ||
+                (micPermissionDenied
+                  ? "マイクを許可してください"
+                  : "マイク準備中…")}
             </div>
             <button
               type="button"
