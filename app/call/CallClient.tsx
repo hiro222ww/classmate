@@ -1795,19 +1795,28 @@ export default function CallClient() {
     renderCountRef.current += 1;
   });
 
+  const lastCallRenderPerfLogRef = useRef({ count: 0, atMs: 0 });
+
   useEffect(() => {
     const timer = window.setInterval(() => {
+      const count = renderCountRef.current;
+      const prev = lastCallRenderPerfLogRef.current;
+      const delta = count - prev.count;
+      const sincePrevMs = Date.now() - prev.atMs;
+      if (delta < 8 && sincePrevMs < 20_000) return;
+
+      lastCallRenderPerfLogRef.current = { count, atMs: Date.now() };
       const sinceMountMs = Date.now() - callMountAtRef.current;
       const lastFetchAgeMs =
         lastFetchAtRef.current != null
           ? Date.now() - lastFetchAtRef.current
           : -1;
       console.log(
-        `[call-render-perf] count=${renderCountRef.current} sinceMountMs=${sinceMountMs} ` +
+        `[call-render-perf] count=${count} delta=${delta} sinceMountMs=${sinceMountMs} ` +
           `displayMembers=${members.length} remoteMembers=${remoteMemberIds.length} ` +
           `fetchInFlight=${fetchingRef.current ? 1 : 0} lastFetchAgeMs=${lastFetchAgeMs}`
       );
-    }, 5000);
+    }, 12_000);
     return () => window.clearInterval(timer);
   }, [members.length, remoteMemberIds.length, sessionId]);
 

@@ -25,3 +25,6 @@ export function getConnectedAudioConfirmTimeoutMs(memberCount: number): number {
   if (useEarlyTurnBias() || count >= 3) return 7000;
   return 11000;
 }
+
+/** Extra wait after remote track + transport are up but strict confirm is still pending. */
+export const CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS = 12_000;

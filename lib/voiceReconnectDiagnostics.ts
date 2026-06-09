@@ -74,6 +74,18 @@ export function buildVoicePlaybackBlockReason(
     return "playback_confirmed_transport_ok";
   }
 
+  if (
+    (input.reason === "connected_no_audio_confirm" ||
+      input.source === "connected_audio_confirm_timeout") &&
+    input.tracks >= 1 &&
+    input.trackLive === "live" &&
+    input.conn === "connected" &&
+    (input.ice === "connected" || input.ice === "completed") &&
+    input.hasLiveRemoteStream
+  ) {
+    return "remote_track_awaiting_strict_confirm";
+  }
+
   return null;
 }
 
