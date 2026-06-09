@@ -1387,13 +1387,101 @@ export function logVoiceStartCheck(params: {
   );
 }
 
+const VOICE_ENSURE_SKIP_LOG_MIN_INTERVAL_MS = 5000;
+const voiceEnsureSkipLogState = new Map<string, { key: string; atMs: number }>();
+
+const DEDUPED_ENSURE_SKIP_REASONS = new Set([
+  "already_has_pc",
+  "blocked_by_cooldown",
+  "blocked_by_reconnect_pending",
+  "passive_awaiting_reconnect_offer",
+]);
+
+export function logVoiceEnsureSkipped(params: {
+  remoteId: string;
+  requestedReason: string;
+  skipReason: string;
+  extra?: string;
+}) {
+  const remote = compactDeviceId(params.remoteId);
+  const line =
+    `[voice-peer] ensurePeerConnection skipped remote=${remote} ` +
+    `requested=${params.requestedReason} skip=${params.skipReason}` +
+    `${params.extra ? ` ${params.extra}` : ""}`;
+
+  if (DEDUPED_ENSURE_SKIP_REASONS.has(params.skipReason)) {
+    const key = `${remote}|${params.skipReason}|${params.requestedReason}`;
+    const now = Date.now();
+    const prev = voiceEnsureSkipLogState.get(remote);
+    if (
+      prev &&
+      prev.key === key &&
+      now - prev.atMs < VOICE_ENSURE_SKIP_LOG_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+    voiceEnsureSkipLogState.set(remote, { key, atMs: now });
+  }
+
+  console.log(line);
+}
+
+const VOICE_PASSIVE_DEFER_LOG_MIN_INTERVAL_MS = 10_000;
+const voicePassiveDeferLogState = new Map<string, { key: string; atMs: number }>();
+
+export function logPassiveOfferDeferred(params: {
+  remoteId: string;
+  triggerReason: string;
+  delayMs: number;
+}) {
+  const remote = compactDeviceId(params.remoteId);
+  const key = `${remote}|${params.triggerReason}|${params.delayMs}`;
+  const now = Date.now();
+  const prev = voicePassiveDeferLogState.get(remote);
+  if (
+    prev &&
+    prev.key === key &&
+    now - prev.atMs < VOICE_PASSIVE_DEFER_LOG_MIN_INTERVAL_MS
+  ) {
+    return;
+  }
+  voicePassiveDeferLogState.set(remote, { key, atMs: now });
+  console.log(
+    `[voice-peer] passive-offer-deferred remote=${remote} ` +
+      `reason=await_active_offer trigger=${params.triggerReason} delayMs=${params.delayMs}`
+  );
+}
+
+const VOICE_START_BLOCKED_LOG_MIN_INTERVAL_MS = 5000;
+const voiceStartBlockedLogState = new Map<string, { key: string; atMs: number }>();
+
+const DEDUPED_START_BLOCKED_REASONS = new Set<VoiceStartBlockedReason>([
+  "already_has_pc",
+  "blocked_by_cooldown",
+  "blocked_by_reconnect_pending",
+  "passive_awaiting_reconnect_offer",
+]);
+
 export function logVoiceStartBlocked(
   remoteId: string,
   reason: VoiceStartBlockedReason
 ) {
-  console.log(
-    `[voice-start-blocked] remote=${compactDeviceId(remoteId)} reason=${reason}`
-  );
+  const remote = compactDeviceId(remoteId);
+  if (DEDUPED_START_BLOCKED_REASONS.has(reason)) {
+    const key = `${remote}|${reason}`;
+    const now = Date.now();
+    const prev = voiceStartBlockedLogState.get(remote);
+    if (
+      prev &&
+      prev.key === key &&
+      now - prev.atMs < VOICE_START_BLOCKED_LOG_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+    voiceStartBlockedLogState.set(remote, { key, atMs: now });
+  }
+
+  console.log(`[voice-start-blocked] remote=${remote} reason=${reason}`);
 }
 
 export function logVoiceSettingsReadyChange(params: {

@@ -37,3 +37,6 @@ export const HAVE_LOCAL_OFFER_STUCK_MS = 12_000;
 
 /** Passive/active deadlock probe before force-offer (after stabilization). */
 export const NO_STREAM_NO_OFFER_FORCE_MS = 9000;
+
+/** Passive waits for active offer on initial join before one-shot fallback. */
+export const PASSIVE_WAIT_OFFER_INITIAL_MS = 5000;

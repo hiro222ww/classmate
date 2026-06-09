@@ -34,6 +34,8 @@ import {
   logVoiceStartCheck,
   logVoiceAudioConfirmTimer,
   logVoiceEnsureRepeat,
+  logVoiceEnsureSkipped,
+  logPassiveOfferDeferred,
   logVoiceNegotiationGap,
   logVoicePeerCompetition,
   logVoiceRemoteTrackReceived,
@@ -68,6 +70,7 @@ import {
   CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS,
   HAVE_LOCAL_OFFER_STUCK_MS,
   NO_STREAM_NO_OFFER_FORCE_MS,
+  PASSIVE_WAIT_OFFER_INITIAL_MS,
   VOICE_JOIN_STABILIZATION_MS,
   getConnectedAudioConfirmTimeoutMs,
   getConnectingTurnProbeMs,
@@ -968,6 +971,9 @@ export function usePeerConnections({
     voiceSessionMemberIdsRef.current.clear();
     lastPeerCloseReasonRef.current.clear();
     voiceJoinEpochRef.current = { sessionId, startedAt: 0 };
+    passiveFallbackOfferSentRef.current.clear();
+    passiveWaitOfferMetaRef.current.clear();
+    activeOfferJoinLoggedRef.current.clear();
     if (deferredHealTimerRef.current != null) {
       window.clearTimeout(deferredHealTimerRef.current);
       deferredHealTimerRef.current = null;
@@ -1080,6 +1086,11 @@ export function usePeerConnections({
   const trackEndedAtRef = useRef<Map<string, number>>(new Map());
   const endedHoldTimersRef = useRef<Map<string, number>>(new Map());
   const passiveWaitOfferTimersRef = useRef<Map<string, number>>(new Map());
+  const passiveFallbackOfferSentRef = useRef<Set<string>>(new Set());
+  const passiveWaitOfferMetaRef = useRef<
+    Map<string, { triggerReason: string; scheduledAt: number; delayMs: number }>
+  >(new Map());
+  const activeOfferJoinLoggedRef = useRef<Set<string>>(new Set());
   const noStreamNoOfferTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
     Map<
@@ -2666,10 +2677,12 @@ export function usePeerConnections({
       skipReason: string,
       extra?: string
     ) => {
-      debugConsoleLog(
-        `[voice-peer] ensurePeerConnection skipped remote=${compactDeviceId(remoteId)} ` +
-          `requested=${requestedReason} skip=${skipReason}${extra ? ` ${extra}` : ""}`
-      );
+      logVoiceEnsureSkipped({
+        remoteId,
+        requestedReason,
+        skipReason,
+        extra,
+      });
       logVoiceStartBlocked(
         remoteId,
         mapEnsureSkipToVoiceStartBlocked(skipReason)
@@ -3840,6 +3853,8 @@ export function usePeerConnections({
       pendingIceRef.current.delete(remoteId);
       clearReconnectTimer(remoteId);
       clearPeerWatchdogTimers(remoteId);
+      passiveFallbackOfferSentRef.current.delete(remoteId);
+      passiveWaitOfferMetaRef.current.delete(remoteId);
       const connectedAudioTimer =
         connectedAudioConfirmTimersRef.current.get(remoteId);
       if (connectedAudioTimer) {
@@ -5817,7 +5832,12 @@ export function usePeerConnections({
 
       if (!isOfferOwner && !force) return;
 
-      if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) return;
+      if (
+        !isLocalTrackLive(localAudioTrackRef, localStreamRef) &&
+        (isOfferOwner || !force)
+      ) {
+        return;
+      }
 
       const hasRemoteStream = hasLiveRemoteAudioStream(remoteId);
       const existingPc = pcsRef.current.get(remoteId);
@@ -5960,36 +5980,77 @@ export function usePeerConnections({
     maybeStartOfferRef.current = startPeerOffer;
   }, [startPeerOffer]);
 
-  const schedulePassiveWaitOfferTimeout = useCallback(
+  const runPassiveFallbackOffer = useCallback(
     (remoteId: string, triggerReason: string) => {
+      if (passiveFallbackOfferSentRef.current.has(remoteId)) return;
+
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc || hasLiveRemoteAudioStream(remoteId)) return;
+
+      if (
+        pc.signalingState === "have-remote-offer" ||
+        pc.connectionState === "connected"
+      ) {
+        return;
+      }
+
+      passiveFallbackOfferSentRef.current.add(remoteId);
+      clearNoStreamNoOfferTimer(remoteId);
+
+      console.log(
+        `[voice-peer] passive-wait-offer-timeout remote=${compactDeviceId(remoteId)} ` +
+          `action=fallback_offer trigger=${triggerReason} ${formatVoiceModeSuffix()}`
+      );
+
+      void startPeerOffer(remoteId, {
+        force: true,
+        reason: "passive_wait_fallback_offer",
+      });
+    },
+    [clearNoStreamNoOfferTimer, hasLiveRemoteAudioStream, startPeerOffer]
+  );
+
+  const schedulePassiveWaitOfferTimeout = useCallback(
+    (
+      remoteId: string,
+      triggerReason: string,
+      opts?: { forceReschedule?: boolean; initialJoin?: boolean }
+    ): boolean => {
+      if (deviceId < remoteId) return false;
+      if (passiveFallbackOfferSentRef.current.has(remoteId)) return false;
+
+      const existingTimer = passiveWaitOfferTimersRef.current.get(remoteId);
+      if (existingTimer != null && !opts?.forceReschedule) {
+        return false;
+      }
+
       clearPassiveWaitOfferTimer(remoteId);
-      if (deviceId < remoteId) return;
+
+      const delayMs = opts?.initialJoin
+        ? PASSIVE_WAIT_OFFER_INITIAL_MS
+        : PASSIVE_WAIT_OFFER_TIMEOUT_MS;
+
+      logPassiveOfferDeferred({ remoteId, triggerReason, delayMs });
 
       const timer = window.setTimeout(() => {
         passiveWaitOfferTimersRef.current.delete(remoteId);
-        const pc = pcsRef.current.get(remoteId);
-        if (!pc || hasLiveRemoteAudioStream(remoteId)) return;
-
-        if (
-          pc.signalingState === "have-remote-offer" ||
-          pc.connectionState === "connected"
-        ) {
-          return;
-        }
-
-        debugConsoleLog(
-          `[voice-peer] passive-wait-offer-timeout remote=${compactDeviceId(remoteId)} action=force_offer reason=ended_stream_reconnect_timeout trigger=${triggerReason} ${formatVoiceModeSuffix()}`
-        );
-
-        void startPeerOffer(remoteId, {
-          force: true,
-          reason: "ended_stream_reconnect_timeout",
-        });
-      }, PASSIVE_WAIT_OFFER_TIMEOUT_MS);
+        passiveWaitOfferMetaRef.current.delete(remoteId);
+        runPassiveFallbackOffer(remoteId, triggerReason);
+      }, delayMs);
 
       passiveWaitOfferTimersRef.current.set(remoteId, timer);
+      passiveWaitOfferMetaRef.current.set(remoteId, {
+        triggerReason,
+        scheduledAt: Date.now(),
+        delayMs,
+      });
+      return true;
     },
-    [clearPassiveWaitOfferTimer, deviceId, hasLiveRemoteAudioStream, startPeerOffer]
+    [
+      clearPassiveWaitOfferTimer,
+      deviceId,
+      runPassiveFallbackOffer,
+    ]
   );
 
   const scheduleNoStreamNoOfferTimeout = useCallback(
@@ -6634,9 +6695,9 @@ export function usePeerConnections({
         );
         createPeerConnection(remoteId, connectionId);
         setPeerState(remoteId, "connecting");
-        if (isEndedStreamReconnectReason(reason)) {
-          schedulePassiveWaitOfferTimeout(remoteId, reason);
-        }
+        schedulePassiveWaitOfferTimeout(remoteId, reason, {
+          initialJoin: !isEndedStreamReconnectReason(reason),
+        });
         scheduleNoStreamNoOfferTimeout(remoteId, reason);
       }
 
@@ -7831,10 +7892,10 @@ export function usePeerConnections({
                 force: true,
               });
             } else {
-              schedulePassiveWaitOfferTimeout(remoteId, "no_stream_no_offer_passive_wait");
-              console.log(
-                `[voice-peer] passive-offer-deferred remote=${compactDeviceId(remoteId)} ` +
-                  `reason=await_active_offer`
+              schedulePassiveWaitOfferTimeout(
+                remoteId,
+                "no_stream_no_offer_passive_wait",
+                { initialJoin: true }
               );
             }
           },
@@ -8272,6 +8333,8 @@ export function usePeerConnections({
           logVoiceSignalSetRemoteOfferDone(remoteId, pc.signalingState);
           await flushPendingIce(remoteId, incomingConnectionId);
           touchPeerSignal(remoteId, "offer_received");
+          clearPassiveWaitOfferTimer(remoteId);
+          passiveWaitOfferMetaRef.current.delete(remoteId);
 
           setPeerState(remoteId, "connecting");
 
@@ -8383,6 +8446,7 @@ export function usePeerConnections({
     [
       addRemoteIceCandidate,
       assignConnectionId,
+      clearPassiveWaitOfferTimer,
       clearPassiveReconnectState,
       closePeer,
       createPeerConnection,
@@ -8740,6 +8804,13 @@ export function usePeerConnections({
           }
           continue;
         }
+        if (!activeOfferJoinLoggedRef.current.has(remoteId)) {
+          activeOfferJoinLoggedRef.current.add(remoteId);
+          console.log(
+            `[voice-peer] active-offer-join remote=${compactDeviceId(remoteId)} ` +
+              `micReady=${micReady ? 1 : 0} signalReady=${signalReady ? 1 : 0}`
+          );
+        }
         void maybeStartOffer(remoteId);
       } else {
         ensurePeerConnection(remoteId, "passive_on_join");
@@ -8900,6 +8971,9 @@ export function usePeerConnections({
         timerCount += 1;
       }
       passiveWaitOfferTimersRef.current.clear();
+      passiveFallbackOfferSentRef.current.clear();
+      passiveWaitOfferMetaRef.current.clear();
+      activeOfferJoinLoggedRef.current.clear();
 
       for (const timer of iceCheckingTimersRef.current.values()) {
         window.clearTimeout(timer);

@@ -146,6 +146,8 @@ type PeerState = "idle" | "connecting" | "connected" | "failed";
 const CALL_MEMBERS_POLL_MS = 15_000;
 const CALL_REALTIME_FETCH_DEBOUNCE_MS = 2000;
 const CALL_NOW_MS_TICK_MS = 2000;
+const MIC_LEVEL_COMMIT_MIN_DELTA = 0.02;
+const MIC_LEVEL_COMMIT_MIN_INTERVAL_MS = 250;
 
 function arePeerStatesEqual(
   a: Record<string, PeerState>,
@@ -1178,8 +1180,19 @@ export default function CallClient() {
     [sessionId, deviceId]
   );
 
+  const lastMicLevelCommitRef = useRef({ level: 0, atMs: 0 });
+
   const handleMicLevelChange = useCallback(
     (level: number) => {
+      const now = Date.now();
+      const prev = lastMicLevelCommitRef.current;
+      if (
+        Math.abs(level - prev.level) < MIC_LEVEL_COMMIT_MIN_DELTA &&
+        now - prev.atMs < MIC_LEVEL_COMMIT_MIN_INTERVAL_MS
+      ) {
+        return;
+      }
+      lastMicLevelCommitRef.current = { level, atMs: now };
       setMicLevel(level);
 
       if (!userMuted && level > 0.08) {
@@ -1811,10 +1824,13 @@ export default function CallClient() {
         lastFetchAtRef.current != null
           ? Date.now() - lastFetchAtRef.current
           : -1;
+      const rendersPerSec =
+        sincePrevMs > 0 ? Math.round((delta / sincePrevMs) * 1000) : 0;
       console.log(
         `[call-render-perf] count=${count} delta=${delta} sinceMountMs=${sinceMountMs} ` +
-          `displayMembers=${members.length} remoteMembers=${remoteMemberIds.length} ` +
-          `fetchInFlight=${fetchingRef.current ? 1 : 0} lastFetchAgeMs=${lastFetchAgeMs}`
+          `rendersPerSec=${rendersPerSec} displayMembers=${members.length} ` +
+          `remoteMembers=${remoteMemberIds.length} fetchInFlight=${fetchingRef.current ? 1 : 0} ` +
+          `lastFetchAgeMs=${lastFetchAgeMs} note=micLevel_raf_throttled`
       );
     }, 12_000);
     return () => window.clearInterval(timer);
