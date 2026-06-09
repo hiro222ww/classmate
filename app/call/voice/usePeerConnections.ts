@@ -64,8 +64,11 @@ import {
 import {
   evaluateIceDisconnectedReconnectSuppressReason,
   ICE_DISCONNECTED_RECONNECT_GRACE_MS,
+  PC_DISCONNECTED_RECONNECT_GRACE_MS,
+  classifyTransportDisconnect,
   isIceTransportReconnectReason,
   isPeerIceDisconnectedOnly,
+  isPeerPcDisconnectedOnly,
   type IceDisconnectedGuardInput,
   type IceDisconnectedSuppressReason,
 } from "@/lib/voiceIceDisconnectedGuard";
@@ -1112,6 +1115,7 @@ export function usePeerConnections({
   const recoveryStartedAtRef = useRef<Map<string, number>>(new Map());
   const iceCheckingTimersRef = useRef<Map<string, number>>(new Map());
   const iceDisconnectedGraceTimersRef = useRef<Map<string, number>>(new Map());
+  const pcDisconnectedGraceTimersRef = useRef<Map<string, number>>(new Map());
   const connectingTimersRef = useRef<Map<string, number>>(new Map());
   const attachedTrackIdsRef = useRef<Map<string, Set<string>>>(new Map());
   const trackEndedAtRef = useRef<Map<string, number>>(new Map());
@@ -1351,10 +1355,19 @@ export function usePeerConnections({
     }
   }, []);
 
+  const clearPcDisconnectedGraceTimer = useCallback((remoteId: string) => {
+    const timer = pcDisconnectedGraceTimersRef.current.get(remoteId);
+    if (timer) {
+      window.clearTimeout(timer);
+      pcDisconnectedGraceTimersRef.current.delete(remoteId);
+    }
+  }, []);
+
   const clearPeerWatchdogTimers = useCallback((remoteId: string) => {
     clearPassiveWaitOfferTimer(remoteId);
     clearNoStreamNoOfferTimer(remoteId);
     clearIceDisconnectedGraceTimer(remoteId);
+    clearPcDisconnectedGraceTimer(remoteId);
 
     const checkingTimer = iceCheckingTimersRef.current.get(remoteId);
     if (checkingTimer) {
@@ -1375,6 +1388,7 @@ export function usePeerConnections({
     }
   }, [
     clearIceDisconnectedGraceTimer,
+    clearPcDisconnectedGraceTimer,
     clearNoStreamNoOfferTimer,
     clearPassiveWaitOfferTimer,
   ]);
@@ -3232,18 +3246,42 @@ export function usePeerConnections({
     []
   );
 
-  const shouldSuppressIceTransportReconnect = useCallback(
+  const logPcDisconnectedReconnectSuppressed = useCallback(
+    (
+      remoteId: string,
+      reason: IceDisconnectedSuppressReason,
+      context: string
+    ) => {
+      console.log(
+        `[voice-peer] reconnect_pc_disconnected_suppressed remote=${compactDeviceId(remoteId)} ` +
+          `reason=${reason} context=${context} ${formatVoiceModeSuffix()}`
+      );
+    },
+    []
+  );
+
+  const shouldSuppressTransportDisconnectReconnect = useCallback(
     (
       remoteId: string,
       reconnectReason: string,
       pc?: RTCPeerConnection | null,
       context = "schedule"
     ): IceDisconnectedSuppressReason | null => {
-      if (!isIceTransportReconnectReason(reconnectReason)) return null;
-
       const input = buildIceDisconnectedGuardInput(remoteId, pc);
       const suppress = evaluateIceDisconnectedReconnectSuppressReason(input);
       if (!suppress) return null;
+
+      const disconnectKind = classifyTransportDisconnect({
+        reconnectReason,
+        conn: input.conn,
+        ice: input.ice,
+      });
+      if (!disconnectKind) return null;
+
+      if (disconnectKind === "pc") {
+        logPcDisconnectedReconnectSuppressed(remoteId, suppress, context);
+        return suppress;
+      }
 
       if (reconnectReason === "ice_failed") {
         logIceDisconnectedReconnectSuppressed(remoteId, suppress, context);
@@ -3264,6 +3302,7 @@ export function usePeerConnections({
     [
       buildIceDisconnectedGuardInput,
       logIceDisconnectedReconnectSuppressed,
+      logPcDisconnectedReconnectSuppressed,
     ]
   );
 
@@ -4428,7 +4467,7 @@ export function usePeerConnections({
       }
 
       if (
-        shouldSuppressIceTransportReconnect(
+        shouldSuppressTransportDisconnectReconnect(
           remoteId,
           reasonRaw,
           pcEarly,
@@ -4620,7 +4659,7 @@ export function usePeerConnections({
         }
 
         if (
-          shouldSuppressIceTransportReconnect(
+          shouldSuppressTransportDisconnectReconnect(
             remoteId,
             reason,
             pcsRef.current.get(remoteId),
@@ -4690,7 +4729,7 @@ export function usePeerConnections({
       buildReconnectDecisionInput,
       buildVoicePlaybackBlockReason,
       logVoiceReconnectDecision,
-      shouldSuppressIceTransportReconnect,
+      shouldSuppressTransportDisconnectReconnect,
     ]
   );
 
@@ -6049,11 +6088,63 @@ export function usePeerConnections({
             pc,
             media: getPeerMedia(remoteId),
           });
-          setPeerState(remoteId, "connecting");
-          scheduleReconnect(remoteId, 1200, {
-            reason: "pc_disconnected",
-            source: "pc_onconnectionstatechange",
-          });
+
+          const suppress = evaluateIceDisconnectedReconnectSuppressReason(
+            buildIceDisconnectedGuardInput(remoteId, pc)
+          );
+          if (suppress) {
+            logPcDisconnectedReconnectSuppressed(
+              remoteId,
+              suppress,
+              "pc_state_change"
+            );
+            return;
+          }
+
+          if (pcDisconnectedGraceTimersRef.current.has(remoteId)) {
+            return;
+          }
+
+          const graceTimer = window.setTimeout(() => {
+            pcDisconnectedGraceTimersRef.current.delete(remoteId);
+            const currentPc = pcsRef.current.get(remoteId);
+            if (!currentPc || currentPc !== pc) return;
+            if (!getCurrentConnectionId(remoteId)) return;
+
+            const currentConn = currentPc.connectionState;
+            if (currentConn === "connected") {
+              return;
+            }
+            if (currentConn === "failed" || currentConn === "closed") {
+              return;
+            }
+            if (currentConn !== "disconnected") return;
+
+            const graceSuppress = evaluateIceDisconnectedReconnectSuppressReason(
+              buildIceDisconnectedGuardInput(remoteId, currentPc)
+            );
+            if (graceSuppress) {
+              logPcDisconnectedReconnectSuppressed(
+                remoteId,
+                graceSuppress,
+                "grace_timeout"
+              );
+              return;
+            }
+
+            console.log(
+              `[voice-peer] reconnect_pc_disconnected_scheduled remote=${compactDeviceId(remoteId)} ` +
+                `graceMs=${PC_DISCONNECTED_RECONNECT_GRACE_MS} ` +
+                `conn=${currentConn} ice=${currentPc.iceConnectionState} ${formatVoiceModeSuffix()}`
+            );
+            setPeerState(remoteId, "connecting");
+            scheduleReconnect(remoteId, 1200, {
+              reason: "pc_disconnected",
+              source: "pc_onconnectionstatechange_grace",
+            });
+          }, PC_DISCONNECTED_RECONNECT_GRACE_MS);
+
+          pcDisconnectedGraceTimersRef.current.set(remoteId, graceTimer);
         }
 
         if (state === "failed") {
@@ -6141,6 +6232,7 @@ export function usePeerConnections({
       isPeerEstablishedForRecovery,
       isRemoteMediaTransportReady,
       logIceDisconnectedReconnectSuppressed,
+      logPcDisconnectedReconnectSuppressed,
       shouldRejectIncomingStaleOffer,
       userMutedRef,
       localAudioTrackRef,
@@ -8181,6 +8273,23 @@ export function usePeerConnections({
         continue;
       }
 
+      if (pc && isPeerPcDisconnectedOnly({ conn: pc.connectionState })) {
+        const pcDisconnectedSuppress =
+          evaluateIceDisconnectedReconnectSuppressReason(
+            buildIceDisconnectedGuardInput(remoteId, pc)
+          );
+        if (pcDisconnectedSuppress) {
+          logHealSkipHealthy(
+            remoteId,
+            `pc_disconnected_${pcDisconnectedSuppress}`,
+            pc
+          );
+          continue;
+        }
+        logHealSkipHealthy(remoteId, "pc_disconnected_awaiting_grace", pc);
+        continue;
+      }
+
       if (
         pc &&
         isPeerIceDisconnectedOnly({
@@ -9687,6 +9796,12 @@ export function usePeerConnections({
       }
       iceDisconnectedGraceTimersRef.current.clear();
 
+      for (const timer of pcDisconnectedGraceTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      pcDisconnectedGraceTimersRef.current.clear();
+
       for (const timer of connectingTimersRef.current.values()) {
         window.clearTimeout(timer);
         timerCount += 1;
@@ -9922,11 +10037,29 @@ export function usePeerConnections({
         if (hasRemoteStream) continue;
         if (!pc) continue;
 
+        const conn = pc.connectionState;
+        const ice = pc.iceConnectionState;
+        const isPcDisconnected = isPeerPcDisconnectedOnly({ conn });
+        const isIceDisconnected = isPeerIceDisconnectedOnly({ conn, ice });
+
+        if (isPcDisconnected || isIceDisconnected) {
+          const suppress = evaluateIceDisconnectedReconnectSuppressReason(
+            buildIceDisconnectedGuardInput(remoteId, pc)
+          );
+          if (suppress) continue;
+          if (
+            iceDisconnectedGraceTimersRef.current.has(remoteId) ||
+            pcDisconnectedGraceTimersRef.current.has(remoteId)
+          ) {
+            continue;
+          }
+        }
+
         const badState =
-          pc.connectionState === "failed" ||
-          pc.iceConnectionState === "failed" ||
-          pc.connectionState === "disconnected" ||
-          pc.iceConnectionState === "disconnected";
+          conn === "failed" ||
+          ice === "failed" ||
+          isPcDisconnected ||
+          isIceDisconnected;
 
         if (badState) {
           scheduleReconnect(remoteId, 1200, {
@@ -9940,7 +10073,15 @@ export function usePeerConnections({
     return () => {
       window.clearInterval(timer);
     };
-  }, [members, micReady, signalReady, deviceId, scheduleReconnect, getRemoteIds]);
+  }, [
+    buildIceDisconnectedGuardInput,
+    members,
+    micReady,
+    signalReady,
+    deviceId,
+    scheduleReconnect,
+    getRemoteIds,
+  ]);
 
   return {
     remoteAudios,

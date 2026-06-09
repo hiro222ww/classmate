@@ -1,5 +1,6 @@
-/** Grace before acting on transient ICE disconnected (not immediate reconnect). */
+/** Grace before acting on transient transport disconnect (not immediate reconnect). */
 export const ICE_DISCONNECTED_RECONNECT_GRACE_MS = 8_000;
+export const PC_DISCONNECTED_RECONNECT_GRACE_MS = ICE_DISCONNECTED_RECONNECT_GRACE_MS;
 
 export type IceDisconnectedGuardInput = {
   hasPlaybackEvidence: boolean;
@@ -40,6 +41,48 @@ export function isIceTransportReconnectReason(reason: string): boolean {
     value === "heal_stream_without_connected_pc" ||
     value === "heal_live_stream_not_connected_timeout"
   );
+}
+
+export function isPcConnectionReconnectReason(reason: string): boolean {
+  return String(reason ?? "").trim() === "pc_disconnected";
+}
+
+export function isPeerPcDisconnectedOnly(input: { conn: string }): boolean {
+  return input.conn === "disconnected";
+}
+
+export type TransportDisconnectKind = "ice" | "pc";
+
+export function classifyTransportDisconnect(params: {
+  reconnectReason: string;
+  conn: string;
+  ice: string;
+}): TransportDisconnectKind | null {
+  const reason = String(params.reconnectReason ?? "").trim();
+
+  if (isIceTransportReconnectReason(reason)) {
+    return "ice";
+  }
+
+  if (isPcConnectionReconnectReason(reason)) {
+    return "pc";
+  }
+
+  if (reason === "transport_bad_state") {
+    if (isPeerPcDisconnectedOnly(params)) return "pc";
+    if (params.ice === "disconnected") return "ice";
+    return null;
+  }
+
+  if (isPeerPcDisconnectedOnly(params)) {
+    return "pc";
+  }
+
+  if (isPeerIceDisconnectedOnly(params)) {
+    return "ice";
+  }
+
+  return null;
 }
 
 export function isPeerIceDisconnectedOnly(input: {
