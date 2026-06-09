@@ -32,7 +32,14 @@ import {
   logVoiceSettingsReadyChange,
   logVoiceStartBlocked,
   logVoiceStartCheck,
+  logVoiceAudioConfirmTimer,
+  logVoiceEnsureRepeat,
+  logVoiceNegotiationGap,
+  logVoicePeerCompetition,
+  logVoiceRemoteTrackReceived,
+  markVoiceNegotiationStep,
   mapEnsureSkipToVoiceStartBlocked,
+  resetVoiceNegotiationSteps,
   compactConnectionId,
   voiceDebugLog,
   type VoiceMeshPeerSummaryEntry,
@@ -1084,6 +1091,7 @@ export function usePeerConnections({
   const peerMetaRef = useRef<Map<string, PeerMeta>>(new Map());
   const meshSummaryTimerRef = useRef<number | null>(null);
   const meshNotConnectedTimerRef = useRef<number | null>(null);
+  const ensurePeerAttemptRef = useRef<Map<string, number>>(new Map());
 
   const [remoteAudios, setRemoteAudios] = useState<
     Record<string, RemoteAudioState>
@@ -3338,6 +3346,7 @@ export function usePeerConnections({
       });
 
       touchPeerSignal(remoteId, "ontrack");
+      markVoiceNegotiationStep(remoteId, "remote_track_applied", `reason=${opts?.reason ?? "ontrack"}`);
       markVoicePerf("remote_track_received", {
         remoteId,
         extra: `ready=${audioTrack?.readyState ?? "none"}`,
@@ -3693,6 +3702,8 @@ export function usePeerConnections({
       }
 
       pcsRef.current.delete(remoteId);
+      ensurePeerAttemptRef.current.delete(remoteId);
+      resetVoiceNegotiationSteps(remoteId);
       offeredPeersRef.current.delete(remoteId);
       startedPeersRef.current.delete(remoteId);
       if (!preserveRemoteAudio) {
@@ -4160,6 +4171,17 @@ export function usePeerConnections({
         scheduledInMs: delay,
         scheduledAt: Date.now(),
       });
+
+      if (
+        reason === "connected_no_audio_confirm" ||
+        source === "connected_audio_confirm_timeout"
+      ) {
+        console.log(
+          `[voice-audio-confirm] reconnect-scheduled remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} source=${source} delayMs=${delay} force=${opts.force ? 1 : 0}`
+        );
+        logVoiceNegotiationGap(remoteId, `reconnect_${reason}`);
+      }
 
       logVoiceReconnectDecision("voice-reconnect-decision", {
         ...buildReconnectDecisionInput(remoteId, reason, source, {
@@ -4939,6 +4961,16 @@ export function usePeerConnections({
           return existing;
         }
 
+        logVoicePeerCompetition({
+          remoteId,
+          action: "create_pc_replace",
+          reason: "connection_id_mismatch",
+          role: deviceId < remoteId ? "active" : "passive",
+          connectionId,
+          existingConnectionId: currentId,
+          sig: existing.signalingState,
+          conn: existing.connectionState,
+        });
         closePeer(remoteId, CLOSE_FOR_RECONNECT);
       }
 
@@ -5041,6 +5073,18 @@ export function usePeerConnections({
 
         const stream = event.streams?.[0];
         if (!stream) return;
+
+        const audioTrack = stream.getAudioTracks()[0] ?? null;
+        markVoiceNegotiationStep(remoteId, "ontrack", `sig=${pc.signalingState}`);
+        logVoiceRemoteTrackReceived({
+          remoteId,
+          reason: "pc_ontrack",
+          trackId: audioTrack?.id,
+          streamId: stream.id,
+          connectionId: getCurrentConnectionId(remoteId),
+          sig: pc.signalingState,
+          conn: pc.connectionState,
+        });
 
         upsertRemoteAudio(remoteId, stream, { reason: "pc_ontrack", force: true });
         touchPeerSignal(remoteId, "ontrack");
@@ -5294,12 +5338,57 @@ export function usePeerConnections({
             connectedAudioConfirmTimersRef.current.get(remoteId);
           if (prevAudioConfirmTimer) {
             window.clearTimeout(prevAudioConfirmTimer);
+            logVoiceAudioConfirmTimer({
+              remoteId,
+              phase: "cancel",
+              sig: pc.signalingState,
+              conn: pc.connectionState,
+              ice: pc.iceConnectionState,
+            });
           }
+          const audioConfirmTimeoutMs =
+            getConnectedAudioConfirmTimeoutMs(inCallMemberCount);
+          const marks = getPeerPipelineMarks(remoteId);
+          logVoiceAudioConfirmTimer({
+            remoteId,
+            phase: "arm",
+            timeoutMs: audioConfirmTimeoutMs,
+            sig: pc.signalingState,
+            conn: pc.connectionState,
+            ice: pc.iceConnectionState,
+            tracks: getPeerMedia(remoteId).remoteTracksCount,
+            ontrack:
+              (peerSignalTimestampsRef.current.get(remoteId)?.lastOnTrackAt ??
+                null) != null,
+            offerSent: marks.offer_sent,
+            offerReceived: marks.offer_received,
+            answerSent: marks.answer_sent,
+            answerReceived: marks.answer_received,
+          });
           const audioConfirmTimer = window.setTimeout(() => {
             connectedAudioConfirmTimersRef.current.delete(remoteId);
             const currentPc = pcsRef.current.get(remoteId);
             if (!currentPc || currentPc !== pc) return;
             if (isPeerEstablishedForRecovery(remoteId, currentPc)) return;
+            const fireMarks = getPeerPipelineMarks(remoteId);
+            const timestamps =
+              peerSignalTimestampsRef.current.get(remoteId) ??
+              emptyPeerSignalTimestamps();
+            logVoiceAudioConfirmTimer({
+              remoteId,
+              phase: "fire",
+              timeoutMs: audioConfirmTimeoutMs,
+              sig: currentPc.signalingState,
+              conn: currentPc.connectionState,
+              ice: currentPc.iceConnectionState,
+              tracks: getPeerMedia(remoteId).remoteTracksCount,
+              ontrack: timestamps.lastOnTrackAt != null,
+              offerSent: fireMarks.offer_sent,
+              offerReceived: fireMarks.offer_received,
+              answerSent: fireMarks.answer_sent,
+              answerReceived: fireMarks.answer_received,
+            });
+            logVoiceNegotiationGap(remoteId, "connected_audio_confirm_timeout");
             if (
               p2pEnabledRef.current &&
               turnFallbackEnabledRef.current &&
@@ -5312,13 +5401,27 @@ export function usePeerConnections({
               return;
             }
             if (relayForcedRef.current) {
+              logVoiceAudioConfirmTimer({
+                remoteId,
+                phase: "reconnect_scheduled",
+                timeoutMs: audioConfirmTimeoutMs,
+                sig: currentPc.signalingState,
+                conn: currentPc.connectionState,
+                ice: currentPc.iceConnectionState,
+                tracks: getPeerMedia(remoteId).remoteTracksCount,
+                ontrack: timestamps.lastOnTrackAt != null,
+                offerSent: fireMarks.offer_sent,
+                offerReceived: fireMarks.offer_received,
+                answerSent: fireMarks.answer_sent,
+                answerReceived: fireMarks.answer_received,
+              });
               scheduleReconnect(remoteId, 1200, {
                 reason: "connected_no_audio_confirm",
                 source: "connected_audio_confirm_timeout",
                 force: true,
               });
             }
-          }, getConnectedAudioConfirmTimeoutMs(inCallMemberCount));
+          }, audioConfirmTimeoutMs);
           connectedAudioConfirmTimersRef.current.set(
             remoteId,
             audioConfirmTimer
@@ -5548,8 +5651,10 @@ export function usePeerConnections({
           sdp: pc.localDescription,
         });
         console.log(
-          `[voice-signal] offer-send remote=${compactDeviceId(remoteId)} reason=${reason}`
+          `[voice-signal] offer-send remote=${compactDeviceId(remoteId)} reason=${reason} ` +
+            `connectionId=${compactConnectionId(connectionId)} sig=${pc.signalingState}`
         );
+        markVoiceNegotiationStep(remoteId, "offer_send", `reason=${reason}`);
         touchPeerSignal(remoteId, "offer_sent");
         markVoicePerf("offer_sent", { remoteId, extra: reason });
         emitMeshSummary("offer_sent", { immediate: true });
@@ -6113,6 +6218,9 @@ export function usePeerConnections({
       const force = opts?.force === true;
       const mode = isOfferOwner ? "offer" : "passive_wait_offer";
       const role: "active" | "passive" = isOfferOwner ? "active" : "passive";
+      const existingForEnsure = pcsRef.current.get(remoteId) ?? null;
+      const attempt = (ensurePeerAttemptRef.current.get(remoteId) ?? 0) + 1;
+      ensurePeerAttemptRef.current.set(remoteId, attempt);
 
       logVoicePeerRole({
         localDeviceId: deviceId,
@@ -6122,9 +6230,15 @@ export function usePeerConnections({
         localGreater: deviceId > remoteId,
       });
 
-      debugConsoleLog(
-        `[voice-peer] ensure-start target=${compact} reason=${reason} force=${force} ${formatVoiceModeSuffix()}`
-      );
+      logVoiceEnsureRepeat({
+        remoteId,
+        reason,
+        role,
+        attempt,
+        force,
+        hasPc: isUsablePeerConnection(existingForEnsure),
+        sig: existingForEnsure?.signalingState,
+      });
 
       if (voiceTransportDisabledRef.current) {
         console.warn("[voice-audio-disabled] reason=p2p_and_turn_disabled");
@@ -6239,6 +6353,15 @@ export function usePeerConnections({
       }
 
       if (hasUsablePc) {
+        logVoicePeerCompetition({
+          remoteId,
+          action: "ensure_replace_pc",
+          reason,
+          role,
+          connectionId: getCurrentConnectionId(remoteId),
+          sig: existing?.signalingState,
+          conn: existing?.connectionState,
+        });
         closePeer(remoteId, {
           clearConnectionId: false,
           preserveRemoteAudio: hasLiveRemoteAudioStream(remoteId),
@@ -7631,6 +7754,18 @@ export function usePeerConnections({
         });
         return;
       }
+      if (
+        row.signal_type === "offer" ||
+        row.signal_type === "answer" ||
+        row.signal_type === "ice"
+      ) {
+        console.log(
+          `[voice-signal] inbound type=${row.signal_type} from=${compactDeviceId(remoteId)} ` +
+            `connectionId=${compactConnectionId(row.payload?.connectionId)} ` +
+            `target=${compactDeviceId(row.to_device_id ?? deviceId)}`
+        );
+      }
+
       if (row.session_id !== sessionId) {
         logVoiceSignalIgnored({
           reason: "wrong_session",

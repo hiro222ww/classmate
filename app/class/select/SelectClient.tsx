@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { markAutoCallOnce } from "@/lib/autoCallOnce";
@@ -139,8 +139,40 @@ function Pill({ children }: { children: React.ReactNode }) {
   );
 }
 
+const AGE_FILTER_OFF_MIN = 0;
+const AGE_FILTER_OFF_MAX = 130;
+const AGE_FILTER_SLIDER_MIN = 18;
+const AGE_FILTER_SLIDER_MAX = 130;
+const AGE_FILTER_OFF_PREFS: MatchPrefs = {
+  min_age: AGE_FILTER_OFF_MIN,
+  max_age: AGE_FILTER_OFF_MAX,
+};
+const AGE_FILTER_ON_DEFAULT: MatchPrefs = { min_age: 18, max_age: 25 };
+
 const AGE_PREF_HELP_TEXT =
-  "この範囲の相手だけが同じクラスの候補になります。";
+  "年齢絞り込みをONにすると、指定した年齢範囲の相手とマッチしやすくなります。OFFの場合は年齢では絞り込みません。";
+
+function clampAge(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function isAgeFilterOff(prefs: MatchPrefs) {
+  return (
+    prefs.min_age === AGE_FILTER_OFF_MIN && prefs.max_age === AGE_FILTER_OFF_MAX
+  );
+}
+
+function normalizeMatchPrefs(prefs: MatchPrefs): MatchPrefs {
+  return {
+    min_age: Math.min(prefs.min_age, prefs.max_age),
+    max_age: Math.max(prefs.min_age, prefs.max_age),
+  };
+}
+
+function matchPrefsForSubmit(prefs: MatchPrefs): MatchPrefs {
+  if (isAgeFilterOff(prefs)) return AGE_FILTER_OFF_PREFS;
+  return normalizeMatchPrefs(prefs);
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -199,9 +231,10 @@ export default function SelectClient() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [, setClasses] = useState<ClassRow[]>([]);
 
-  const [prefs, setPrefs] = useState<MatchPrefs>({ min_age: 18, max_age: 120 });
+  const [prefs, setPrefs] = useState<MatchPrefs>(AGE_FILTER_OFF_PREFS);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const lastOnPrefsRef = useRef<MatchPrefs>(AGE_FILTER_ON_DEFAULT);
 
   const [wFilter, setWFilter] = useState<string>("all");
   const [tFilter, setTFilter] = useState<string>("all");
@@ -433,7 +466,7 @@ export default function SelectClient() {
       setHasProfile(null);
       setProfile(null);
       setEnt(null);
-      setPrefs({ min_age: 18, max_age: 120 });
+      setPrefs(AGE_FILTER_OFF_PREFS);
       setPrefsLoaded(false);
       setWorlds([]);
       setTopics([]);
@@ -539,16 +572,19 @@ export default function SelectClient() {
           if (pr.ok && pj?.prefs) {
             if (!alive) return;
 
-            const nextPrefs = {
-              min_age: Number(pj.prefs.min_age ?? 18),
-              max_age: Number(pj.prefs.max_age ?? 25),
-            };
+            const nextPrefs = normalizeMatchPrefs({
+              min_age: Number(pj.prefs.min_age ?? AGE_FILTER_OFF_MIN),
+              max_age: Number(pj.prefs.max_age ?? AGE_FILTER_OFF_MAX),
+            });
 
             console.log("[class/select] match-prefs loaded", {
               deviceId: id,
               nextPrefs,
             });
 
+            if (!isAgeFilterOff(nextPrefs)) {
+              lastOnPrefsRef.current = nextPrefs;
+            }
             setPrefs(nextPrefs);
           } else {
             console.warn("[class/select] match-prefs get skipped", {
@@ -590,6 +626,7 @@ export default function SelectClient() {
   async function savePrefs(next: MatchPrefs) {
     if (!deviceId) return;
 
+    const payload = matchPrefsForSubmit(next);
     setSavingPrefs(true);
     try {
       const r = await fetch("/api/user/match-prefs", {
@@ -597,8 +634,8 @@ export default function SelectClient() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           deviceId,
-          minAge: next.min_age,
-          maxAge: next.max_age,
+          minAge: payload.min_age,
+          maxAge: payload.max_age,
         }),
         cache: "no-store",
       });
@@ -621,6 +658,24 @@ export default function SelectClient() {
       setSavingPrefs(false);
     }
   }
+
+  async function handleAgeFilterToggle(enabled: boolean) {
+    let next: MatchPrefs;
+    if (enabled) {
+      next = lastOnPrefsRef.current;
+    } else {
+      if (!isAgeFilterOff(prefs)) {
+        lastOnPrefsRef.current = normalizeMatchPrefs(prefs);
+      }
+      next = AGE_FILTER_OFF_PREFS;
+    }
+    setPrefs(next);
+    await savePrefs(next);
+  }
+
+  const ageFilterEnabled = !isAgeFilterOff(prefs);
+  const displayMinAge = Math.min(prefs.min_age, prefs.max_age);
+  const displayMaxAge = Math.max(prefs.min_age, prefs.max_age);
 
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
@@ -732,8 +787,9 @@ export default function SelectClient() {
         return;
       }
 
-      const finalMinAge = Math.min(prefs.min_age, prefs.max_age);
-      const finalMaxAge = Math.max(prefs.min_age, prefs.max_age);
+      const submitPrefs = matchPrefsForSubmit(prefs);
+      const finalMinAge = submitPrefs.min_age;
+      const finalMaxAge = submitPrefs.max_age;
 
       console.log(
         `[match-join] click device=${String(deviceId).slice(-6)} topic=${b.topic_key} ` +
@@ -1112,8 +1168,7 @@ return;
           <div>display_name: {debugDisplayName}</div>
           <div>prefsLoaded: {String(prefsLoaded)}</div>
           <div>
-            prefs: {Math.min(prefs.min_age, prefs.max_age)}〜
-            {Math.max(prefs.min_age, prefs.max_age)}
+            prefs: {ageFilterEnabled ? `${displayMinAge}〜${displayMaxAge}` : "OFF(0-130)"}
           </div>
         </section>
       )}
@@ -1325,64 +1380,141 @@ return;
           borderRadius: 18,
           padding: 16,
           background: "#fff",
+          maxWidth: 480,
+          width: "100%",
         }}
       >
         <div
           style={{
             display: "flex",
+            alignItems: "center",
             justifyContent: "space-between",
-            alignItems: "baseline",
             gap: 10,
             flexWrap: "wrap",
           }}
         >
-          <HelpTip label="話したい相手の年齢について" content={AGE_PREF_HELP_TEXT}>
-            <strong>話したい相手の年齢</strong>
+          <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT}>
+            <strong>年齢絞り込み</strong>
           </HelpTip>
-          <span style={{ fontSize: 12, color: "#666" }}>
-            {Math.min(prefs.min_age, prefs.max_age)}〜{Math.max(prefs.min_age, prefs.max_age)}歳
-          </span>
+
+          <div
+            style={{
+              display: "inline-flex",
+              border: "1px solid #d1d5db",
+              borderRadius: 12,
+              overflow: "hidden",
+              flexShrink: 0,
+            }}
+            role="group"
+            aria-label="年齢絞り込み"
+          >
+            <button
+              type="button"
+              onClick={() => void handleAgeFilterToggle(false)}
+              disabled={savingPrefs || !deviceId || loading || !prefsLoaded}
+              style={{
+                padding: "8px 14px",
+                border: "none",
+                background: !ageFilterEnabled ? "#111827" : "#fff",
+                color: !ageFilterEnabled ? "#fff" : "#374151",
+                fontWeight: 900,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              OFF
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleAgeFilterToggle(true)}
+              disabled={savingPrefs || !deviceId || loading || !prefsLoaded}
+              style={{
+                padding: "8px 14px",
+                border: "none",
+                borderLeft: "1px solid #d1d5db",
+                background: ageFilterEnabled ? "#111827" : "#fff",
+                color: ageFilterEnabled ? "#fff" : "#374151",
+                fontWeight: 900,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              ON
+            </button>
+          </div>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 10,
-            marginTop: 10,
-          }}
-        >
-          <label style={{ fontSize: 12, color: "#666" }}>
-            最小
-            <input
-              type="number"
-              value={prefs.min_age}
-              onChange={(e) =>
-                setPrefs((p) => ({ ...p, min_age: Number(e.target.value) }))
-              }
-              style={{ width: "100%", padding: 10, borderRadius: 10, marginTop: 6 }}
-            />
-          </label>
-          <label style={{ fontSize: 12, color: "#666" }}>
-            最大
-            <input
-              type="number"
-              value={prefs.max_age}
-              onChange={(e) =>
-                setPrefs((p) => ({ ...p, max_age: Number(e.target.value) }))
-              }
-              style={{ width: "100%", padding: 10, borderRadius: 10, marginTop: 6 }}
-            />
-          </label>
-        </div>
+        {!ageFilterEnabled ? (
+          <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
+            年齢では絞り込みません
+          </p>
+        ) : (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>
+              {displayMinAge} 〜 {displayMaxAge} 歳
+            </div>
 
-        <button
-          onClick={() => void savePrefs(prefs)}
-          disabled={savingPrefs || !deviceId || loading}
-          style={{ marginTop: 10, padding: "10px 12px", borderRadius: 12, fontWeight: 900 }}
-        >
-          保存
-        </button>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#6b7280" }}>最小</div>
+                <input
+                  type="range"
+                  min={AGE_FILTER_SLIDER_MIN}
+                  max={AGE_FILTER_SLIDER_MAX}
+                  value={displayMinAge}
+                  onChange={(e) => {
+                    const v = clampAge(
+                      Number(e.target.value),
+                      AGE_FILTER_SLIDER_MIN,
+                      AGE_FILTER_SLIDER_MAX
+                    );
+                    setPrefs((p) => ({
+                      min_age: v,
+                      max_age: Math.max(v, p.max_age),
+                    }));
+                  }}
+                  style={{ width: "100%" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div style={{ fontSize: 12, color: "#6b7280" }}>最大</div>
+                <input
+                  type="range"
+                  min={AGE_FILTER_SLIDER_MIN}
+                  max={AGE_FILTER_SLIDER_MAX}
+                  value={displayMaxAge}
+                  onChange={(e) => {
+                    const v = clampAge(
+                      Number(e.target.value),
+                      AGE_FILTER_SLIDER_MIN,
+                      AGE_FILTER_SLIDER_MAX
+                    );
+                    setPrefs((p) => ({
+                      min_age: Math.min(p.min_age, v),
+                      max_age: v,
+                    }));
+                  }}
+                  style={{ width: "100%" }}
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={() => void savePrefs(prefs)}
+              disabled={savingPrefs || !deviceId || loading}
+              style={{
+                marginTop: 12,
+                padding: "10px 12px",
+                borderRadius: 12,
+                fontWeight: 900,
+                width: "100%",
+              }}
+            >
+              保存
+            </button>
+          </div>
+        )}
       </section>
 
       <section

@@ -552,7 +552,149 @@ export function logVoiceSignalIgnored(params: {
     );
   }
 
-  debugConsoleLog(parts.join(" "));
+  console.warn(parts.join(" "));
+}
+
+export type VoiceNegotiationStep =
+  | "offer_send"
+  | "offer_received"
+  | "set_remote_offer"
+  | "answer_create"
+  | "answer_send"
+  | "answer_received"
+  | "ontrack"
+  | "remote_track_applied";
+
+const negotiationSteps = new Map<
+  string,
+  Partial<Record<VoiceNegotiationStep, number>>
+>();
+
+export function markVoiceNegotiationStep(
+  remoteId: string,
+  step: VoiceNegotiationStep,
+  extra?: string
+) {
+  const key = compactDeviceId(remoteId);
+  const prev = negotiationSteps.get(key) ?? {};
+  const isFirst = prev[step] == null;
+  prev[step] = Date.now();
+  negotiationSteps.set(key, prev);
+  console.log(
+    `[voice-negotiation] step=${step} remote=${key} first=${isFirst ? 1 : 0}` +
+      (extra ? ` ${extra}` : "")
+  );
+}
+
+export function logVoiceNegotiationGap(remoteId: string, context: string) {
+  const key = compactDeviceId(remoteId);
+  const steps = negotiationSteps.get(key) ?? {};
+  const order: VoiceNegotiationStep[] = [
+    "offer_send",
+    "offer_received",
+    "set_remote_offer",
+    "answer_create",
+    "answer_send",
+    "answer_received",
+    "ontrack",
+    "remote_track_applied",
+  ];
+  const done = order.filter((s) => steps[s] != null);
+  const missing = order.filter((s) => steps[s] == null);
+  console.log(
+    `[voice-negotiation] gap-check context=${context} remote=${key} ` +
+      `done=${done.join(",") || "-"} missing=${missing.join(",") || "-"}`
+  );
+}
+
+export function resetVoiceNegotiationSteps(remoteId: string) {
+  negotiationSteps.delete(compactDeviceId(remoteId));
+}
+
+export function logVoicePeerCompetition(params: {
+  remoteId: string;
+  action: string;
+  reason: string;
+  role: "active" | "passive";
+  connectionId?: string | null;
+  existingConnectionId?: string | null;
+  sig?: string;
+  conn?: string;
+}) {
+  console.warn(
+    `[voice-peer-competition] remote=${compactDeviceId(params.remoteId)} ` +
+      `action=${params.action} reason=${params.reason} role=${params.role} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} ` +
+      `existingConnectionId=${compactConnectionId(params.existingConnectionId)} ` +
+      `sig=${params.sig ?? "-"} conn=${params.conn ?? "-"}`
+  );
+}
+
+export function logVoiceEnsureRepeat(params: {
+  remoteId: string;
+  reason: string;
+  role: "active" | "passive";
+  attempt: number;
+  force: boolean;
+  hasPc: boolean;
+  sig?: string;
+}) {
+  const remote = compactDeviceId(params.remoteId);
+  if (params.attempt <= 1) {
+    console.log(
+      `[voice-peer] ensure-start remote=${remote} reason=${params.reason} ` +
+        `role=${params.role} force=${params.force ? 1 : 0} ` +
+        `hasPc=${params.hasPc ? 1 : 0} sig=${params.sig ?? "-"}`
+    );
+    return;
+  }
+  console.warn(
+    `[voice-peer-competition] ensure-repeat remote=${remote} ` +
+      `reason=${params.reason} role=${params.role} attempt=${params.attempt} ` +
+      `force=${params.force ? 1 : 0} hasPc=${params.hasPc ? 1 : 0} sig=${params.sig ?? "-"}`
+  );
+}
+
+export function logVoiceAudioConfirmTimer(params: {
+  remoteId: string;
+  phase: "arm" | "fire" | "cancel" | "reconnect_scheduled";
+  timeoutMs?: number;
+  sig?: string;
+  conn?: string;
+  ice?: string;
+  tracks?: number;
+  ontrack?: boolean;
+  offerSent?: boolean;
+  offerReceived?: boolean;
+  answerSent?: boolean;
+  answerReceived?: boolean;
+}) {
+  console.log(
+    `[voice-audio-confirm] phase=${params.phase} remote=${compactDeviceId(params.remoteId)} ` +
+      `timeoutMs=${params.timeoutMs ?? "-"} sig=${params.sig ?? "-"} ` +
+      `conn=${params.conn ?? "-"} ice=${params.ice ?? "-"} ` +
+      `tracks=${params.tracks ?? "-"} ontrack=${params.ontrack ? 1 : 0} ` +
+      `offerSent=${params.offerSent ? 1 : 0} offerRx=${params.offerReceived ? 1 : 0} ` +
+      `answerSent=${params.answerSent ? 1 : 0} answerRx=${params.answerReceived ? 1 : 0}`
+  );
+}
+
+export function logVoiceRemoteTrackReceived(params: {
+  remoteId: string;
+  reason: string;
+  trackId?: string;
+  streamId?: string;
+  connectionId?: string | null;
+  sig?: string;
+  conn?: string;
+}) {
+  console.log(
+    `[voice-track] remote_track_received remote=${compactDeviceId(params.remoteId)} ` +
+      `reason=${params.reason} trackId=${params.trackId?.slice(-8) ?? "-"} ` +
+      `streamId=${params.streamId?.slice(-8) ?? "-"} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} ` +
+      `sig=${params.sig ?? "-"} conn=${params.conn ?? "-"}`
+  );
 }
 
 export function logVoicePeerRole(params: {
@@ -686,7 +828,8 @@ export function logVoiceSignalOfferReceived(params: {
   currentConnectionId: string | null;
   sig: string;
 }) {
-  debugConsoleLog(
+  markVoiceNegotiationStep(params.from, "offer_received");
+  console.log(
     `[voice-signal] offer-received from=${compactDeviceId(params.from)} to=${compactDeviceId(params.to)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
@@ -697,7 +840,7 @@ export function logVoiceSignalSetRemoteOfferStart(
   remoteId: string,
   sig: string
 ) {
-  debugConsoleLog(
+  console.log(
     `[voice-signal] set-remote-offer-start remote=${compactDeviceId(remoteId)} sig=${sig}`
   );
 }
@@ -706,13 +849,15 @@ export function logVoiceSignalSetRemoteOfferDone(
   remoteId: string,
   sig: string
 ) {
-  debugConsoleLog(
+  markVoiceNegotiationStep(remoteId, "set_remote_offer", `sig=${sig}`);
+  console.log(
     `[voice-signal] set-remote-offer-done remote=${compactDeviceId(remoteId)} sig=${sig}`
   );
 }
 
 export function logVoiceSignalAnswerCreateStart(remoteId: string) {
-  debugConsoleLog(
+  markVoiceNegotiationStep(remoteId, "answer_create");
+  console.log(
     `[voice-signal] answer-create-start remote=${compactDeviceId(remoteId)}`
   );
 }
@@ -721,8 +866,9 @@ export function logVoiceSignalAnswerSent(
   remoteId: string,
   connectionId: string
 ) {
-  debugConsoleLog(
-    `[voice-signal] answer-sent remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}`
+  markVoiceNegotiationStep(remoteId, "answer_send");
+  console.log(
+    `[voice-signal] answer-send remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}`
   );
 }
 
@@ -732,7 +878,8 @@ export function logVoiceSignalAnswerReceived(params: {
   currentConnectionId: string | null;
   sig: string;
 }) {
-  debugConsoleLog(
+  markVoiceNegotiationStep(params.remoteId, "answer_received", `sig=${params.sig}`);
+  console.log(
     `[voice-signal] answer-received remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
@@ -1070,6 +1217,39 @@ export function checkVoiceMeshExpectations(params: VoiceMeshPeerSummaryParams) {
       warn("offer_without_answer", {
         remoteDeviceId,
         lastOfferAt,
+      });
+      logVoiceNegotiationGap(remoteDeviceId, "offer_without_answer");
+    }
+
+    if (
+      isOfferOwner &&
+      weOffered &&
+      lastOfferAt &&
+      !lastAnswerAt &&
+      msSinceConnectStart != null &&
+      msSinceConnectStart >= 5000 &&
+      msSinceConnectStart < 10000
+    ) {
+      warn("offer_pending_answer", {
+        remoteDeviceId,
+        offerAgeMs: now - lastOfferAt,
+        signalingState,
+      });
+    }
+
+    if (!isOfferOwner && weOffered && !lastAnswerAt) {
+      warn("passive_sent_offer_anomaly", {
+        remoteDeviceId,
+        signalingState,
+        lastOfferAt,
+      });
+      logVoicePeerCompetition({
+        remoteId: remoteDeviceId,
+        action: "passive_offer_sent",
+        reason: trigger,
+        role: "passive",
+        sig: signalingState ?? undefined,
+        conn: connectionState ?? undefined,
       });
     }
 

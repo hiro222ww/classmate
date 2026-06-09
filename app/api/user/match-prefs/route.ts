@@ -40,18 +40,18 @@ export async function POST(req: Request) {
       );
     }
 
-    // 念のため未作成時も安全に返す
+    // 念のため未作成時も安全に返す（OFF = 全年代）
     return NextResponse.json({
       prefs: data ?? {
         device_id: deviceId,
-        min_age: 18,
-        max_age: 25,
+        min_age: 0,
+        max_age: 130,
       },
     });
   }
 
-  const minA = clamp(Number(minAge ?? 18), 0, 120);
-  const maxA = clamp(Number(maxAge ?? 25), 0, 120);
+  const minA = clamp(Number(minAge ?? 0), 0, 130);
+  const maxA = clamp(Number(maxAge ?? 130), 0, 130);
   const fixedMin = Math.min(minA, maxA);
   const fixedMax = Math.max(minA, maxA);
 
