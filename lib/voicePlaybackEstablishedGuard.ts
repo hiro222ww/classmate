@@ -33,6 +33,20 @@ export function shouldProtectVoicePeerFromAutoMutation(
   return evidence.hasPlaybackEvidence || evidence.audioConfirmedStrict;
 }
 
+export function shouldSuppressAutoVoiceRecovery(
+  evidence: VoicePlaybackEstablishedEvidence
+): boolean {
+  return shouldProtectVoicePeerFromAutoMutation(evidence);
+}
+
+export function getEstablishedPeerAutoRecoverySkipReason(
+  evidence: VoicePlaybackEstablishedEvidence
+): "audio_confirmed_strict" | "playback_evidence" | null {
+  if (evidence.audioConfirmedStrict) return "audio_confirmed_strict";
+  if (evidence.hasPlaybackEvidence) return "playback_evidence";
+  return null;
+}
+
 export function isManualVoicePeerReconnectMutation(
   ctx: VoicePeerMutationContext
 ): boolean {

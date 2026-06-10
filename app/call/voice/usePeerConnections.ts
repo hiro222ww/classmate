@@ -84,6 +84,8 @@ import {
 } from "@/lib/voicePeerNegotiationPhase";
 import {
   evaluateVoicePeerMutationBlock,
+  getEstablishedPeerAutoRecoverySkipReason,
+  shouldProtectVoicePeerFromAutoMutation,
   type VoicePlaybackEstablishedEvidence,
 } from "@/lib/voicePlaybackEstablishedGuard";
 import type { VoiceAudioConfirmCancelReason } from "@/app/call/voice/voiceDiagnostics";
@@ -1027,6 +1029,7 @@ export function usePeerConnections({
     softResetLastAtRef.current.clear();
     softResetExhaustedNotifiedRef.current.clear();
     bidirectionalEstablishedRef.current.clear();
+    peerAutoRecoveryFrozenRef.current.clear();
     if (deferredHealTimerRef.current != null) {
       window.clearTimeout(deferredHealTimerRef.current);
       deferredHealTimerRef.current = null;
@@ -1155,6 +1158,10 @@ export function usePeerConnections({
   const softResetLastAtRef = useRef<Map<string, number>>(new Map());
   const softResetExhaustedNotifiedRef = useRef<Set<string>>(new Set());
   const bidirectionalEstablishedRef = useRef<Set<string>>(new Set());
+  /** Sticky latch: auto heal/reconnect/passive-wait forbidden until manual reset. */
+  const peerAutoRecoveryFrozenRef = useRef<
+    Map<string, "audio_confirmed_strict" | "playback_evidence">
+  >(new Map());
   const noStreamNoOfferTimersRef = useRef<Map<string, number>>(new Map());
   const reconnectPendingRef = useRef<
     Map<
@@ -1231,6 +1238,9 @@ export function usePeerConnections({
     Map<string, { atMs: number; blockedReason: string }>
   >(new Map());
   const passiveJoinSettledRef = useRef<Set<string>>(new Set());
+  const healSkipHealthyLastLogRef = useRef(
+    new Map<string, { reason: string; atMs: number }>()
+  );
   const offerEffectMembersFingerprintRef = useRef("");
   const lastPeerDiagnosticsEmitRef = useRef<{ signature: string; atMs: number }>({
     signature: "",
@@ -2271,6 +2281,10 @@ export function usePeerConnections({
         touchPeerSignal(remoteId, "playback_confirmed");
         markVoicePerf("audio_confirmed_strict", { remoteId });
         markVoicePerf("audio_confirmed", { remoteId });
+        markPeerAutoRecoveryFrozenRef.current(
+          remoteId,
+          "audio_confirmed_strict"
+        );
         logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)} source=stats_poll`);
       }
 
@@ -2326,6 +2340,10 @@ export function usePeerConnections({
         markVoicePerf("audio_confirmed_strict", { remoteId });
         markVoicePerf("audio_confirmed", { remoteId });
         cancelPassiveWaitOffer(remoteId, "audio_confirmed_strict");
+        markPeerAutoRecoveryFrozenRef.current(
+          remoteId,
+          "audio_confirmed_strict"
+        );
         logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)}`);
         refreshConnectedVoiceLogForAudioStrictRef.current(
           remoteId,
@@ -2358,6 +2376,7 @@ export function usePeerConnections({
         (health.level ?? 0) > 0.001
       ) {
         cancelPassiveWaitOffer(remoteId, "playback_evidence");
+        markPeerAutoRecoveryFrozenRef.current(remoteId, "playback_evidence");
       } else if (health.playbackActive) {
         markVoicePerf("playback_advanced", { remoteId });
         debugConsoleLog(
@@ -2819,7 +2838,7 @@ export function usePeerConnections({
         skipReason,
         extra,
       });
-      if (skipReason === "already_has_pc") {
+      if (skipReason === "already_has_pc" || skipReason === "playback_established") {
         return;
       }
       let blockedReason = mapEnsureSkipToVoiceStartBlocked(skipReason);
@@ -3346,6 +3365,38 @@ export function usePeerConnections({
   );
 
   getPeerNegotiationPhaseRef.current = getPeerNegotiationPhase;
+
+  const shouldSuppressAutoVoiceRecoveryForPeer = useCallback(
+    (remoteId: string): boolean => {
+      if (manualHardResetHealPassRef.current.has(remoteId)) return false;
+      return getEstablishedPeerSkipReasonForPeer(remoteId) != null;
+    },
+    [getEstablishedPeerSkipReasonForPeer]
+  );
+
+  const getEstablishedPeerSkipReasonForPeer = useCallback(
+    (
+      remoteId: string
+    ): "audio_confirmed_strict" | "playback_evidence" | null => {
+      const frozen = peerAutoRecoveryFrozenRef.current.get(remoteId);
+      if (frozen) return frozen;
+      return getEstablishedPeerAutoRecoverySkipReason(
+        getPlaybackEstablishedEvidence(remoteId)
+      );
+    },
+    [getPlaybackEstablishedEvidence]
+  );
+
+  const clearEstablishedPeerAutoRecoveryStateRef = useRef<
+    (remoteId: string, reason: string) => void
+  >(() => {});
+
+  const markPeerAutoRecoveryFrozenRef = useRef<
+    (
+      remoteId: string,
+      reason: "audio_confirmed_strict" | "playback_evidence"
+    ) => void
+  >(() => {});
 
   const buildIceDisconnectedGuardInput = useCallback(
     (
@@ -6678,6 +6729,10 @@ export function usePeerConnections({
 
   const runPassiveFallbackOffer = useCallback(
     (remoteId: string, triggerReason: string) => {
+      if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+        return;
+      }
+
       if (!canSendVoiceOffer()) {
         logMicOfferBlocked(remoteId);
         return;
@@ -6735,6 +6790,7 @@ export function usePeerConnections({
       hasLiveRemoteAudioStream,
       hasRemotePlaybackEvidence,
       logMicOfferBlocked,
+      shouldSuppressAutoVoiceRecoveryForPeer,
       startPeerOffer,
     ]
   );
@@ -6746,6 +6802,10 @@ export function usePeerConnections({
       opts?: { forceReschedule?: boolean; initialJoin?: boolean }
     ): boolean => {
       if (deviceId < remoteId) return false;
+
+      if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+        return false;
+      }
 
       const marks = getPeerPipelineMarks(remoteId);
       if (
@@ -6795,6 +6855,9 @@ export function usePeerConnections({
       const timer = window.setTimeout(() => {
         passiveWaitOfferTimersRef.current.delete(remoteId);
         passiveWaitOfferMetaRef.current.delete(remoteId);
+        if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+          return;
+        }
         runPassiveFallbackOffer(remoteId, triggerReason);
       }, delayMs);
 
@@ -6816,11 +6879,16 @@ export function usePeerConnections({
       hasRemotePlaybackEvidence,
       logMicOfferBlocked,
       runPassiveFallbackOffer,
+      shouldSuppressAutoVoiceRecoveryForPeer,
     ]
   );
 
   const scheduleNoStreamNoOfferTimeout = useCallback(
     (remoteId: string, triggerReason: string) => {
+      if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+        return;
+      }
+
       clearNoStreamNoOfferTimer(remoteId);
 
       const selfMember = members.find((m) => m.device_id === deviceId);
@@ -6830,6 +6898,10 @@ export function usePeerConnections({
 
       const timer = window.setTimeout(() => {
         noStreamNoOfferTimersRef.current.delete(remoteId);
+
+        if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+          return;
+        }
 
         const pc = pcsRef.current.get(remoteId);
         if (!pc || hasLiveRemoteAudioStream(remoteId)) return;
@@ -6868,6 +6940,7 @@ export function usePeerConnections({
       hasLiveRemoteAudioStream,
       isRemoteInCall,
       members,
+      shouldSuppressAutoVoiceRecoveryForPeer,
       startPeerOffer,
     ]
   );
@@ -6879,6 +6952,10 @@ export function usePeerConnections({
       opts?: { forceReschedule?: boolean; initialJoin?: boolean }
     ): boolean => {
       if (deviceId < remoteId) return false;
+
+      if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+        return false;
+      }
 
       const phase = getPeerNegotiationPhase(remoteId);
       if (shouldSuppressPassiveOfferReschedule(phase)) {
@@ -6898,6 +6975,7 @@ export function usePeerConnections({
       getPeerNegotiationPhase,
       scheduleNoStreamNoOfferTimeout,
       schedulePassiveWaitOfferTimeout,
+      shouldSuppressAutoVoiceRecoveryForPeer,
     ]
   );
 
@@ -6908,6 +6986,47 @@ export function usePeerConnections({
     }
     passiveReconnectStateRef.current.delete(remoteId);
   }, []);
+
+  const clearEstablishedPeerAutoRecoveryState = useCallback(
+    (remoteId: string, reason: string) => {
+      clearPeerWatchdogTimers(remoteId);
+      clearReconnectTimer(remoteId);
+      reconnectPendingRef.current.delete(remoteId);
+      clearPassiveReconnectState(remoteId);
+      cancelPassiveWaitOffer(remoteId, reason);
+      clearNoStreamNoOfferTimer(remoteId);
+      lastHealActionAtRef.current.delete(remoteId);
+      peerHealActionRef.current.delete(remoteId);
+      passiveJoinSettledRef.current.add(remoteId);
+    },
+    [
+      cancelPassiveWaitOffer,
+      clearNoStreamNoOfferTimer,
+      clearPassiveReconnectState,
+      clearPeerWatchdogTimers,
+      clearReconnectTimer,
+    ]
+  );
+
+  clearEstablishedPeerAutoRecoveryStateRef.current =
+    clearEstablishedPeerAutoRecoveryState;
+
+  const markPeerAutoRecoveryFrozen = useCallback(
+    (
+      remoteId: string,
+      reason: "audio_confirmed_strict" | "playback_evidence"
+    ) => {
+      const prev = peerAutoRecoveryFrozenRef.current.get(remoteId);
+      if (prev !== "audio_confirmed_strict") {
+        peerAutoRecoveryFrozenRef.current.set(remoteId, reason);
+      }
+      bidirectionalEstablishedRef.current.add(remoteId);
+      clearEstablishedPeerAutoRecoveryState(remoteId, reason);
+    },
+    [clearEstablishedPeerAutoRecoveryState]
+  );
+
+  markPeerAutoRecoveryFrozenRef.current = markPeerAutoRecoveryFrozen;
 
   const sendReconnectRequest = useCallback(
     async (
@@ -6964,6 +7083,10 @@ export function usePeerConnections({
 
       state.retryTimerId = window.setTimeout(() => {
         state.retryTimerId = null;
+        if (peerAutoRecoveryFrozenRef.current.has(remoteId)) {
+          clearPassiveReconnectState(remoteId);
+          return;
+        }
         const pc = pcsRef.current.get(remoteId);
         if (
           pc?.signalingState === "have-remote-offer" ||
@@ -6989,6 +7112,17 @@ export function usePeerConnections({
   const runPeerHardReset = useCallback(
     async (remoteId: string, reason: string, mode: PeerHardResetMode) => {
       if (!remoteId || remoteId === deviceId) return;
+
+      if (
+        peerAutoRecoveryFrozenRef.current.has(remoteId) &&
+        mode !== "manual"
+      ) {
+        return;
+      }
+
+      if (mode === "manual") {
+        peerAutoRecoveryFrozenRef.current.delete(remoteId);
+      }
 
       if (mode === "auto") {
         const resetInput = buildReconnectDecisionInput(
@@ -7112,6 +7246,13 @@ export function usePeerConnections({
       const connectionId = getCurrentConnectionId(remoteId);
       const reconnectReason = opts?.reconnectReason ?? "manual_reconnect";
 
+      if (
+        shouldSuppressAutoVoiceRecoveryForPeer(remoteId) &&
+        !manualHardResetHealPassRef.current.has(remoteId)
+      ) {
+        return;
+      }
+
       if (!connectionId) {
         debugConsoleLog(
           `[voice-signal] reconnect-request-failed remote=${compactDeviceId(remoteId)} ` +
@@ -7168,6 +7309,7 @@ export function usePeerConnections({
       schedulePassiveReconnectRequestRetry,
       sendReconnectRequest,
       setPeerState,
+      shouldSuppressAutoVoiceRecoveryForPeer,
       startPeerOffer,
     ]
   );
@@ -7326,6 +7468,16 @@ export function usePeerConnections({
       const isOfferOwner = deviceId < remoteId;
       const compact = compactDeviceId(remoteId);
       const force = opts?.force === true;
+
+      const establishedSkip = getEstablishedPeerSkipReasonForPeer(remoteId);
+      if (
+        establishedSkip &&
+        !manualHardResetHealPassRef.current.has(remoteId)
+      ) {
+        clearEstablishedPeerAutoRecoveryState(remoteId, establishedSkip);
+        return true;
+      }
+
       const mode = isOfferOwner ? "offer" : "passive_wait_offer";
       const role: "active" | "passive" = isOfferOwner ? "active" : "passive";
       const existingForEnsure = pcsRef.current.get(remoteId) ?? null;
@@ -7427,27 +7579,6 @@ export function usePeerConnections({
         const awaitingPc = pcsRef.current.get(remoteId) ?? null;
         logEnsureSkipped(remoteId, reason, "passive_awaiting_reconnect_offer");
         return isUsablePeerConnection(awaitingPc);
-      }
-
-      const playbackEvidence = getPlaybackEstablishedEvidence(remoteId);
-      const ensureMutationBlock = evaluateVoicePeerMutationBlock({
-        kind: "create",
-        evidence: playbackEvidence,
-        ctx: {
-          reason,
-          caller: "ensurePeerConnection",
-          force,
-          manualHealPass: manualHardResetHealPassRef.current.has(remoteId),
-        },
-      });
-      if (ensureMutationBlock.blocked) {
-        debugConsoleLog(
-          `[voice-peer] ensure-blocked-playback remote=${compact} reason=${reason} ` +
-            `hadPlaybackEvidence=${playbackEvidence.hasPlaybackEvidence ? 1 : 0} ` +
-            `hadAudioConfirmedStrict=${playbackEvidence.audioConfirmedStrict ? 1 : 0} ` +
-            `${formatVoiceModeSuffix()}`
-        );
-        return isUsablePeerConnection(existingForEnsure);
       }
 
       const existing = pcsRef.current.get(remoteId) ?? null;
@@ -7571,10 +7702,11 @@ export function usePeerConnections({
       emitVoiceStartCheck,
       ensurePeerLocalAudioSender,
       getCurrentConnectionId,
+      getEstablishedPeerSkipReasonForPeer,
       getP2pDirectFailedHoldRemainingMs,
       getPeerNegotiationPhase,
-      getPlaybackEstablishedEvidence,
       getReconnectBlockReason,
+      clearEstablishedPeerAutoRecoveryState,
       isRemoteInCall,
       localAudioTrackRef,
       localStreamRef,
@@ -7787,6 +7919,15 @@ export function usePeerConnections({
 
   const recoverMissingPc = useCallback(
     (remoteId: string, reason: string) => {
+      const establishedSkip = getEstablishedPeerSkipReasonForPeer(remoteId);
+      if (establishedSkip) {
+        debugConsoleLog(
+          `[voice-peer] recover-missing-pc-skip remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} skip=${establishedSkip} ${formatVoiceModeSuffix()}`
+        );
+        return true;
+      }
+
       const holdRemainingMs = getP2pDirectFailedHoldRemainingMs(remoteId);
       if (holdRemainingMs != null) {
         debugConsoleLog(
@@ -7803,7 +7944,12 @@ export function usePeerConnections({
 
       return ensurePeerConnection(remoteId, reason, { force: true });
     },
-    [ensurePeerConnection, getP2pDirectFailedHoldRemainingMs, isRemoteInCall]
+    [
+      ensurePeerConnection,
+      getEstablishedPeerSkipReasonForPeer,
+      getP2pDirectFailedHoldRemainingMs,
+      isRemoteInCall,
+    ]
   );
 
   const attemptSoftIceRestart = useCallback(
@@ -8404,6 +8550,16 @@ export function usePeerConnections({
       }
 
       for (const peer of missing) {
+        const establishedSkip = getEstablishedPeerSkipReasonForPeer(
+          peer.remoteDeviceId
+        );
+        if (establishedSkip) {
+          debugConsoleLog(
+            `[voice-peer] heal-skip-healthy target=${compactDeviceId(peer.remoteDeviceId)} ` +
+              `reason=${establishedSkip} trigger=${trigger} ${formatVoiceModeSuffix()}`
+          );
+          continue;
+        }
         recoverMissingPc(
           peer.remoteDeviceId,
           "mesh_missing_pc_after_transport_failed"
@@ -8412,6 +8568,7 @@ export function usePeerConnections({
     },
     [
       deviceId,
+      getEstablishedPeerSkipReasonForPeer,
       localAudioTrackRef,
       localStreamRef,
       micReady,
@@ -8424,6 +8581,33 @@ export function usePeerConnections({
   );
 
   scanAndEnsureMissingPcsRef.current = scanAndEnsureMissingPcs;
+
+  const HEAL_SKIP_HEALTHY_LOG_DEDUPE_MS = 5000;
+
+  const logHealSkipHealthy = useCallback(
+    (
+      remoteId: string,
+      reason: string,
+      pc: RTCPeerConnection | null | undefined
+    ) => {
+      const nowMs = Date.now();
+      const last = healSkipHealthyLastLogRef.current.get(remoteId);
+      if (
+        last &&
+        last.reason === reason &&
+        nowMs - last.atMs < HEAL_SKIP_HEALTHY_LOG_DEDUPE_MS
+      ) {
+        return;
+      }
+      healSkipHealthyLastLogRef.current.set(remoteId, { reason, atMs: nowMs });
+      debugConsoleLog(
+        `[voice-peer] heal-skip-healthy target=${compactDeviceId(remoteId)} reason=${reason} ` +
+          `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"} ` +
+          `sig=${pc?.signalingState ?? "-"} ${formatVoiceModeSuffix()}`
+      );
+    },
+    []
+  );
 
   useEffect(() => {
     createPeerConnectionRef.current = createPeerConnection;
@@ -8597,18 +8781,6 @@ export function usePeerConnections({
       }
     }
 
-    const logHealSkipHealthy = (
-      remoteId: string,
-      reason: string,
-      pc: RTCPeerConnection | null | undefined
-    ) => {
-      debugConsoleLog(
-        `[voice-peer] heal-skip-healthy target=${compactDeviceId(remoteId)} reason=${reason} ` +
-          `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"} ` +
-          `sig=${pc?.signalingState ?? "-"} ${formatVoiceModeSuffix()}`
-      );
-    };
-
     for (const remoteId of remoteIds) {
       if (!isRemoteInCall(remoteId)) {
         continue;
@@ -8619,17 +8791,12 @@ export function usePeerConnections({
         peerSignalTimestampsRef.current.get(remoteId) ??
         emptyPeerSignalTimestamps();
 
-      if (pc && isPeerEstablishedForRecovery(remoteId, pc)) {
-        setPeerState(remoteId, "connected");
-        logHealSkipHealthy(remoteId, "p2p_established", pc);
-        continue;
-      }
-
-      if (hasRemotePlaybackEvidence(remoteId)) {
+      const establishedSkip = getEstablishedPeerSkipReasonForPeer(remoteId);
+      if (establishedSkip) {
         if (pc) {
           setPeerState(remoteId, "connected");
         }
-        logHealSkipHealthy(remoteId, "playback_evidence", pc);
+        logHealSkipHealthy(remoteId, establishedSkip, pc);
         continue;
       }
 
@@ -9057,6 +9224,7 @@ export function usePeerConnections({
     const runMissingPcSafetyNet = () => {
       for (const remoteId of remoteIds) {
         if (!isRemoteInCall(remoteId)) continue;
+        if (getEstablishedPeerSkipReasonForPeer(remoteId)) continue;
         if (!peerNeedsPc(remoteId)) continue;
         recoverMissingPc(remoteId, "heal_safety_net_missing_pc");
       }
@@ -9161,6 +9329,7 @@ export function usePeerConnections({
     emitPeerStates,
     ensurePeerConnection,
     getCurrentConnectionId,
+    getEstablishedPeerSkipReasonForPeer,
     getReconnectBlockReason,
     getRemoteIds,
     getTrackEndedHoldCheck,
@@ -9171,6 +9340,7 @@ export function usePeerConnections({
     localAudioTrackRef,
     localStreamRef,
     logHealPeerAction,
+    logHealSkipHealthy,
     recoverMissingPc,
     markConnectStart,
     maybeStartOffer,
@@ -10224,6 +10394,7 @@ export function usePeerConnections({
 
       for (const remoteId of getRemoteIds()) {
         if (!isRemoteInCall(remoteId)) continue;
+        if (getEstablishedPeerSkipReasonForPeer(remoteId)) continue;
         console.log(
           `[voice-peer] start-after-all-ready trigger=${trigger} remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
         );
@@ -10247,6 +10418,7 @@ export function usePeerConnections({
       beginPassiveOfferWait,
       deviceId,
       ensurePeerConnection,
+      getEstablishedPeerSkipReasonForPeer,
       getPeerNegotiationPhase,
       getRemoteIds,
       isAllVoiceStartReady,
@@ -10379,6 +10551,7 @@ export function usePeerConnections({
       softResetLastAtRef.current.clear();
       softResetExhaustedNotifiedRef.current.clear();
       bidirectionalEstablishedRef.current.clear();
+      peerAutoRecoveryFrozenRef.current.clear();
 
       for (const timer of iceCheckingTimersRef.current.values()) {
         window.clearTimeout(timer);

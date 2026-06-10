@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateVoicePeerMutationBlock,
+  getEstablishedPeerAutoRecoverySkipReason,
   isManualVoicePeerReconnectMutation,
   shouldProtectVoicePeerFromAutoMutation,
 } from "./voicePlaybackEstablishedGuard";
@@ -64,6 +65,21 @@ describe("voicePlaybackEstablishedGuard", () => {
         },
       }).blocked
     ).toBe(false);
+  });
+
+  it("returns skip reason preferring strict confirm", () => {
+    expect(
+      getEstablishedPeerAutoRecoverySkipReason({
+        hasPlaybackEvidence: true,
+        audioConfirmedStrict: true,
+      })
+    ).toBe("audio_confirmed_strict");
+    expect(
+      getEstablishedPeerAutoRecoverySkipReason({
+        hasPlaybackEvidence: true,
+        audioConfirmedStrict: false,
+      })
+    ).toBe("playback_evidence");
   });
 
   it("allows lifecycle close on member leave", () => {
