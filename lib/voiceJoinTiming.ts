@@ -39,4 +39,10 @@ export const HAVE_LOCAL_OFFER_STUCK_MS = 12_000;
 export const NO_STREAM_NO_OFFER_FORCE_MS = 9000;
 
 /** Passive waits for active offer on initial join before one-shot fallback. */
-export const PASSIVE_WAIT_OFFER_INITIAL_MS = 5000;
+export const PASSIVE_WAIT_OFFER_INITIAL_MS = 3500;
+
+/** Passive fallback after mic/all-ready (active offer not received). */
+export const PASSIVE_WAIT_OFFER_MIC_READY_MS = 3500;
+
+/** Default passive fallback for non-initial triggers. */
+export const PASSIVE_WAIT_OFFER_TIMEOUT_MS = 3500;

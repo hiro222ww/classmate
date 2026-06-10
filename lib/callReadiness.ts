@@ -39,7 +39,8 @@ const initialCallReadyCheckLogged = new Set<string>();
 
 export function logCallReadyCheck(
   snap: CallReadinessSnapshot,
-  reason: string
+  reason: string,
+  wait?: ReturnType<typeof formatCallReadinessWaitMetrics>
 ) {
   if (reason === "initial") {
     const sessionKey = snap.sessionId;
@@ -59,6 +60,10 @@ export function logCallReadyCheck(
   }
   lastCallReadyCheckKey = key;
 
+  const waitSuffix = wait
+    ? ` totalWaitMs=${wait.totalWaitMs} turnWaitMs=${wait.turnWaitMs} allReadyWaitMs=${wait.allReadyWaitMs}`
+    : "";
+
   console.log(
     `[call-ready-check] session=${snap.sessionId.slice(-6)} ` +
       `class=${snap.classId.slice(-6)} device=${snap.deviceId.slice(-4)} ` +
@@ -66,7 +71,7 @@ export function logCallReadyCheck(
       `micReady=${snap.micReady ? 1 : 0} signalReady=${snap.signalReady ? 1 : 0} ` +
       `settingsReady=${snap.settingsReady ? 1 : 0} turnReady=${snap.turnReady ? 1 : 0} ` +
       `voiceEnabled=${snap.voiceEnabled ? 1 : 0} callLayerMounted=${snap.callLayerMounted ? 1 : 0} ` +
-      `reason=${reason}`
+      `reason=${reason}${waitSuffix}`
   );
 }
 
@@ -83,4 +88,115 @@ export function logCallReadyStuck(
   );
 }
 
-export const CALL_READY_STUCK_MS = 10_000;
+/** Show reconnect UI when prerequisites stay unmet this long. */
+export const CALL_READY_STUCK_MS = 12_000;
+
+/** Target time to reach playback evidence before prompting reconnect. */
+export const VOICE_PLAYBACK_CONNECT_TARGET_MS = 12_000;
+
+export type CallReadinessWaitState = {
+  sessionKey: string;
+  startedAt: number;
+  settingsReadyAt: number | null;
+  turnReadyAt: number | null;
+  micReadyAt: number | null;
+  signalReadyAt: number | null;
+  allReadyAt: number | null;
+  turnWaitStartedAt: number | null;
+};
+
+export function createCallReadinessWaitState(sessionKey: string): CallReadinessWaitState {
+  return {
+    sessionKey,
+    startedAt: Date.now(),
+    settingsReadyAt: null,
+    turnReadyAt: null,
+    micReadyAt: null,
+    signalReadyAt: null,
+    allReadyAt: null,
+    turnWaitStartedAt: null,
+  };
+}
+
+export function updateCallReadinessWaitState(
+  state: CallReadinessWaitState,
+  snap: CallReadinessSnapshot,
+  sessionKey: string
+): CallReadinessWaitState {
+  const now = Date.now();
+  if (state.sessionKey !== sessionKey) {
+    return {
+      ...createCallReadinessWaitState(sessionKey),
+      settingsReadyAt: snap.settingsReady ? now : null,
+      turnReadyAt: snap.turnReady ? now : null,
+      micReadyAt: snap.micReady ? now : null,
+      signalReadyAt: snap.signalReady ? now : null,
+      allReadyAt:
+        snap.settingsReady &&
+        snap.signalReady &&
+        snap.turnReady &&
+        snap.micReady
+          ? now
+          : null,
+      turnWaitStartedAt:
+        snap.settingsReady && !snap.turnReady ? now : null,
+    };
+  }
+
+  const next = { ...state };
+  if (snap.settingsReady && next.settingsReadyAt == null) {
+    next.settingsReadyAt = now;
+  }
+  if (snap.turnReady && next.turnReadyAt == null) {
+    next.turnReadyAt = now;
+  }
+  if (snap.micReady && next.micReadyAt == null) {
+    next.micReadyAt = now;
+  }
+  if (snap.signalReady && next.signalReadyAt == null) {
+    next.signalReadyAt = now;
+  }
+  if (
+    snap.settingsReady &&
+    !snap.turnReady &&
+    next.turnWaitStartedAt == null
+  ) {
+    next.turnWaitStartedAt = now;
+  }
+  if (snap.turnReady) {
+    next.turnWaitStartedAt = null;
+  }
+  if (
+    snap.settingsReady &&
+    snap.signalReady &&
+    snap.turnReady &&
+    snap.micReady &&
+    next.allReadyAt == null
+  ) {
+    next.allReadyAt = now;
+  }
+  return next;
+}
+
+export function formatCallReadinessWaitMetrics(
+  state: CallReadinessWaitState,
+  snap: CallReadinessSnapshot
+): {
+  totalWaitMs: number;
+  turnWaitMs: number;
+  allReadyWaitMs: number;
+} {
+  const now = Date.now();
+  const totalWaitMs = Math.max(0, now - state.startedAt);
+  const turnWaitMs =
+    snap.turnReady && state.turnWaitStartedAt != null && state.turnReadyAt != null
+      ? Math.max(0, state.turnReadyAt - state.turnWaitStartedAt)
+      : !snap.turnReady && state.turnWaitStartedAt != null
+        ? Math.max(0, now - state.turnWaitStartedAt)
+        : 0;
+  const allReadyWaitMs =
+    state.allReadyAt != null
+      ? Math.max(0, state.allReadyAt - state.startedAt)
+      : totalWaitMs;
+  return { totalWaitMs, turnWaitMs, allReadyWaitMs };
+}

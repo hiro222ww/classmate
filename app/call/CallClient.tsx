@@ -49,10 +49,15 @@ import {
 } from "@/lib/memberListEquality";
 import {
   CALL_READY_STUCK_MS,
+  createCallReadinessWaitState,
+  formatCallReadinessWaitMetrics,
   logCallReadyCheck,
   logCallReadyStuck,
   resolveCallReadyStuckReason,
+  updateCallReadinessWaitState,
+  VOICE_PLAYBACK_CONNECT_TARGET_MS,
   type CallReadinessSnapshot,
+  type CallReadinessWaitState,
 } from "@/lib/callReadiness";
 import {
   computeRemoteMemberIds,
@@ -278,6 +283,8 @@ export default function CallClient() {
   const [remoteAudioHealth, setRemoteAudioHealth] = useState<
     Record<string, RemotePlaybackHealth>
   >({});
+  const remoteAudioHealthRef = useRef(remoteAudioHealth);
+  remoteAudioHealthRef.current = remoteAudioHealth;
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
   const [nowMs, setNowMs] = useState(0);
@@ -310,6 +317,11 @@ export default function CallClient() {
   });
   const callReadySinceRef = useRef<number | null>(null);
   const callReadyStuckLoggedRef = useRef(false);
+  const callReadyWaitRef = useRef<CallReadinessWaitState>(
+    createCallReadinessWaitState("pending")
+  );
+  const voiceConnectStartedAtRef = useRef<number | null>(null);
+  const voicePlaybackPromptLoggedRef = useRef(false);
   const voiceLayerMountedRef = useRef(false);
   const lastCallRenderLogKeyRef = useRef("");
   const callMountAtRef = useRef(Date.now());
@@ -1824,6 +1836,7 @@ export default function CallClient() {
       voiceEnabled: boolean;
     }) => {
       voiceReadinessRef.current = snapshot;
+      runCallReadinessRecheckRef.current("voice_readiness");
     },
     []
   );
@@ -1909,12 +1922,28 @@ export default function CallClient() {
   const runCallReadinessRecheck = useCallback(
     (reason: string) => {
       const snap = buildCallReadinessSnapshot();
-      logCallReadyCheck(snap, reason);
+      const sessionKey = `${snap.sessionId}|${snap.classId}|${snap.deviceId}`;
+      callReadyWaitRef.current = updateCallReadinessWaitState(
+        callReadyWaitRef.current,
+        snap,
+        sessionKey
+      );
+      const waitMetrics = formatCallReadinessWaitMetrics(
+        callReadyWaitRef.current,
+        snap
+      );
+      logCallReadyCheck(snap, reason, waitMetrics);
       const stuckReason = resolveCallReadyStuckReason(snap);
       const peersConnected = Object.values(peerStatesForReadinessRef.current).some(
         (state) => state === "connected"
       );
-      if (!stuckReason || peersConnected) {
+      const hasPlaybackEvidence = Object.values(remoteAudioHealthRef.current).some(
+        (health) =>
+          health.playSuccess === true ||
+          health.playbackActive === true ||
+          health.audioConfirmedStrict === true
+      );
+      if (!stuckReason || peersConnected || hasPlaybackEvidence) {
         callReadySinceRef.current = null;
         callReadyStuckLoggedRef.current = false;
         setShowCallStuckReconnect(false);
@@ -1948,6 +1977,11 @@ export default function CallClient() {
   useEffect(() => {
     callReadySinceRef.current = null;
     callReadyStuckLoggedRef.current = false;
+    voiceConnectStartedAtRef.current = null;
+    voicePlaybackPromptLoggedRef.current = false;
+    callReadyWaitRef.current = createCallReadinessWaitState(
+      `${sessionId}|${classId}|${deviceId}`
+    );
     setShowCallStuckReconnect(false);
     setShowVoiceReconnectPrompt(false);
   }, [sessionId, classId, deviceId]);
@@ -1962,6 +1996,50 @@ export default function CallClient() {
     }, 3000);
     return () => window.clearInterval(timer);
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!voiceLayerShouldRender || remoteMemberIds.length === 0) {
+      voiceConnectStartedAtRef.current = null;
+      voicePlaybackPromptLoggedRef.current = false;
+      return;
+    }
+
+    if (voiceConnectStartedAtRef.current == null) {
+      voiceConnectStartedAtRef.current = Date.now();
+    }
+
+    const timer = window.setInterval(() => {
+      const startedAt = voiceConnectStartedAtRef.current;
+      if (startedAt == null) return;
+
+      const hasPlaybackEvidence = Object.values(remoteAudioHealthRef.current).some(
+        (health) =>
+          health.playSuccess === true ||
+          health.playbackActive === true ||
+          health.audioConfirmedStrict === true ||
+          health.audioActuallyPlaying === true
+      );
+      if (hasPlaybackEvidence) {
+        voicePlaybackPromptLoggedRef.current = false;
+        setShowVoiceReconnectPrompt(false);
+        return;
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs < VOICE_PLAYBACK_CONNECT_TARGET_MS) return;
+
+      if (!voicePlaybackPromptLoggedRef.current) {
+        voicePlaybackPromptLoggedRef.current = true;
+        console.log(
+          `[call-ready-stuck] reason=playback_evidence_timeout elapsedMs=${elapsedMs} ` +
+            `targetMs=${VOICE_PLAYBACK_CONNECT_TARGET_MS} remotes=${remoteMemberIds.length}`
+        );
+      }
+      setShowVoiceReconnectPrompt(true);
+    }, 2000);
+
+    return () => window.clearInterval(timer);
+  }, [remoteMemberIds.length, sessionId, voiceLayerShouldRender]);
 
   const handleCallStuckReconnect = useCallback(() => {
     const snap = buildCallReadinessSnapshot();
