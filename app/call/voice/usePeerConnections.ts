@@ -3366,14 +3366,6 @@ export function usePeerConnections({
 
   getPeerNegotiationPhaseRef.current = getPeerNegotiationPhase;
 
-  const shouldSuppressAutoVoiceRecoveryForPeer = useCallback(
-    (remoteId: string): boolean => {
-      if (manualHardResetHealPassRef.current.has(remoteId)) return false;
-      return getEstablishedPeerSkipReasonForPeer(remoteId) != null;
-    },
-    [getEstablishedPeerSkipReasonForPeer]
-  );
-
   const getEstablishedPeerSkipReasonForPeer = useCallback(
     (
       remoteId: string
@@ -3385,6 +3377,14 @@ export function usePeerConnections({
       );
     },
     [getPlaybackEstablishedEvidence]
+  );
+
+  const shouldSuppressAutoVoiceRecoveryForPeer = useCallback(
+    (remoteId: string): boolean => {
+      if (manualHardResetHealPassRef.current.has(remoteId)) return false;
+      return getEstablishedPeerSkipReasonForPeer(remoteId) != null;
+    },
+    [getEstablishedPeerSkipReasonForPeer]
   );
 
   const clearEstablishedPeerAutoRecoveryStateRef = useRef<
@@ -6570,12 +6570,13 @@ export function usePeerConnections({
       clearNoStreamNoOfferTimer(remoteId);
       cancelPassiveWaitOffer(remoteId, "offer_send");
 
-      let pc = existingPc;
+      let pc: RTCPeerConnection | null | undefined = existingPc;
       if (!isUsablePeerConnection(pc)) {
-        pc = createPeerConnection(remoteId, connectionId, {
-          caller: "startPeerOffer",
-          reason,
-        });
+        pc =
+          createPeerConnection(remoteId, connectionId, {
+            caller: "startPeerOffer",
+            reason,
+          }) ?? undefined;
       }
 
       if (!pc) return;
@@ -6591,14 +6592,15 @@ export function usePeerConnections({
         });
         if (pcsRef.current.has(remoteId)) return;
         assignConnectionId(remoteId, connectionId, "force_offer_reset");
-        pc = createPeerConnection(remoteId, connectionId, {
-          caller: "startPeerOffer",
-          reason: `force_offer_reset_${reason}`,
-          force,
-        });
+        pc =
+          createPeerConnection(remoteId, connectionId, {
+            caller: "startPeerOffer",
+            reason: `force_offer_reset_${reason}`,
+            force,
+          }) ?? undefined;
       }
 
-      if (pc.signalingState !== "stable") return;
+      if (!pc || pc.signalingState !== "stable") return;
 
       offeredPeersRef.current.add(remoteId);
       clearReconnectTimer(remoteId);
@@ -9696,6 +9698,7 @@ export function usePeerConnections({
         caller: "handleIncomingSignal",
         reason: `${signalType}_received`,
       });
+      if (!pc) return;
 
       try {
         if (row.signal_type === "offer") {
