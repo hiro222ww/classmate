@@ -77,6 +77,11 @@ import {
 import { shouldRejectEstablishedPeerStaleOffer } from "@/lib/voiceStaleOfferGuard";
 import { resolveOfferConnectionConflict } from "@/lib/voiceOfferGlareGuard";
 import { buildVoiceConnectionMembersFingerprint } from "@/lib/memberListEquality";
+import {
+  classifyPeerNegotiationPhase,
+  shouldSuppressPassiveOfferReschedule,
+  type PeerNegotiationPhase,
+} from "@/lib/voicePeerNegotiationPhase";
 import type { VoiceAudioConfirmCancelReason } from "@/app/call/voice/voiceDiagnostics";
 
 const PRESERVE_REMOTE_AUDIO_WINDOW_MS = 12_000;
@@ -1216,6 +1221,9 @@ export function usePeerConnections({
     signature: "",
     atMs: 0,
   });
+  const getPeerNegotiationPhaseRef = useRef<
+    (remoteId: string, pc?: RTCPeerConnection | null) => PeerNegotiationPhase
+  >(() => "none");
   const connectedAudioConfirmGraceRef = useRef<Map<string, number>>(new Map());
   const voiceJoinEpochRef = useRef<{ sessionId: string; startedAt: number }>({
     sessionId: "",
@@ -2835,7 +2843,6 @@ export function usePeerConnections({
       const settingsReady = voiceSettingsReadyRef.current;
       const hasTurn = hasTurnIceServer(iceServersRef.current);
       const remoteIds = getRemoteIds();
-      const hasUsablePc = isUsablePeerConnection(pcsRef.current.get(remoteId));
       const canCreatePassive =
         role === "passive" &&
         peerNeedsPc(remoteId) &&
@@ -2855,7 +2862,11 @@ export function usePeerConnections({
       else if (!signalReady) blockedReason = "signal_not_ready";
       else if (relayForcedRef.current && !hasTurn) blockedReason = "turn_not_loaded";
       else if (!isRemoteInCall(remoteId)) blockedReason = "not_in_call";
-      else if (hasUsablePc && !peerNeedsPc(remoteId)) {
+      else if (
+        shouldSuppressPassiveOfferReschedule(
+          getPeerNegotiationPhaseRef.current(remoteId)
+        )
+      ) {
         blockedReason = "already_has_pc";
       } else if (!localTrackLive && !receiveOnly) {
         blockedReason = micPermissionDeniedRef.current
@@ -3272,6 +3283,34 @@ export function usePeerConnections({
       timestamps.lastPlaybackActiveAt != null
     );
   }, []);
+
+  const getPeerNegotiationPhase = useCallback(
+    (remoteId: string, pc?: RTCPeerConnection | null): PeerNegotiationPhase => {
+      const activePc = pc ?? pcsRef.current.get(remoteId) ?? null;
+      const marks = getPeerPipelineMarks(remoteId);
+      const media = getPeerMedia(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId);
+
+      return classifyPeerNegotiationPhase({
+        pc: activePc,
+        isUsablePeer: isUsablePeerConnection(activePc),
+        remoteTrackReceived: marks.remote_track_received,
+        hasPlaybackEvidence: hasRemotePlaybackEvidence(remoteId),
+        audioConfirmedStrict:
+          marks.audio_confirmed_strict || health?.audioConfirmedStrict === true,
+        answerReceived: marks.answer_received,
+        offerSent: marks.offer_sent,
+        offerReceived: marks.offer_received,
+        answerSent: marks.answer_sent,
+        offerInFlight: offeredPeersRef.current.has(remoteId),
+        remoteTracksCount: media.remoteTracksCount,
+        hasRemoteStream: media.hasRemoteStream,
+      });
+    },
+    [getPeerMedia, hasRemotePlaybackEvidence]
+  );
+
+  getPeerNegotiationPhaseRef.current = getPeerNegotiationPhase;
 
   const buildIceDisconnectedGuardInput = useCallback(
     (
@@ -6484,6 +6523,38 @@ export function usePeerConnections({
     maybeStartOfferRef.current = startPeerOffer;
   }, [startPeerOffer]);
 
+  const ensurePeerLocalAudioSender = useCallback(
+    (remoteId: string, reason: string): boolean => {
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc || !isUsablePeerConnection(pc)) return false;
+
+      const track = localAudioTrackRef.current;
+      const stream = localStreamRef.current;
+      if (!track || track.readyState !== "live" || !stream) return false;
+
+      const sendTrack = userMutedRef.current ? null : track;
+      let sender = pc
+        .getSenders()
+        .find((s) => s.track?.kind === "audio" || s.track === null);
+
+      if (!sender) {
+        pc.addTrack(track, stream);
+        sender = pc
+          .getSenders()
+          .find((s) => s.track?.kind === "audio" || s.track === null);
+        logVoicePeerReplaceTrack(remoteId, sendTrack, `${reason}_add_track`);
+      }
+
+      if (sender) {
+        void sender.replaceTrack(sendTrack);
+        logVoicePeerReplaceTrack(remoteId, sendTrack, reason);
+      }
+
+      return !!sender;
+    },
+    [localAudioTrackRef, localStreamRef, userMutedRef]
+  );
+
   const runPassiveFallbackOffer = useCallback(
     (remoteId: string, triggerReason: string) => {
       if (!canSendVoiceOffer()) {
@@ -6573,15 +6644,9 @@ export function usePeerConnections({
       }
 
       const existingPc = pcsRef.current.get(remoteId);
-      if (isUsablePeerConnection(existingPc)) {
-        if (
-          existingPc!.signalingState === "have-local-offer" ||
-          existingPc!.signalingState === "have-remote-offer" ||
-          existingPc!.connectionState === "connected"
-        ) {
-          return false;
-        }
-        if (!opts?.forceReschedule) {
+      if (existingPc && isUsablePeerConnection(existingPc)) {
+        const phase = getPeerNegotiationPhase(remoteId, existingPc);
+        if (shouldSuppressPassiveOfferReschedule(phase)) {
           return false;
         }
       }
@@ -6623,6 +6688,7 @@ export function usePeerConnections({
       clearPassiveWaitOfferTimer,
       deviceId,
       getCurrentConnectionId,
+      getPeerNegotiationPhase,
       hasLiveRemoteAudioStream,
       hasRemotePlaybackEvidence,
       logMicOfferBlocked,
@@ -6680,6 +6746,35 @@ export function usePeerConnections({
       isRemoteInCall,
       members,
       startPeerOffer,
+    ]
+  );
+
+  const beginPassiveOfferWait = useCallback(
+    (
+      remoteId: string,
+      triggerReason: string,
+      opts?: { forceReschedule?: boolean; initialJoin?: boolean }
+    ): boolean => {
+      if (deviceId < remoteId) return false;
+
+      const phase = getPeerNegotiationPhase(remoteId);
+      if (shouldSuppressPassiveOfferReschedule(phase)) {
+        return false;
+      }
+
+      passiveJoinSettledRef.current.delete(remoteId);
+      ensurePeerLocalAudioSender(remoteId, triggerReason);
+
+      const scheduled = schedulePassiveWaitOfferTimeout(remoteId, triggerReason, opts);
+      scheduleNoStreamNoOfferTimeout(remoteId, triggerReason);
+      return scheduled;
+    },
+    [
+      deviceId,
+      ensurePeerLocalAudioSender,
+      getPeerNegotiationPhase,
+      scheduleNoStreamNoOfferTimeout,
+      schedulePassiveWaitOfferTimeout,
     ]
   );
 
@@ -7209,9 +7304,30 @@ export function usePeerConnections({
       const hasUsablePc = isUsablePeerConnection(existing);
 
       if (hasUsablePc && !force) {
-        passiveJoinSettledRef.current.add(remoteId);
-        logEnsureSkipped(remoteId, reason, "already_has_pc");
-        return true;
+        const phase = getPeerNegotiationPhase(remoteId, existing);
+        if (shouldSuppressPassiveOfferReschedule(phase)) {
+          passiveJoinSettledRef.current.add(remoteId);
+          logEnsureSkipped(remoteId, reason, "already_has_pc");
+          return true;
+        }
+        if (phase === "idle_unnegotiated") {
+          if (isOfferOwner) {
+            ensurePeerLocalAudioSender(remoteId, reason);
+            if (canSendVoiceOffer()) {
+              void maybeStartOffer(remoteId);
+            } else {
+              logMicOfferBlocked(remoteId);
+            }
+          } else if (canSendVoiceOffer()) {
+            beginPassiveOfferWait(remoteId, reason, {
+              forceReschedule: reason === "mic_ready",
+              initialJoin: reason === "passive_on_join",
+            });
+          } else {
+            logMicOfferBlocked(remoteId);
+          }
+          return true;
+        }
       }
 
       emitVoiceStartCheck(remoteId);
@@ -7288,6 +7404,7 @@ export function usePeerConnections({
     },
     [
       assignConnectionId,
+      beginPassiveOfferWait,
       canSendVoiceOffer,
       clearReconnectTimer,
       closePeer,
@@ -7295,8 +7412,10 @@ export function usePeerConnections({
       deviceId,
       enableTurnFallback,
       emitVoiceStartCheck,
+      ensurePeerLocalAudioSender,
       getCurrentConnectionId,
       getP2pDirectFailedHoldRemainingMs,
+      getPeerNegotiationPhase,
       getReconnectBlockReason,
       isRemoteInCall,
       localAudioTrackRef,
@@ -9769,12 +9888,13 @@ export function usePeerConnections({
     }
 
     for (const remoteId of remoteIds) {
+      const phase = getPeerNegotiationPhase(remoteId);
       const hasUsablePc = isUsablePeerConnection(pcsRef.current.get(remoteId));
       if (
-        hasUsablePc &&
-        passiveJoinSettledRef.current.has(remoteId) &&
+        shouldSuppressPassiveOfferReschedule(phase) &&
         !membersChanged
       ) {
+        passiveJoinSettledRef.current.add(remoteId);
         continue;
       }
 
@@ -9809,18 +9929,23 @@ export function usePeerConnections({
         }
         void maybeStartOffer(remoteId);
       } else {
-        if (hasUsablePc) {
+        if (shouldSuppressPassiveOfferReschedule(phase)) {
           passiveJoinSettledRef.current.add(remoteId);
           continue;
         }
-        if (
-          passiveJoinSettledRef.current.has(remoteId) &&
-          !membersChanged
-        ) {
+        if (phase === "idle_unnegotiated") {
+          if (activeCanOffer) {
+            beginPassiveOfferWait(remoteId, "passive_on_join", {
+              initialJoin: true,
+            });
+          }
           continue;
         }
         const ok = ensurePeerConnection(remoteId, "passive_on_join");
-        if (ok || isUsablePeerConnection(pcsRef.current.get(remoteId))) {
+        if (
+          ok &&
+          shouldSuppressPassiveOfferReschedule(getPeerNegotiationPhase(remoteId))
+        ) {
           passiveJoinSettledRef.current.add(remoteId);
         }
       }
@@ -9836,12 +9961,14 @@ export function usePeerConnections({
     settingsReadyTick,
     deviceId,
     assignConnectionId,
+    beginPassiveOfferWait,
     closePeer,
     emitMeshSummary,
     emitPeerStates,
     emitReadinessSnapshot,
     emitVoiceStartCheck,
     ensurePeerConnection,
+    getPeerNegotiationPhase,
     getCurrentConnectionId,
     getRemoteIds,
     getStrictRemoteIds,
@@ -9898,16 +10025,23 @@ export function usePeerConnections({
         ensurePeerConnection(remoteId, "mic_ready");
         continue;
       }
-      if (isUsablePeerConnection(pcsRef.current.get(remoteId) ?? null)) {
+      const phase = getPeerNegotiationPhase(remoteId);
+      if (shouldSuppressPassiveOfferReschedule(phase)) {
+        continue;
+      }
+      if (phase === "idle_unnegotiated") {
+        beginPassiveOfferWait(remoteId, "mic_ready", { forceReschedule: true });
         continue;
       }
       ensurePeerConnection(remoteId, "mic_ready");
     }
     scheduleDeferredHealPeerConnections("mic_ready");
   }, [
+    beginPassiveOfferWait,
     canSendVoiceOffer,
     deviceId,
     ensurePeerConnection,
+    getPeerNegotiationPhase,
     getRemoteIds,
     isRemoteInCall,
     micReady,
