@@ -43,7 +43,10 @@ import {
   logMemberSource,
   mergeSessionMembersPreservingRemoved,
 } from "@/lib/sessionMemberListMerge";
-import { areMembersListEquivalent } from "@/lib/memberListEquality";
+import {
+  areMembersListEquivalent,
+  areVoiceConnectionMembersEquivalent,
+} from "@/lib/memberListEquality";
 import {
   CALL_READY_STUCK_MS,
   logCallReadyCheck,
@@ -1211,12 +1214,23 @@ export default function CallClient() {
     [deviceId, userMuted]
   );
 
+  const lastRemoteSpeakingCommitRef = useRef<Map<string, number>>(new Map());
+
   const handleRemoteSpeakingChange = useCallback((remoteId: string) => {
-    setMembers((prev) =>
-      prev.map((m) =>
-        m.device_id === remoteId ? { ...m, lastSpokeAt: Date.now() } : m
-      )
-    );
+    const now = Date.now();
+    const lastCommit = lastRemoteSpeakingCommitRef.current.get(remoteId) ?? 0;
+    if (now - lastCommit < 1500) return;
+
+    setMembers((prev) => {
+      const member = prev.find((m) => m.device_id === remoteId);
+      if (member?.lastSpokeAt != null && now - member.lastSpokeAt < 1500) {
+        return prev;
+      }
+      lastRemoteSpeakingCommitRef.current.set(remoteId, now);
+      return prev.map((m) =>
+        m.device_id === remoteId ? { ...m, lastSpokeAt: now } : m
+      );
+    });
   }, []);
 
   const handleSoftResetExhausted = useCallback(
@@ -1976,7 +1990,7 @@ export default function CallClient() {
       explicitLeftIds: localExitedPeersRef.current,
       stable: isStableVoiceJoinMode(),
     });
-    if (areMembersListEquivalent(voiceMembersRef.current, next)) {
+    if (areVoiceConnectionMembersEquivalent(voiceMembersRef.current, next)) {
       return voiceMembersRef.current;
     }
     voiceMembersRef.current = next;

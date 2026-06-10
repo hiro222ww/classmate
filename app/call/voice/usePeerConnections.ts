@@ -76,6 +76,7 @@ import {
 } from "@/lib/voiceIceDisconnectedGuard";
 import { shouldRejectEstablishedPeerStaleOffer } from "@/lib/voiceStaleOfferGuard";
 import { resolveOfferConnectionConflict } from "@/lib/voiceOfferGlareGuard";
+import { buildVoiceConnectionMembersFingerprint } from "@/lib/memberListEquality";
 import type { VoiceAudioConfirmCancelReason } from "@/app/call/voice/voiceDiagnostics";
 
 const PRESERVE_REMOTE_AUDIO_WINDOW_MS = 12_000;
@@ -331,6 +332,7 @@ const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
 
 const AUDIO_CONFIRM_REARM_DEDUPE_MS = 5000;
 const VOICE_START_CHECK_LOG_DEDUPE_MS = 5000;
+const PEER_DIAGNOSTICS_EMIT_MIN_INTERVAL_MS = 1000;
 
 const voicePolicy = getVoiceModePolicy();
 logVoiceClientEnv("peer-connections-init");
@@ -1208,6 +1210,12 @@ export function usePeerConnections({
   const voiceStartCheckLastLogRef = useRef<
     Map<string, { atMs: number; blockedReason: string }>
   >(new Map());
+  const passiveJoinSettledRef = useRef<Set<string>>(new Set());
+  const offerEffectMembersFingerprintRef = useRef("");
+  const lastPeerDiagnosticsEmitRef = useRef<{ signature: string; atMs: number }>({
+    signature: "",
+    atMs: 0,
+  });
   const connectedAudioConfirmGraceRef = useRef<Map<string, number>>(new Map());
   const voiceJoinEpochRef = useRef<{ sessionId: string; startedAt: number }>({
     sessionId: "",
@@ -2781,6 +2789,9 @@ export function usePeerConnections({
         skipReason,
         extra,
       });
+      if (skipReason === "already_has_pc") {
+        return;
+      }
       let blockedReason = mapEnsureSkipToVoiceStartBlocked(skipReason);
       if (
         micPermissionDeniedRef.current &&
@@ -2824,6 +2835,7 @@ export function usePeerConnections({
       const settingsReady = voiceSettingsReadyRef.current;
       const hasTurn = hasTurnIceServer(iceServersRef.current);
       const remoteIds = getRemoteIds();
+      const hasUsablePc = isUsablePeerConnection(pcsRef.current.get(remoteId));
       const canCreatePassive =
         role === "passive" &&
         peerNeedsPc(remoteId) &&
@@ -2843,7 +2855,9 @@ export function usePeerConnections({
       else if (!signalReady) blockedReason = "signal_not_ready";
       else if (relayForcedRef.current && !hasTurn) blockedReason = "turn_not_loaded";
       else if (!isRemoteInCall(remoteId)) blockedReason = "not_in_call";
-      else if (!localTrackLive && !receiveOnly) {
+      else if (hasUsablePc && !peerNeedsPc(remoteId)) {
+        blockedReason = "already_has_pc";
+      } else if (!localTrackLive && !receiveOnly) {
         blockedReason = micPermissionDeniedRef.current
           ? "mic_permission_denied"
           : role === "active" && !micReady
@@ -3067,7 +3081,30 @@ export function usePeerConnections({
       };
     }
 
-    onPeerDiagnosticsChange(diagnostics);
+    const signature = Object.keys(diagnostics)
+      .sort()
+      .map((remoteId) => {
+        const d = diagnostics[remoteId];
+        return (
+          `${compactDeviceId(remoteId)}:` +
+          `${d.hasPc ? 1 : 0}/${d.conn}/${d.ice}/${d.sig}/` +
+          `${d.hasRemoteStream ? 1 : 0}/${d.remoteTracksCount}/${d.trackReady}/` +
+          `${d.isRemoteInCall ? 1 : 0}/${d.liveStreamHealHold ? 1 : 0}/` +
+          `${d.p2pDirectFailedHoldActive ? 1 : 0}/${d.transportUnconfirmed ? 1 : 0}/` +
+          `${d.p2pRetryActive ? 1 : 0}/${d.autoHardResetInProgress ? 1 : 0}/` +
+          `${d.orphanRemoteAudio ? 1 : 0}`
+        );
+      })
+      .join("|");
+    const nowMs = Date.now();
+    const prevEmit = lastPeerDiagnosticsEmitRef.current;
+    if (
+      signature !== prevEmit.signature ||
+      nowMs - prevEmit.atMs >= PEER_DIAGNOSTICS_EMIT_MIN_INTERVAL_MS
+    ) {
+      lastPeerDiagnosticsEmitRef.current = { signature, atMs: nowMs };
+      onPeerDiagnosticsChange(diagnostics);
+    }
   }, [
     deviceId,
     getPeerMedia,
@@ -4141,6 +4178,7 @@ export function usePeerConnections({
       clearReconnectTimer(remoteId);
       clearPeerWatchdogTimers(remoteId);
       passiveFallbackOfferByConnRef.current.delete(remoteId);
+      passiveJoinSettledRef.current.delete(remoteId);
       passiveWaitOfferMetaRef.current.delete(remoteId);
       cancelConnectedAudioConfirmTimer(remoteId, "peer_closed", pc);
 
@@ -7171,6 +7209,7 @@ export function usePeerConnections({
       const hasUsablePc = isUsablePeerConnection(existing);
 
       if (hasUsablePc && !force) {
+        passiveJoinSettledRef.current.add(remoteId);
         logEnsureSkipped(remoteId, reason, "already_has_pc");
         return true;
       }
@@ -9643,8 +9682,17 @@ export function usePeerConnections({
     }
   }, [userMuted, userMutedRef, localAudioTrackRef, micReady, voicePolicy.releaseMicOnMute]);
 
+  const voiceMembersFingerprint = useMemo(
+    () => buildVoiceConnectionMembersFingerprint(members, deviceId),
+    [members, deviceId]
+  );
+
   useEffect(() => {
     const remoteIds = getRemoteIds();
+    const membersFingerprint = voiceMembersFingerprint;
+    const membersChanged =
+      offerEffectMembersFingerprintRef.current !== membersFingerprint;
+    offerEffectMembersFingerprintRef.current = membersFingerprint;
 
     voiceDebugLog("[voice-peer] offer effect check", {
       micReady,
@@ -9710,6 +9758,7 @@ export function usePeerConnections({
       if (!remoteIds.includes(existingId)) {
         startedPeersRef.current.delete(existingId);
         peerStatesRef.current.delete(existingId);
+        passiveJoinSettledRef.current.delete(existingId);
         emitPeerStates();
         maybeClosePeerForMemberRemoval(existingId, "offer_effect_member_removed");
       }
@@ -9720,7 +9769,18 @@ export function usePeerConnections({
     }
 
     for (const remoteId of remoteIds) {
-      emitVoiceStartCheck(remoteId);
+      const hasUsablePc = isUsablePeerConnection(pcsRef.current.get(remoteId));
+      if (
+        hasUsablePc &&
+        passiveJoinSettledRef.current.has(remoteId) &&
+        !membersChanged
+      ) {
+        continue;
+      }
+
+      if (!hasUsablePc || membersChanged) {
+        emitVoiceStartCheck(remoteId);
+      }
 
       if (!getCurrentConnectionId(remoteId)) {
         assignConnectionId(
@@ -9749,7 +9809,20 @@ export function usePeerConnections({
         }
         void maybeStartOffer(remoteId);
       } else {
-        ensurePeerConnection(remoteId, "passive_on_join");
+        if (hasUsablePc) {
+          passiveJoinSettledRef.current.add(remoteId);
+          continue;
+        }
+        if (
+          passiveJoinSettledRef.current.has(remoteId) &&
+          !membersChanged
+        ) {
+          continue;
+        }
+        const ok = ensurePeerConnection(remoteId, "passive_on_join");
+        if (ok || isUsablePeerConnection(pcsRef.current.get(remoteId))) {
+          passiveJoinSettledRef.current.add(remoteId);
+        }
       }
     }
 
@@ -9757,7 +9830,7 @@ export function usePeerConnections({
     emitMeshSummary("after_join", { immediate: true });
     emitReadinessSnapshot("offer_effect");
   }, [
-    members,
+    voiceMembersFingerprint,
     micReady,
     signalReady,
     settingsReadyTick,
@@ -9982,6 +10055,9 @@ export function usePeerConnections({
       connectedAudioConfirmTimersRef.current.clear();
       connectedAudioConfirmArmedAtRef.current.clear();
       voiceStartCheckLastLogRef.current.clear();
+      passiveJoinSettledRef.current.clear();
+      offerEffectMembersFingerprintRef.current = "";
+      lastPeerDiagnosticsEmitRef.current = { signature: "", atMs: 0 };
 
       if (meshSummaryTimerRef.current) {
         window.clearTimeout(meshSummaryTimerRef.current);

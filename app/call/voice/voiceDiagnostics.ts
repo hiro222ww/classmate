@@ -1390,7 +1390,7 @@ export function mapEnsureSkipToVoiceStartBlocked(
   }
 }
 
-const VOICE_START_CHECK_LOG_MIN_INTERVAL_MS = 1500;
+const VOICE_START_CHECK_LOG_MIN_INTERVAL_MS = 5000;
 const voiceStartCheckLogState = new Map<string, { key: string; atMs: number }>();
 
 export function logVoiceStartCheck(params: {
