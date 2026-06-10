@@ -74,6 +74,26 @@ function compactMediaId(id: string | null | undefined): string {
   return value.slice(-6);
 }
 
+function logRemoteAudioEvent(
+  tag: string,
+  remoteId: string,
+  instanceId: string,
+  extra?: Record<string, string | number | boolean>
+) {
+  const parts = [
+    `[remote-audio] ${tag}`,
+    `remote=${compactRemoteId(remoteId)}`,
+    `instance=${instanceId}`,
+  ];
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      parts.push(`${key}=${value}`);
+    }
+  }
+  parts.push(formatVoiceModeSuffix());
+  console.log(parts.join(" "));
+}
+
 function createRemoteAudioInstanceId(): string {
   return Math.random().toString(36).slice(2, 6);
 }
@@ -146,6 +166,27 @@ function logPlaybackCheck(params: {
 
   const confirmed =
     health.playbackActiveMode === "confirmed" || health.currentTimeAdvanced;
+
+  if (health.currentTimeAdvanced) {
+    logRemoteAudioEvent(
+      "playback-check currentTime advanced",
+      remoteId,
+      instanceId,
+      {
+        afterMs,
+        currentTime: el.currentTime.toFixed(2),
+        previousCurrentTime: previousCurrentTime.toFixed(2),
+        level: level.toFixed(3),
+      }
+    );
+  }
+
+  if (level > CONFIRMED_LEVEL_THRESHOLD) {
+    logRemoteAudioEvent("level detected", remoteId, instanceId, {
+      level: level.toFixed(3),
+      afterMs,
+    });
+  }
 
   debugConsoleLog(
     `[remote-audio] playback-check remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
@@ -397,6 +438,8 @@ export default function RemoteAudio({
     at: number;
     signature: string;
   } | null>(null);
+  const confirmedStrictLoggedRef = useRef(false);
+  const levelDetectedLoggedRef = useRef(false);
   const attachLogThrottleRef = useRef(
     new Map<
       string,
@@ -509,6 +552,14 @@ export default function RemoteAudio({
         check: confirmInput,
         audioConfirmedStrict,
       });
+      if (audioConfirmedStrict && !confirmedStrictLoggedRef.current) {
+        confirmedStrictLoggedRef.current = true;
+        logRemoteAudioEvent("audio_confirmed_strict", remoteId, instanceId, {
+          currentTime: el.currentTime.toFixed(2),
+          level: baseHealth.level.toFixed(3),
+          advanced: baseHealth.currentTimeAdvanced ? 1 : 0,
+        });
+      }
       const health: RemotePlaybackHealth = {
         ...baseHealth,
         audioConfirmedStrict,
@@ -713,7 +764,14 @@ export default function RemoteAudio({
       maxAttempts?: number;
     }) => {
       const el = ref.current;
-      if (!el || !stream) return;
+      if (!el || !stream) {
+        logRemoteAudioEvent("play-skipped", remoteId, instanceId, {
+          reason: opts?.reason ?? "unknown",
+          hasElement: el ? 1 : 0,
+          hasStream: stream ? 1 : 0,
+        });
+        return;
+      }
 
       const playbackTrack = getPlaybackTrack(el, stream);
       if (!playbackTrack || playbackTrack.readyState === "ended") {
@@ -745,6 +803,13 @@ export default function RemoteAudio({
         opts?.attempt != null && opts?.maxAttempts != null
           ? ` attempt=${opts.attempt}/${opts.maxAttempts}`
           : "";
+      logRemoteAudioEvent("play-start", remoteId, instanceId, {
+        reason,
+        paused: el.paused ? 1 : 0,
+        muted: el.muted ? 1 : 0,
+        srcObjectSet: el.srcObject === stream ? 1 : 0,
+        readyState: el.readyState,
+      });
       debugConsoleLog(
         `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason}${attemptLabel} ` +
           `paused=${el.paused} muted=${el.muted} volume=${el.volume} readyState=${el.readyState} ` +
@@ -772,6 +837,12 @@ export default function RemoteAudio({
         playFailedAtRef.current = null;
         provisionalPlaybackStartedAtRef.current = now;
 
+        logRemoteAudioEvent("play-success", remoteId, instanceId, {
+          reason,
+          currentTime: el.currentTime.toFixed(2),
+          paused: el.paused ? 1 : 0,
+          muted: el.muted ? 1 : 0,
+        });
         logRemoteAudioCompact(remoteId, el, stream, "play-success");
 
         const health = publishPlaybackHealth(el, {
@@ -798,6 +869,11 @@ export default function RemoteAudio({
         const err = e as { name?: string; message?: string };
         const errName = err?.name ?? "unknown";
         const errMessage = String(err?.message ?? "").slice(0, 120);
+        logRemoteAudioEvent("play-failed", remoteId, instanceId, {
+          reason,
+          name: errName,
+          message: errMessage,
+        });
         debugConsoleLog(
           `[remote-audio] play-failed remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
             `name=${errName} message=${errMessage} ${formatVoiceModeSuffix()}`
@@ -1055,6 +1131,12 @@ export default function RemoteAudio({
   useEffect(() => {
     mountedAtRef.current = Date.now();
     const track = stream?.getAudioTracks?.()[0] ?? null;
+    logRemoteAudioEvent("mount", remoteId, instanceId, {
+      streamId: compactMediaId(stream?.id),
+      trackId: compactMediaId(track?.id),
+      trackReady: track?.readyState ?? "-",
+      replayReason: replayReason ?? "-",
+    });
     debugConsoleLog(
       `[remote-audio] mount remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
         `streamId=${compactMediaId(stream?.id)} trackId=${compactMediaId(track?.id)} trackReady=${track?.readyState ?? "-"} ${formatVoiceModeSuffix()}`
@@ -1164,6 +1246,13 @@ export default function RemoteAudio({
     lastAttachAtRef.current = Date.now();
     lastAttachedStreamIdRef.current = streamId || null;
     lastAttachedTrackIdRef.current = trackId || null;
+
+    logRemoteAudioEvent("srcObject attached", remoteId, instanceId, {
+      streamId: compactMediaId(streamId),
+      trackId: compactMediaId(trackId),
+      trackReady: track.readyState,
+      audioTracks: stream.getAudioTracks().length,
+    });
 
     const attachTag = trackChanged || streamChanged ? "attach-track-changed" : "attach";
     logRemoteAudioCompact(remoteId, el, stream, attachTag);

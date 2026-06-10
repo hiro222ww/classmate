@@ -1195,6 +1195,9 @@ export function usePeerConnections({
   const triggerRemoteAudioReplayRef = useRef<
     (remoteId: string, reason: string) => void
   >(() => {});
+  const armConnectedAudioConfirmRef = useRef<
+    (remoteId: string, triggerReason: string) => void
+  >(() => {});
   const audioReplayAtRef = useRef<Map<string, number>>(new Map());
   const audioUnconfirmedTimeoutNotifiedRef = useRef<Set<string>>(new Set());
   const peerIceDiagnosticsRef = useRef<Map<string, PeerIceDiagnostics>>(new Map());
@@ -2375,6 +2378,11 @@ export function usePeerConnections({
         health.playbackActive ||
         (health.level ?? 0) > 0.001
       ) {
+        console.log(
+          `[voice-peer] playback_evidence remote=${compactDeviceId(remoteId)} ` +
+            `playSuccess=${health.playSuccess ? 1 : 0} playbackActive=${health.playbackActive ? 1 : 0} ` +
+            `level=${(health.level ?? 0).toFixed(3)}`
+        );
         cancelPassiveWaitOffer(remoteId, "playback_evidence");
         markPeerAutoRecoveryFrozenRef.current(remoteId, "playback_evidence");
       } else if (health.playbackActive) {
@@ -3946,6 +3954,25 @@ export function usePeerConnections({
       if (pc) {
         syncPeerObservedStates(remoteId, pc);
       }
+
+      console.log(
+        `[voice-peer] remote-audio-pipeline-start remote=${compactDeviceId(remoteId)} ` +
+          `reason=${opts?.reason ?? "ontrack"} streamTracks=${stream.getAudioTracks().length} ` +
+          `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0} ` +
+          `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"}`
+      );
+
+      queueMicrotask(() => {
+        triggerRemoteAudioReplayRef.current(remoteId, "remote_track_applied");
+        armConnectedAudioConfirmRef.current(
+          remoteId,
+          opts?.reason ?? "remote_track_applied"
+        );
+        console.log(
+          `[voice-peer] remote-audio-pipeline-dispatch remote=${compactDeviceId(remoteId)} ` +
+            `replay=1 arm=1 hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
+        );
+      });
     },
     [members, syncPeerObservedStates, touchPeerSignal, emitMeshSummary, cancelPassiveWaitOffer]
   );
@@ -3992,7 +4019,13 @@ export function usePeerConnections({
 
   const ensureRemoteAudioMounted = useCallback(
     (remoteId: string, reason: string) => {
-      if (remoteAudiosRef.current[remoteId]) return true;
+      if (remoteAudiosRef.current[remoteId]) {
+        console.log(
+          `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} result=already_mounted`
+        );
+        return true;
+      }
 
       const pc = pcsRef.current.get(remoteId);
       const stream = remoteStreamsRef.current.get(remoteId);
@@ -4000,12 +4033,22 @@ export function usePeerConnections({
 
       if (stream && snapshot.hasLiveStream) {
         upsertRemoteAudio(remoteId, stream, { force: true, reason });
+        console.log(
+          `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} result=upsert_stream`
+        );
         return true;
       }
 
       if (pc) {
         const synced = syncRemoteAudioFromPc(remoteId, pc, reason);
-        if (synced) return true;
+        if (synced) {
+          console.log(
+            `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
+              `reason=${reason} result=sync_from_pc`
+          );
+          return true;
+        }
 
         const liveTrack = pc
           .getReceivers()
@@ -4020,10 +4063,18 @@ export function usePeerConnections({
             force: true,
             reason,
           });
+          console.log(
+            `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
+              `reason=${reason} result=receiver_track`
+          );
           return true;
         }
       }
 
+      console.log(
+        `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
+          `reason=${reason} result=miss`
+      );
       return false;
     },
     [syncRemoteAudioFromPc, upsertRemoteAudio]
@@ -4031,6 +4082,9 @@ export function usePeerConnections({
 
   const triggerRemoteAudioReplay = useCallback(
     (remoteId: string, reason: string) => {
+      console.log(
+        `[voice-peer] triggerRemoteAudioReplay remote=${compactDeviceId(remoteId)} reason=${reason}`
+      );
       debugConsoleLog(
         `[remote-audio] replay remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
       );
@@ -4959,6 +5013,250 @@ export function usePeerConnections({
       shouldSuppressTransportDisconnectReconnect,
     ]
   );
+
+  const fireConnectedAudioConfirmTimeout = useCallback(
+    (
+      remoteId: string,
+      phase: "initial" | "extended",
+      audioConfirmTimeoutMs: number
+    ) => {
+      connectedAudioConfirmTimersRef.current.delete(remoteId);
+      const currentPc = pcsRef.current.get(remoteId);
+      if (!currentPc) return;
+      if (isPeerEstablishedForRecovery(remoteId, currentPc)) return;
+      if (hasRemotePlaybackEvidence(remoteId)) {
+        console.log(
+          `[voice-audio-confirm] timeout-suppressed remote=${compactDeviceId(remoteId)} ` +
+            `reason=playback_evidence phase=${phase}`
+        );
+        return;
+      }
+
+      const fireMarks = getPeerPipelineMarks(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+      logVoiceAudioConfirmTimer({
+        remoteId,
+        phase: "fire",
+        timeoutMs:
+          phase === "extended"
+            ? CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS
+            : audioConfirmTimeoutMs,
+        sig: currentPc.signalingState,
+        conn: currentPc.connectionState,
+        ice: currentPc.iceConnectionState,
+        tracks: getPeerMedia(remoteId).remoteTracksCount,
+        ontrack: timestamps.lastOnTrackAt != null,
+        offerSent: fireMarks.offer_sent,
+        offerReceived: fireMarks.offer_received,
+        answerSent: fireMarks.answer_sent,
+        answerReceived: fireMarks.answer_received,
+      });
+
+      if (
+        isRemoteMediaTransportReady(remoteId, currentPc) &&
+        phase === "initial"
+      ) {
+        connectedAudioConfirmGraceRef.current.set(remoteId, 1);
+        ensureRemoteAudioMountedRef.current(
+          remoteId,
+          "audio_confirm_playback_grace"
+        );
+        triggerRemoteAudioReplayRef.current(
+          remoteId,
+          "audio_confirm_playback_grace"
+        );
+        logVoiceAudioConfirmTimer({
+          remoteId,
+          phase: "arm",
+          timeoutMs: CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS,
+          sig: currentPc.signalingState,
+          conn: currentPc.connectionState,
+          ice: currentPc.iceConnectionState,
+          tracks: getPeerMedia(remoteId).remoteTracksCount,
+          ontrack: timestamps.lastOnTrackAt != null,
+          offerSent: fireMarks.offer_sent,
+          offerReceived: fireMarks.offer_received,
+          answerSent: fireMarks.answer_sent,
+          answerReceived: fireMarks.answer_received,
+        });
+        const graceTimer = window.setTimeout(() => {
+          fireConnectedAudioConfirmTimeout(
+            remoteId,
+            "extended",
+            audioConfirmTimeoutMs
+          );
+        }, CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS);
+        connectedAudioConfirmTimersRef.current.set(remoteId, graceTimer);
+        console.log(
+          `[voice-audio-confirm] grace-extended remote=${compactDeviceId(remoteId)} ` +
+            `ms=${CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS} tracks=${getPeerMedia(remoteId).remoteTracksCount}`
+        );
+        return;
+      }
+
+      logVoiceNegotiationGap(remoteId, "connected_audio_confirm_timeout");
+      if (
+        p2pEnabledRef.current &&
+        turnFallbackEnabledRef.current &&
+        voiceRouteRef.current === "stun"
+      ) {
+        void attemptTurnFallbackForPeerRef.current(
+          remoteId,
+          "connected_audio_confirm_timeout"
+        );
+        return;
+      }
+
+      if (phase === "extended") {
+        ensureRemoteAudioMountedRef.current(
+          remoteId,
+          "audio_confirm_extended_recovery"
+        );
+        triggerRemoteAudioReplayRef.current(
+          remoteId,
+          "audio_confirm_extended_recovery"
+        );
+        void maybeSoftRenegotiatePeerRef
+          .current(remoteId)
+          .then((softOk) => {
+            if (softOk) return;
+            if (hasRemotePlaybackEvidence(remoteId)) return;
+            return attemptSignalingRecoverRef.current(
+              remoteId,
+              "connected_audio_confirm_timeout"
+            );
+          })
+          .finally(() => {
+            if (hasRemotePlaybackEvidence(remoteId)) return;
+            if (reconnectPendingRef.current.has(remoteId)) return;
+            if (!relayForcedRef.current) return;
+            scheduleReconnect(remoteId, 1200, {
+              reason: "connected_no_audio_confirm",
+              source: "connected_audio_confirm_timeout",
+              force: false,
+            });
+          });
+        return;
+      }
+
+      if (relayForcedRef.current) {
+        logVoiceAudioConfirmTimer({
+          remoteId,
+          phase: "reconnect_scheduled",
+          timeoutMs: audioConfirmTimeoutMs,
+          sig: currentPc.signalingState,
+          conn: currentPc.connectionState,
+          ice: currentPc.iceConnectionState,
+          tracks: getPeerMedia(remoteId).remoteTracksCount,
+          ontrack: timestamps.lastOnTrackAt != null,
+          offerSent: fireMarks.offer_sent,
+          offerReceived: fireMarks.offer_received,
+          answerSent: fireMarks.answer_sent,
+          answerReceived: fireMarks.answer_received,
+        });
+        scheduleReconnect(remoteId, 1200, {
+          reason: "connected_no_audio_confirm",
+          source: "connected_audio_confirm_timeout",
+          force: false,
+        });
+      }
+    },
+    [
+      getPeerMedia,
+      hasRemotePlaybackEvidence,
+      isPeerEstablishedForRecovery,
+      isRemoteMediaTransportReady,
+      scheduleReconnect,
+    ]
+  );
+
+  const armConnectedAudioConfirm = useCallback(
+    (remoteId: string, triggerReason: string) => {
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc) {
+        console.log(
+          `[voice-audio-confirm] phase=arm-skipped remote=${compactDeviceId(remoteId)} ` +
+            `reason=no_pc trigger=${triggerReason}`
+        );
+        return;
+      }
+
+      if (hasRemotePlaybackEvidence(remoteId)) {
+        cancelConnectedAudioConfirmTimer(remoteId, "already_confirmed", pc);
+        return;
+      }
+
+      const prevAudioConfirmTimer =
+        connectedAudioConfirmTimersRef.current.get(remoteId);
+      if (prevAudioConfirmTimer) {
+        const armedAt =
+          connectedAudioConfirmArmedAtRef.current.get(remoteId) ?? 0;
+        const armAgeMs = armedAt > 0 ? Date.now() - armedAt : Infinity;
+        if (armAgeMs < AUDIO_CONFIRM_REARM_DEDUPE_MS) {
+          logVoiceAudioConfirmTimer({
+            remoteId,
+            phase: "arm",
+            reason:
+              triggerReason === "pc_connected"
+                ? "skipped_duplicate_connected"
+                : `skipped_duplicate_${triggerReason}`,
+            sig: pc.signalingState,
+            conn: pc.connectionState,
+            ice: pc.iceConnectionState,
+          });
+          return;
+        }
+        cancelConnectedAudioConfirmTimer(remoteId, "reconnected_pc", pc);
+      }
+
+      const audioConfirmTimeoutMs =
+        getConnectedAudioConfirmTimeoutMs(inCallMemberCount);
+      const marks = getPeerPipelineMarks(remoteId);
+      const timestamps =
+        peerSignalTimestampsRef.current.get(remoteId) ??
+        emptyPeerSignalTimestamps();
+
+      logVoiceAudioConfirmTimer({
+        remoteId,
+        phase: "arm",
+        reason: triggerReason,
+        timeoutMs: audioConfirmTimeoutMs,
+        sig: pc.signalingState,
+        conn: pc.connectionState,
+        ice: pc.iceConnectionState,
+        tracks: getPeerMedia(remoteId).remoteTracksCount,
+        ontrack:
+          timestamps.lastOnTrackAt != null || marks.remote_track_received,
+        offerSent: marks.offer_sent,
+        offerReceived: marks.offer_received,
+        answerSent: marks.answer_sent,
+        answerReceived: marks.answer_received,
+      });
+      connectedAudioConfirmArmedAtRef.current.set(remoteId, Date.now());
+
+      const timer = window.setTimeout(() => {
+        fireConnectedAudioConfirmTimeout(
+          remoteId,
+          "initial",
+          audioConfirmTimeoutMs
+        );
+      }, audioConfirmTimeoutMs);
+      connectedAudioConfirmTimersRef.current.set(remoteId, timer);
+    },
+    [
+      cancelConnectedAudioConfirmTimer,
+      fireConnectedAudioConfirmTimeout,
+      getPeerMedia,
+      hasRemotePlaybackEvidence,
+      inCallMemberCount,
+    ]
+  );
+
+  useEffect(() => {
+    armConnectedAudioConfirmRef.current = armConnectedAudioConfirm;
+  }, [armConnectedAudioConfirm]);
 
   const attachRemoteTrackDiagnostics = useCallback(
     (remoteId: string, track: MediaStreamTrack) => {
@@ -6127,210 +6425,7 @@ export function usePeerConnections({
           markIceTransportConfirmed(remoteId, pc);
 
           connectedAudioConfirmGraceRef.current.delete(remoteId);
-
-          let skipArmConfirmTimer = false;
-          if (hasRemotePlaybackEvidence(remoteId)) {
-            cancelConnectedAudioConfirmTimer(remoteId, "already_confirmed", pc);
-            skipArmConfirmTimer = true;
-          } else {
-            const prevAudioConfirmTimer =
-              connectedAudioConfirmTimersRef.current.get(remoteId);
-            if (prevAudioConfirmTimer) {
-              const armedAt =
-                connectedAudioConfirmArmedAtRef.current.get(remoteId) ?? 0;
-              const armAgeMs = armedAt > 0 ? Date.now() - armedAt : Infinity;
-              if (armAgeMs < AUDIO_CONFIRM_REARM_DEDUPE_MS) {
-                logVoiceAudioConfirmTimer({
-                  remoteId,
-                  phase: "arm",
-                  reason: "skipped_duplicate_connected",
-                  sig: pc.signalingState,
-                  conn: pc.connectionState,
-                  ice: pc.iceConnectionState,
-                });
-                skipArmConfirmTimer = true;
-              } else {
-                cancelConnectedAudioConfirmTimer(remoteId, "reconnected_pc", pc);
-              }
-            }
-          }
-
-          const audioConfirmTimeoutMs =
-            getConnectedAudioConfirmTimeoutMs(inCallMemberCount);
-
-          if (!skipArmConfirmTimer) {
-            const marks = getPeerPipelineMarks(remoteId);
-            logVoiceAudioConfirmTimer({
-              remoteId,
-              phase: "arm",
-              timeoutMs: audioConfirmTimeoutMs,
-              sig: pc.signalingState,
-              conn: pc.connectionState,
-              ice: pc.iceConnectionState,
-              tracks: getPeerMedia(remoteId).remoteTracksCount,
-              ontrack:
-                (peerSignalTimestampsRef.current.get(remoteId)?.lastOnTrackAt ??
-                  null) != null,
-              offerSent: marks.offer_sent,
-              offerReceived: marks.offer_received,
-              answerSent: marks.answer_sent,
-              answerReceived: marks.answer_received,
-            });
-            connectedAudioConfirmArmedAtRef.current.set(remoteId, Date.now());
-          }
-
-          const runConnectedAudioConfirmTimeout = (
-            phase: "initial" | "extended"
-          ) => {
-            connectedAudioConfirmTimersRef.current.delete(remoteId);
-            const currentPc = pcsRef.current.get(remoteId);
-            if (!currentPc || currentPc !== pc) return;
-            if (isPeerEstablishedForRecovery(remoteId, currentPc)) return;
-            if (hasRemotePlaybackEvidence(remoteId)) {
-              console.log(
-                `[voice-audio-confirm] timeout-suppressed remote=${compactDeviceId(remoteId)} ` +
-                  `reason=playback_evidence phase=${phase}`
-              );
-              return;
-            }
-
-            const fireMarks = getPeerPipelineMarks(remoteId);
-            const timestamps =
-              peerSignalTimestampsRef.current.get(remoteId) ??
-              emptyPeerSignalTimestamps();
-            logVoiceAudioConfirmTimer({
-              remoteId,
-              phase: "fire",
-              timeoutMs:
-                phase === "extended"
-                  ? CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS
-                  : audioConfirmTimeoutMs,
-              sig: currentPc.signalingState,
-              conn: currentPc.connectionState,
-              ice: currentPc.iceConnectionState,
-              tracks: getPeerMedia(remoteId).remoteTracksCount,
-              ontrack: timestamps.lastOnTrackAt != null,
-              offerSent: fireMarks.offer_sent,
-              offerReceived: fireMarks.offer_received,
-              answerSent: fireMarks.answer_sent,
-              answerReceived: fireMarks.answer_received,
-            });
-
-            if (
-              isRemoteMediaTransportReady(remoteId, currentPc) &&
-              phase === "initial"
-            ) {
-              connectedAudioConfirmGraceRef.current.set(remoteId, 1);
-              ensureRemoteAudioMountedRef.current(
-                remoteId,
-                "audio_confirm_playback_grace"
-              );
-              triggerRemoteAudioReplayRef.current(
-                remoteId,
-                "audio_confirm_playback_grace"
-              );
-              logVoiceAudioConfirmTimer({
-                remoteId,
-                phase: "arm",
-                timeoutMs: CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS,
-                sig: currentPc.signalingState,
-                conn: currentPc.connectionState,
-                ice: currentPc.iceConnectionState,
-                tracks: getPeerMedia(remoteId).remoteTracksCount,
-                ontrack: timestamps.lastOnTrackAt != null,
-                offerSent: fireMarks.offer_sent,
-                offerReceived: fireMarks.offer_received,
-                answerSent: fireMarks.answer_sent,
-                answerReceived: fireMarks.answer_received,
-              });
-              const graceTimer = window.setTimeout(() => {
-                runConnectedAudioConfirmTimeout("extended");
-              }, CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS);
-              connectedAudioConfirmTimersRef.current.set(remoteId, graceTimer);
-              console.log(
-                `[voice-audio-confirm] grace-extended remote=${compactDeviceId(remoteId)} ` +
-                  `ms=${CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS} tracks=${getPeerMedia(remoteId).remoteTracksCount}`
-              );
-              return;
-            }
-
-            logVoiceNegotiationGap(remoteId, "connected_audio_confirm_timeout");
-            if (
-              p2pEnabledRef.current &&
-              turnFallbackEnabledRef.current &&
-              voiceRouteRef.current === "stun"
-            ) {
-              void attemptTurnFallbackForPeerRef.current(
-                remoteId,
-                "connected_audio_confirm_timeout"
-              );
-              return;
-            }
-
-            if (phase === "extended") {
-              ensureRemoteAudioMountedRef.current(
-                remoteId,
-                "audio_confirm_extended_recovery"
-              );
-              triggerRemoteAudioReplayRef.current(
-                remoteId,
-                "audio_confirm_extended_recovery"
-              );
-              void maybeSoftRenegotiatePeerRef
-                .current(remoteId)
-                .then((softOk) => {
-                  if (softOk) return;
-                  if (hasRemotePlaybackEvidence(remoteId)) return;
-                  return attemptSignalingRecoverRef.current(
-                    remoteId,
-                    "connected_audio_confirm_timeout"
-                  );
-                })
-                .finally(() => {
-                  if (hasRemotePlaybackEvidence(remoteId)) return;
-                  if (reconnectPendingRef.current.has(remoteId)) return;
-                  if (!relayForcedRef.current) return;
-                  scheduleReconnect(remoteId, 1200, {
-                    reason: "connected_no_audio_confirm",
-                    source: "connected_audio_confirm_timeout",
-                    force: false,
-                  });
-                });
-              return;
-            }
-
-            if (relayForcedRef.current) {
-              logVoiceAudioConfirmTimer({
-                remoteId,
-                phase: "reconnect_scheduled",
-                timeoutMs: audioConfirmTimeoutMs,
-                sig: currentPc.signalingState,
-                conn: currentPc.connectionState,
-                ice: currentPc.iceConnectionState,
-                tracks: getPeerMedia(remoteId).remoteTracksCount,
-                ontrack: timestamps.lastOnTrackAt != null,
-                offerSent: fireMarks.offer_sent,
-                offerReceived: fireMarks.offer_received,
-                answerSent: fireMarks.answer_sent,
-                answerReceived: fireMarks.answer_received,
-              });
-              scheduleReconnect(remoteId, 1200, {
-                reason: "connected_no_audio_confirm",
-                source: "connected_audio_confirm_timeout",
-                force: false,
-              });
-            }
-          };
-
-          if (!skipArmConfirmTimer) {
-            const audioConfirmTimer = window.setTimeout(() => {
-              runConnectedAudioConfirmTimeout("initial");
-            }, audioConfirmTimeoutMs);
-            connectedAudioConfirmTimersRef.current.set(
-              remoteId,
-              audioConfirmTimer
-            );
-          }
+          armConnectedAudioConfirm(remoteId, "pc_connected");
 
           const sender = pc
             .getSenders()
@@ -6485,6 +6580,7 @@ export function usePeerConnections({
     },
     [
       assignConnectionId,
+      armConnectedAudioConfirm,
       buildIceDisconnectedGuardInput,
       cancelConnectedAudioConfirmTimer,
       clearIceDisconnectedGraceTimer,
