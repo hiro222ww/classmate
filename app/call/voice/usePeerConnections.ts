@@ -101,6 +101,7 @@ import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
 import { normalizeVoiceTransportSettings } from "@/lib/voiceTransportMode";
 import { fetchWithRetry } from "@/lib/retryableFetch";
 import {
+  ANSWER_WAIT_TIMEOUT_MS,
   CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS,
   HAVE_LOCAL_OFFER_STUCK_MS,
   NO_STREAM_NO_OFFER_FORCE_MS,
@@ -1148,6 +1149,14 @@ export function usePeerConnections({
   const attachedTrackIdsRef = useRef<Map<string, Set<string>>>(new Map());
   const trackEndedAtRef = useRef<Map<string, number>>(new Map());
   const endedHoldTimersRef = useRef<Map<string, number>>(new Map());
+  const answerWaitTimersRef = useRef<Map<string, number>>(new Map());
+  const answerWaitMetaRef = useRef<
+    Map<string, { connectionId: string; reason: string; armedAt: number }>
+  >(new Map());
+  const answerWaitRetriedByConnRef = useRef<Map<string, string>>(new Map());
+  const clearAnswerWaitTimerRef = useRef<
+    (remoteId: string, cancelReason?: string) => void
+  >(() => {});
   const passiveWaitOfferTimersRef = useRef<Map<string, number>>(new Map());
   const passiveFallbackOfferByConnRef = useRef<Map<string, string>>(new Map());
   const passiveWaitOfferMetaRef = useRef<
@@ -1399,6 +1408,29 @@ export function usePeerConnections({
       passiveWaitOfferTimersRef.current.delete(remoteId);
     }
   }, []);
+
+  const clearAnswerWaitTimer = useCallback(
+    (remoteId: string, cancelReason?: string) => {
+      const timer = answerWaitTimersRef.current.get(remoteId);
+      if (timer) {
+        window.clearTimeout(timer);
+        answerWaitTimersRef.current.delete(remoteId);
+      }
+      const meta = answerWaitMetaRef.current.get(remoteId);
+      if (cancelReason && meta) {
+        console.log(
+          `[voice-signal] answer_wait_cancel remote=${compactDeviceId(remoteId)} ` +
+            `reason=${cancelReason} connectionId=${compactConnectionId(meta.connectionId)}`
+        );
+      }
+      answerWaitMetaRef.current.delete(remoteId);
+    },
+    []
+  );
+
+  useEffect(() => {
+    clearAnswerWaitTimerRef.current = clearAnswerWaitTimer;
+  }, [clearAnswerWaitTimer]);
 
   const cancelPassiveWaitOffer = useCallback(
     (remoteId: string, reason: string) => {
@@ -4386,6 +4418,7 @@ export function usePeerConnections({
       passiveFallbackOfferByConnRef.current.delete(remoteId);
       passiveJoinSettledRef.current.delete(remoteId);
       passiveWaitOfferMetaRef.current.delete(remoteId);
+      clearAnswerWaitTimerRef.current(remoteId, "peer_closed");
       cancelConnectedAudioConfirmTimer(remoteId, "peer_closed", pc);
 
       connectStartedAtRef.current.delete(remoteId);
@@ -6724,10 +6757,19 @@ export function usePeerConnections({
 
         await pc.setLocalDescription(offer);
 
-        await sendSignal(remoteId, "offer", {
+        const sendResult = await sendSignal(remoteId, "offer", {
           connectionId,
           sdp: pc.localDescription,
         });
+        if (!sendResult.ok) {
+          offeredPeersRef.current.delete(remoteId);
+          console.warn(
+            `[voice-signal] offer-send-failed remote=${compactDeviceId(remoteId)} reason=${reason} ` +
+              `connectionId=${compactConnectionId(connectionId)} ` +
+              `name=${sendResult.errorName ?? "unknown"} message=${sendResult.errorMessage ?? "unknown"}`
+          );
+          return;
+        }
         console.log(
           `[voice-signal] offer-send remote=${compactDeviceId(remoteId)} reason=${reason} ` +
             `connectionId=${compactConnectionId(connectionId)} sig=${pc.signalingState}`
@@ -6735,6 +6777,7 @@ export function usePeerConnections({
         markVoiceNegotiationStep(remoteId, "offer_send", `reason=${reason}`);
         touchPeerSignal(remoteId, "offer_sent");
         markVoicePerf("offer_sent", { remoteId, extra: reason });
+        scheduleAnswerWaitTimeoutRef.current(remoteId, connectionId, reason);
         emitMeshSummary("offer_sent", { immediate: true });
 
         if (
@@ -6781,6 +6824,77 @@ export function usePeerConnections({
       touchPeerSignal,
     ]
   );
+
+  const scheduleAnswerWaitTimeoutRef = useRef<
+    (remoteId: string, connectionId: string, reason: string) => void
+  >(() => {});
+
+  const scheduleAnswerWaitTimeout = useCallback(
+    (remoteId: string, connectionId: string, reason: string) => {
+      clearAnswerWaitTimer(remoteId);
+
+      const armedAt = Date.now();
+      answerWaitMetaRef.current.set(remoteId, {
+        connectionId,
+        reason,
+        armedAt,
+      });
+
+      const timer = window.setTimeout(() => {
+        answerWaitTimersRef.current.delete(remoteId);
+        const meta = answerWaitMetaRef.current.get(remoteId);
+        answerWaitMetaRef.current.delete(remoteId);
+        if (!meta || meta.connectionId !== connectionId) return;
+
+        const pc = pcsRef.current.get(remoteId);
+        const marks = getPeerPipelineMarks(remoteId);
+        const ageMs = Date.now() - meta.armedAt;
+
+        if (marks.answer_received) return;
+        if (pc?.signalingState !== "have-local-offer") return;
+
+        console.log(
+          `[voice-signal] answer_wait_timeout remote=${compactDeviceId(remoteId)} ` +
+            `connectionId=${compactConnectionId(connectionId)} offerReason=${meta.reason} ` +
+            `ageMs=${ageMs} sig=${pc.signalingState} conn=${pc.connectionState} ` +
+            `ice=${pc.iceConnectionState} answerReceived=${marks.answer_received ? 1 : 0}`
+        );
+
+        if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) return;
+
+        if (answerWaitRetriedByConnRef.current.get(remoteId) === connectionId) {
+          offeredPeersRef.current.delete(remoteId);
+          scheduleReconnect(remoteId, 1200, {
+            reason: "answer_wait_timeout",
+            source: "answer_wait_timeout",
+            force: false,
+          });
+          return;
+        }
+
+        answerWaitRetriedByConnRef.current.set(remoteId, connectionId);
+        offeredPeersRef.current.delete(remoteId);
+        passiveFallbackOfferByConnRef.current.delete(remoteId);
+        void startPeerOffer(remoteId, {
+          force: true,
+          reason: "answer_wait_timeout_retry",
+        });
+      }, ANSWER_WAIT_TIMEOUT_MS);
+
+      answerWaitTimersRef.current.set(remoteId, timer);
+    },
+    [
+      clearAnswerWaitTimer,
+      getPeerPipelineMarks,
+      scheduleReconnect,
+      shouldSuppressAutoVoiceRecoveryForPeer,
+      startPeerOffer,
+    ]
+  );
+
+  useEffect(() => {
+    scheduleAnswerWaitTimeoutRef.current = scheduleAnswerWaitTimeout;
+  }, [scheduleAnswerWaitTimeout]);
 
   const maybeStartOffer = useCallback(
     async (remoteId: string) => {
@@ -6944,7 +7058,9 @@ export function usePeerConnections({
 
       const delayMs = opts?.initialJoin
         ? PASSIVE_WAIT_OFFER_INITIAL_MS
-        : triggerReason === "mic_ready" || triggerReason === "all_ready"
+        : triggerReason === "mic_ready" ||
+            triggerReason === "all_ready" ||
+            triggerReason === "settings_turn_signal_ready"
           ? PASSIVE_WAIT_OFFER_MIC_READY_MS
           : PASSIVE_WAIT_OFFER_TIMEOUT_MS;
 
@@ -9921,6 +10037,8 @@ export function usePeerConnections({
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
           touchPeerSignal(remoteId, "answer_received");
+          clearAnswerWaitTimer(remoteId, "answer_received");
+          answerWaitRetriedByConnRef.current.delete(remoteId);
           cancelPassiveWaitOffer(remoteId, "answer_received");
           passiveFallbackOfferByConnRef.current.delete(remoteId);
           emitMeshSummary("answer_received", { immediate: true });
@@ -9978,6 +10096,7 @@ export function usePeerConnections({
       addRemoteIceCandidate,
       assignConnectionId,
       cancelPassiveWaitOffer,
+      clearAnswerWaitTimer,
       clearPassiveReconnectState,
       closePeer,
       createPeerConnection,
@@ -10458,19 +10577,25 @@ export function usePeerConnections({
   }, [micReady, signalReady, healPeerConnections]);
 
   const prevAllVoiceStartReadyRef = useRef(false);
+  const prevSettingsTurnSignalReadyRef = useRef(false);
 
-  const isAllVoiceStartReady = useCallback((): boolean => {
+  const isSettingsTurnSignalReady = useCallback((): boolean => {
     if (!signalReady || !voiceSettingsReadyRef.current) return false;
     if (voiceTransportDisabledRef.current) return false;
     if (relayForcedRef.current && !hasTurnIceServer(iceServersRef.current)) {
       return false;
     }
+    const remoteIds = getRemoteIds().filter((remoteId) => isRemoteInCall(remoteId));
+    return remoteIds.length > 0;
+  }, [getRemoteIds, isRemoteInCall, signalReady]);
+
+  const isAllVoiceStartReady = useCallback((): boolean => {
+    if (!isSettingsTurnSignalReady()) return false;
     const receiveOnly = isReceiveOnlyMutedSession(
       voicePolicy.releaseMicOnMute,
       userMutedRef
     );
     const remoteIds = getRemoteIds().filter((remoteId) => isRemoteInCall(remoteId));
-    if (remoteIds.length === 0) return false;
     const activeCanStart =
       micReady &&
       (isLocalTrackLive(localAudioTrackRef, localStreamRef) || receiveOnly);
@@ -10480,10 +10605,10 @@ export function usePeerConnections({
     deviceId,
     getRemoteIds,
     isRemoteInCall,
+    isSettingsTurnSignalReady,
     localAudioTrackRef,
     localStreamRef,
     micReady,
-    signalReady,
     userMutedRef,
   ]);
 
@@ -10527,19 +10652,50 @@ export function usePeerConnections({
   );
 
   useEffect(() => {
+    const settingsReady = isSettingsTurnSignalReady();
     const allReady = isAllVoiceStartReady();
-    const wasReady = prevAllVoiceStartReadyRef.current;
+    const wasAllReady = prevAllVoiceStartReadyRef.current;
+    const wasSettingsReady = prevSettingsTurnSignalReadyRef.current;
     prevAllVoiceStartReadyRef.current = allReady;
-    if (!allReady || wasReady) return;
-    runStartAfterAllReady("all_ready");
+    prevSettingsTurnSignalReadyRef.current = settingsReady;
+
+    if (allReady && !wasAllReady) {
+      const receiveOnly = isReceiveOnlyMutedSession(
+        voicePolicy.releaseMicOnMute,
+        userMutedRef
+      );
+      const activeCanStart =
+        micReady &&
+        (isLocalTrackLive(localAudioTrackRef, localStreamRef) || receiveOnly);
+      const trigger = activeCanStart ? "all_ready" : "settings_turn_signal_ready";
+      runStartAfterAllReady(trigger);
+      return;
+    }
+
+    if (settingsReady && !wasSettingsReady && !allReady) {
+      const passiveCanStart = getRemoteIds()
+        .filter((remoteId) => isRemoteInCall(remoteId))
+        .some((remoteId) => deviceId > remoteId);
+      if (passiveCanStart && !micReady) {
+        runStartAfterAllReady("settings_turn_signal_ready");
+      }
+    }
   }, [
+    deviceId,
+    getRemoteIds,
     isAllVoiceStartReady,
+    isRemoteInCall,
+    isSettingsTurnSignalReady,
+    localAudioTrackRef,
+    localStreamRef,
     micReady,
     runStartAfterAllReady,
     settingsReadyTick,
     signalReady,
     turnReadyTick,
+    userMutedRef,
     voiceMembersFingerprint,
+    voicePolicy.releaseMicOnMute,
   ]);
 
   useEffect(() => {
@@ -10645,6 +10801,15 @@ export function usePeerConnections({
       passiveWaitOfferTimersRef.current.clear();
       passiveFallbackOfferByConnRef.current.clear();
       passiveWaitOfferMetaRef.current.clear();
+
+      for (const timer of answerWaitTimersRef.current.values()) {
+        window.clearTimeout(timer);
+        timerCount += 1;
+      }
+      answerWaitTimersRef.current.clear();
+      answerWaitMetaRef.current.clear();
+      answerWaitRetriedByConnRef.current.clear();
+
       activeOfferJoinLoggedRef.current.clear();
       softResetAttemptCountRef.current.clear();
       softResetLastAtRef.current.clear();

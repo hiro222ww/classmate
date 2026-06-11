@@ -35,6 +35,9 @@ export const VOICE_JOIN_STABILIZATION_MS = 2000;
 /** Wait for answer/ICE before treating have-local-offer as stuck. */
 export const HAVE_LOCAL_OFFER_STUCK_MS = 12_000;
 
+/** Log (and optionally retry) when local offer is sent but no answer arrives. */
+export const ANSWER_WAIT_TIMEOUT_MS = 10_000;
+
 /** Passive/active deadlock probe before force-offer (after stabilization). */
 export const NO_STREAM_NO_OFFER_FORCE_MS = 9000;
 
