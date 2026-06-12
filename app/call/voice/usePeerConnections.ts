@@ -341,6 +341,8 @@ type UsePeerConnectionsArgs = {
     signalReady: boolean;
     turnReady: boolean;
     voiceEnabled: boolean;
+    awaitingAnswerPeerIds: string[];
+    anyAwaitingAnswer: boolean;
   }) => void;
   onSoftResetExhausted?: (remoteId: string, reason: VoiceSoftResetTriggerReason) => void;
   voiceLayerInstanceId?: string;
@@ -464,10 +466,25 @@ function evaluateAutoHardResetTrigger(params: {
   connectStartedAt: number | null;
   p2pDirectFailedAt: number | null;
   nowMs: number;
+  awaitingRemoteAnswer?: boolean;
 }): string | null {
   const { timestamps, nowMs } = params;
   const conn = params.pc?.connectionState ?? "-";
   const ice = params.pc?.iceConnectionState ?? "-";
+  const sig = params.pc?.signalingState ?? "-";
+
+  if (params.awaitingRemoteAnswer) {
+    return null;
+  }
+
+  if (
+    sig === "have-local-offer" &&
+    conn !== "connected" &&
+    ice !== "connected" &&
+    ice !== "completed"
+  ) {
+    return null;
+  }
 
   if (conn === "failed" || ice === "failed") {
     return "transport_failed";
@@ -1410,7 +1427,7 @@ export function usePeerConnections({
   }, []);
 
   const clearAnswerWaitTimer = useCallback(
-    (remoteId: string, cancelReason?: string) => {
+    (remoteId: string, cancelReason?: string, caller = "unknown") => {
       const timer = answerWaitTimersRef.current.get(remoteId);
       if (timer) {
         window.clearTimeout(timer);
@@ -1418,9 +1435,16 @@ export function usePeerConnections({
       }
       const meta = answerWaitMetaRef.current.get(remoteId);
       if (cancelReason && meta) {
+        const elapsedMs = Date.now() - meta.armedAt;
+        const pc = pcsRef.current.get(remoteId) ?? null;
         console.log(
           `[voice-signal] answer_wait_cancel remote=${compactDeviceId(remoteId)} ` +
-            `reason=${cancelReason} connectionId=${compactConnectionId(meta.connectionId)}`
+            `reason=${cancelReason} caller=${caller} ` +
+            `connectionId=${compactConnectionId(meta.connectionId)} ` +
+            `currentConnectionId=${compactConnectionId(connectionIdsRef.current.get(remoteId))} ` +
+            `elapsedMs=${elapsedMs} sig=${pc?.signalingState ?? "-"} ` +
+            `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"} ` +
+            `offerReason=${meta.reason}`
         );
       }
       answerWaitMetaRef.current.delete(remoteId);
@@ -1835,18 +1859,33 @@ export function usePeerConnections({
       const remoteIds = getRemoteIds();
       const turnReady =
         !relayForcedRef.current || hasTurnIceServer(iceServersRef.current);
+      const awaitingAnswerPeerIds = remoteIds.filter((remoteId) => {
+        const meta = answerWaitMetaRef.current.get(remoteId) ?? null;
+        const armed =
+          answerWaitTimersRef.current.has(remoteId) || meta != null;
+        const marks = getPeerPipelineMarks(remoteId);
+        const pc = pcsRef.current.get(remoteId) ?? null;
+        return (
+          armed &&
+          !marks.answer_received &&
+          (pc?.signalingState === "have-local-offer" || marks.offer_sent)
+        );
+      });
       const snapshot = {
         remoteIds,
         settingsReady: voiceSettingsReadyRef.current,
         signalReady,
         turnReady,
         voiceEnabled: !voiceTransportDisabledRef.current,
+        awaitingAnswerPeerIds,
+        anyAwaitingAnswer: awaitingAnswerPeerIds.length > 0,
       };
       onReadinessSnapshotRef.current?.(snapshot);
       debugConsoleLog(
         `[voice-peer] readiness reason=${reason} remoteIds=${remoteIds.length} ` +
           `settingsReady=${snapshot.settingsReady ? 1 : 0} signalReady=${snapshot.signalReady ? 1 : 0} ` +
           `turnReady=${snapshot.turnReady ? 1 : 0} voiceEnabled=${snapshot.voiceEnabled ? 1 : 0} ` +
+          `awaitingAnswer=${snapshot.anyAwaitingAnswer ? 1 : 0} ` +
           `turnWaitMs=${snapshot.turnReady ? 0 : "pending"}`
       );
     },
@@ -3236,6 +3275,42 @@ export function usePeerConnections({
     return connectionIdsRef.current.get(remoteId) ?? null;
   }, []);
 
+  const getPeerAnswerWaitState = useCallback(
+    (remoteId: string) => {
+      const meta = answerWaitMetaRef.current.get(remoteId) ?? null;
+      const armed =
+        answerWaitTimersRef.current.has(remoteId) || meta != null;
+      const marks = getPeerPipelineMarks(remoteId);
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const elapsedMs = meta ? Date.now() - meta.armedAt : 0;
+      const remainingMs = meta
+        ? Math.max(0, ANSWER_WAIT_TIMEOUT_MS - elapsedMs)
+        : 0;
+      const awaiting =
+        armed &&
+        !marks.answer_received &&
+        (pc?.signalingState === "have-local-offer" || marks.offer_sent);
+      return {
+        awaiting,
+        meta,
+        pc,
+        marks,
+        elapsedMs,
+        remainingMs,
+        connectionId: meta?.connectionId ?? null,
+        currentConnectionId: getCurrentConnectionId(remoteId),
+        signalingState: pc?.signalingState ?? "-",
+        offerReason: meta?.reason ?? "-",
+      };
+    },
+    [getCurrentConnectionId]
+  );
+
+  const isPeerAwaitingRemoteAnswer = useCallback(
+    (remoteId: string) => getPeerAnswerWaitState(remoteId).awaiting,
+    [getPeerAnswerWaitState]
+  );
+
   const setCurrentConnectionId = useCallback(
     (remoteId: string, connectionId: string) => {
       connectionIdsRef.current.set(remoteId, connectionId);
@@ -4318,6 +4393,25 @@ export function usePeerConnections({
         return false;
       }
 
+      const answerWait = getPeerAnswerWaitState(remoteId);
+      const bypassAnswerWaitClose =
+        reason === "leave_signal" ||
+        reason === "voice_layer_cleanup" ||
+        reason === "session_changed" ||
+        caller === "performVoicePeerCleanup";
+      if (answerWait.awaiting && !bypassAnswerWaitClose) {
+        console.log(
+          `[voice-peer] close-blocked-awaiting-answer remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} caller=${caller} ` +
+            `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
+            `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
+            `elapsedMs=${answerWait.elapsedMs} remainingMs=${answerWait.remainingMs} ` +
+            `sig=${answerWait.signalingState} conn=${answerWait.pc?.connectionState ?? "-"} ` +
+            `ice=${answerWait.pc?.iceConnectionState ?? "-"} offerReason=${answerWait.offerReason}`
+        );
+        return false;
+      }
+
       const playbackEvidence = getPlaybackEstablishedEvidence(remoteId);
       const mutationBlock = evaluateVoicePeerMutationBlock({
         kind: "close",
@@ -4418,7 +4512,7 @@ export function usePeerConnections({
       passiveFallbackOfferByConnRef.current.delete(remoteId);
       passiveJoinSettledRef.current.delete(remoteId);
       passiveWaitOfferMetaRef.current.delete(remoteId);
-      clearAnswerWaitTimerRef.current(remoteId, "peer_closed");
+      clearAnswerWaitTimerRef.current(remoteId, "peer_closed", caller);
       cancelConnectedAudioConfirmTimer(remoteId, "peer_closed", pc);
 
       connectStartedAtRef.current.delete(remoteId);
@@ -4521,6 +4615,7 @@ export function usePeerConnections({
       clearCurrentConnectionId,
       emitPeerStates,
       getPlaybackEstablishedEvidence,
+      getPeerAnswerWaitState,
       hasLiveRemoteAudioStream,
       hasStaleEndedRemoteAudio,
       shouldHoldCloseForReconnectClearEnded,
@@ -4749,6 +4844,28 @@ export function usePeerConnections({
           ...decisionInputEarly,
           allow: false,
           blockReason: "p2p_established_recovery",
+        });
+        return false;
+      }
+
+      const answerWait = getPeerAnswerWaitState(remoteId);
+      if (
+        answerWait.awaiting &&
+        reasonRaw !== "answer_wait_timeout" &&
+        sourceRaw !== "answer_wait_timeout"
+      ) {
+        console.log(
+          `[voice-peer] reconnect-blocked-awaiting-answer remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reasonRaw} source=${sourceRaw} callerHint=${callerHint} ` +
+            `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
+            `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
+            `elapsedMs=${answerWait.elapsedMs} remainingMs=${answerWait.remainingMs} ` +
+            `sig=${answerWait.signalingState}`
+        );
+        logVoiceReconnectDecision("voice-reconnect-blocked", {
+          ...decisionInputEarly,
+          allow: false,
+          blockReason: "awaiting_remote_answer",
         });
         return false;
       }
@@ -5034,6 +5151,7 @@ export function usePeerConnections({
       assignConnectionId,
       markRecoveryStart,
       micReady,
+      getPeerAnswerWaitState,
       getPeerMedia,
       hasRemotePlaybackEvidence,
       isPeerEstablishedForRecovery,
@@ -6840,6 +6958,14 @@ export function usePeerConnections({
         armedAt,
       });
 
+      console.log(
+        `[voice-signal] answer_wait_arm remote=${compactDeviceId(remoteId)} ` +
+          `connectionId=${compactConnectionId(connectionId)} ` +
+          `currentConnectionId=${compactConnectionId(getCurrentConnectionId(remoteId))} ` +
+          `offerReason=${reason} timeoutMs=${ANSWER_WAIT_TIMEOUT_MS} caller=scheduleAnswerWaitTimeout`
+      );
+      emitReadinessSnapshot("answer_wait_arm");
+
       const timer = window.setTimeout(() => {
         answerWaitTimersRef.current.delete(remoteId);
         const meta = answerWaitMetaRef.current.get(remoteId);
@@ -6849,16 +6975,19 @@ export function usePeerConnections({
         const pc = pcsRef.current.get(remoteId);
         const marks = getPeerPipelineMarks(remoteId);
         const ageMs = Date.now() - meta.armedAt;
+        const currentConnectionId = getCurrentConnectionId(remoteId);
 
         if (marks.answer_received) return;
         if (pc?.signalingState !== "have-local-offer") return;
 
         console.log(
           `[voice-signal] answer_wait_timeout remote=${compactDeviceId(remoteId)} ` +
-            `connectionId=${compactConnectionId(connectionId)} offerReason=${meta.reason} ` +
-            `ageMs=${ageMs} sig=${pc.signalingState} conn=${pc.connectionState} ` +
-            `ice=${pc.iceConnectionState} answerReceived=${marks.answer_received ? 1 : 0}`
+            `connectionId=${compactConnectionId(connectionId)} currentConnectionId=${compactConnectionId(currentConnectionId)} ` +
+            `offerReason=${meta.reason} elapsedMs=${ageMs} sig=${pc.signalingState} ` +
+            `conn=${pc.connectionState} ice=${pc.iceConnectionState} ` +
+            `answerReceived=${marks.answer_received ? 1 : 0} caller=scheduleAnswerWaitTimeout`
         );
+        emitReadinessSnapshot("answer_wait_timeout");
 
         if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) return;
 
@@ -6875,6 +7004,11 @@ export function usePeerConnections({
         answerWaitRetriedByConnRef.current.set(remoteId, connectionId);
         offeredPeersRef.current.delete(remoteId);
         passiveFallbackOfferByConnRef.current.delete(remoteId);
+        console.log(
+          `[voice-signal] answer_wait_retry remote=${compactDeviceId(remoteId)} ` +
+            `connectionId=${compactConnectionId(connectionId)} currentConnectionId=${compactConnectionId(currentConnectionId)} ` +
+            `elapsedMs=${ageMs} sig=${pc.signalingState} caller=scheduleAnswerWaitTimeout`
+        );
         void startPeerOffer(remoteId, {
           force: true,
           reason: "answer_wait_timeout_retry",
@@ -6885,6 +7019,8 @@ export function usePeerConnections({
     },
     [
       clearAnswerWaitTimer,
+      emitReadinessSnapshot,
+      getCurrentConnectionId,
       getPeerPipelineMarks,
       scheduleReconnect,
       shouldSuppressAutoVoiceRecoveryForPeer,
@@ -7327,6 +7463,19 @@ export function usePeerConnections({
     async (remoteId: string, reason: string, mode: PeerHardResetMode) => {
       if (!remoteId || remoteId === deviceId) return;
 
+      const answerWait = getPeerAnswerWaitState(remoteId);
+      if (answerWait.awaiting) {
+        console.log(
+          `[voice-peer] hard-reset-blocked-awaiting-answer remote=${compactDeviceId(remoteId)} ` +
+            `mode=${mode} trigger=${reason} ` +
+            `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
+            `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
+            `elapsedMs=${answerWait.elapsedMs} remainingMs=${answerWait.remainingMs} ` +
+            `sig=${answerWait.signalingState} caller=runPeerHardReset`
+        );
+        return;
+      }
+
       if (
         peerAutoRecoveryFrozenRef.current.has(remoteId) &&
         mode !== "manual"
@@ -7443,8 +7592,38 @@ export function usePeerConnections({
       deviceId,
       emitPeerStates,
       getCurrentConnectionId,
+      getPeerAnswerWaitState,
       setPeerState,
     ]
+  );
+
+  const logReconnectOfferDeferred = useCallback(
+    (
+      remoteId: string,
+      reconnectReason: string,
+      blockedReason: string,
+      extra?: Record<string, string | number | boolean>
+    ) => {
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const parts = [
+        `[voice-peer] reconnect-offer-deferred remote=${compactDeviceId(remoteId)}`,
+        `reconnectReason=${reconnectReason}`,
+        `blockedReason=${blockedReason}`,
+        `role=${deviceId < remoteId ? "active" : "passive"}`,
+        `connectionId=${compactConnectionId(getCurrentConnectionId(remoteId))}`,
+        `sig=${pc?.signalingState ?? "-"}`,
+        `conn=${pc?.connectionState ?? "-"}`,
+        `ice=${pc?.iceConnectionState ?? "-"}`,
+        formatVoiceModeSuffix(),
+      ];
+      if (extra) {
+        for (const [key, value] of Object.entries(extra)) {
+          parts.push(`${key}=${value}`);
+        }
+      }
+      console.log(parts.join(" "));
+    },
+    [deviceId, getCurrentConnectionId]
   );
 
   const beginReconnectAfterHardReset = useCallback(
@@ -7464,19 +7643,38 @@ export function usePeerConnections({
         shouldSuppressAutoVoiceRecoveryForPeer(remoteId) &&
         !manualHardResetHealPassRef.current.has(remoteId)
       ) {
+        logReconnectOfferDeferred(
+          remoteId,
+          reconnectReason,
+          "auto_recovery_frozen"
+        );
         return;
       }
 
       if (!connectionId) {
-        debugConsoleLog(
-          `[voice-signal] reconnect-request-failed remote=${compactDeviceId(remoteId)} ` +
-            `name=MissingConnectionId message=connection_id_missing reason=${reconnectReason} ${formatVoiceModeSuffix()}`
+        console.log(
+          `[voice-peer] reconnect-offer-deferred remote=${compactDeviceId(remoteId)} ` +
+            `reconnectReason=${reconnectReason} blockedReason=missing_connection_id ${formatVoiceModeSuffix()}`
         );
         return;
       }
 
       if (isOfferOwner || opts?.forceOffer) {
         clearPassiveReconnectState(remoteId);
+        if (!canSendVoiceOffer()) {
+          logReconnectOfferDeferred(
+            remoteId,
+            reconnectReason,
+            getMicOfferBlockReason()
+          );
+          createPeerConnection(remoteId, connectionId, {
+            caller: "beginReconnectAfterHardReset",
+            reason: reconnectReason,
+            force: reconnectReason === "manual_reconnect",
+          });
+          setPeerState(remoteId, "connecting");
+          return;
+        }
         await startPeerOffer(remoteId, {
           force: true,
           reason: reconnectReason,
@@ -7484,43 +7682,67 @@ export function usePeerConnections({
         return;
       }
 
-      let passiveState = passiveReconnectStateRef.current.get(remoteId);
-      if (!passiveState || passiveState.connectionId !== connectionId) {
-        passiveState = {
-          connectionId,
-          reconnectReason,
-          sentAt: null,
-          retryUsed: false,
-          retryTimerId: null,
-          hardResetAt: Date.now(),
-        };
-        passiveReconnectStateRef.current.set(remoteId, passiveState);
-      }
-
-      if (!opts?.skipReconnectRequest && passiveState.sentAt == null) {
-        await sendReconnectRequest(
-          remoteId,
-          connectionId,
-          passiveState.reconnectReason
-        );
-      }
-
+      clearPassiveReconnectState(remoteId);
       createPeerConnection(remoteId, connectionId, {
         caller: "beginReconnectAfterHardReset",
         reason: reconnectReason,
         force: reconnectReason === "manual_reconnect",
       });
       setPeerState(remoteId, "connecting");
+
+      if (!canSendVoiceOffer()) {
+        logReconnectOfferDeferred(
+          remoteId,
+          reconnectReason,
+          getMicOfferBlockReason()
+        );
+        schedulePassiveWaitOfferTimeout(remoteId, reconnectReason, {
+          forceReschedule: true,
+        });
+        return;
+      }
+
+      if (reconnectReason === "manual_reconnect") {
+        void startPeerOffer(remoteId, {
+          force: true,
+          reason: reconnectReason,
+        });
+        return;
+      }
+
+      const scheduled = schedulePassiveWaitOfferTimeout(remoteId, reconnectReason, {
+        forceReschedule: true,
+      });
+      if (!scheduled) {
+        logReconnectOfferDeferred(remoteId, reconnectReason, "passive_wait_not_scheduled");
+        void startPeerOffer(remoteId, {
+          force: true,
+          reason: `${reconnectReason}_passive_offer`,
+        });
+        return;
+      }
+
+      if (!opts?.skipReconnectRequest) {
+        await sendReconnectRequest(
+          remoteId,
+          connectionId,
+          reconnectReason
+        );
+      }
       schedulePassiveReconnectRequestRetry(remoteId);
       scheduleNoStreamNoOfferTimeout(remoteId, reconnectReason);
     },
     [
+      canSendVoiceOffer,
       clearPassiveReconnectState,
       createPeerConnection,
       deviceId,
       getCurrentConnectionId,
+      getMicOfferBlockReason,
+      logReconnectOfferDeferred,
       scheduleNoStreamNoOfferTimeout,
       schedulePassiveReconnectRequestRetry,
+      schedulePassiveWaitOfferTimeout,
       sendReconnectRequest,
       setPeerState,
       shouldSuppressAutoVoiceRecoveryForPeer,
@@ -7623,6 +7845,28 @@ export function usePeerConnections({
 
       const pc = pcsRef.current.get(remoteId) ?? null;
       const media = getPeerMedia(remoteId);
+
+      if (isPeerAwaitingRemoteAnswer(remoteId)) {
+        const answerWait = getPeerAnswerWaitState(remoteId);
+        logVoiceReconnectDecision("voice-hard-reset-decision", {
+          ...buildReconnectDecisionInput(
+            remoteId,
+            "awaiting_remote_answer",
+            "auto_hard_reset_eval"
+          ),
+          allow: false,
+          blockReason: "awaiting_remote_answer",
+        });
+        console.log(
+          `[voice-peer] auto-hard-reset-blocked remote=${compactDeviceId(remoteId)} ` +
+            `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
+            `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
+            `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
+            `elapsedMs=${answerWait.elapsedMs} sig=${answerWait.signalingState}`
+        );
+        return;
+      }
+
       const trigger = evaluateAutoHardResetTrigger({
         pc,
         timestamps,
@@ -7633,6 +7877,7 @@ export function usePeerConnections({
         connectStartedAt: connectStartedAtRef.current.get(remoteId) ?? null,
         p2pDirectFailedAt: p2pDirectFailedSignalAtRef.current.get(remoteId) ?? null,
         nowMs: Date.now(),
+        awaitingRemoteAnswer: isPeerAwaitingRemoteAnswer(remoteId),
       });
 
       if (!trigger) return;
@@ -7645,7 +7890,13 @@ export function usePeerConnections({
 
       void tryRunPeerAutoHardReset(remoteId, trigger);
     },
-    [buildReconnectDecisionInput, getPeerMedia, tryRunPeerAutoHardReset]
+    [
+      buildReconnectDecisionInput,
+      getPeerAnswerWaitState,
+      getPeerMedia,
+      isPeerAwaitingRemoteAnswer,
+      tryRunPeerAutoHardReset,
+    ]
   );
 
   const flushPendingReconnectRequests = useCallback(() => {
@@ -7661,6 +7912,18 @@ export function usePeerConnections({
 
   const manualPeerHardReset = useCallback(
     async (remoteId: string) => {
+      const answerWait = getPeerAnswerWaitState(remoteId);
+      if (answerWait.awaiting) {
+        console.log(
+          `[voice-peer] manual-hard-reset-blocked remote=${compactDeviceId(remoteId)} ` +
+            `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
+            `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
+            `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
+            `elapsedMs=${answerWait.elapsedMs} sig=${answerWait.signalingState} caller=manualPeerHardReset`
+        );
+        return;
+      }
+
       autoHardResetAttemptCountRef.current.delete(remoteId);
       autoHardResetGiveUpRef.current.delete(remoteId);
       autoHardResetInProgressRef.current.delete(remoteId);
@@ -7670,7 +7933,7 @@ export function usePeerConnections({
       });
       emitPeerStates();
     },
-    [beginReconnectAfterHardReset, emitPeerStates, runPeerHardReset]
+    [beginReconnectAfterHardReset, emitPeerStates, getPeerAnswerWaitState, runPeerHardReset]
   );
 
   const ensurePeerConnection = useCallback(
@@ -7945,6 +8208,16 @@ export function usePeerConnections({
       if (!remoteId || remoteId === deviceId) return;
       if (triggerReason === "max_attempts") return;
 
+      const answerWait = getPeerAnswerWaitState(remoteId);
+      if (answerWait.awaiting) {
+        console.log(
+          `[voice-soft-reset] blocked remote=${compactDeviceId(remoteId)} ` +
+            `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
+            `connectionId=${compactConnectionId(answerWait.connectionId)} caller=runPeerSoftReset`
+        );
+        return;
+      }
+
       const marks = getPeerPipelineMarks(remoteId);
       const hasPlaybackEvidence = hasRemotePlaybackEvidence(remoteId);
       const audioConfirmedStrict =
@@ -8030,6 +8303,7 @@ export function usePeerConnections({
       deviceId,
       emitPeerStates,
       ensurePeerConnection,
+      getPeerAnswerWaitState,
       hasRemotePlaybackEvidence,
       setPeerState,
     ]
@@ -8041,6 +8315,7 @@ export function usePeerConnections({
       if (!micReady || !signalReady) return;
       if (!isRemoteInCall(remoteId)) return;
       if (bidirectionalEstablishedRef.current.has(remoteId)) return;
+      if (isPeerAwaitingRemoteAnswer(remoteId)) return;
 
       const joinEpoch = voiceJoinEpochRef.current;
       if (joinEpoch.sessionId !== sessionId || joinEpoch.startedAt <= 0) return;
@@ -8123,6 +8398,7 @@ export function usePeerConnections({
       deviceId,
       getPeerMedia,
       hasRemotePlaybackEvidence,
+      isPeerAwaitingRemoteAnswer,
       isRemoteInCall,
       micReady,
       runPeerSoftReset,
@@ -10037,7 +10313,7 @@ export function usePeerConnections({
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           await flushPendingIce(remoteId, incomingConnectionId);
           touchPeerSignal(remoteId, "answer_received");
-          clearAnswerWaitTimer(remoteId, "answer_received");
+          clearAnswerWaitTimer(remoteId, "answer_received", "handleSignal");
           answerWaitRetriedByConnRef.current.delete(remoteId);
           cancelPassiveWaitOffer(remoteId, "answer_received");
           passiveFallbackOfferByConnRef.current.delete(remoteId);

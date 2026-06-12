@@ -314,6 +314,8 @@ export default function CallClient() {
     signalReady: false,
     turnReady: false,
     voiceEnabled: true,
+    awaitingAnswerPeerIds: [] as string[],
+    anyAwaitingAnswer: false,
   });
   const callReadySinceRef = useRef<number | null>(null);
   const callReadyStuckLoggedRef = useRef(false);
@@ -1834,6 +1836,8 @@ export default function CallClient() {
       signalReady: boolean;
       turnReady: boolean;
       voiceEnabled: boolean;
+      awaitingAnswerPeerIds: string[];
+      anyAwaitingAnswer: boolean;
     }) => {
       voiceReadinessRef.current = snapshot;
       runCallReadinessRecheckRef.current("voice_readiness");
@@ -2025,6 +2029,10 @@ export default function CallClient() {
         return;
       }
 
+      if (voiceReadinessRef.current.anyAwaitingAnswer) {
+        return;
+      }
+
       const elapsedMs = Date.now() - startedAt;
       if (elapsedMs < VOICE_PLAYBACK_CONNECT_TARGET_MS) return;
 
@@ -2042,6 +2050,16 @@ export default function CallClient() {
   }, [remoteMemberIds.length, sessionId, voiceLayerShouldRender]);
 
   const handleCallStuckReconnect = useCallback(() => {
+    if (voiceReadinessRef.current.anyAwaitingAnswer) {
+      console.log(
+        `[call-ready-stuck] manual-reconnect-blocked reason=awaiting_remote_answer ` +
+          `peers=${voiceReadinessRef.current.awaitingAnswerPeerIds
+            .map((id) => id.slice(-4))
+            .join(",") || "-"}`
+      );
+      return;
+    }
+
     const snap = buildCallReadinessSnapshot();
     logCallReadyCheck(snap, "manual_reconnect");
     callReadySinceRef.current = Date.now();

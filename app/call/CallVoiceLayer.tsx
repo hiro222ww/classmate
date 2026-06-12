@@ -73,6 +73,8 @@ type CallVoiceLayerProps = {
     signalReady: boolean;
     turnReady: boolean;
     voiceEnabled: boolean;
+    awaitingAnswerPeerIds: string[];
+    anyAwaitingAnswer: boolean;
   }) => void;
   onVoiceLayerMountedChange?: (mounted: boolean) => void;
   onMicPermissionDeniedChange?: (denied: boolean) => void;
