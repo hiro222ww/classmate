@@ -39,7 +39,18 @@ export function resolveOfferConnectionConflict(input: {
     return { action: "accept_incoming_connection_id" };
   }
   if (input.localConnectionId === input.incomingConnectionId) {
-    return null;
+    const localOfferInFlight =
+      input.localOfferInFlight || input.sig === "have-local-offer";
+    if (!localOfferInFlight) {
+      return null;
+    }
+    if (isActiveOfferOwner(input.localDeviceId, input.remoteDeviceId)) {
+      return {
+        action: "ignore_remote_offer",
+        reason: "active_offer_owner_wins",
+      };
+    }
+    return { action: "rollback_accept_remote_offer" };
   }
 
   const localOfferInFlight =

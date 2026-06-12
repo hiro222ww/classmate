@@ -555,6 +555,64 @@ export function logVoiceSignalIgnored(params: {
   }
 
   console.warn(parts.join(" "));
+  voiceProdLog(parts.join(" "));
+}
+
+export function logVoiceGlareDetected(params: {
+  remoteId: string;
+  localConnectionId?: string | null;
+  inboundConnectionId?: string | null;
+  sig?: string;
+  role: "active" | "passive";
+}) {
+  voiceProdLog(
+    `[voice-glare] detected remote=${compactDeviceId(params.remoteId)} ` +
+      `role=${params.role} localConnectionId=${compactConnectionId(params.localConnectionId)} ` +
+      `inboundConnectionId=${compactConnectionId(params.inboundConnectionId)} ` +
+      `sig=${params.sig ?? "-"}`
+  );
+}
+
+export function logVoiceGlareIgnore(params: {
+  remoteId: string;
+  reason: string;
+}) {
+  voiceProdLog(
+    `[voice-glare] ignore-remote-offer remote=${compactDeviceId(params.remoteId)} ` +
+      `reason=${params.reason} role=active`
+  );
+}
+
+export function logVoiceGlareRollbackStart(params: {
+  remoteId: string;
+  connectionId?: string | null;
+  sig?: string;
+}) {
+  voiceProdLog(
+    `[voice-glare] rollback-start remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} sig=${params.sig ?? "-"}`
+  );
+}
+
+export function logVoiceGlareRollbackDone(params: {
+  remoteId: string;
+  connectionId?: string | null;
+  sig?: string;
+}) {
+  voiceProdLog(
+    `[voice-glare] rollback-done remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} sig=${params.sig ?? "-"}`
+  );
+}
+
+export function logVoiceGlareAcceptRemoteOffer(params: {
+  remoteId: string;
+  connectionId?: string | null;
+}) {
+  voiceProdLog(
+    `[voice-glare] accept-remote-offer remote=${compactDeviceId(params.remoteId)} ` +
+      `connectionId=${compactConnectionId(params.connectionId)} role=passive`
+  );
 }
 
 export type VoiceNegotiationStep =
@@ -637,20 +695,24 @@ export function logVoiceGlare(params: {
   reason?: string;
   sig?: string;
 }) {
-  const remote = compactDeviceId(params.remoteId);
-  voiceProdLog(
-    `[voice-glare] detected remote=${remote} ` +
-      `localConnectionId=${compactConnectionId(params.localConnectionId)} ` +
-      `inboundConnectionId=${compactConnectionId(params.inboundConnectionId)} ` +
-      `sig=${params.sig ?? "-"}`
-  );
+  const role = params.action === "ignore_remote_offer" ? "active" : "passive";
+  logVoiceGlareDetected({
+    remoteId: params.remoteId,
+    localConnectionId: params.localConnectionId,
+    inboundConnectionId: params.inboundConnectionId,
+    sig: params.sig,
+    role,
+  });
   if (params.action === "ignore_remote_offer") {
-    voiceProdLog(
-      `[voice-glare] action=${params.action} reason=${params.reason ?? "unknown"}`
-    );
+    logVoiceGlareIgnore({
+      remoteId: params.remoteId,
+      reason: params.reason ?? "active_offer_owner_wins",
+    });
     return;
   }
-  voiceProdLog(`[voice-glare] action=${params.action}`);
+  if (params.action === "rollback_accept_remote_offer") {
+    voiceProdLog(`[voice-glare] action=${params.action}`);
+  }
 }
 
 export function logPassiveWaitCancel(params: {
@@ -910,11 +972,13 @@ export function logVoiceSignalAnswerCreateStart(remoteId: string) {
 
 export function logVoiceSignalAnswerSent(
   remoteId: string,
-  connectionId: string
+  connectionId: string,
+  opts?: { reason?: string }
 ) {
   markVoiceNegotiationStep(remoteId, "answer_send");
+  const reasonSuffix = opts?.reason ? ` reason=${opts.reason}` : "";
   voiceProdLog(
-    `[voice-signal] answer-send remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}`
+    `[voice-signal] answer-send remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}${reasonSuffix}`
   );
 }
 

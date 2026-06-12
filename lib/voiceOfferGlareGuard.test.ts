@@ -36,6 +36,35 @@ describe("voiceOfferGlareGuard", () => {
     });
   });
 
+  it("same connection id glare: active ignores competing offer", () => {
+    expect(
+      resolveOfferConnectionConflict({
+        localDeviceId: "device-a",
+        remoteDeviceId: "device-b",
+        localConnectionId: "join__device-a__device-b",
+        incomingConnectionId: "join__device-a__device-b",
+        sig: "have-local-offer",
+        localOfferInFlight: true,
+      })
+    ).toEqual({
+      action: "ignore_remote_offer",
+      reason: "active_offer_owner_wins",
+    });
+  });
+
+  it("same connection id glare: passive rolls back and accepts", () => {
+    expect(
+      resolveOfferConnectionConflict({
+        localDeviceId: "device-b",
+        remoteDeviceId: "device-a",
+        localConnectionId: "join__device-a__device-b",
+        incomingConnectionId: "join__device-a__device-b",
+        sig: "have-local-offer",
+        localOfferInFlight: true,
+      })
+    ).toEqual({ action: "rollback_accept_remote_offer" });
+  });
+
   it("accepts incoming connection id when no local offer is in flight", () => {
     expect(
       resolveOfferConnectionConflict({

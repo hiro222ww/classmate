@@ -23,13 +23,11 @@ import {
   logPeerStateWarning,
   logRemoteTrackEvent,
   logVoiceMeshPeerSummary,
-  logVoiceSignalAnswerCreateStart,
   logVoiceSignalAnswerReceived,
   logVoiceSignalAnswerSent,
   logVoiceSignalIgnored,
   logVoiceSignalOfferReceived,
   logVoiceSignalSetRemoteOfferDone,
-  logVoiceSignalSetRemoteOfferStart,
   logVoiceSignalStaleAnswerRecover,
   logVoiceSignalStaleWarning,
   logVoicePeerPair,
@@ -43,6 +41,9 @@ import {
   logPassiveOfferDeferred,
   logPassiveWaitCancel,
   logVoiceGlare,
+  logVoiceGlareAcceptRemoteOffer,
+  logVoiceGlareRollbackDone,
+  logVoiceGlareRollbackStart,
   logVoiceNegotiationGap,
   logVoicePeerCompetition,
   logVoiceRemoteTrackReceived,
@@ -81,7 +82,6 @@ import {
 } from "@/lib/voiceIceDisconnectedGuard";
 import { shouldRejectEstablishedPeerStaleOffer } from "@/lib/voiceStaleOfferGuard";
 import {
-  isActiveOfferOwner,
   makeStableConnectionId,
   resolveOfferConnectionConflict,
 } from "@/lib/voiceOfferGlareGuard";
@@ -10045,106 +10045,151 @@ export function usePeerConnections({
         peerSignalTimestampsRef.current.get(remoteId) ??
         emptyPeerSignalTimestamps();
 
-      if (row.signal_type === "offer") {
-        if (currentConnectionId !== incomingConnectionId) {
-          if (
-            shouldRejectIncomingStaleOffer(
-              remoteId,
-              incomingConnectionId,
-              existingPc
-            )
-          ) {
-            logVoiceSignalIgnored({
-              reason: "stale_offer_established_peer",
-              type: "offer",
-              remote: remoteId,
-              incomingConnectionId,
-              currentConnectionId,
-              pcExists: !!existingPc,
-              sig: existingPc?.signalingState ?? "-",
-              conn: existingPc?.connectionState ?? "-",
-              ice: existingPc?.iceConnectionState ?? "-",
-              hasRemoteStream: media.hasRemoteStream,
-              tracks: media.remoteTracksCount,
-            });
-            return;
-          }
+      let offerAnswerReason: string | undefined;
 
-          const offerMarks = getPeerPipelineMarks(remoteId);
-          const glareDecision = resolveOfferConnectionConflict({
-            localDeviceId: deviceId,
-            remoteDeviceId: remoteId,
-            localConnectionId: currentConnectionId,
+      if (row.signal_type === "offer") {
+        if (
+          currentConnectionId !== incomingConnectionId &&
+          shouldRejectIncomingStaleOffer(
+            remoteId,
             incomingConnectionId,
+            existingPc
+          )
+        ) {
+          logVoiceSignalIgnored({
+            reason: "stale_offer_established_peer",
+            type: "offer",
+            remote: remoteId,
+            incomingConnectionId,
+            currentConnectionId,
+            pcExists: !!existingPc,
             sig: existingPc?.signalingState ?? "-",
-            localOfferInFlight:
-              existingPc?.signalingState === "have-local-offer" ||
-              offerMarks.offer_sent ||
-              offeredPeersRef.current.has(remoteId),
-            localAnswerReceived: offerMarks.answer_received,
+            conn: existingPc?.connectionState ?? "-",
+            ice: existingPc?.iceConnectionState ?? "-",
+            hasRemoteStream: media.hasRemoteStream,
+            tracks: media.remoteTracksCount,
+          });
+          return;
+        }
+
+        const offerMarks = getPeerPipelineMarks(remoteId);
+        const localOfferInFlight =
+          existingPc?.signalingState === "have-local-offer" ||
+          offerMarks.offer_sent ||
+          offeredPeersRef.current.has(remoteId);
+        const glareDecision = resolveOfferConnectionConflict({
+          localDeviceId: deviceId,
+          remoteDeviceId: remoteId,
+          localConnectionId: currentConnectionId,
+          incomingConnectionId,
+          sig: existingPc?.signalingState ?? "-",
+          localOfferInFlight,
+          localAnswerReceived: offerMarks.answer_received,
+        });
+
+        if (glareDecision?.action === "ignore_remote_offer") {
+          logVoiceGlare({
+            remoteId,
+            localConnectionId: currentConnectionId,
+            inboundConnectionId: incomingConnectionId,
+            action: glareDecision.action,
+            reason: glareDecision.reason,
+            sig: existingPc?.signalingState ?? "-",
+          });
+          logVoiceSignalIgnored({
+            reason: glareDecision.reason,
+            type: "offer",
+            remote: remoteId,
+            incomingConnectionId,
+            currentConnectionId,
+            pcExists: !!existingPc,
+            sig: existingPc?.signalingState ?? "-",
+            conn: existingPc?.connectionState ?? "-",
+            ice: existingPc?.iceConnectionState ?? "-",
+            hasRemoteStream: media.hasRemoteStream,
+            tracks: media.remoteTracksCount,
+          });
+          return;
+        }
+
+        if (glareDecision?.action === "rollback_accept_remote_offer") {
+          logVoiceGlare({
+            remoteId,
+            localConnectionId: currentConnectionId,
+            inboundConnectionId: incomingConnectionId,
+            action: glareDecision.action,
+            sig: existingPc?.signalingState ?? "-",
+          });
+          logVoiceGlareRollbackStart({
+            remoteId,
+            connectionId: incomingConnectionId,
+            sig: existingPc?.signalingState ?? "-",
           });
 
-          if (glareDecision) {
-            logVoiceGlare({
-              remoteId,
-              localConnectionId: currentConnectionId,
-              inboundConnectionId: incomingConnectionId,
-              action: glareDecision.action,
-              reason:
-                glareDecision.action === "ignore_remote_offer"
-                  ? glareDecision.reason
-                  : undefined,
-              sig: existingPc?.signalingState ?? "-",
-            });
+          cancelPassiveWaitOffer(remoteId, "glare_accept_remote_offer");
+          passiveFallbackOfferByConnRef.current.delete(remoteId);
+          offeredPeersRef.current.delete(remoteId);
+          clearAnswerWaitTimer(remoteId, "glare_rollback_accept", "handleSignal");
 
-            if (glareDecision.action === "ignore_remote_offer") {
-              logVoiceSignalIgnored({
-                reason: "glare_ignore_remote_offer",
-                type: "offer",
-                remote: remoteId,
-                incomingConnectionId,
-                currentConnectionId,
-                pcExists: !!existingPc,
-                sig: existingPc?.signalingState ?? "-",
-                conn: existingPc?.connectionState ?? "-",
-                ice: existingPc?.iceConnectionState ?? "-",
-                hasRemoteStream: media.hasRemoteStream,
-                tracks: media.remoteTracksCount,
-              });
-              return;
+          const sameConnectionId = currentConnectionId === incomingConnectionId;
+          let rollbackSig = existingPc?.signalingState ?? "-";
+
+          if (existingPc?.signalingState === "have-local-offer") {
+            try {
+              await existingPc.setLocalDescription({ type: "rollback" });
+              rollbackSig = existingPc.signalingState;
+            } catch (rollbackErr) {
+              voiceProdLog(
+                `[voice-glare] rollback-failed remote=${compactDeviceId(remoteId)} ` +
+                  `connectionId=${compactConnectionId(incomingConnectionId)} ` +
+                  `message=${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`
+              );
             }
+          }
 
-            cancelPassiveWaitOffer(remoteId, "glare_accept_remote_offer");
-            passiveFallbackOfferByConnRef.current.delete(remoteId);
-            offeredPeersRef.current.delete(remoteId);
+          logVoiceGlareRollbackDone({
+            remoteId,
+            connectionId: incomingConnectionId,
+            sig: rollbackSig,
+          });
 
-            if (
-              glareDecision.action === "rollback_accept_remote_offer" &&
-              existingPc?.signalingState === "have-local-offer"
-            ) {
-              try {
-                await existingPc.setLocalDescription({ type: "rollback" });
-              } catch (rollbackErr) {
-                console.warn(
-                  "[call] glare offer rollback failed",
-                  remoteId,
-                  rollbackErr
-                );
-              }
-            }
-
+          if (
+            !sameConnectionId ||
+            (existingPc && existingPc.signalingState !== "stable")
+          ) {
             if (existingPc) {
               closePeer(remoteId, {
                 clearConnectionId: false,
                 preserveRemoteAudio: false,
                 reason: "glare_abandon_local_offer",
+                caller: "handleSignal",
               });
             }
-            assignConnectionId(remoteId, incomingConnectionId, "glare_accept_remote_offer");
-            connectStartedAtRef.current.set(remoteId, Date.now());
+            assignConnectionId(
+              remoteId,
+              incomingConnectionId,
+              "glare_accept_remote_offer"
+            );
             currentConnectionId = incomingConnectionId;
-            startedPeersRef.current.add(remoteId);
           }
+
+          logVoiceGlareAcceptRemoteOffer({
+            remoteId,
+            connectionId: incomingConnectionId,
+          });
+          connectStartedAtRef.current.set(remoteId, Date.now());
+          startedPeersRef.current.add(remoteId);
+          offerAnswerReason = "glare_rollback_accept";
+        } else if (
+          glareDecision?.action === "accept_incoming_connection_id" &&
+          currentConnectionId !== incomingConnectionId
+        ) {
+          assignConnectionId(
+            remoteId,
+            incomingConnectionId,
+            "glare_accept_remote_offer"
+          );
+          currentConnectionId = incomingConnectionId;
         }
       } else if (
         !currentConnectionId ||
@@ -10279,47 +10324,23 @@ export function usePeerConnections({
                 pc.iceConnectionState === "new"));
 
           if (pc.signalingState !== "stable" && !isRenegotiation) {
-            if (pc.signalingState === "have-local-offer") {
-              if (isActiveOfferOwner(deviceId, remoteId)) {
-                logVoiceSignalIgnored({
-                  reason: "glare_active_owner_keeps_local_offer",
-                  type: "offer",
-                  remote: remoteId,
-                  incomingConnectionId,
-                  currentConnectionId,
-                  pcExists: true,
-                  sig: pc.signalingState,
-                  conn: pc.connectionState,
-                  ice: pc.iceConnectionState,
-                });
-                return;
-              }
-              try {
-                await pc.setLocalDescription({ type: "rollback" });
-              } catch (rollbackErr) {
-                console.warn(
-                  "[call] offer rollback failed",
-                  remoteId,
-                  rollbackErr
-                );
-              }
-            } else {
-              logVoiceSignalIgnored({
-                reason: "invalid_signaling_state",
-                type: "offer",
-                remote: remoteId,
-                incomingConnectionId,
-                currentConnectionId,
-                pcExists: true,
-                sig: pc.signalingState,
-                conn: pc.connectionState,
-                ice: pc.iceConnectionState,
-              });
-              return;
-            }
+            logVoiceSignalIgnored({
+              reason: "invalid_signaling_state",
+              type: "offer",
+              remote: remoteId,
+              incomingConnectionId,
+              currentConnectionId,
+              pcExists: true,
+              sig: pc.signalingState,
+              conn: pc.connectionState,
+              ice: pc.iceConnectionState,
+            });
+            return;
           }
 
-          logVoiceSignalSetRemoteOfferStart(remoteId, pc.signalingState);
+          voiceProdLog(
+            `[voice-signal] set-remote-offer-start remote=${compactDeviceId(remoteId)} sig=${pc.signalingState}`
+          );
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
           logVoiceSignalSetRemoteOfferDone(remoteId, pc.signalingState);
           await flushPendingIce(remoteId, incomingConnectionId);
@@ -10335,7 +10356,10 @@ export function usePeerConnections({
             setPeerState(remoteId, "connecting");
           }
 
-          logVoiceSignalAnswerCreateStart(remoteId);
+          voiceProdLog(
+            `[voice-signal] answer-create-start remote=${compactDeviceId(remoteId)}` +
+              (offerAnswerReason ? ` reason=${offerAnswerReason}` : "")
+          );
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
@@ -10344,7 +10368,7 @@ export function usePeerConnections({
             sdp: pc.localDescription,
           });
           if (!answerSendResult.ok) {
-            console.warn(
+            voiceProdLog(
               `[voice-signal] answer-send-failed remote=${compactDeviceId(remoteId)} ` +
                 `connectionId=${compactConnectionId(incomingConnectionId)} ` +
                 `currentConnectionId=${compactConnectionId(getCurrentConnectionId(remoteId))} ` +
@@ -10353,7 +10377,9 @@ export function usePeerConnections({
             );
             return;
           }
-          logVoiceSignalAnswerSent(remoteId, incomingConnectionId);
+          logVoiceSignalAnswerSent(remoteId, incomingConnectionId, {
+            reason: offerAnswerReason,
+          });
           touchPeerSignal(remoteId, "answer_sent");
           markVoicePerf("answer_sent", { remoteId });
           emitMeshSummary("answer_sent", { immediate: true });
