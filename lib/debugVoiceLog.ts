@@ -253,6 +253,61 @@ export function getDebugVoiceRingBuffer() {
   return [...ringBuffer];
 }
 
+const prodStateLog = new Map<string, string>();
+
+/** Always-on voice/call diagnostics for Web Inspector triage (not gated by debugVoice). */
+export function voiceProdLog(...args: unknown[]) {
+  console.log(...args.map(sanitizeArg));
+}
+
+/** Log only when stateKey changes for dedupeKey. */
+export function voiceProdLogOnStateChange(
+  dedupeKey: string,
+  stateKey: string,
+  ...args: unknown[]
+) {
+  const prev = prodStateLog.get(dedupeKey);
+  if (prev === stateKey) return;
+  prodStateLog.set(dedupeKey, stateKey);
+  voiceProdLog(...args);
+}
+
+/** Throttled always-on log. */
+export function voiceProdLogThrottle(
+  key: string,
+  ms: number,
+  ...args: unknown[]
+) {
+  if (shouldThrottle(`prod:${key}`, ms)) return;
+  voiceProdLog(...args);
+}
+
+/** Log on first call and again near a deadline (e.g. answer-wait timeout). */
+export function voiceProdLogUntilDeadline(params: {
+  key: string;
+  deadlineAtMs: number;
+  nearDeadlineMs?: number;
+  minRepeatMs?: number;
+  args: unknown[];
+}) {
+  const nearDeadlineMs = params.nearDeadlineMs ?? 3000;
+  const minRepeatMs = params.minRepeatMs ?? 30_000;
+  const now = Date.now();
+  const nearDeadline =
+    params.deadlineAtMs > 0 &&
+    params.deadlineAtMs - now <= nearDeadlineMs;
+  const stateKey = `${params.key}|deadline:${params.deadlineAtMs}`;
+  const prev = prodStateLog.get(params.key);
+
+  if (prev === stateKey && !nearDeadline) return;
+  if (prev === stateKey && nearDeadline) {
+    if (shouldThrottle(`prod-deadline:${params.key}`, minRepeatMs)) return;
+  }
+
+  prodStateLog.set(params.key, stateKey);
+  voiceProdLog(...params.args);
+}
+
 /** Drop-in replacement for console.log in voice/call code paths */
 export function debugConsoleLog(...args: unknown[]) {
   if (!isDebugVoiceEnabled()) return;

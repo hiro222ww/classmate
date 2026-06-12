@@ -1,3 +1,8 @@
+import {
+  debugConsoleLog,
+  voiceProdLogOnStateChange,
+} from "@/lib/debugVoiceLog";
+
 export function tailDeviceId(deviceId: string) {
   const id = String(deviceId ?? "").trim();
   return id ? id.slice(-4) : "-";
@@ -44,8 +49,13 @@ export function logCallMembersDebug(params: {
   const selfFound = params.members.some(
     (m) => String(m.device_id ?? "").trim() === selfId
   );
+  const stateKey =
+    `display=[${displayMemberIds.join(",")}]` +
+    `|remote=[${remoteMemberIds.join(",")}]|selfFound=${selfFound ? 1 : 0}`;
 
-  console.log(
+  voiceProdLogOnStateChange(
+    `call-members-debug:${tailDeviceId(selfId)}`,
+    stateKey,
     `[call-members-debug] deviceId=${tailDeviceId(selfId)} ` +
       `displayMemberIds=[${displayMemberIds.join(",")}] ` +
       `remoteMemberIds=[${remoteMemberIds.join(",")}] selfFound=${selfFound ? 1 : 0}`
@@ -63,7 +73,14 @@ export function logCallRender(params: {
   voiceLayerShouldRender: boolean;
   blockingReason: string;
 }) {
-  console.log(
+  const stateKey =
+    `${params.displayMembers}|${params.remoteMembers}|` +
+    `${params.localStreamReady ? 1 : 0}|${params.micReady ? 1 : 0}|` +
+    `${params.voiceLayerShouldRender ? 1 : 0}|${params.blockingReason}`;
+
+  voiceProdLogOnStateChange(
+    `call-render:${tailSessionId(params.sessionId)}:${tailDeviceId(params.deviceId)}`,
+    stateKey,
     `[call-render] sessionId=${tailSessionId(params.sessionId)} ` +
       `classId=${tailSessionId(params.classId)} deviceId=${tailDeviceId(params.deviceId)} ` +
       `displayMembers=${params.displayMembers} remoteMembers=${params.remoteMembers} ` +
@@ -83,7 +100,7 @@ export function logVoiceLayerRenderCheck(params: {
   localStreamReady: boolean;
   micReady: boolean;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-layer-render-check] shouldRender=${params.shouldRender ? 1 : 0} ` +
       `blockingReason=${params.blockingReason} ` +
       `sessionId=${tailSessionId(params.sessionId)} deviceId=${tailDeviceId(params.deviceId)} ` +

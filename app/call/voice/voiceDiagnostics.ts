@@ -5,6 +5,8 @@ import {
   debugConsoleLog,
   debugVoiceLog,
   isDebugVoiceEnabled,
+  voiceProdLog,
+  voiceProdLogOnStateChange,
 } from "@/lib/debugVoiceLog";
 
 import { installCallLifecycleDiagnostics as installCallLifecycleDiagnosticsImpl } from "@/lib/callLifecycle";
@@ -570,6 +572,14 @@ const negotiationSteps = new Map<
   Partial<Record<VoiceNegotiationStep, number>>
 >();
 
+const PROD_NEGOTIATION_STEPS = new Set<VoiceNegotiationStep>([
+  "offer_send",
+  "offer_received",
+  "answer_send",
+  "answer_received",
+  "remote_track_applied",
+]);
+
 export function markVoiceNegotiationStep(
   remoteId: string,
   step: VoiceNegotiationStep,
@@ -580,30 +590,19 @@ export function markVoiceNegotiationStep(
   const isFirst = prev[step] == null;
   prev[step] = Date.now();
   negotiationSteps.set(key, prev);
-  console.log(
+  const line =
     `[voice-negotiation] step=${step} remote=${key} first=${isFirst ? 1 : 0}` +
-      (extra ? ` ${extra}` : "")
-  );
+    (extra ? ` ${extra}` : "");
+  if (PROD_NEGOTIATION_STEPS.has(step) && isFirst) {
+    voiceProdLog(line);
+  } else {
+    debugConsoleLog(line);
+  }
 }
 
 export function logVoiceNegotiationGap(remoteId: string, context: string) {
-  const key = compactDeviceId(remoteId);
-  const steps = negotiationSteps.get(key) ?? {};
-  const order: VoiceNegotiationStep[] = [
-    "offer_send",
-    "offer_received",
-    "set_remote_offer",
-    "answer_create",
-    "answer_send",
-    "answer_received",
-    "ontrack",
-    "remote_track_applied",
-  ];
-  const done = order.filter((s) => steps[s] != null);
-  const missing = order.filter((s) => steps[s] == null);
-  console.log(
-    `[voice-negotiation] gap-check context=${context} remote=${key} ` +
-      `done=${done.join(",") || "-"} missing=${missing.join(",") || "-"}`
+  debugConsoleLog(
+    `[voice-negotiation] gap-check context=${context} remote=${compactDeviceId(remoteId)}`
   );
 }
 
@@ -639,26 +638,26 @@ export function logVoiceGlare(params: {
   sig?: string;
 }) {
   const remote = compactDeviceId(params.remoteId);
-  console.log(
+  voiceProdLog(
     `[voice-glare] detected remote=${remote} ` +
       `localConnectionId=${compactConnectionId(params.localConnectionId)} ` +
       `inboundConnectionId=${compactConnectionId(params.inboundConnectionId)} ` +
       `sig=${params.sig ?? "-"}`
   );
   if (params.action === "ignore_remote_offer") {
-    console.log(
+    voiceProdLog(
       `[voice-glare] action=${params.action} reason=${params.reason ?? "unknown"}`
     );
     return;
   }
-  console.log(`[voice-glare] action=${params.action}`);
+  voiceProdLog(`[voice-glare] action=${params.action}`);
 }
 
 export function logPassiveWaitCancel(params: {
   remoteId: string;
   reason: string;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-peer] passive-wait-cancel remote=${compactDeviceId(params.remoteId)} ` +
       `reason=${params.reason}`
   );
@@ -675,7 +674,7 @@ export function logVoiceEnsureRepeat(params: {
 }) {
   const remote = compactDeviceId(params.remoteId);
   if (params.attempt <= 1) {
-    console.log(
+    debugConsoleLog(
       `[voice-peer] ensure-start remote=${remote} reason=${params.reason} ` +
         `role=${params.role} force=${params.force ? 1 : 0} ` +
         `hasPc=${params.hasPc ? 1 : 0} sig=${params.sig ?? "-"}`
@@ -715,7 +714,7 @@ export function logVoiceAudioConfirmTimer(params: {
   answerSent?: boolean;
   answerReceived?: boolean;
 }) {
-  console.log(
+  debugConsoleLog(
     `[voice-audio-confirm] phase=${params.phase} remote=${compactDeviceId(params.remoteId)} ` +
       (params.reason ? `reason=${params.reason} ` : "") +
       `timeoutMs=${params.timeoutMs ?? "-"} sig=${params.sig ?? "-"} ` +
@@ -735,7 +734,7 @@ export function logVoiceRemoteTrackReceived(params: {
   sig?: string;
   conn?: string;
 }) {
-  console.log(
+  voiceProdLog(
     `[voice-track] remote_track_received remote=${compactDeviceId(params.remoteId)} ` +
       `reason=${params.reason} trackId=${params.trackId?.slice(-8) ?? "-"} ` +
       `streamId=${params.streamId?.slice(-8) ?? "-"} ` +
@@ -876,7 +875,7 @@ export function logVoiceSignalOfferReceived(params: {
   sig: string;
 }) {
   markVoiceNegotiationStep(params.from, "offer_received");
-  console.log(
+  voiceProdLog(
     `[voice-signal] offer-received from=${compactDeviceId(params.from)} to=${compactDeviceId(params.to)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
@@ -887,7 +886,7 @@ export function logVoiceSignalSetRemoteOfferStart(
   remoteId: string,
   sig: string
 ) {
-  console.log(
+  debugConsoleLog(
     `[voice-signal] set-remote-offer-start remote=${compactDeviceId(remoteId)} sig=${sig}`
   );
 }
@@ -897,14 +896,14 @@ export function logVoiceSignalSetRemoteOfferDone(
   sig: string
 ) {
   markVoiceNegotiationStep(remoteId, "set_remote_offer", `sig=${sig}`);
-  console.log(
+  debugConsoleLog(
     `[voice-signal] set-remote-offer-done remote=${compactDeviceId(remoteId)} sig=${sig}`
   );
 }
 
 export function logVoiceSignalAnswerCreateStart(remoteId: string) {
   markVoiceNegotiationStep(remoteId, "answer_create");
-  console.log(
+  debugConsoleLog(
     `[voice-signal] answer-create-start remote=${compactDeviceId(remoteId)}`
   );
 }
@@ -914,7 +913,7 @@ export function logVoiceSignalAnswerSent(
   connectionId: string
 ) {
   markVoiceNegotiationStep(remoteId, "answer_send");
-  console.log(
+  voiceProdLog(
     `[voice-signal] answer-send remote=${compactDeviceId(remoteId)} connectionId=${compactConnectionId(connectionId)}`
   );
 }
@@ -926,7 +925,7 @@ export function logVoiceSignalAnswerReceived(params: {
   sig: string;
 }) {
   markVoiceNegotiationStep(params.remoteId, "answer_received", `sig=${params.sig}`);
-  console.log(
+  voiceProdLog(
     `[voice-signal] answer-received remote=${compactDeviceId(params.remoteId)} ` +
       `connectionId=${compactConnectionId(params.connectionId)} ` +
       `currentConnectionId=${compactConnectionId(params.currentConnectionId)} sig=${params.sig}`
@@ -1390,8 +1389,7 @@ export function mapEnsureSkipToVoiceStartBlocked(
   }
 }
 
-const VOICE_START_CHECK_LOG_MIN_INTERVAL_MS = 5000;
-const voiceStartCheckLogState = new Map<string, { key: string; atMs: number }>();
+const voiceStartCheckLogState = new Map<string, string>();
 
 export function logVoiceStartCheck(params: {
   deviceId: string;
@@ -1410,23 +1408,12 @@ export function logVoiceStartCheck(params: {
   blockedReason?: VoiceStartBlockedReason | string;
 }) {
   const remoteKey = compactDeviceId(params.remoteId);
-  const key =
-    `${remoteKey}|${params.role}|${params.shouldCreatePeer ? 1 : 0}|` +
-    `${params.blockedReason ?? "-"}|${params.settingsReady ? 1 : 0}|` +
-    `${params.signalReady ? 1 : 0}|${params.micReady ? 1 : 0}|` +
-    `${params.remoteIdsCount}`;
-  const now = Date.now();
+  const stateKey = `${remoteKey}|${params.role}|${params.blockedReason ?? "-"}`;
   const prev = voiceStartCheckLogState.get(remoteKey);
-  if (
-    prev &&
-    prev.key === key &&
-    now - prev.atMs < VOICE_START_CHECK_LOG_MIN_INTERVAL_MS
-  ) {
-    return;
-  }
-  voiceStartCheckLogState.set(remoteKey, { key, atMs: now });
+  if (prev === stateKey) return;
+  voiceStartCheckLogState.set(remoteKey, stateKey);
 
-  console.log(
+  voiceProdLog(
     `[voice-start-check] remote=${remoteKey} role=${params.role} ` +
       `shouldCreatePeer=${params.shouldCreatePeer ? 1 : 0} ` +
       `blockedReason=${params.blockedReason ?? "-"} ` +
@@ -1437,14 +1424,16 @@ export function logVoiceStartCheck(params: {
   );
 }
 
-const VOICE_ENSURE_SKIP_LOG_MIN_INTERVAL_MS = 5000;
-const voiceEnsureSkipLogState = new Map<string, { key: string; atMs: number }>();
-
-const DEDUPED_ENSURE_SKIP_REASONS = new Set([
+const DEBUG_ONLY_ENSURE_SKIP_REASONS = new Set([
   "already_has_pc",
+  "voice_settings_not_loaded",
   "blocked_by_cooldown",
   "blocked_by_reconnect_pending",
   "passive_awaiting_reconnect_offer",
+  "signal_not_ready",
+  "mic_not_ready",
+  "local_track_not_live",
+  "member_not_in_call",
 ]);
 
 export function logVoiceEnsureSkipped(params: {
@@ -1459,21 +1448,16 @@ export function logVoiceEnsureSkipped(params: {
     `requested=${params.requestedReason} skip=${params.skipReason}` +
     `${params.extra ? ` ${params.extra}` : ""}`;
 
-  if (DEDUPED_ENSURE_SKIP_REASONS.has(params.skipReason)) {
-    const key = `${remote}|${params.skipReason}|${params.requestedReason}`;
-    const now = Date.now();
-    const prev = voiceEnsureSkipLogState.get(remote);
-    if (
-      prev &&
-      prev.key === key &&
-      now - prev.atMs < VOICE_ENSURE_SKIP_LOG_MIN_INTERVAL_MS
-    ) {
-      return;
-    }
-    voiceEnsureSkipLogState.set(remote, { key, atMs: now });
+  if (DEBUG_ONLY_ENSURE_SKIP_REASONS.has(params.skipReason)) {
+    debugConsoleLog(line);
+    return;
   }
 
-  console.log(line);
+  voiceProdLogOnStateChange(
+    `ensure-skip:${remote}:${params.skipReason}`,
+    params.requestedReason,
+    line
+  );
 }
 
 const VOICE_PASSIVE_DEFER_LOG_MIN_INTERVAL_MS = 10_000;
@@ -1496,43 +1480,26 @@ export function logPassiveOfferDeferred(params: {
     return;
   }
   voicePassiveDeferLogState.set(remote, { key, atMs: now });
-  console.log(
+  voiceProdLog(
     `[voice-peer] passive-offer-deferred remote=${remote} ` +
       `reason=await_active_offer trigger=${params.triggerReason} delayMs=${params.delayMs}`
   );
 }
-
-const VOICE_START_BLOCKED_LOG_MIN_INTERVAL_MS = 5000;
-const voiceStartBlockedLogState = new Map<string, { key: string; atMs: number }>();
-
-const DEDUPED_START_BLOCKED_REASONS = new Set<VoiceStartBlockedReason>([
-  "already_has_pc",
-  "blocked_by_cooldown",
-  "blocked_by_reconnect_pending",
-  "passive_awaiting_reconnect_offer",
-  "mic_permission_denied",
-]);
 
 export function logVoiceStartBlocked(
   remoteId: string,
   reason: VoiceStartBlockedReason
 ) {
   const remote = compactDeviceId(remoteId);
-  if (DEDUPED_START_BLOCKED_REASONS.has(reason)) {
-    const key = `${remote}|${reason}`;
-    const now = Date.now();
-    const prev = voiceStartBlockedLogState.get(remote);
-    if (
-      prev &&
-      prev.key === key &&
-      now - prev.atMs < VOICE_START_BLOCKED_LOG_MIN_INTERVAL_MS
-    ) {
-      return;
-    }
-    voiceStartBlockedLogState.set(remote, { key, atMs: now });
+  if (reason === "no_remote_ids" && !isDebugVoiceEnabled()) {
+    return;
   }
 
-  console.log(`[voice-start-blocked] remote=${remote} reason=${reason}`);
+  voiceProdLogOnStateChange(
+    `voice-start-blocked:${remote}`,
+    reason,
+    `[voice-start-blocked] remote=${remote} reason=${reason}`
+  );
 }
 
 export function logVoiceSettingsReadyChange(params: {
@@ -1543,7 +1510,7 @@ export function logVoiceSettingsReadyChange(params: {
   deviceId: string;
 }) {
   if (params.from === params.to) return;
-  console.log(
+  voiceProdLog(
     `[voice-settings-ready] from=${params.from ? 1 : 0} to=${params.to ? 1 : 0} ` +
       `reason=${params.reason} session=${compactSessionId(params.sessionId)} ` +
       `device=${compactDeviceId(params.deviceId)}`
@@ -1584,7 +1551,7 @@ export function logVoiceUnstable(params: {
   }
   voiceUnstableLogState.set(remote, { key, atMs: now });
 
-  console.log(
+  debugConsoleLog(
     `[voice-unstable] reason=${params.reason} remote=${remote} ` +
       `pc=${params.pc ? 1 : 0} ice=${params.ice ?? "-"} ` +
       `connection=${params.connection ?? "-"} signaling=${params.signaling ?? "-"} ` +

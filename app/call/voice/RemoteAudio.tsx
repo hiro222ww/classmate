@@ -1,6 +1,6 @@
 "use client";
 
-import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
+import { debugConsoleLog, voiceProdLog } from "@/lib/debugVoiceLog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   formatVoiceModeSuffix,
@@ -74,6 +74,12 @@ function compactMediaId(id: string | null | undefined): string {
   return value.slice(-6);
 }
 
+const PROD_REMOTE_AUDIO_TAGS = new Set([
+  "play-success",
+  "play-failed",
+  "audio_confirmed_strict",
+]);
+
 function logRemoteAudioEvent(
   tag: string,
   remoteId: string,
@@ -91,7 +97,12 @@ function logRemoteAudioEvent(
     }
   }
   parts.push(formatVoiceModeSuffix());
-  console.log(parts.join(" "));
+  const line = parts.join(" ");
+  if (PROD_REMOTE_AUDIO_TAGS.has(tag)) {
+    voiceProdLog(line);
+  } else {
+    debugConsoleLog(line);
+  }
 }
 
 function createRemoteAudioInstanceId(): string {

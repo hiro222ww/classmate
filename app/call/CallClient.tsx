@@ -1,6 +1,6 @@
 "use client";
 
-import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
+import { debugConsoleLog, isDebugVoiceEnabled } from "@/lib/debugVoiceLog";
 import {
   useCallback,
   useEffect,
@@ -1866,6 +1866,7 @@ export default function CallClient() {
   const lastCallRenderPerfLogRef = useRef({ count: 0, atMs: 0 });
 
   useEffect(() => {
+    if (!isDebugVoiceEnabled()) return;
     const timer = window.setInterval(() => {
       const count = renderCountRef.current;
       const prev = lastCallRenderPerfLogRef.current;
@@ -1881,7 +1882,7 @@ export default function CallClient() {
           : -1;
       const rendersPerSec =
         sincePrevMs > 0 ? Math.round((delta / sincePrevMs) * 1000) : 0;
-      console.log(
+      debugConsoleLog(
         `[call-render-perf] count=${count} delta=${delta} sinceMountMs=${sinceMountMs} ` +
           `rendersPerSec=${rendersPerSec} displayMembers=${members.length} ` +
           `remoteMembers=${remoteMemberIds.length} fetchInFlight=${fetchingRef.current ? 1 : 0} ` +

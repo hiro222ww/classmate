@@ -1,3 +1,5 @@
+import { isDebugVoiceEnabled, voiceProdLog } from "@/lib/debugVoiceLog";
+
 export type CallReadyStuckReason =
   | "mic_not_ready"
   | "signal_not_ready"
@@ -37,6 +39,14 @@ export function resolveCallReadyStuckReason(
 let lastCallReadyCheckKey = "";
 const initialCallReadyCheckLogged = new Set<string>();
 
+function buildCallReadyStateKey(snap: CallReadinessSnapshot) {
+  return (
+    `${snap.sessionId.slice(-6)}|${snap.members}|${snap.remoteIds}|` +
+    `${snap.micReady ? 1 : 0}|${snap.signalReady ? 1 : 0}|${snap.settingsReady ? 1 : 0}|` +
+    `${snap.turnReady ? 1 : 0}|${snap.callLayerMounted ? 1 : 0}|${snap.voiceEnabled ? 1 : 0}`
+  );
+}
+
 export function logCallReadyCheck(
   snap: CallReadinessSnapshot,
   reason: string,
@@ -46,16 +56,12 @@ export function logCallReadyCheck(
     const sessionKey = snap.sessionId;
     if (initialCallReadyCheckLogged.has(sessionKey)) return;
     initialCallReadyCheckLogged.add(sessionKey);
+  } else if (reason === "interval") {
+    if (!isDebugVoiceEnabled()) return;
   }
 
-  const key =
-    `${reason}|${snap.sessionId.slice(-6)}|${snap.members}|${snap.remoteIds}|` +
-    `${snap.micReady ? 1 : 0}|${snap.signalReady ? 1 : 0}|${snap.settingsReady ? 1 : 0}|` +
-    `${snap.turnReady ? 1 : 0}|${snap.callLayerMounted ? 1 : 0}`;
-  if (
-    (reason === "interval" || reason === "render") &&
-    key === lastCallReadyCheckKey
-  ) {
+  const key = buildCallReadyStateKey(snap);
+  if (reason !== "initial" && key === lastCallReadyCheckKey) {
     return;
   }
   lastCallReadyCheckKey = key;
@@ -64,7 +70,7 @@ export function logCallReadyCheck(
     ? ` totalWaitMs=${wait.totalWaitMs} turnWaitMs=${wait.turnWaitMs} allReadyWaitMs=${wait.allReadyWaitMs}`
     : "";
 
-  console.log(
+  voiceProdLog(
     `[call-ready-check] session=${snap.sessionId.slice(-6)} ` +
       `class=${snap.classId.slice(-6)} device=${snap.deviceId.slice(-4)} ` +
       `members=${snap.members} remoteIds=${snap.remoteIds} ` +
@@ -80,7 +86,7 @@ export function logCallReadyStuck(
   snap: CallReadinessSnapshot,
   stuckMs: number
 ) {
-  console.log(
+  voiceProdLog(
     `[call-ready-stuck] reason=${reason} stuckMs=${stuckMs} ` +
       `session=${snap.sessionId.slice(-6)} members=${snap.members} remoteIds=${snap.remoteIds} ` +
       `micReady=${snap.micReady ? 1 : 0} signalReady=${snap.signalReady ? 1 : 0} ` +

@@ -1,6 +1,11 @@
 "use client";
 
-import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
+import {
+  debugConsoleLog,
+  debugConsoleInfo,
+  voiceProdLog,
+  voiceProdLogUntilDeadline,
+} from "@/lib/debugVoiceLog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   SendSignalResult,
@@ -1459,7 +1464,7 @@ export function usePeerConnections({
       if (cancelReason && meta) {
         const elapsedMs = Date.now() - meta.armedAt;
         const pc = pcsRef.current.get(remoteId) ?? null;
-        console.log(
+        voiceProdLog(
           `[voice-signal] answer_wait_cancel remote=${compactDeviceId(remoteId)} ` +
             `reason=${cancelReason} caller=${caller} ` +
             `connectionId=${compactConnectionId(meta.connectionId)} ` +
@@ -1831,7 +1836,7 @@ export function usePeerConnections({
     ) {
       fromMembers = getSessionMemberRemoteDeviceIds(members, selfId);
       if (fromMembers.length > 0) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] remoteIds-rebuild session=${sessionId.slice(-6)} ` +
             `members=${members.length} rebuilt=${fromMembers.length}`
         );
@@ -1929,7 +1934,7 @@ export function usePeerConnections({
     if (lastHookStartLogKeyRef.current === key) return;
     lastHookStartLogKeyRef.current = key;
     hookRunIdRef.current += 1;
-    console.log(
+    debugConsoleLog(
       `[voice-peer] hook-start instance=${voiceLayerInstanceId} runId=${hookRunIdRef.current} ` +
         `session=${sessionId.slice(-6)} device=${compactDeviceId(deviceId)} ` +
         `micReady=${micReady ? 1 : 0} signalReady=${signalReady ? 1 : 0} ` +
@@ -2471,7 +2476,7 @@ export function usePeerConnections({
         health.playbackActive ||
         (health.level ?? 0) > 0.001
       ) {
-        console.log(
+        voiceProdLog(
           `[voice-peer] playback_evidence remote=${compactDeviceId(remoteId)} ` +
             `playSuccess=${health.playSuccess ? 1 : 0} playbackActive=${health.playbackActive ? 1 : 0} ` +
             `level=${(health.level ?? 0).toFixed(3)}`
@@ -3564,7 +3569,7 @@ export function usePeerConnections({
       reason: IceDisconnectedSuppressReason,
       context: string
     ) => {
-      console.log(
+      debugConsoleLog(
         `[voice-peer] reconnect_ice_disconnected_suppressed remote=${compactDeviceId(remoteId)} ` +
           `reason=${reason} context=${context} ${formatVoiceModeSuffix()}`
       );
@@ -3578,7 +3583,7 @@ export function usePeerConnections({
       reason: IceDisconnectedSuppressReason,
       context: string
     ) => {
-      console.log(
+      debugConsoleLog(
         `[voice-peer] reconnect_pc_disconnected_suppressed remote=${compactDeviceId(remoteId)} ` +
           `reason=${reason} context=${context} ${formatVoiceModeSuffix()}`
       );
@@ -3689,7 +3694,7 @@ export function usePeerConnections({
     const epoch = voiceJoinEpochRef.current;
     if (epoch.sessionId !== sessionId || epoch.startedAt <= 0) {
       voiceJoinEpochRef.current = { sessionId, startedAt: Date.now() };
-      console.log(
+      debugConsoleLog(
         `[voice-peer] join-stabilization-start session=${sessionId.slice(-6)} ` +
           `ms=${VOICE_JOIN_STABILIZATION_MS}`
       );
@@ -3714,7 +3719,7 @@ export function usePeerConnections({
         return;
       }
       if (deferredHealTimerRef.current != null) return;
-      console.log(
+      debugConsoleLog(
         `[voice-peer] heal-deferred reason=${reason} remainingMs=${remaining} ` +
           `session=${sessionId.slice(-6)}`
       );
@@ -4084,7 +4089,7 @@ export function usePeerConnections({
         syncPeerObservedStates(remoteId, pc);
       }
 
-      console.log(
+      voiceProdLog(
         `[voice-peer] remote-audio-pipeline-start remote=${compactDeviceId(remoteId)} ` +
           `reason=${opts?.reason ?? "ontrack"} streamTracks=${stream.getAudioTracks().length} ` +
           `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0} ` +
@@ -4097,7 +4102,7 @@ export function usePeerConnections({
           remoteId,
           opts?.reason ?? "remote_track_applied"
         );
-        console.log(
+        debugConsoleLog(
           `[voice-peer] remote-audio-pipeline-dispatch remote=${compactDeviceId(remoteId)} ` +
             `replay=1 arm=1 hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
         );
@@ -4149,7 +4154,7 @@ export function usePeerConnections({
   const ensureRemoteAudioMounted = useCallback(
     (remoteId: string, reason: string) => {
       if (remoteAudiosRef.current[remoteId]) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
             `reason=${reason} result=already_mounted`
         );
@@ -4162,7 +4167,7 @@ export function usePeerConnections({
 
       if (stream && snapshot.hasLiveStream) {
         upsertRemoteAudio(remoteId, stream, { force: true, reason });
-        console.log(
+        debugConsoleLog(
           `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
             `reason=${reason} result=upsert_stream`
         );
@@ -4172,7 +4177,7 @@ export function usePeerConnections({
       if (pc) {
         const synced = syncRemoteAudioFromPc(remoteId, pc, reason);
         if (synced) {
-          console.log(
+          debugConsoleLog(
             `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
               `reason=${reason} result=sync_from_pc`
           );
@@ -4192,7 +4197,7 @@ export function usePeerConnections({
             force: true,
             reason,
           });
-          console.log(
+          debugConsoleLog(
             `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
               `reason=${reason} result=receiver_track`
           );
@@ -4200,7 +4205,7 @@ export function usePeerConnections({
         }
       }
 
-      console.log(
+      debugConsoleLog(
         `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
           `reason=${reason} result=miss`
       );
@@ -4211,7 +4216,7 @@ export function usePeerConnections({
 
   const triggerRemoteAudioReplay = useCallback(
     (remoteId: string, reason: string) => {
-      console.log(
+      debugConsoleLog(
         `[voice-peer] triggerRemoteAudioReplay remote=${compactDeviceId(remoteId)} reason=${reason}`
       );
       debugConsoleLog(
@@ -4422,7 +4427,7 @@ export function usePeerConnections({
         reason === "session_changed" ||
         caller === "performVoicePeerCleanup";
       if (answerWait.awaiting && !bypassAnswerWaitClose) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] close-blocked-awaiting-answer remote=${compactDeviceId(remoteId)} ` +
             `reason=${reason} caller=${caller} ` +
             `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
@@ -4876,7 +4881,7 @@ export function usePeerConnections({
         reasonRaw !== "answer_wait_timeout" &&
         sourceRaw !== "answer_wait_timeout"
       ) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] reconnect-blocked-awaiting-answer remote=${compactDeviceId(remoteId)} ` +
             `reason=${reasonRaw} source=${sourceRaw} callerHint=${callerHint} ` +
             `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
@@ -4897,7 +4902,7 @@ export function usePeerConnections({
         sourceRaw === "connected_audio_confirm_timeout"
       ) {
         if (hasRemotePlaybackEvidence(remoteId)) {
-          console.log(
+          debugConsoleLog(
             `[voice-audio-confirm] reconnect-suppressed remote=${compactDeviceId(remoteId)} ` +
               `reason=playback_evidence_present`
           );
@@ -4907,7 +4912,7 @@ export function usePeerConnections({
           isRemoteMediaTransportReady(remoteId, pcEarly) &&
           (connectedAudioConfirmGraceRef.current.get(remoteId) ?? 0) < 1
         ) {
-          console.log(
+          debugConsoleLog(
             `[voice-audio-confirm] reconnect-suppressed remote=${compactDeviceId(remoteId)} ` +
               `reason=awaiting_playback_grace`
           );
@@ -5057,7 +5062,7 @@ export function usePeerConnections({
         reason === "connected_no_audio_confirm" ||
         source === "connected_audio_confirm_timeout"
       ) {
-        console.log(
+        debugConsoleLog(
           `[voice-audio-confirm] reconnect-scheduled remote=${compactDeviceId(remoteId)} ` +
             `reason=${reason} source=${source} delayMs=${delay} force=${opts.force ? 1 : 0}`
         );
@@ -5198,7 +5203,7 @@ export function usePeerConnections({
       if (!currentPc) return;
       if (isPeerEstablishedForRecovery(remoteId, currentPc)) return;
       if (hasRemotePlaybackEvidence(remoteId)) {
-        console.log(
+        debugConsoleLog(
           `[voice-audio-confirm] timeout-suppressed remote=${compactDeviceId(remoteId)} ` +
             `reason=playback_evidence phase=${phase}`
         );
@@ -5262,7 +5267,7 @@ export function usePeerConnections({
           );
         }, CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS);
         connectedAudioConfirmTimersRef.current.set(remoteId, graceTimer);
-        console.log(
+        debugConsoleLog(
           `[voice-audio-confirm] grace-extended remote=${compactDeviceId(remoteId)} ` +
             `ms=${CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS} tracks=${getPeerMedia(remoteId).remoteTracksCount}`
         );
@@ -5349,7 +5354,7 @@ export function usePeerConnections({
     (remoteId: string, triggerReason: string) => {
       const pc = pcsRef.current.get(remoteId);
       if (!pc) {
-        console.log(
+        debugConsoleLog(
           `[voice-audio-confirm] phase=arm-skipped remote=${compactDeviceId(remoteId)} ` +
             `reason=no_pc trigger=${triggerReason}`
         );
@@ -6181,7 +6186,7 @@ export function usePeerConnections({
       const iceTransportPolicy = getPeerIceTransportPolicy();
       peerIcePolicyRef.current.set(remoteId, iceTransportPolicy);
 
-      console.log(
+      voiceProdLog(
         `[voice-peer] create remote=${compactDeviceId(remoteId)} role=${role} ` +
           `reason=${mutationReason} caller=${caller} blockedByPlaybackEvidence=0 ` +
           `connectionId=${compactConnectionId(connectionId)} ${formatVoiceModeSuffix()}`
@@ -6438,7 +6443,7 @@ export function usePeerConnections({
               return;
             }
 
-            console.log(
+            debugConsoleLog(
               `[voice-peer] reconnect_ice_disconnected_scheduled remote=${compactDeviceId(remoteId)} ` +
                 `graceMs=${ICE_DISCONNECTED_RECONNECT_GRACE_MS} ` +
                 `conn=${currentPc.connectionState} ice=${currentIce} ${formatVoiceModeSuffix()}`
@@ -6668,7 +6673,7 @@ export function usePeerConnections({
               return;
             }
 
-            console.log(
+            debugConsoleLog(
               `[voice-peer] reconnect_pc_disconnected_scheduled remote=${compactDeviceId(remoteId)} ` +
                 `graceMs=${PC_DISCONNECTED_RECONNECT_GRACE_MS} ` +
                 `conn=${currentConn} ice=${currentPc.iceConnectionState} ${formatVoiceModeSuffix()}`
@@ -6928,7 +6933,7 @@ export function usePeerConnections({
           );
           return;
         }
-        console.log(
+        voiceProdLog(
           `[voice-signal] offer-send remote=${compactDeviceId(remoteId)} reason=${reason} ` +
             `connectionId=${compactConnectionId(connectionId)} target=${compactDeviceId(remoteId)} sig=${pc.signalingState}`
         );
@@ -6998,7 +7003,7 @@ export function usePeerConnections({
         armedAt,
       });
 
-      console.log(
+      voiceProdLog(
         `[voice-signal] answer_wait_arm remote=${compactDeviceId(remoteId)} ` +
           `connectionId=${compactConnectionId(connectionId)} ` +
           `currentConnectionId=${compactConnectionId(getCurrentConnectionId(remoteId))} ` +
@@ -7020,7 +7025,7 @@ export function usePeerConnections({
         if (marks.answer_received) return;
         if (pc?.signalingState !== "have-local-offer") return;
 
-        console.log(
+        voiceProdLog(
           `[voice-signal] answer_wait_timeout remote=${compactDeviceId(remoteId)} ` +
             `connectionId=${compactConnectionId(connectionId)} currentConnectionId=${compactConnectionId(currentConnectionId)} ` +
             `offerReason=${meta.reason} elapsedMs=${ageMs} sig=${pc.signalingState} ` +
@@ -7044,7 +7049,7 @@ export function usePeerConnections({
         answerWaitRetriedByConnRef.current.set(remoteId, connectionId);
         offeredPeersRef.current.delete(remoteId);
         passiveFallbackOfferByConnRef.current.delete(remoteId);
-        console.log(
+        voiceProdLog(
           `[voice-signal] answer_wait_retry remote=${compactDeviceId(remoteId)} ` +
             `connectionId=${compactConnectionId(connectionId)} currentConnectionId=${compactConnectionId(currentConnectionId)} ` +
             `elapsedMs=${ageMs} sig=${pc.signalingState} caller=scheduleAnswerWaitTimeout`
@@ -7161,7 +7166,7 @@ export function usePeerConnections({
       clearNoStreamNoOfferTimer(remoteId);
       cancelPassiveWaitOffer(remoteId, "passive_wait_fallback_offer");
 
-      console.log(
+      voiceProdLog(
         `[voice-peer] passive-wait-offer-timeout remote=${compactDeviceId(remoteId)} ` +
           `action=fallback_offer trigger=${triggerReason} ${formatVoiceModeSuffix()}`
       );
@@ -7509,7 +7514,7 @@ export function usePeerConnections({
 
       const answerWait = getPeerAnswerWaitState(remoteId);
       if (answerWait.awaiting) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] hard-reset-blocked-awaiting-answer remote=${compactDeviceId(remoteId)} ` +
             `mode=${mode} trigger=${reason} ` +
             `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
@@ -7665,7 +7670,7 @@ export function usePeerConnections({
           parts.push(`${key}=${value}`);
         }
       }
-      console.log(parts.join(" "));
+      debugConsoleLog(parts.join(" "));
     },
     [deviceId, getCurrentConnectionId]
   );
@@ -7696,7 +7701,7 @@ export function usePeerConnections({
       }
 
       if (!connectionId) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] reconnect-offer-deferred remote=${compactDeviceId(remoteId)} ` +
             `reconnectReason=${reconnectReason} blockedReason=missing_connection_id ${formatVoiceModeSuffix()}`
         );
@@ -7901,13 +7906,19 @@ export function usePeerConnections({
           allow: false,
           blockReason: "awaiting_remote_answer",
         });
-        console.log(
-          `[voice-peer] auto-hard-reset-blocked remote=${compactDeviceId(remoteId)} ` +
-            `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
-            `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
-            `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
-            `elapsedMs=${answerWait.elapsedMs} sig=${answerWait.signalingState}`
-        );
+        voiceProdLogUntilDeadline({
+          key: `auto-hard-reset-blocked:${remoteId}`,
+          deadlineAtMs: Date.now() + answerWait.remainingMs,
+          nearDeadlineMs: 3000,
+          minRepeatMs: 30_000,
+          args: [
+            `[voice-peer] auto-hard-reset-blocked remote=${compactDeviceId(remoteId)} ` +
+              `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
+              `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
+              `currentConnectionId=${compactConnectionId(answerWait.currentConnectionId)} ` +
+              `elapsedMs=${answerWait.elapsedMs} sig=${answerWait.signalingState}`,
+          ],
+        });
         return;
       }
 
@@ -7958,7 +7969,7 @@ export function usePeerConnections({
     async (remoteId: string) => {
       const answerWait = getPeerAnswerWaitState(remoteId);
       if (answerWait.awaiting) {
-        console.log(
+        debugConsoleLog(
           `[voice-peer] manual-hard-reset-blocked remote=${compactDeviceId(remoteId)} ` +
             `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
             `connectionId=${compactConnectionId(answerWait.connectionId)} ` +
@@ -8185,7 +8196,7 @@ export function usePeerConnections({
       if (isOfferOwner) {
         void maybeStartOffer(remoteId);
       } else {
-        console.log(
+        voiceProdLog(
           `[voice-peer] passive_wait_offer remote=${compactDeviceId(remoteId)} reason=${reason}`
         );
         createPeerConnection(remoteId, connectionId, {
@@ -8254,7 +8265,7 @@ export function usePeerConnections({
 
       const answerWait = getPeerAnswerWaitState(remoteId);
       if (answerWait.awaiting) {
-        console.log(
+        debugConsoleLog(
           `[voice-soft-reset] blocked remote=${compactDeviceId(remoteId)} ` +
             `reason=awaiting_remote_answer remainingMs=${answerWait.remainingMs} ` +
             `connectionId=${compactConnectionId(answerWait.connectionId)} caller=runPeerSoftReset`
@@ -8282,7 +8293,7 @@ export function usePeerConnections({
       softResetAttemptCountRef.current.set(remoteId, attempts + 1);
       softResetLastAtRef.current.set(remoteId, Date.now());
 
-      console.log(
+      debugConsoleLog(
         `[voice-soft-reset] start remote=${compactDeviceId(remoteId)} ` +
           `attempt=${attempts + 1}/${MAX_VOICE_SOFT_RESET_ATTEMPTS} ` +
           `reason=${triggerReason} ${formatVoiceModeSuffix()}`
@@ -8333,7 +8344,7 @@ export function usePeerConnections({
       ensurePeerConnection(remoteId, "soft_reset_rejoin", { force: true });
       emitPeerStates();
 
-      console.log(
+      debugConsoleLog(
         `[voice-soft-reset] done remote=${compactDeviceId(remoteId)} ` +
           `reason=${triggerReason} connectionId=${compactConnectionId(newConnectionId)} ` +
           `${formatVoiceModeSuffix()}`
@@ -8426,7 +8437,7 @@ export function usePeerConnections({
       if (trigger === "max_attempts") {
         if (!softResetExhaustedNotifiedRef.current.has(remoteId)) {
           softResetExhaustedNotifiedRef.current.add(remoteId);
-          console.log(
+          debugConsoleLog(
             `[voice-soft-reset] exhausted remote=${compactDeviceId(remoteId)} ` +
               `attempts=${MAX_VOICE_SOFT_RESET_ATTEMPTS} joinAgeMs=${joinAgeMs}`
           );
@@ -9937,12 +9948,14 @@ export function usePeerConnections({
         });
         return;
       }
-      if (
-        row.signal_type === "offer" ||
-        row.signal_type === "answer" ||
-        row.signal_type === "ice"
-      ) {
-        console.log(
+      if (row.signal_type === "offer" || row.signal_type === "answer") {
+        voiceProdLog(
+          `[voice-signal] inbound type=${row.signal_type} from=${compactDeviceId(remoteId)} ` +
+            `connectionId=${compactConnectionId(row.payload?.connectionId)} ` +
+            `target=${compactDeviceId(row.to_device_id ?? deviceId)}`
+        );
+      } else if (row.signal_type === "ice") {
+        debugConsoleLog(
           `[voice-signal] inbound type=${row.signal_type} from=${compactDeviceId(remoteId)} ` +
             `connectionId=${compactConnectionId(row.payload?.connectionId)} ` +
             `target=${compactDeviceId(row.to_device_id ?? deviceId)}`
@@ -10217,7 +10230,7 @@ export function usePeerConnections({
       }
 
       if (!voiceSettingsReadyRef.current) {
-        console.log(
+        debugConsoleLog(
           `[voice-signal] inbound-blocked remote=${compactDeviceId(remoteId)} type=${signalType} ` +
             `reason=voice_settings_not_loaded connectionId=${compactConnectionId(incomingConnectionId)}`
         );
@@ -10858,7 +10871,7 @@ export function usePeerConnections({
         }
         if (!activeOfferJoinLoggedRef.current.has(remoteId)) {
           activeOfferJoinLoggedRef.current.add(remoteId);
-          console.log(
+          voiceProdLog(
             `[voice-peer] active-offer-join remote=${compactDeviceId(remoteId)} ` +
               `settingsReady=${voiceSettingsReadyRef.current ? 1 : 0} ` +
               `turnReady=${hasTurnIceServer(iceServersRef.current) ? 1 : 0} ` +
@@ -10999,7 +11012,7 @@ export function usePeerConnections({
       for (const remoteId of getRemoteIds()) {
         if (!isRemoteInCall(remoteId)) continue;
         if (getEstablishedPeerSkipReasonForPeer(remoteId)) continue;
-        console.log(
+        debugConsoleLog(
           `[voice-peer] start-after-all-ready trigger=${trigger} remote=${compactDeviceId(remoteId)} ${formatVoiceModeSuffix()}`
         );
         if (deviceId < remoteId) {

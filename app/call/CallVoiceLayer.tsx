@@ -182,11 +182,6 @@ export default function CallVoiceLayer({
       device: compactDeviceId(deviceId),
       members: membersRef.current.length,
     });
-    console.log(
-      `[voice-layer] mount session=${compactSessionId(sessionId)} ` +
-        `device=${compactDeviceId(deviceId)} members=${membersRef.current.length} ` +
-        `instance=${instanceId}`
-    );
     debugConsoleLog(
       `[voice-layer] mount instance=${instanceId} sessionId=${compactSessionId(sessionId)} deviceId=${compactDeviceId(deviceId)} members=${membersRef.current.length}`
     );
