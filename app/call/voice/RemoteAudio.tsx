@@ -20,6 +20,7 @@ import { markVoicePerf } from "@/lib/voicePerf";
 import {
   evaluateAudioConfirmedStrict,
   getPeerInboundDeltaBytes,
+  getPeerInboundDeltaPackets,
   logRemoteAudioConfirmCheck,
   type RemoteAudioConfirmInput,
 } from "@/lib/voiceAudioDiagnostics";
@@ -379,6 +380,7 @@ function buildRemoteAudioConfirmInput(params: {
     playSuccess: health.playSuccess,
     playFailed,
     inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
+    inboundDeltaPackets: getPeerInboundDeltaPackets(remoteId),
   };
 }
 
@@ -851,11 +853,17 @@ export default function RemoteAudio({
         playFailedAtRef.current = null;
         provisionalPlaybackStartedAtRef.current = now;
 
+        const playbackTrack = getPlaybackTrack(el, stream);
         logRemoteAudioEvent("play-success", remoteId, instanceId, {
           reason,
           currentTime: el.currentTime.toFixed(2),
           paused: el.paused ? 1 : 0,
           muted: el.muted ? 1 : 0,
+          trackMuted: playbackTrack?.muted ? 1 : 0,
+          trackEnabled: playbackTrack?.enabled ? 1 : 0,
+          trackReady: playbackTrack?.readyState ?? "-",
+          inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
+          inboundDeltaPkts: getPeerInboundDeltaPackets(remoteId),
         });
         logRemoteAudioCompact(remoteId, el, stream, "play-success");
 

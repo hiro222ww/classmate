@@ -1,6 +1,10 @@
 "use client";
 
-import { debugConsoleLog } from "@/lib/debugVoiceLog";
+import {
+  debugConsoleLog,
+  voiceProdLog,
+  voiceProdLogThrottle,
+} from "@/lib/debugVoiceLog";
 import { compactDeviceId } from "@/app/call/voice/voiceDiagnostics";
 
 export type OneWayAudioSubClass =
@@ -27,6 +31,7 @@ export const AUDIO_DIAG_LOG_THROTTLE_MS = 2000;
 
 const CONFIRMED_LEVEL_THRESHOLD = 0.02;
 const inboundDeltaByPeer = new Map<string, number>();
+const inboundDeltaPacketsByPeer = new Map<string, number>();
 const outboundDeltaByPeer = new Map<string, number>();
 
 export type PeerRtpStatsSnapshot = {
@@ -65,10 +70,15 @@ export type RemoteAudioConfirmInput = {
   playSuccess: boolean;
   playFailed: boolean;
   inboundDeltaBytes: number;
+  inboundDeltaPackets: number;
 };
 
 export function setPeerInboundDeltaBytes(remoteId: string, delta: number) {
   inboundDeltaByPeer.set(compactDeviceId(remoteId), Math.max(0, delta));
+}
+
+export function setPeerInboundDeltaPackets(remoteId: string, delta: number) {
+  inboundDeltaPacketsByPeer.set(compactDeviceId(remoteId), Math.max(0, delta));
 }
 
 export function setPeerOutboundDeltaBytes(remoteId: string, delta: number) {
@@ -77,6 +87,10 @@ export function setPeerOutboundDeltaBytes(remoteId: string, delta: number) {
 
 export function getPeerInboundDeltaBytes(remoteId: string): number {
   return inboundDeltaByPeer.get(compactDeviceId(remoteId)) ?? 0;
+}
+
+export function getPeerInboundDeltaPackets(remoteId: string): number {
+  return inboundDeltaPacketsByPeer.get(compactDeviceId(remoteId)) ?? 0;
 }
 
 export function getPeerOutboundDeltaBytes(remoteId: string): number {
@@ -90,7 +104,8 @@ export function evaluateAudioConfirmedStrict(input: RemoteAudioConfirmInput): bo
   const hasPlaybackProgress =
     input.currentTimeAdvanced ||
     input.level >= CONFIRMED_LEVEL_THRESHOLD ||
-    input.inboundDeltaBytes > 0;
+    input.inboundDeltaBytes > 0 ||
+    input.inboundDeltaPackets > 0;
 
   return (
     input.hasElement &&
@@ -151,7 +166,7 @@ export function classifyOneWayAudioFromConfirmInput(
     iceConnected: opts?.iceConnected !== false,
     remoteTrackReceived,
     inboundDeltaBytes: input.inboundDeltaBytes,
-    inboundDeltaPackets: 0,
+    inboundDeltaPackets: input.inboundDeltaPackets,
     inboundBytesTotal: input.inboundDeltaBytes,
     hasRtpBaseline: hasPeerRtpStatsBaseline(remoteId),
     playSuccess: input.playSuccess,
@@ -305,6 +320,7 @@ export async function collectPeerRtpStats(
 
   prevRtpStatsByPeer.set(compact, snapshot);
   setPeerInboundDeltaBytes(remoteId, deltaInboundBytes);
+  setPeerInboundDeltaPackets(remoteId, deltaInboundPackets);
   setPeerOutboundDeltaBytes(remoteId, deltaOutboundBytes);
 
   return snapshot;
@@ -334,6 +350,14 @@ export function logRemoteAudioConfirmCheck(params: {
       });
   const subSuffix =
     subClass !== "OK" ? ` sub=${subClass}(${describeOneWayAudioSubClass(subClass)})` : "";
+  if (params.audioConfirmedStrict) {
+    voiceProdLog(
+      `[remote-audio] audio_confirmed_strict remote=${remote} ` +
+        `currentTime=${c.currentTime.toFixed(2)} level=${c.level.toFixed(3)} ` +
+        `advanced=${c.currentTimeAdvanced} inboundDeltaBytes=${c.inboundDeltaBytes} ` +
+        `inboundDeltaPkts=${c.inboundDeltaPackets}`
+    );
+  }
   debugConsoleLog(
     `[remote-audio] confirm-check remote=${remote} ` +
       `hasElement=${c.hasElement} srcObjectSet=${c.srcObjectSet} audioTracks=${c.audioTracks} ` +
@@ -342,6 +366,7 @@ export function logRemoteAudioConfirmCheck(params: {
       `readyState=${c.readyState} networkState=${c.networkState} ` +
       `trackReadyState=${c.trackReadyState} trackMuted=${c.trackMuted} trackEnabled=${c.trackEnabled} ` +
       `level=${c.level.toFixed(3)} inboundDeltaBytes=${c.inboundDeltaBytes} ` +
+      `inboundDeltaPkts=${c.inboundDeltaPackets} ` +
       `audioConfirmed=${params.audioConfirmedStrict}${subSuffix}`
   );
 }
@@ -373,6 +398,48 @@ export function logLocalAudioSenderCheck(params: {
       `bytesSent=${params.bytesSent} packetsSent=${params.packetsSent} ` +
       `deltaBytes=${params.deltaBytesSent} deltaPackets=${params.deltaPacketsSent}${subSuffix}`
   );
+}
+
+export function logVoiceRtpDiagnosticsProd(params: {
+  remoteId: string;
+  stats: PeerRtpStatsSnapshot;
+  subClass?: OneWayAudioSubClass | null;
+  localTrackReadyState: string;
+  localTrackMuted: boolean;
+  localTrackEnabled: boolean;
+  senderTrackReadyState: string;
+  senderTrackEnabled: boolean;
+  senderTrackMuted: boolean;
+  remoteTrackMuted?: boolean;
+  remoteTrackEnabled?: boolean;
+  remoteTrackReadyState?: string;
+  force?: boolean;
+}) {
+  const remote = compactDeviceId(params.remoteId);
+  const sub =
+    params.subClass && params.subClass !== "OK" ? params.subClass : null;
+  const subSuffix = sub
+    ? ` sub=${sub}(${describeOneWayAudioSubClass(sub)})`
+    : "";
+  const line =
+    `[voice-stats] remote=${remote} ` +
+    `inbound bytes=${params.stats.inboundBytes} delta=${params.stats.deltaInboundBytes} ` +
+    `pkts=${params.stats.inboundPackets} deltaPkts=${params.stats.deltaInboundPackets} ` +
+    `outbound bytes=${params.stats.outboundBytes} delta=${params.stats.deltaOutboundBytes} ` +
+    `pkts=${params.stats.outboundPackets} deltaPkts=${params.stats.deltaOutboundPackets}` +
+    ` remoteTrack muted=${params.remoteTrackMuted === true ? 1 : params.remoteTrackMuted === false ? 0 : "-"} ` +
+    `enabled=${params.remoteTrackEnabled === true ? 1 : params.remoteTrackEnabled === false ? 0 : "-"} ` +
+    `ready=${params.remoteTrackReadyState ?? "-"} ` +
+    `localTrack ready=${params.localTrackReadyState} muted=${params.localTrackMuted ? 1 : 0} ` +
+    `enabled=${params.localTrackEnabled ? 1 : 0} ` +
+    `sender ready=${params.senderTrackReadyState} muted=${params.senderTrackMuted ? 1 : 0} ` +
+    `enabled=${params.senderTrackEnabled ? 1 : 0}${subSuffix}`;
+
+  if (sub || params.force) {
+    voiceProdLog(line);
+  } else {
+    voiceProdLogThrottle(`voice-stats:${remote}`, 3000, line);
+  }
 }
 
 export function logVoiceRtpStats(params: {
@@ -416,15 +483,17 @@ export function logVoiceOneWayAudioSubClass(params: {
   playFailed?: boolean;
 }) {
   const label = describeOneWayAudioSubClass(params.subClass);
-  debugConsoleLog(
-    `[voice-peer] one-way-audio remote=${compactDeviceId(params.remoteDeviceId)} ` +
-      `class=D sub=${params.subClass}(${label}) iceConnected=${params.iceConnected} ` +
-      `remoteTrackReceived=${params.remoteTrackReceived} audioConfirmedStrict=${params.audioConfirmedStrict} ` +
-      `inboundBytesDelta=${params.inboundDeltaBytes} outboundBytesDelta=${params.outboundDeltaBytes} ` +
-      `currentTimeAdvanced=${params.currentTimeAdvanced === true} ` +
-      `paused=${params.paused === true} trackLive=${params.trackLive !== false} ` +
-      `playFailed=${params.playFailed === true}`
-  );
+  const remote = compactDeviceId(params.remoteDeviceId);
+  const line =
+    `[voice-peer] one-way-audio remote=${remote} ` +
+    `class=D sub=${params.subClass}(${label}) iceConnected=${params.iceConnected} ` +
+    `remoteTrackReceived=${params.remoteTrackReceived} audioConfirmedStrict=${params.audioConfirmedStrict} ` +
+    `inboundBytesDelta=${params.inboundDeltaBytes} outboundBytesDelta=${params.outboundDeltaBytes} ` +
+    `currentTimeAdvanced=${params.currentTimeAdvanced === true} ` +
+    `paused=${params.paused === true} trackLive=${params.trackLive !== false} ` +
+    `playFailed=${params.playFailed === true}`;
+  voiceProdLog(line);
+  debugConsoleLog(line);
 }
 
 export type VoiceConnectedAudioState = {
@@ -533,12 +602,14 @@ export function formatConnectedPairStatusLabel(
 export function resetPeerAudioDiagnostics(remoteId?: string) {
   if (!remoteId) {
     inboundDeltaByPeer.clear();
+    inboundDeltaPacketsByPeer.clear();
     outboundDeltaByPeer.clear();
     prevRtpStatsByPeer.clear();
     return;
   }
   const compact = compactDeviceId(remoteId);
   inboundDeltaByPeer.delete(compact);
+  inboundDeltaPacketsByPeer.delete(compact);
   outboundDeltaByPeer.delete(compact);
   prevRtpStatsByPeer.delete(compact);
 }

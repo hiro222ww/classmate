@@ -148,9 +148,11 @@ import {
   collectPeerRtpStats,
   formatVoiceConnectedConnectionState,
   getPeerInboundDeltaBytes,
+  getPeerInboundDeltaPackets,
   getPeerOutboundDeltaBytes,
   logLocalAudioSenderCheck,
   logVoiceOneWayAudioSubClass,
+  logVoiceRtpDiagnosticsProd,
   logVoiceRtpStats,
   resetPeerAudioDiagnostics,
   type OneWayAudioSubClass,
@@ -1254,6 +1256,9 @@ export function usePeerConnections({
   const oneWayAudioLoggedRef = useRef<Set<string>>(new Set());
   const peerIceConnectedAtRef = useRef<Map<string, number>>(new Map());
   const audioDiagLogAtRef = useRef<Map<string, number>>(new Map());
+  const pollPeerAudioDiagnosticsRef = useRef<
+    (remoteId: string, opts?: { forceLog?: boolean }) => void
+  >(() => {});
   const audioStrictRecoveryAttemptedRef = useRef<Set<string>>(new Set());
   const iceRestartAttemptsRef = useRef<Map<string, number>>(new Map());
   const checkingPlaybackStuckAtRef = useRef<Map<string, number>>(new Map());
@@ -2349,7 +2354,7 @@ export function usePeerConnections({
   );
 
   const pollPeerAudioDiagnostics = useCallback(
-    async (remoteId: string) => {
+    async (remoteId: string, opts?: { forceLog?: boolean }) => {
       const pc = pcsRef.current.get(remoteId);
       if (!pc || !isUsablePeerConnection(pc)) return;
       if (
@@ -2367,7 +2372,9 @@ export function usePeerConnections({
         : classifyPeerAudioSubClass(remoteId, { stats, health });
 
       const lastLog = audioDiagLogAtRef.current.get(remoteId) ?? 0;
-      const shouldLog = now - lastLog >= AUDIO_DIAG_LOG_THROTTLE_MS;
+      const shouldLog =
+        opts?.forceLog === true ||
+        now - lastLog >= AUDIO_DIAG_LOG_THROTTLE_MS;
       if (shouldLog) {
         audioDiagLogAtRef.current.set(remoteId, now);
         const pendingSub = subClass !== "OK" ? subClass : null;
@@ -2392,6 +2399,8 @@ export function usePeerConnections({
 
         const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
         const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+        const remoteStream = remoteStreamsRef.current.get(remoteId);
+        const remoteTrack = remoteStream?.getAudioTracks()[0] ?? null;
         logLocalAudioSenderCheck({
           remoteId,
           localTrackReadyState: localTrack?.readyState ?? "none",
@@ -2405,6 +2414,21 @@ export function usePeerConnections({
           deltaBytesSent: stats.deltaOutboundBytes,
           deltaPacketsSent: stats.deltaOutboundPackets,
           subClass: pendingSub,
+        });
+        logVoiceRtpDiagnosticsProd({
+          remoteId,
+          stats,
+          subClass: pendingSub,
+          localTrackReadyState: localTrack?.readyState ?? "none",
+          localTrackMuted: localTrack?.muted ?? false,
+          localTrackEnabled: localTrack?.enabled ?? false,
+          senderTrackReadyState: sender?.track?.readyState ?? "none",
+          senderTrackEnabled: sender?.track?.enabled ?? false,
+          senderTrackMuted: sender?.track?.muted ?? false,
+          remoteTrackMuted: remoteTrack?.muted,
+          remoteTrackEnabled: remoteTrack?.enabled,
+          remoteTrackReadyState: remoteTrack?.readyState,
+          force: opts?.forceLog === true,
         });
       }
 
@@ -2451,6 +2475,10 @@ export function usePeerConnections({
     ]
   );
 
+  pollPeerAudioDiagnosticsRef.current = (remoteId, opts) => {
+    void pollPeerAudioDiagnostics(remoteId, opts);
+  };
+
   const handleRemotePlaybackHealthChange = useCallback(
     (remoteId: string, health: RemotePlaybackHealth) => {
       remotePlaybackHealthRef.current.set(remoteId, health);
@@ -2458,11 +2486,14 @@ export function usePeerConnections({
       if (health.playSuccessEvent) {
         touchPeerSignal(remoteId, "play_success");
         markVoicePerf("audio_play_success", { remoteId });
+        pollPeerAudioDiagnosticsRef.current(remoteId, { forceLog: true });
       }
 
-      if (health.playSuccess && !health.audioConfirmedStrict) {
+      if (health.playbackActive && !health.audioConfirmedStrict) {
         markVoicePerf("audio_provisional", { remoteId });
         touchPeerSignal(remoteId, "playback_active");
+      } else if (health.playSuccess && !health.audioConfirmedStrict) {
+        markVoicePerf("audio_provisional", { remoteId });
       }
 
       if (health.audioConfirmedStrict) {
@@ -2502,14 +2533,19 @@ export function usePeerConnections({
           }
         });
       } else if (
-        health.playSuccess ||
         health.playbackActive ||
-        (health.level ?? 0) > 0.001
+        health.currentTimeAdvanced ||
+        (health.level ?? 0) >= 0.02 ||
+        getPeerInboundDeltaBytes(remoteId) > 0 ||
+        getPeerInboundDeltaPackets(remoteId) > 0
       ) {
         voiceProdLog(
           `[voice-peer] playback_evidence remote=${compactDeviceId(remoteId)} ` +
-            `playSuccess=${health.playSuccess ? 1 : 0} playbackActive=${health.playbackActive ? 1 : 0} ` +
-            `level=${(health.level ?? 0).toFixed(3)}`
+            `playbackActive=${health.playbackActive ? 1 : 0} ` +
+            `currentTimeAdvanced=${health.currentTimeAdvanced ? 1 : 0} ` +
+            `level=${(health.level ?? 0).toFixed(3)} ` +
+            `inboundDeltaBytes=${getPeerInboundDeltaBytes(remoteId)} ` +
+            `inboundDeltaPkts=${getPeerInboundDeltaPackets(remoteId)}`
         );
         cancelPassiveWaitOffer(remoteId, "playback_evidence");
         markPeerAutoRecoveryFrozenRef.current(remoteId, "playback_evidence");
@@ -3488,12 +3524,12 @@ export function usePeerConnections({
     return (
       health?.audioConfirmedStrict === true ||
       health?.audioActuallyPlaying === true ||
-      health?.playSuccess === true ||
       health?.playbackActive === true ||
-      (health?.level ?? 0) > 0.001 ||
-      timestamps.lastPlaySuccessAt != null ||
-      timestamps.lastPlaybackConfirmedAt != null ||
-      timestamps.lastPlaybackActiveAt != null
+      health?.currentTimeAdvanced === true ||
+      (health?.level ?? 0) >= 0.02 ||
+      getPeerInboundDeltaBytes(remoteId) > 0 ||
+      getPeerInboundDeltaPackets(remoteId) > 0 ||
+      timestamps.lastPlaybackConfirmedAt != null
     );
   }, []);
 
@@ -4159,6 +4195,7 @@ export function usePeerConnections({
         }
         triggerRemoteAudioReplayRef.current(remoteId, "remote_track_applied");
         armConnectedAudioConfirmRef.current(remoteId, reason);
+        pollPeerAudioDiagnosticsRef.current(remoteId, { forceLog: true });
         debugConsoleLog(
           `[voice-peer] remote-audio-pipeline-dispatch remote=${compactDeviceId(remoteId)} ` +
             `replay=1 arm=1 hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
