@@ -42,10 +42,27 @@ export const ANSWER_WAIT_TIMEOUT_MS = 10_000;
 export const NO_STREAM_NO_OFFER_FORCE_MS = 9000;
 
 /** Passive waits for active offer on initial join before one-shot fallback. */
-export const PASSIVE_WAIT_OFFER_INITIAL_MS = 3500;
+export const PASSIVE_WAIT_OFFER_INITIAL_MS = 2200;
 
 /** Passive fallback after mic/all-ready (active offer not received). */
-export const PASSIVE_WAIT_OFFER_MIC_READY_MS = 3500;
+export const PASSIVE_WAIT_OFFER_MIC_READY_MS = 1800;
 
 /** Default passive fallback for non-initial triggers. */
-export const PASSIVE_WAIT_OFFER_TIMEOUT_MS = 3500;
+export const PASSIVE_WAIT_OFFER_TIMEOUT_MS = 2000;
+
+export function resolvePassiveWaitOfferDelayMs(
+  triggerReason: string,
+  opts?: { initialJoin?: boolean }
+): number {
+  if (opts?.initialJoin || triggerReason === "passive_on_join") {
+    return PASSIVE_WAIT_OFFER_INITIAL_MS;
+  }
+  if (
+    triggerReason === "mic_ready" ||
+    triggerReason === "all_ready" ||
+    triggerReason === "settings_turn_signal_ready"
+  ) {
+    return PASSIVE_WAIT_OFFER_MIC_READY_MS;
+  }
+  return PASSIVE_WAIT_OFFER_TIMEOUT_MS;
+}

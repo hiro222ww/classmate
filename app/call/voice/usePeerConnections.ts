@@ -39,6 +39,8 @@ import {
   logVoiceEnsureRepeat,
   logVoiceEnsureSkipped,
   logPassiveOfferDeferred,
+  logPassiveOfferDeduped,
+  logPassiveOfferRescheduled,
   logPassiveWaitCancel,
   logVoiceGlare,
   logVoiceGlareAcceptRemoteOffer,
@@ -117,9 +119,7 @@ import {
   CONNECTED_AUDIO_CONFIRM_PLAYBACK_GRACE_MS,
   HAVE_LOCAL_OFFER_STUCK_MS,
   NO_STREAM_NO_OFFER_FORCE_MS,
-  PASSIVE_WAIT_OFFER_INITIAL_MS,
-  PASSIVE_WAIT_OFFER_MIC_READY_MS,
-  PASSIVE_WAIT_OFFER_TIMEOUT_MS,
+  resolvePassiveWaitOfferDelayMs,
   VOICE_JOIN_STABILIZATION_MS,
   getConnectedAudioConfirmTimeoutMs,
   getConnectingTurnProbeMs,
@@ -7599,8 +7599,12 @@ export function usePeerConnections({
 
       const marks = getPeerPipelineMarks(remoteId);
       if (
+        marks.audio_confirmed_strict ||
         marks.offer_received ||
+        marks.answer_received ||
         marks.remote_track_received ||
+        marks.offer_sent ||
+        marks.answer_sent ||
         hasLiveRemoteAudioStream(remoteId) ||
         hasRemotePlaybackEvidence(remoteId)
       ) {
@@ -7621,6 +7625,10 @@ export function usePeerConnections({
         if (shouldSuppressPassiveOfferReschedule(phase)) {
           return false;
         }
+        const sig = existingPc.signalingState;
+        if (sig === "have-local-offer" || sig === "have-remote-offer") {
+          return false;
+        }
       }
 
       if (!canSendVoiceOffer()) {
@@ -7630,20 +7638,44 @@ export function usePeerConnections({
         }
       }
 
+      const delayMs = resolvePassiveWaitOfferDelayMs(triggerReason, opts);
       const existingTimer = passiveWaitOfferTimersRef.current.get(remoteId);
-      if (existingTimer != null && !opts?.forceReschedule) {
-        return false;
+      const existingMeta = passiveWaitOfferMetaRef.current.get(remoteId);
+
+      if (existingTimer != null && existingMeta) {
+        const elapsedMs = Date.now() - existingMeta.scheduledAt;
+        const remainingMs = Math.max(0, existingMeta.delayMs - elapsedMs);
+        if (!opts?.forceReschedule) {
+          logPassiveOfferDeduped({
+            remoteId,
+            triggerReason,
+            existingReason: existingMeta.triggerReason,
+            remainingMs,
+            newDelayMs: delayMs,
+          });
+          return false;
+        }
+        if (delayMs >= remainingMs) {
+          logPassiveOfferDeduped({
+            remoteId,
+            triggerReason,
+            existingReason: existingMeta.triggerReason,
+            remainingMs,
+            newDelayMs: delayMs,
+          });
+          return false;
+        }
+        logPassiveOfferRescheduled({
+          remoteId,
+          triggerReason,
+          previousReason: existingMeta.triggerReason,
+          previousDelayMs: existingMeta.delayMs,
+          newDelayMs: delayMs,
+          remainingMs,
+        });
       }
 
       clearPassiveWaitOfferTimer(remoteId);
-
-      const delayMs = opts?.initialJoin
-        ? PASSIVE_WAIT_OFFER_INITIAL_MS
-        : triggerReason === "mic_ready" ||
-            triggerReason === "all_ready" ||
-            triggerReason === "settings_turn_signal_ready"
-          ? PASSIVE_WAIT_OFFER_MIC_READY_MS
-          : PASSIVE_WAIT_OFFER_TIMEOUT_MS;
 
       logPassiveOfferDeferred({ remoteId, triggerReason, delayMs });
 

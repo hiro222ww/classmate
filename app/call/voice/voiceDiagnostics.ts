@@ -1550,6 +1550,36 @@ export function logPassiveOfferDeferred(params: {
   );
 }
 
+export function logPassiveOfferDeduped(params: {
+  remoteId: string;
+  triggerReason: string;
+  existingReason: string;
+  remainingMs: number;
+  newDelayMs: number;
+}) {
+  voiceProdLog(
+    `[voice-peer] passive-offer-deduped remote=${compactDeviceId(params.remoteId)} ` +
+      `trigger=${params.triggerReason} existing=${params.existingReason} ` +
+      `remainingMs=${params.remainingMs} newDelayMs=${params.newDelayMs}`
+  );
+}
+
+export function logPassiveOfferRescheduled(params: {
+  remoteId: string;
+  triggerReason: string;
+  previousReason: string;
+  previousDelayMs: number;
+  newDelayMs: number;
+  remainingMs: number;
+}) {
+  voiceProdLog(
+    `[voice-peer] passive-offer-rescheduled remote=${compactDeviceId(params.remoteId)} ` +
+      `trigger=${params.triggerReason} previous=${params.previousReason} ` +
+      `previousDelayMs=${params.previousDelayMs} newDelayMs=${params.newDelayMs} ` +
+      `remainingMs=${params.remainingMs}`
+  );
+}
+
 export function logVoiceStartBlocked(
   remoteId: string,
   reason: VoiceStartBlockedReason
