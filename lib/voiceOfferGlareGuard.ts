@@ -15,6 +15,16 @@ export function isActiveOfferOwner(
   return localDeviceId < remoteDeviceId;
 }
 
+/** Deterministic join connection id — both peers derive the same value. */
+export function makeStableConnectionId(
+  deviceA: string,
+  deviceB: string
+): string {
+  const [a, b] =
+    deviceA < deviceB ? [deviceA, deviceB] : [deviceB, deviceA];
+  return `join__${a}__${b}`;
+}
+
 export function resolveOfferConnectionConflict(input: {
   localDeviceId: string;
   remoteDeviceId: string;
@@ -37,12 +47,9 @@ export function resolveOfferConnectionConflict(input: {
 
   if (localOfferInFlight) {
     if (isActiveOfferOwner(input.localDeviceId, input.remoteDeviceId)) {
-      if (input.localAnswerReceived !== true) {
-        return { action: "rollback_accept_remote_offer" };
-      }
       return {
         action: "ignore_remote_offer",
-        reason: "local_offer_in_flight",
+        reason: "active_offer_owner_wins",
       };
     }
     return { action: "rollback_accept_remote_offer" };

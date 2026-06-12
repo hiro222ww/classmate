@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isActiveOfferOwner,
+  makeStableConnectionId,
   resolveOfferConnectionConflict,
 } from "./voiceOfferGlareGuard";
 
@@ -18,7 +19,7 @@ describe("voiceOfferGlareGuard", () => {
     ).toEqual({ action: "rollback_accept_remote_offer" });
   });
 
-  it("active rolls back unanswered local offer for passive fallback offer", () => {
+  it("active ignores competing inbound offer when both sides sent offers", () => {
     expect(
       resolveOfferConnectionConflict({
         localDeviceId: "device-a",
@@ -29,23 +30,9 @@ describe("voiceOfferGlareGuard", () => {
         localOfferInFlight: true,
         localAnswerReceived: false,
       })
-    ).toEqual({ action: "rollback_accept_remote_offer" });
-  });
-
-  it("active ignores competing inbound offer after local answer received", () => {
-    expect(
-      resolveOfferConnectionConflict({
-        localDeviceId: "device-a",
-        remoteDeviceId: "device-b",
-        localConnectionId: "conn-local",
-        incomingConnectionId: "conn-remote",
-        sig: "have-local-offer",
-        localOfferInFlight: true,
-        localAnswerReceived: true,
-      })
     ).toEqual({
       action: "ignore_remote_offer",
-      reason: "local_offer_in_flight",
+      reason: "active_offer_owner_wins",
     });
   });
 
@@ -65,5 +52,14 @@ describe("voiceOfferGlareGuard", () => {
   it("treats lower device id as active offer owner", () => {
     expect(isActiveOfferOwner("aaa", "bbb")).toBe(true);
     expect(isActiveOfferOwner("bbb", "aaa")).toBe(false);
+  });
+
+  it("derives the same stable connection id on both peers", () => {
+    expect(makeStableConnectionId("device-a", "device-b")).toBe(
+      makeStableConnectionId("device-b", "device-a")
+    );
+    expect(makeStableConnectionId("device-a", "device-b")).toBe(
+      "join__device-a__device-b"
+    );
   });
 });
