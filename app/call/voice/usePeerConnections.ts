@@ -1247,6 +1247,7 @@ export function usePeerConnections({
     (remoteId: string, triggerReason: string) => void
   >(() => {});
   const audioReplayAtRef = useRef<Map<string, number>>(new Map());
+  const remoteAudioPipelineKeyRef = useRef<Map<string, string>>(new Map());
   const audioUnconfirmedTimeoutNotifiedRef = useRef<Set<string>>(new Set());
   const peerIceDiagnosticsRef = useRef<Map<string, PeerIceDiagnostics>>(new Map());
   const peerIcePolicyRef = useRef<Map<string, RTCIceTransportPolicy>>(new Map());
@@ -1358,6 +1359,35 @@ export function usePeerConnections({
     remoteAudiosRef.current = remoteAudios;
   }, [remoteAudios]);
 
+  const writeRemoteAudios = useCallback(
+    (
+      updater: (
+        prev: Record<string, RemoteAudioState>
+      ) => Record<string, RemoteAudioState>
+    ) => {
+      setRemoteAudios((prev) => {
+        const next = updater(prev);
+        remoteAudiosRef.current = next;
+        return next;
+      });
+    },
+    []
+  );
+
+  const writeRemoteAudiosSync = useCallback(
+    (
+      updater: (
+        prev: Record<string, RemoteAudioState>
+      ) => Record<string, RemoteAudioState>
+    ) => {
+      const next = updater(remoteAudiosRef.current);
+      remoteAudiosRef.current = next;
+      setRemoteAudios(next);
+      return next;
+    },
+    []
+  );
+
   const notifyStatus = useCallback(
     (text: string) => {
       onStatusChange?.(text);
@@ -1399,7 +1429,7 @@ export function usePeerConnections({
 
       remoteStreamsRef.current.delete(remoteId);
 
-      setRemoteAudios((prev) => {
+      writeRemoteAudios((prev) => {
         if (!prev[remoteId]) return prev;
         const next = { ...prev };
         delete next[remoteId];
@@ -1415,7 +1445,7 @@ export function usePeerConnections({
       emitPeerStatesRef.current();
       return true;
     },
-    []
+    [writeRemoteAudios]
   );
 
   const markPeerLastConnected = useCallback((remoteId: string) => {
@@ -4021,13 +4051,15 @@ export function usePeerConnections({
       stream: MediaStream,
       opts?: { reason?: string; force?: boolean }
     ) => {
+      const reason = opts?.reason ?? "ontrack";
+      const isReplayMount = reason.startsWith("replay:");
       const audioTrack = stream.getAudioTracks()[0] ?? null;
       if (!audioTrack || audioTrack.readyState !== "live") {
         debugConsoleLog(
           `[voice-peer] upsertRemoteAudio skipped remote=${compactDeviceId(remoteId)} ` +
-            `reason=${opts?.reason ?? "ontrack"} trackReady=${audioTrack?.readyState ?? "none"} ${formatVoiceModeSuffix()}`
+            `reason=${reason} trackReady=${audioTrack?.readyState ?? "none"} ${formatVoiceModeSuffix()}`
         );
-        return;
+        return false;
       }
 
       remoteStreamsRef.current.set(remoteId, stream);
@@ -4036,50 +4068,64 @@ export function usePeerConnections({
         attachRemoteTrackDiagnosticsRef.current(remoteId, track);
       }
 
-      setRemoteAudios((prev) => {
-        const prevState = prev[remoteId];
-        const member = members.find((m) => m.device_id === remoteId);
-        const prevTrackId = prevState?.stream.getAudioTracks()[0]?.id ?? null;
-        const nextTrackId = stream.getAudioTracks()[0]?.id ?? null;
+      const prevState = remoteAudiosRef.current[remoteId];
+      const member = members.find((m) => m.device_id === remoteId);
+      const prevTrackId = prevState?.stream.getAudioTracks()[0]?.id ?? null;
+      const nextTrackId = audioTrack.id;
+      const sameTrack =
+        prevTrackId != null &&
+        nextTrackId === prevTrackId &&
+        (prevState?.stream === stream ||
+          prevState?.stream.getAudioTracks()[0]?.readyState === "live");
 
-        if (
-          !opts?.force &&
-          prevState?.stream === stream &&
-          prevTrackId === nextTrackId
-        ) {
-          return {
+      if (!opts?.force && sameTrack && prevState) {
+        if (prevState.member !== member) {
+          writeRemoteAudiosSync((prev) => ({
             ...prev,
-            [remoteId]: {
-              ...prevState,
-              member,
-            },
-          };
+            [remoteId]: { ...prevState, member },
+          }));
         }
+        return true;
+      }
 
-        voiceDebugLog("[voice-peer] upsertRemoteAudio", {
-          remoteId,
-          reason: opts?.reason ?? "ontrack",
-          trackId: nextTrackId,
-          trackReadyState: stream.getAudioTracks()[0]?.readyState ?? null,
-          attachSeq: Date.now(),
-        });
+      const entryCreated = !prevState;
+      const attachSeq = Date.now();
+      writeRemoteAudiosSync((prev) => ({
+        ...prev,
+        [remoteId]: {
+          stream,
+          member,
+          attachSeq,
+          replayReason: null,
+        },
+      }));
 
-        return {
-          ...prev,
-          [remoteId]: {
-            stream,
-            member,
-            attachSeq: Date.now(),
-            replayReason: null,
-          },
-        };
-      });
+      if (entryCreated) {
+        voiceProdLog(
+          `[voice-peer] remote-audio-entry-created remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} attachSeq=${attachSeq} trackId=${nextTrackId.slice(-8)} ` +
+            `streamTracks=${stream.getAudioTracks().length}`
+        );
+      } else {
+        voiceProdLog(
+          `[voice-peer] remote-audio-entry-updated remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} attachSeq=${attachSeq} trackId=${nextTrackId.slice(-8)}`
+        );
+      }
+
+      if (isReplayMount) {
+        return true;
+      }
 
       touchPeerSignal(remoteId, "ontrack");
-      markVoiceNegotiationStep(remoteId, "remote_track_applied", `reason=${opts?.reason ?? "ontrack"}`);
+      markVoiceNegotiationStep(
+        remoteId,
+        "remote_track_applied",
+        `reason=${reason}`
+      );
       markVoicePerf("remote_track_received", {
         remoteId,
-        extra: `ready=${audioTrack?.readyState ?? "none"}`,
+        extra: `ready=${audioTrack.readyState}`,
       });
       cancelPassiveWaitOffer(remoteId, "remote_track_received");
       emitMeshSummary("ontrack", { immediate: true });
@@ -4089,26 +4135,46 @@ export function usePeerConnections({
         syncPeerObservedStates(remoteId, pc);
       }
 
+      const pipelineKey = `${nextTrackId}|${reason}`;
+      if (remoteAudioPipelineKeyRef.current.get(remoteId) === pipelineKey) {
+        return true;
+      }
+      remoteAudioPipelineKeyRef.current.set(remoteId, pipelineKey);
+
       voiceProdLog(
         `[voice-peer] remote-audio-pipeline-start remote=${compactDeviceId(remoteId)} ` +
-          `reason=${opts?.reason ?? "ontrack"} streamTracks=${stream.getAudioTracks().length} ` +
+          `reason=${reason} streamTracks=${stream.getAudioTracks().length} ` +
           `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0} ` +
           `conn=${pc?.connectionState ?? "-"} ice=${pc?.iceConnectionState ?? "-"}`
       );
 
       queueMicrotask(() => {
+        if (!remoteAudiosRef.current[remoteId]) {
+          voiceProdLog(
+            `[voice-peer] remote-audio-entry-missing remote=${compactDeviceId(remoteId)} ` +
+              `reason=${reason} action=ensure_mount`
+          );
+          ensureRemoteAudioMountedRef.current(remoteId, "pipeline_entry_missing");
+          return;
+        }
         triggerRemoteAudioReplayRef.current(remoteId, "remote_track_applied");
-        armConnectedAudioConfirmRef.current(
-          remoteId,
-          opts?.reason ?? "remote_track_applied"
-        );
+        armConnectedAudioConfirmRef.current(remoteId, reason);
         debugConsoleLog(
           `[voice-peer] remote-audio-pipeline-dispatch remote=${compactDeviceId(remoteId)} ` +
             `replay=1 arm=1 hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
         );
       });
+
+      return true;
     },
-    [members, syncPeerObservedStates, touchPeerSignal, emitMeshSummary, cancelPassiveWaitOffer]
+    [
+      cancelPassiveWaitOffer,
+      emitMeshSummary,
+      members,
+      syncPeerObservedStates,
+      touchPeerSignal,
+      writeRemoteAudiosSync,
+    ]
   );
 
   const syncRemoteAudioFromPc = useCallback(
@@ -4166,12 +4232,16 @@ export function usePeerConnections({
       const snapshot = getRemoteStreamAudioSnapshot(stream);
 
       if (stream && snapshot.hasLiveStream) {
-        upsertRemoteAudio(remoteId, stream, { force: true, reason });
+        const ok = upsertRemoteAudio(remoteId, stream, {
+          force: true,
+          reason,
+        });
         debugConsoleLog(
           `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
-            `reason=${reason} result=upsert_stream`
+            `reason=${reason} result=${ok ? "upsert_stream" : "upsert_failed"} ` +
+            `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
         );
-        return true;
+        return ok && !!remoteAudiosRef.current[remoteId];
       }
 
       if (pc) {
@@ -4179,7 +4249,8 @@ export function usePeerConnections({
         if (synced) {
           debugConsoleLog(
             `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
-              `reason=${reason} result=sync_from_pc`
+              `reason=${reason} result=sync_from_pc ` +
+              `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
           );
           return true;
         }
@@ -4193,15 +4264,16 @@ export function usePeerConnections({
           );
 
         if (liveTrack) {
-          upsertRemoteAudio(remoteId, new MediaStream([liveTrack]), {
+          const ok = upsertRemoteAudio(remoteId, new MediaStream([liveTrack]), {
             force: true,
             reason,
           });
           debugConsoleLog(
             `[voice-peer] ensureRemoteAudioMounted remote=${compactDeviceId(remoteId)} ` +
-              `reason=${reason} result=receiver_track`
+              `reason=${reason} result=${ok ? "receiver_track" : "receiver_failed"} ` +
+              `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
           );
-          return true;
+          return ok && !!remoteAudiosRef.current[remoteId];
         }
       }
 
@@ -4216,17 +4288,41 @@ export function usePeerConnections({
 
   const triggerRemoteAudioReplay = useCallback(
     (remoteId: string, reason: string) => {
+      const dedupeKey = `${remoteId}|${reason}`;
+      const now = Date.now();
+      const lastReplay = audioReplayAtRef.current.get(dedupeKey) ?? 0;
+      if (now - lastReplay < 500) {
+        debugConsoleLog(
+          `[voice-peer] triggerRemoteAudioReplay deduped remote=${compactDeviceId(remoteId)} reason=${reason}`
+        );
+        return;
+      }
+      audioReplayAtRef.current.set(dedupeKey, now);
+
+      if (!remoteAudiosRef.current[remoteId]) {
+        const mounted = ensureRemoteAudioMounted(
+          remoteId,
+          `replay:${reason}`
+        );
+        if (!mounted || !remoteAudiosRef.current[remoteId]) {
+          voiceProdLog(
+            `[voice-peer] remote-audio-replay-blocked remote=${compactDeviceId(remoteId)} ` +
+              `reason=${reason} block=no_entry`
+          );
+          return;
+        }
+      }
+
       debugConsoleLog(
-        `[voice-peer] triggerRemoteAudioReplay remote=${compactDeviceId(remoteId)} reason=${reason}`
+        `[voice-peer] triggerRemoteAudioReplay remote=${compactDeviceId(remoteId)} reason=${reason} ` +
+          `hasRemoteAudioEntry=${remoteAudiosRef.current[remoteId] ? 1 : 0}`
       );
       debugConsoleLog(
         `[remote-audio] replay remote=${compactDeviceId(remoteId)} reason=${reason} ${formatVoiceModeSuffix()}`
       );
 
-      ensureRemoteAudioMounted(remoteId, `replay:${reason}`);
-
       const member = members.find((m) => m.device_id === remoteId);
-      setRemoteAudios((prev) => {
+      writeRemoteAudiosSync((prev) => {
         const existing = prev[remoteId];
         const stream =
           existing?.stream ?? remoteStreamsRef.current.get(remoteId) ?? null;
@@ -4243,7 +4339,7 @@ export function usePeerConnections({
         };
       });
     },
-    [ensureRemoteAudioMounted, members]
+    [ensureRemoteAudioMounted, members, writeRemoteAudiosSync]
   );
 
   useEffect(() => {
@@ -4381,7 +4477,7 @@ export function usePeerConnections({
   }, [getCurrentConnectionId, getPeerMedia, getRemoteIds, micReady, signalReady]);
 
   useEffect(() => {
-    setRemoteAudios((prev) => {
+    writeRemoteAudios((prev) => {
       const next: Record<string, RemoteAudioState> = {};
 
       for (const [remoteId, state] of Object.entries(prev)) {
@@ -4391,7 +4487,7 @@ export function usePeerConnections({
 
       return next;
     });
-  }, [members]);
+  }, [members, writeRemoteAudios]);
 
   useEffect(() => {
     onRemoteCountChange?.(Object.keys(remoteAudios).length);
@@ -4624,11 +4720,12 @@ export function usePeerConnections({
       }
 
       if (!preserveRemoteAudio) {
-        setRemoteAudios((prev) => {
+        writeRemoteAudios((prev) => {
           const next = { ...prev };
           delete next[remoteId];
           return next;
         });
+        remoteAudioPipelineKeyRef.current.delete(remoteId);
       }
 
       return true;
@@ -4646,6 +4743,7 @@ export function usePeerConnections({
       hasLiveRemoteAudioStream,
       hasStaleEndedRemoteAudio,
       shouldHoldCloseForReconnectClearEnded,
+      writeRemoteAudios,
     ]
   );
 
@@ -8299,13 +8397,13 @@ export function usePeerConnections({
           `reason=${triggerReason} ${formatVoiceModeSuffix()}`
       );
 
-      setRemoteAudios((prev) => {
+      writeRemoteAudios((prev) => {
         if (!prev[remoteId]) return prev;
         const next = { ...prev };
         delete next[remoteId];
         return next;
       });
-      delete remoteAudiosRef.current[remoteId];
+      remoteAudioPipelineKeyRef.current.delete(remoteId);
       remoteStreamsRef.current.delete(remoteId);
       orphanRemoteAudioRef.current.delete(remoteId);
       orphanRemoteAudioAtRef.current.delete(remoteId);
@@ -8361,6 +8459,7 @@ export function usePeerConnections({
       getPeerAnswerWaitState,
       hasRemotePlaybackEvidence,
       setPeerState,
+      writeRemoteAudios,
     ]
   );
 
@@ -11343,6 +11442,7 @@ export function usePeerConnections({
       }
       passiveReconnectStateRef.current.clear();
 
+      remoteAudiosRef.current = {};
       setRemoteAudios({});
       emitPeerStatesRef.current();
       onVoiceCleanupRef.current?.();
