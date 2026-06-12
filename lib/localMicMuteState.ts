@@ -1,4 +1,4 @@
-import { debugConsoleLog, debugConsoleInfo } from "@/lib/debugVoiceLog";
+import { debugConsoleLog, voiceProdLog } from "@/lib/debugVoiceLog";
 function compactCallScopeId(id: string | null | undefined, tail = 8): string {
   const value = String(id ?? "").trim();
   if (!value) return "-";
@@ -32,6 +32,40 @@ export function logMuteStateSet(params: {
   debugConsoleLog(
     `[local-mic] mute-state-set userMuted=${params.userMuted} prev=${params.prev} ` +
       `reason=${params.reason} source=${params.source}`
+  );
+}
+
+export function logVoiceUiMuteToggle(params: {
+  fromMuted: boolean;
+  toMuted: boolean;
+  refMuted: boolean;
+}) {
+  const fromLabel = params.fromMuted ? "muted" : "unmuted";
+  const toLabel = params.toMuted ? "muted" : "unmuted";
+  voiceProdLog(
+    `[voice-ui] mute-toggle from=${fromLabel} to=${toLabel} ` +
+      `userMuted=${params.toMuted ? 1 : 0} ref=${params.refMuted ? 1 : 0}`
+  );
+}
+
+export function logVoiceUiUserMutedState(params: {
+  userMuted: boolean;
+  refMuted: boolean;
+  prevMuted?: boolean | null;
+  source: string;
+  micReady?: boolean;
+  localStreamReady?: boolean;
+}) {
+  const prev =
+    params.prevMuted == null ? "-" : params.prevMuted ? "1" : "0";
+  voiceProdLog(
+    `[voice-ui] userMuted-state source=${params.source} ` +
+      `userMuted=${params.userMuted ? 1 : 0} ref=${params.refMuted ? 1 : 0} ` +
+      `match=${params.userMuted === params.refMuted ? 1 : 0} prev=${prev}` +
+      (params.micReady != null ? ` micReady=${params.micReady ? 1 : 0}` : "") +
+      (params.localStreamReady != null
+        ? ` localStreamReady=${params.localStreamReady ? 1 : 0}`
+        : "")
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { debugConsoleLog, isDebugVoiceEnabled } from "@/lib/debugVoiceLog";
+import { debugConsoleLog, isDebugVoiceEnabled, voiceProdLog } from "@/lib/debugVoiceLog";
 import {
   useCallback,
   useEffect,
@@ -81,6 +81,7 @@ import {
   getCurrentPath,
   logNavigationIntent,
   logRouteChange,
+  markCallMicEverUnmuted,
   readCallMutePreference,
   resolveCallEntryUserMuted,
   restoreCallSessionAfterReload,
@@ -130,6 +131,8 @@ import {
   logInitialSafetyMute,
   logMuteStateSet,
   logRestoreMutedState,
+  logVoiceUiMuteToggle,
+  logVoiceUiUserMutedState,
 } from "@/lib/localMicMuteState";
 import type { RemotePlaybackHealth } from "@/app/call/voice/RemoteAudio";
 import {
@@ -342,9 +345,19 @@ export default function CallClient() {
   const [meetingPlan, setMeetingPlan] = useState<MeetingPlanPublic | null>(null);
   const [callRequest, setCallRequest] = useState<CallRequestPublic | null>(null);
 
+  const prevCallUserMutedRef = useRef<boolean | null>(null);
+
   useEffect(() => {
     userMutedRef.current = userMuted;
-  }, [userMuted]);
+    logVoiceUiUserMutedState({
+      userMuted,
+      refMuted: userMutedRef.current,
+      prevMuted: prevCallUserMutedRef.current,
+      source: "call_client_state",
+      micReady,
+    });
+    prevCallUserMutedRef.current = userMuted;
+  }, [userMuted, micReady]);
 
   useEffect(() => {
     setNowMs(Date.now());
@@ -2739,15 +2752,27 @@ export default function CallClient() {
               setUserMuted((prev) => {
                 const next = !prev;
                 userMutedRef.current = next;
+                logVoiceUiMuteToggle({
+                  fromMuted: prev,
+                  toMuted: next,
+                  refMuted: userMutedRef.current,
+                });
                 logMuteStateSet({
                   userMuted: next,
                   prev,
                   reason: next ? "user_click_mute" : "user_click_unmute",
                   source: "user_click",
                 });
+                if (!next) {
+                  markCallMicEverUnmuted(sessionId, deviceId);
+                }
                 writeCallMutePreference(sessionId, deviceId, next, {
                   source: "user_click",
                 });
+                voiceProdLog(
+                  `[voice-ui] mute-toggle-applied userMuted=${next ? 1 : 0} ` +
+                    `ref=${userMutedRef.current ? 1 : 0} stored=${readCallMutePreference(sessionId, deviceId) === true ? 1 : readCallMutePreference(sessionId, deviceId) === false ? 0 : "-"}`
+                );
                 return next;
               });
             }}
