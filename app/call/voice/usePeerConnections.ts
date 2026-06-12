@@ -1172,7 +1172,7 @@ export function usePeerConnections({
   >(new Map());
   const answerWaitRetriedByConnRef = useRef<Map<string, string>>(new Map());
   const clearAnswerWaitTimerRef = useRef<
-    (remoteId: string, cancelReason?: string) => void
+    (remoteId: string, cancelReason?: string, caller?: string) => void
   >(() => {});
   const passiveWaitOfferTimersRef = useRef<Map<string, number>>(new Map());
   const passiveFallbackOfferByConnRef = useRef<Map<string, string>>(new Map());
