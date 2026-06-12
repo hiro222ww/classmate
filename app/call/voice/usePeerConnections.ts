@@ -303,15 +303,42 @@ function hasPassiveRemoteNeedingPc(
   );
 }
 
+function findPeerAudioSender(pc: RTCPeerConnection): RTCRtpSender | null {
+  const senders = pc.getSenders();
+  const liveAudio = senders.find((s) => s.track?.kind === "audio");
+  if (liveAudio) return liveAudio;
+  const nullTrackSender = senders.find((s) => s.track == null);
+  if (nullTrackSender) return nullTrackSender;
+  const transceiver = pc.getTransceivers().find(
+    (t) =>
+      t.sender?.track?.kind === "audio" || t.receiver?.track?.kind === "audio"
+  );
+  return transceiver?.sender ?? null;
+}
+
+function peerHasLiveLocalAudioSender(pc: RTCPeerConnection): boolean {
+  return pc
+    .getSenders()
+    .some(
+      (sender) =>
+        sender.track?.kind === "audio" && sender.track.readyState === "live"
+    );
+}
+
 function logVoicePeerReplaceTrack(
   remoteId: string,
   track: MediaStreamTrack | null,
-  reason: string
+  reason: string,
+  opts?: { prod?: boolean }
 ) {
-  debugConsoleLog(
+  const line =
     `[voice-peer] replace-track remote=${compactDeviceId(remoteId)} ` +
-      `track=${track?.readyState === "live" ? "live" : "null"} reason=${reason}`
-  );
+    `track=${track?.readyState === "live" ? "live" : "null"} reason=${reason}`;
+  if (opts?.prod) {
+    voiceProdLog(line);
+  } else {
+    debugConsoleLog(line);
+  }
 }
 
 type VoicePeerCleanupReason =
@@ -1259,6 +1286,10 @@ export function usePeerConnections({
   const pollPeerAudioDiagnosticsRef = useRef<
     (remoteId: string, opts?: { forceLog?: boolean }) => void
   >(() => {});
+  const ensurePeerLocalAudioSenderRef = useRef<
+    (remoteId: string, reason: string) => Promise<boolean>
+  >(async () => false);
+  const localAudioRenegotiateAtRef = useRef<Map<string, number>>(new Map());
   const audioStrictRecoveryAttemptedRef = useRef<Set<string>>(new Set());
   const iceRestartAttemptsRef = useRef<Map<string, number>>(new Map());
   const checkingPlaybackStuckAtRef = useRef<Map<string, number>>(new Map());
@@ -2326,12 +2357,8 @@ export function usePeerConnections({
       }
 
       if (subClass === "D5") {
-        const pc = pcsRef.current.get(remoteId);
-        const track = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
-        const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
-        if (sender && track) {
-          await sender.replaceTrack(userMutedRef.current ? null : track);
-        }
+        await ensurePeerLocalAudioSenderRef.current(remoteId, "audio_strict_d5");
+        pollPeerAudioDiagnosticsRef.current(remoteId, { forceLog: true });
         return;
       }
 
@@ -2398,7 +2425,7 @@ export function usePeerConnections({
         });
 
         const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
-        const sender = pc.getSenders().find((s) => s.track?.kind === "audio");
+        const sender = findPeerAudioSender(pc);
         const remoteStream = remoteStreamsRef.current.get(remoteId);
         const remoteTrack = remoteStream?.getAudioTracks()[0] ?? null;
         logLocalAudioSenderCheck({
@@ -6250,6 +6277,9 @@ export function usePeerConnections({
         !manualHardResetHealPassRef.current.has(remoteId);
 
       if (existing && currentId === connectionId) {
+        queueMicrotask(() => {
+          void ensurePeerLocalAudioSenderRef.current(remoteId, "create_pc_reuse");
+        });
         return existing;
       }
 
@@ -7038,6 +7068,8 @@ export function usePeerConnections({
           `force=${force} owner=${isOfferOwner} ${formatVoiceModeSuffix()}`
       );
 
+      await ensurePeerLocalAudioSenderRef.current(remoteId, reason);
+
       try {
         const offer = await pc.createOffer({ offerToReceiveAudio: true });
 
@@ -7223,36 +7255,197 @@ export function usePeerConnections({
     maybeStartOfferRef.current = startPeerOffer;
   }, [startPeerOffer]);
 
+  const renegotiatePeerForLocalAudio = useCallback(
+    async (remoteId: string, reason: string): Promise<boolean> => {
+      const pc = pcsRef.current.get(remoteId);
+      if (!pc || !isUsablePeerConnection(pc)) return false;
+      if (pc.signalingState !== "stable") return false;
+      if (
+        pc.connectionState !== "connected" &&
+        pc.connectionState !== "connecting"
+      ) {
+        return false;
+      }
+
+      const connectionId = getCurrentConnectionId(remoteId);
+      if (!connectionId) return false;
+      if (!canSendVoiceOffer()) {
+        logMicOfferBlocked(remoteId);
+        return false;
+      }
+
+      const now = Date.now();
+      const lastAt = localAudioRenegotiateAtRef.current.get(remoteId) ?? 0;
+      if (now - lastAt < 3000) return false;
+
+      try {
+        voiceProdLog(
+          `[voice-peer] local-audio-renegotiate-start remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} owner=${deviceId < remoteId ? 1 : 0}`
+        );
+        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        if (pcsRef.current.get(remoteId) !== pc || pc.signalingState !== "stable") {
+          return false;
+        }
+
+        await pc.setLocalDescription(offer);
+        const sendResult = await sendSignal(remoteId, "offer", {
+          connectionId,
+          sdp: pc.localDescription,
+        });
+        if (!sendResult.ok) {
+          voiceProdLog(
+            `[voice-peer] local-audio-renegotiate-failed remote=${compactDeviceId(remoteId)} ` +
+              `reason=${reason} name=${sendResult.errorName ?? "unknown"}`
+          );
+          return false;
+        }
+
+        offeredPeersRef.current.add(remoteId);
+        markVoiceNegotiationStep(
+          remoteId,
+          "offer_send",
+          `reason=${reason}_local_audio_renegotiate`
+        );
+        touchPeerSignal(remoteId, "offer_sent");
+        localAudioRenegotiateAtRef.current.set(remoteId, now);
+        voiceProdLog(
+          `[voice-peer] local-audio-renegotiate-offer-sent remote=${compactDeviceId(remoteId)} reason=${reason}`
+        );
+        if (deviceId < remoteId) {
+          scheduleAnswerWaitTimeoutRef.current(remoteId, connectionId, reason);
+        }
+        return true;
+      } catch (e) {
+        console.warn("[voice-peer] local-audio-renegotiate failed", remoteId, e);
+        return false;
+      }
+    },
+    [
+      canSendVoiceOffer,
+      deviceId,
+      getCurrentConnectionId,
+      logMicOfferBlocked,
+      sendSignal,
+      touchPeerSignal,
+    ]
+  );
+
   const ensurePeerLocalAudioSender = useCallback(
-    (remoteId: string, reason: string): boolean => {
+    async (remoteId: string, reason: string): Promise<boolean> => {
       const pc = pcsRef.current.get(remoteId);
       if (!pc || !isUsablePeerConnection(pc)) return false;
 
+      if (
+        isReceiveOnlyMutedSession(voicePolicy.releaseMicOnMute, userMutedRef)
+      ) {
+        return false;
+      }
+
       const track = localAudioTrackRef.current;
       const stream = localStreamRef.current;
-      if (!track || track.readyState !== "live" || !stream) return false;
+      if (!track || track.readyState !== "live" || !stream) {
+        voiceProdLog(
+          `[voice-peer] local-audio-sender-skip remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reason} trackReady=${track?.readyState ?? "none"} hasStream=${stream ? 1 : 0}`
+        );
+        return false;
+      }
+
+      if (!userMutedRef.current && !track.enabled) {
+        track.enabled = true;
+        voiceProdLog(
+          `[voice-peer] local-track-enabled remote=${compactDeviceId(remoteId)} reason=${reason}`
+        );
+      }
 
       const sendTrack = userMutedRef.current ? null : track;
-      let sender = pc
-        .getSenders()
-        .find((s) => s.track?.kind === "audio" || s.track === null);
+      let sender = findPeerAudioSender(pc);
+      let addedTrack = false;
+      let needsRenegotiation = false;
 
       if (!sender) {
         pc.addTrack(track, stream);
-        sender = pc
-          .getSenders()
-          .find((s) => s.track?.kind === "audio" || s.track === null);
-        logVoicePeerReplaceTrack(remoteId, sendTrack, `${reason}_add_track`);
+        sender = findPeerAudioSender(pc);
+        addedTrack = true;
+        needsRenegotiation = true;
+        logVoicePeerReplaceTrack(remoteId, sendTrack, `${reason}_add_track`, {
+          prod: true,
+        });
       }
 
-      if (sender) {
-        void sender.replaceTrack(sendTrack);
-        logVoicePeerReplaceTrack(remoteId, sendTrack, reason);
+      if (!sender) {
+        voiceProdLog(
+          `[voice-peer] local-audio-sender-missing remote=${compactDeviceId(remoteId)} reason=${reason}`
+        );
+        return false;
       }
 
-      return !!sender;
+      const transceiver = pc
+        .getTransceivers()
+        .find((t) => t.sender === sender);
+      if (
+        sendTrack &&
+        transceiver &&
+        (transceiver.direction === "recvonly" ||
+          transceiver.direction === "inactive")
+      ) {
+        transceiver.direction = "sendrecv";
+        needsRenegotiation = true;
+      }
+
+      const currentTrack = sender.track;
+      const trackChanged =
+        sendTrack == null
+          ? currentTrack != null
+          : currentTrack?.id !== sendTrack.id;
+      if (trackChanged) {
+        await sender.replaceTrack(sendTrack);
+        logVoicePeerReplaceTrack(remoteId, sendTrack, reason, { prod: true });
+      }
+
+      const established =
+        pc.connectionState === "connected" ||
+        (pc.connectionState === "connecting" &&
+          (pc.iceConnectionState === "connected" ||
+            pc.iceConnectionState === "completed" ||
+            pc.iceConnectionState === "checking"));
+
+      if (
+        sendTrack &&
+        established &&
+        (addedTrack || needsRenegotiation) &&
+        pc.signalingState === "stable"
+      ) {
+        await renegotiatePeerForLocalAudio(
+          remoteId,
+          addedTrack ? `${reason}_add_track` : `${reason}_sender_direction`
+        );
+      }
+
+      return true;
     },
-    [localAudioTrackRef, localStreamRef, userMutedRef]
+    [
+      localAudioTrackRef,
+      localStreamRef,
+      renegotiatePeerForLocalAudio,
+      userMutedRef,
+      voicePolicy.releaseMicOnMute,
+    ]
+  );
+
+  ensurePeerLocalAudioSenderRef.current = ensurePeerLocalAudioSender;
+
+  const ensureAllPeerLocalAudioSenders = useCallback(
+    async (reason: string) => {
+      for (const remoteId of getRemoteIds()) {
+        if (!isRemoteInCall(remoteId)) continue;
+        const pc = pcsRef.current.get(remoteId);
+        if (!pc || !isUsablePeerConnection(pc)) continue;
+        await ensurePeerLocalAudioSender(remoteId, reason);
+      }
+    },
+    [ensurePeerLocalAudioSender, getRemoteIds, isRemoteInCall]
   );
 
   const runPassiveFallbackOffer = useCallback(
@@ -7497,7 +7690,7 @@ export function usePeerConnections({
       }
 
       passiveJoinSettledRef.current.delete(remoteId);
-      ensurePeerLocalAudioSender(remoteId, triggerReason);
+      void ensurePeerLocalAudioSenderRef.current(remoteId, triggerReason);
 
       const scheduled = schedulePassiveWaitOfferTimeout(remoteId, triggerReason, opts);
       scheduleNoStreamNoOfferTimeout(remoteId, triggerReason);
@@ -7505,7 +7698,6 @@ export function usePeerConnections({
     },
     [
       deviceId,
-      ensurePeerLocalAudioSender,
       getPeerNegotiationPhase,
       scheduleNoStreamNoOfferTimeout,
       schedulePassiveWaitOfferTimeout,
@@ -8253,6 +8445,24 @@ export function usePeerConnections({
 
       if (hasUsablePc && !force) {
         const phase = getPeerNegotiationPhase(remoteId, existing);
+        if (
+          existing &&
+          !isReceiveOnlyMutedSession(
+            voicePolicy.releaseMicOnMute,
+            userMutedRef
+          ) &&
+          isLocalTrackLive(localAudioTrackRef, localStreamRef) &&
+          !peerHasLiveLocalAudioSender(existing) &&
+          isTransportMediaConnected(
+            existing.connectionState,
+            existing.iceConnectionState
+          )
+        ) {
+          void ensurePeerLocalAudioSenderRef.current(
+            remoteId,
+            `${reason}_connected_missing_sender`
+          );
+        }
         if (shouldSuppressPassiveOfferReschedule(phase)) {
           passiveJoinSettledRef.current.add(remoteId);
           logEnsureSkipped(remoteId, reason, "already_has_pc");
@@ -8260,7 +8470,7 @@ export function usePeerConnections({
         }
         if (phase === "idle_unnegotiated") {
           if (isOfferOwner) {
-            ensurePeerLocalAudioSender(remoteId, reason);
+            void ensurePeerLocalAudioSenderRef.current(remoteId, reason);
             if (canSendVoiceOffer()) {
               void maybeStartOffer(remoteId);
             } else {
@@ -8367,7 +8577,6 @@ export function usePeerConnections({
       deviceId,
       enableTurnFallback,
       emitVoiceStartCheck,
-      ensurePeerLocalAudioSender,
       getCurrentConnectionId,
       getEstablishedPeerSkipReasonForPeer,
       getP2pDirectFailedHoldRemainingMs,
@@ -8388,6 +8597,8 @@ export function usePeerConnections({
       sendReconnectRequest,
       setPeerState,
       signalReady,
+      userMutedRef,
+      voicePolicy.releaseMicOnMute,
     ]
   );
 
@@ -9527,6 +9738,17 @@ export function usePeerConnections({
       const holdCheck = getTrackEndedHoldCheck(remoteId, pc);
 
       if (hasStream && connected) {
+        if (
+          pc &&
+          !receiveOnly &&
+          localTrackLive &&
+          !peerHasLiveLocalAudioSender(pc)
+        ) {
+          void ensurePeerLocalAudioSenderRef.current(
+            remoteId,
+            "heal_connected_missing_sender"
+          );
+        }
         setPeerState(remoteId, "connected");
         continue;
       }
@@ -10496,6 +10718,10 @@ export function usePeerConnections({
             `[voice-signal] answer-create-start remote=${compactDeviceId(remoteId)}` +
               (offerAnswerReason ? ` reason=${offerAnswerReason}` : "")
           );
+          await ensurePeerLocalAudioSenderRef.current(
+            remoteId,
+            "inbound_offer_answer"
+          );
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
@@ -10823,26 +11049,26 @@ export function usePeerConnections({
 
   const applyLocalAudioTrack = useCallback(
     (track: MediaStreamTrack | null, reason: string) => {
-      const sendTrack =
-        track && track.readyState === "live" && !userMutedRef.current
-          ? track
-          : null;
-
-      for (const [remoteId, pc] of pcsRef.current) {
-        const sender = pc
-          .getSenders()
-          .find((s) => s.track?.kind === "audio" || s.track === null);
-
-        if (!sender) continue;
-        void sender.replaceTrack(sendTrack);
-        logVoicePeerReplaceTrack(remoteId, sendTrack, reason);
+      if (
+        track &&
+        track.readyState === "live" &&
+        !userMutedRef.current &&
+        !track.enabled
+      ) {
+        track.enabled = true;
+        voiceProdLog(
+          `[voice-peer] local-track-enabled remote=- reason=${reason}_apply_local_track`
+        );
       }
 
-      if (sendTrack && micReady && signalReady) {
-        healPeerConnections();
-      }
+      void ensureAllPeerLocalAudioSenders(reason).then(() => {
+        if (micReady && signalReady) {
+          healPeerConnections();
+        }
+      });
     },
     [
+      ensureAllPeerLocalAudioSenders,
       healPeerConnections,
       micReady,
       signalReady,
@@ -10855,19 +11081,15 @@ export function usePeerConnections({
     const muted = userMutedRef.current;
 
     if (voicePolicy.releaseMicOnMute) {
-      for (const [remoteId, pc] of pcsRef.current) {
-        const sender = pc
-          .getSenders()
-          .find((s) => s.track?.kind === "audio" || s.track === null);
-
-        if (!sender) continue;
-        const next = muted ? null : track;
-        void sender.replaceTrack(next);
-        logVoicePeerReplaceTrack(
-          remoteId,
-          next,
-          muted ? "muted_release_mic" : "unmuted_acquire_mic"
-        );
+      if (!muted) {
+        void ensureAllPeerLocalAudioSenders("unmuted_acquire_mic");
+      } else {
+        for (const [remoteId, pc] of pcsRef.current) {
+          const sender = findPeerAudioSender(pc);
+          if (!sender) continue;
+          void sender.replaceTrack(null);
+          logVoicePeerReplaceTrack(remoteId, null, "muted_release_mic");
+        }
       }
       return;
     }
@@ -10875,23 +11097,10 @@ export function usePeerConnections({
     if (!track) return;
 
     applyUserMutedToTrack(track, muted, "userMuted_changed", "usePeerConnections");
-
-    for (const [remoteId, pc] of pcsRef.current) {
-      const sender = pc
-        .getSenders()
-        .find((s) => s.track?.kind === "audio" || s.track === null);
-
-      if (sender) {
-        const next = muted ? null : track;
-        void sender.replaceTrack(next);
-        logVoicePeerReplaceTrack(
-          remoteId,
-          next,
-          muted ? "user_muted" : "user_unmuted"
-        );
-      }
-    }
-  }, [userMuted, userMutedRef, localAudioTrackRef, micReady, voicePolicy.releaseMicOnMute]);
+    void ensureAllPeerLocalAudioSenders(
+      muted ? "user_muted" : "user_unmuted"
+    );
+  }, [userMuted, userMutedRef, localAudioTrackRef, micReady, voicePolicy.releaseMicOnMute, ensureAllPeerLocalAudioSenders]);
 
   const voiceMembersFingerprint = useMemo(
     () => buildVoiceConnectionMembersFingerprint(members, deviceId),
@@ -11116,6 +11325,15 @@ export function usePeerConnections({
       maybeClosePeerForMemberRemoval(remoteId, "presence_confirmed_leave");
     }
   }, [deviceId, members, maybeClosePeerForMemberRemoval]);
+
+  useEffect(() => {
+    if (!micReady) return;
+    if (!signalReady) return;
+
+    void ensureAllPeerLocalAudioSenders("mic_ready").then(() => {
+      healPeerConnectionsRef.current?.();
+    });
+  }, [ensureAllPeerLocalAudioSenders, micReady, signalReady]);
 
   useEffect(() => {
     if (!micReady) return;
