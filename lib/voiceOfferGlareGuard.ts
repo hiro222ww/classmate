@@ -22,6 +22,8 @@ export function resolveOfferConnectionConflict(input: {
   incomingConnectionId: string;
   sig: string;
   localOfferInFlight: boolean;
+  /** When false and local offer is still in flight, accept remote fallback offer. */
+  localAnswerReceived?: boolean;
 }): VoiceGlareResolveResult | null {
   if (!input.localConnectionId) {
     return { action: "accept_incoming_connection_id" };
@@ -35,6 +37,9 @@ export function resolveOfferConnectionConflict(input: {
 
   if (localOfferInFlight) {
     if (isActiveOfferOwner(input.localDeviceId, input.remoteDeviceId)) {
+      if (input.localAnswerReceived !== true) {
+        return { action: "rollback_accept_remote_offer" };
+      }
       return {
         action: "ignore_remote_offer",
         reason: "local_offer_in_flight",

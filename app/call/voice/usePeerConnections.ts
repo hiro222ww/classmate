@@ -6890,7 +6890,7 @@ export function usePeerConnections({
         }
         console.log(
           `[voice-signal] offer-send remote=${compactDeviceId(remoteId)} reason=${reason} ` +
-            `connectionId=${compactConnectionId(connectionId)} sig=${pc.signalingState}`
+            `connectionId=${compactConnectionId(connectionId)} target=${compactDeviceId(remoteId)} sig=${pc.signalingState}`
         );
         markVoiceNegotiationStep(remoteId, "offer_send", `reason=${reason}`);
         touchPeerSignal(remoteId, "offer_sent");
@@ -10024,6 +10024,7 @@ export function usePeerConnections({
               existingPc?.signalingState === "have-local-offer" ||
               offerMarks.offer_sent ||
               offeredPeersRef.current.has(remoteId),
+            localAnswerReceived: offerMarks.answer_received,
           });
 
           if (glareDecision) {
@@ -10172,6 +10173,10 @@ export function usePeerConnections({
       }
 
       if (!voiceSettingsReadyRef.current) {
+        console.log(
+          `[voice-signal] inbound-blocked remote=${compactDeviceId(remoteId)} type=${signalType} ` +
+            `reason=voice_settings_not_loaded connectionId=${compactConnectionId(incomingConnectionId)}`
+        );
         logVoiceSignalIgnored({
           reason: "voice_settings_not_loaded",
           type: signalType,
@@ -10263,10 +10268,20 @@ export function usePeerConnections({
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
-          await sendSignal(remoteId, "answer", {
+          const answerSendResult = await sendSignal(remoteId, "answer", {
             connectionId: incomingConnectionId,
             sdp: pc.localDescription,
           });
+          if (!answerSendResult.ok) {
+            console.warn(
+              `[voice-signal] answer-send-failed remote=${compactDeviceId(remoteId)} ` +
+                `connectionId=${compactConnectionId(incomingConnectionId)} ` +
+                `currentConnectionId=${compactConnectionId(getCurrentConnectionId(remoteId))} ` +
+                `sig=${pc.signalingState} name=${answerSendResult.errorName ?? "unknown"} ` +
+                `message=${answerSendResult.errorMessage ?? "unknown"}`
+            );
+            return;
+          }
           logVoiceSignalAnswerSent(remoteId, incomingConnectionId);
           touchPeerSignal(remoteId, "answer_sent");
           markVoicePerf("answer_sent", { remoteId });

@@ -18,7 +18,7 @@ describe("voiceOfferGlareGuard", () => {
     ).toEqual({ action: "rollback_accept_remote_offer" });
   });
 
-  it("active ignores competing inbound offer while local offer is in flight", () => {
+  it("active rolls back unanswered local offer for passive fallback offer", () => {
     expect(
       resolveOfferConnectionConflict({
         localDeviceId: "device-a",
@@ -27,6 +27,21 @@ describe("voiceOfferGlareGuard", () => {
         incomingConnectionId: "conn-remote",
         sig: "have-local-offer",
         localOfferInFlight: true,
+        localAnswerReceived: false,
+      })
+    ).toEqual({ action: "rollback_accept_remote_offer" });
+  });
+
+  it("active ignores competing inbound offer after local answer received", () => {
+    expect(
+      resolveOfferConnectionConflict({
+        localDeviceId: "device-a",
+        remoteDeviceId: "device-b",
+        localConnectionId: "conn-local",
+        incomingConnectionId: "conn-remote",
+        sig: "have-local-offer",
+        localOfferInFlight: true,
+        localAnswerReceived: true,
       })
     ).toEqual({
       action: "ignore_remote_offer",
