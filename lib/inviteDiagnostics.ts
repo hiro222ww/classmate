@@ -2,6 +2,8 @@
 
 export const INVITE_JOIN_GRACE_MS = 18_000;
 export const INVITE_MEMBER_EMPTY_STREAK_REQUIRED = 5;
+export const INVITE_LINK_EXPIRED_MESSAGE =
+  "この招待リンクは期限切れです。もう一度招待してもらってください";
 
 const INVITE_ROUTE_STATE_KEY = "classmate_invite_route_state";
 
@@ -133,8 +135,26 @@ export function isInviteJoinFailureMessage(message: string): boolean {
   return (
     value.includes("招待されたクラス") ||
     value === "参加に失敗しました" ||
-    value.includes("参加できるクラス数")
+    value.includes("参加できるクラス数") ||
+    value === INVITE_LINK_EXPIRED_MESSAGE
   );
+}
+
+export function formatInviteJoinApiError(errorCode: string): string {
+  const code = String(errorCode ?? "").trim();
+  if (code === "class_slots_limit") {
+    return "参加できるクラス数の上限に達しています";
+  }
+  if (
+    code === "invite_expired" ||
+    code === "session_closed" ||
+    code === "session_not_joinable" ||
+    code === "recruitment_closed" ||
+    code === "match_deadline_passed"
+  ) {
+    return INVITE_LINK_EXPIRED_MESSAGE;
+  }
+  return "招待されたクラスへの参加に失敗しました";
 }
 
 export type InviteJoinApiTrace = {

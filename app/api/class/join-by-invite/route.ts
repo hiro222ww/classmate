@@ -3,12 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
-import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
-import {
-  evaluateOpenJoinedSessionReuse,
-  isDeadlinePassed,
-  isSessionEligibleForNormalJoin,
-} from "@/lib/recruitment";
+import { resolveInviteJoinSession } from "@/lib/inviteJoinSession";
+import { isDeadlinePassed } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 
 export const dynamic = "force-dynamic";
@@ -106,14 +102,14 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
 
     const classId = String(body?.classId ?? "").trim();
-    const sessionId = String(body?.sessionId ?? "").trim();
+    const requestedSessionId = String(body?.sessionId ?? "").trim();
     const deviceId = String(body?.deviceId ?? "").trim();
 
     console.log(
-      `[invite-join] start class=${tailJoinId(classId)} session=${tailJoinId(sessionId)} device=${tailJoinId(deviceId)}`
+      `[invite-join] start class=${tailJoinId(classId)} session=${tailJoinId(requestedSessionId)} device=${tailJoinId(deviceId)}`
     );
 
-    if (!classId || !sessionId || !deviceId) {
+    if (!classId || !requestedSessionId || !deviceId) {
       return NextResponse.json(
         {
           ok: false,
@@ -166,94 +162,38 @@ export async function POST(req: Request) {
     }
 
     const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
-    await expireStaleRecruitmentSessions(supabase, {
-      classIds: [classId],
-      ttlMinutes: recruitmentSessionTtlMinutes,
-    });
-
-    const { data: sessionRow, error: sessionErr } = await supabase
-      .from("sessions")
-      .select("id,status,class_id,created_at")
-      .eq("id", sessionId)
-      .maybeSingle();
-
-    if (sessionErr) {
-      return NextResponse.json(
-        { ok: false, error: "session_lookup_failed", detail: sessionErr.message },
-        { status: 500 }
-      );
-    }
-
-    if (!sessionRow) {
-      return NextResponse.json(
-        { ok: false, error: "session_not_found", sessionId },
-        { status: 404 }
-      );
-    }
-
-    const sessionStatus = String(sessionRow.status ?? "").trim().toLowerCase();
-    if (
-      sessionStatus === "closed" ||
-      sessionStatus === "ended" ||
-      sessionStatus === "expired"
-    ) {
-      console.log(
-        `[room join] reject-closed-session session=${sessionId.slice(-6)} reason=${sessionStatus}`
-      );
-      return NextResponse.json(
-        { ok: false, error: "session_closed", sessionStatus },
-        { status: 400 }
-      );
-    }
-
-    if (String(sessionRow.class_id ?? "").trim() !== classId) {
-      return NextResponse.json(
-        { ok: false, error: "session_class_mismatch", sessionId, classId },
-        { status: 409 }
-      );
-    }
-
-    const { data: memberRows } = await supabase
-      .from("session_members")
-      .select("device_id")
-      .eq("session_id", sessionId);
-    const memberIds = (memberRows ?? [])
-      .map((row) => String(row.device_id ?? "").trim())
-      .filter(Boolean);
-    const reuse = evaluateOpenJoinedSessionReuse({
-      sessionStatus: sessionStatus,
-      sessionCreatedAt: sessionRow.created_at ?? null,
+    const resolved = await resolveInviteJoinSession({
+      client: supabase,
+      classId,
+      requestedSessionId,
+      deviceId,
       matchDeadlineAt: klass.match_deadline_at ?? null,
-      memberCount: memberIds.length,
-      deviceIsSessionMember: memberIds.includes(deviceId),
       recruitmentSessionTtlMinutes,
     });
-    if (!reuse.reusable) {
-      console.log(
-        `[match-join] existing-session invalid reason=${reuse.reason ?? "unknown"} session=${sessionId.slice(-6)}`
+
+    if (!resolved.ok) {
+      const status =
+        resolved.error === "recruitment_closed" ? 403 : 400;
+      console.warn(
+        `[invite-join] failed step=resolve-session error=${resolved.error} ` +
+          `class=${tailJoinId(classId)} requested=${tailJoinId(requestedSessionId)} ` +
+          `status=${resolved.sessionStatus ?? "-"} members=${resolved.memberCount ?? 0} ` +
+          `reason=${resolved.reason ?? "-"}`
       );
       return NextResponse.json(
         {
           ok: false,
-          error: "session_not_joinable",
-          reason: reuse.reason ?? "unknown",
+          error: resolved.error,
+          requestedSessionId,
+          sessionStatus: resolved.sessionStatus ?? null,
+          memberCount: resolved.memberCount ?? 0,
+          reason: resolved.reason ?? null,
         },
-        { status: 403 }
+        { status }
       );
     }
-    if (
-      !isSessionEligibleForNormalJoin({
-        sessionStatus,
-        sessionCreatedAt: sessionRow.created_at ?? null,
-        recruitmentSessionTtlMinutes,
-      }) &&
-      sessionStatus !== "active"
-    ) {
-      return NextResponse.json(
-        { ok: false, error: "recruitment_closed", sessionStatus },
-        { status: 403 }
-      );
-    }
+
+    const sessionId = resolved.sessionId;
 
     const joinState = await ensureClassSessionMembership({
       classId,
@@ -273,7 +213,10 @@ export async function POST(req: Request) {
     }
 
     console.log(
-      `[invite-join] success class=${tailJoinId(classId)} session=${tailJoinId(sessionId)} device=${tailJoinId(deviceId)} ` +
+      `[invite-join] success class=${tailJoinId(classId)} session=${tailJoinId(sessionId)} ` +
+        `requested=${tailJoinId(requestedSessionId)} device=${tailJoinId(deviceId)} ` +
+        `fallback=${resolved.sessionFallback ? 1 : 0} reactivated=${resolved.sessionReactivated ? 1 : 0} ` +
+        `reason=${resolved.reason} members=${resolved.memberCount} ` +
         `selfHealed=${joinState.selfHealed.join(",") || "none"}`
     );
 
@@ -290,6 +233,10 @@ export async function POST(req: Request) {
       ok: true,
       classId,
       sessionId,
+      requestedSessionId,
+      sessionFallback: resolved.sessionFallback,
+      sessionReactivated: resolved.sessionReactivated,
+      sessionFallbackReason: resolved.reason,
       className: String(klass.name ?? "").trim() || "クラス",
       alreadyJoined: membershipRes.alreadyJoined,
       currentCount: membershipRes.currentCount,

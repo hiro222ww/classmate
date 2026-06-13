@@ -67,6 +67,7 @@ import {
 import { logDeviceIdInit, logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
   createEmptyInviteJoinApiTrace,
+  formatInviteJoinApiError,
   isInviteJoinFailureMessage,
   isInviteJoinGraceActive,
   logInviteErrorUi,
@@ -2954,13 +2955,41 @@ const name = rawName === "You" ? "参加者" : rawName;
         });
 
         if (inviteJson?.error === "class_slots_limit") {
-          throw new Error("参加できるクラス数の上限に達しています");
+          throw new Error(formatInviteJoinApiError("class_slots_limit"));
         }
 
+        const inviteUiMessage = formatInviteJoinApiError(errCode);
         logInviteUiSnapshot("invite_api_failed", {
-          err: "招待されたクラスへの参加に失敗しました",
+          err: inviteUiMessage,
         });
-        throw new Error("招待されたクラスへの参加に失敗しました");
+        throw new Error(inviteUiMessage);
+      }
+
+      const resolvedSessionId = String(inviteJson?.sessionId ?? sessionId).trim();
+      const requestedSessionId = String(
+        inviteJson?.requestedSessionId ?? sessionId
+      ).trim();
+      const sessionFallback = inviteJson?.sessionFallback === true;
+
+      if (
+        sessionFallback &&
+        resolvedSessionId &&
+        resolvedSessionId !== sessionId
+      ) {
+        console.log(
+          `[invite-join] session-redirect from=${sessionId.slice(-6)} ` +
+            `to=${resolvedSessionId.slice(-6)} requested=${requestedSessionId.slice(-6)} ` +
+            `reason=${String(inviteJson?.sessionFallbackReason ?? "-")}`
+        );
+        joinResultOk = true;
+        joinResultStatus = "invite_session_redirect";
+        router.replace(
+          withDev(
+            `/room?invite=1&autojoin=1&classId=${encodeURIComponent(classId)}` +
+              `&sessionId=${encodeURIComponent(resolvedSessionId)}`
+          )
+        );
+        return;
       }
 
       inviteJoinTraceRef.current.inviteJoinOk = true;
@@ -2985,20 +3014,20 @@ const name = rawName === "You" ? "参加者" : rawName;
       joinResultStatus = "invite_join";
       await applyJoinSuccess({
         ok: true,
-        sessionId,
+        sessionId: resolvedSessionId,
         classId,
         alreadyInSession: true,
-        memberCount: 1,
+        memberCount: Number(inviteJson?.joinState?.ok ? 1 : 1),
         fastPath: "invite_join",
       });
 
       void fetch(
-        `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
+        `/api/session/join?sessionId=${encodeURIComponent(resolvedSessionId)}&classId=${encodeURIComponent(classId)}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            sessionId,
+            sessionId: resolvedSessionId,
             classId: classId || undefined,
             deviceId,
             name,
