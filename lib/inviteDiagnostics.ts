@@ -127,3 +127,87 @@ export function logRoomMembersInviteGraceIgnored(params: {
       `streak=${params.emptyStreak}`
   );
 }
+
+export function isInviteJoinFailureMessage(message: string): boolean {
+  const value = String(message ?? "").trim();
+  return (
+    value.includes("招待されたクラス") ||
+    value === "参加に失敗しました" ||
+    value.includes("参加できるクラス数")
+  );
+}
+
+export type InviteJoinApiTrace = {
+  inviteJoinOk: boolean | null;
+  inviteJoinStatus: number | null;
+  inviteJoinError: string;
+  sessionJoinOk: boolean | null;
+  sessionJoinStatus: number | null;
+  sessionJoinError: string;
+  membershipExists: boolean;
+  sessionMemberExists: boolean;
+};
+
+export function createEmptyInviteJoinApiTrace(): InviteJoinApiTrace {
+  return {
+    inviteJoinOk: null,
+    inviteJoinStatus: null,
+    inviteJoinError: "",
+    sessionJoinOk: null,
+    sessionJoinStatus: null,
+    sessionJoinError: "",
+    membershipExists: false,
+    sessionMemberExists: false,
+  };
+}
+
+export function logInviteErrorUi(params: {
+  reason: string;
+  classId?: string;
+  urlSessionId?: string;
+  joinedSessionId?: string;
+  currentSessionId?: string;
+  deviceId?: string;
+  openJoinedClass?: boolean;
+  invite?: boolean;
+  inviteOk?: boolean | null;
+  inviteStatus?: number | null;
+  inviteError?: string;
+  sessionJoinOk?: boolean | null;
+  sessionJoinStatus?: number | null;
+  sessionJoinError?: string;
+  membershipExists?: boolean;
+  sessionMemberExists?: boolean;
+  roomReady?: boolean;
+  displayMembers?: number;
+  err?: string;
+  joinOpGen?: number;
+  currentOpGen?: number;
+  suppressed?: boolean;
+}) {
+  const action = params.suppressed ? "suppress" : "show";
+  const parts = [
+    `[invite-error-ui] ${action} reason=${params.reason}`,
+    `class=${tailId(params.classId ?? "")}`,
+    `urlSession=${tailId(params.urlSessionId ?? "")}`,
+    `joinedSession=${tailId(params.joinedSessionId ?? "")}`,
+    `currentSession=${tailId(params.currentSessionId ?? "")}`,
+    `device=${tailId(params.deviceId ?? "")}`,
+    `openJoinedClass=${params.openJoinedClass ? 1 : 0}`,
+    `invite=${params.invite ? 1 : 0}`,
+    `inviteOk=${params.inviteOk == null ? "-" : params.inviteOk ? 1 : 0}`,
+    `inviteStatus=${params.inviteStatus ?? "-"}`,
+    `sessionJoinOk=${params.sessionJoinOk == null ? "-" : params.sessionJoinOk ? 1 : 0}`,
+    `sessionJoinStatus=${params.sessionJoinStatus ?? "-"}`,
+    `membershipExists=${params.membershipExists ? 1 : 0}`,
+    `sessionMemberExists=${params.sessionMemberExists ? 1 : 0}`,
+    `roomReady=${params.roomReady ? 1 : 0}`,
+    `displayMembers=${params.displayMembers ?? "-"}`,
+    `joinOpGen=${params.joinOpGen ?? "-"}`,
+    `currentOpGen=${params.currentOpGen ?? "-"}`,
+  ];
+  if (params.inviteError) parts.push(`inviteApiError=${params.inviteError}`);
+  if (params.sessionJoinError) parts.push(`sessionJoinError=${params.sessionJoinError}`);
+  if (params.err) parts.push(`err=${params.err}`);
+  console.log(parts.join(" "));
+}

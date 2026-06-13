@@ -66,12 +66,16 @@ import {
 } from "@/lib/sessionMemberListMerge";
 import { logDeviceIdInit, logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
+  createEmptyInviteJoinApiTrace,
+  isInviteJoinFailureMessage,
   isInviteJoinGraceActive,
+  logInviteErrorUi,
   logInviteJoinClient,
   logInviteRoute,
   logRoomMembersInviteGraceIgnored,
   readInviteRouteState,
   storeInviteRouteState,
+  type InviteJoinApiTrace,
 } from "@/lib/inviteDiagnostics";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
@@ -753,6 +757,7 @@ export default function RoomClient() {
   const roomFastReadyKeyRef = useRef<string | null>(null);
   const inviteJoinDoneKeyRef = useRef<string | null>(null);
   const inviteJoinGraceUntilRef = useRef(0);
+  const inviteJoinTraceRef = useRef<InviteJoinApiTrace>(createEmptyInviteJoinApiTrace());
   const hasClassMembershipHintRef = useRef(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
   const [topicTitle, setTopicTitle] = useState("ルーム");
@@ -981,6 +986,67 @@ export default function RoomClient() {
     []
   );
 
+  const buildInviteErrorUiSnapshot = useCallback(
+    (
+      reason: string,
+      overrides?: {
+        err?: string;
+        suppressed?: boolean;
+        joinOpGen?: number;
+        membershipExists?: boolean;
+        sessionMemberExists?: boolean;
+      }
+    ) => {
+      const joinedKey = joinedSessionKeyRef.current ?? "";
+      const joinedSessionId = joinedKey.includes(":")
+        ? joinedKey.split(":")[0]
+        : joinedKey || undefined;
+      const trace = inviteJoinTraceRef.current;
+      return {
+        reason,
+        classId,
+        urlSessionId: sessionId,
+        joinedSessionId,
+        currentSessionId: roomIdentityRef.current.sessionId,
+        deviceId,
+        openJoinedClass,
+        invite,
+        inviteOk: trace.inviteJoinOk,
+        inviteStatus: trace.inviteJoinStatus,
+        inviteError: trace.inviteJoinError || undefined,
+        sessionJoinOk: trace.sessionJoinOk,
+        sessionJoinStatus: trace.sessionJoinStatus,
+        sessionJoinError: trace.sessionJoinError || undefined,
+        membershipExists: overrides?.membershipExists ?? trace.membershipExists,
+        sessionMemberExists:
+          overrides?.sessionMemberExists ?? trace.sessionMemberExists,
+        roomReady: roomSessionReady,
+        displayMembers: membersRef.current.length,
+        joinOpGen: overrides?.joinOpGen,
+        currentOpGen: roomOpGenRef.current,
+        err: overrides?.err,
+        suppressed: overrides?.suppressed,
+      };
+    },
+    [classId, sessionId, deviceId, openJoinedClass, invite, roomSessionReady]
+  );
+
+  const clearInviteRoomError = useCallback(
+    (reason: string) => {
+      setErr((prev) => {
+        if (!prev || !isInviteJoinFailureMessage(prev)) return prev;
+        logInviteErrorUi(
+          buildInviteErrorUiSnapshot(`clear_${reason}`, {
+            suppressed: true,
+            err: prev,
+          })
+        );
+        return "";
+      });
+    },
+    [buildInviteErrorUiSnapshot]
+  );
+
   const cancelJoinRecoveryTimers = useCallback((reason: string) => {
     if (joinRetryTimerRef.current != null) {
       window.clearTimeout(joinRetryTimerRef.current);
@@ -1177,6 +1243,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     roomPostJoinFetchKeyRef.current = null;
     roomFastReadyKeyRef.current = null;
     inviteJoinDoneKeyRef.current = null;
+    inviteJoinTraceRef.current = createEmptyInviteJoinApiTrace();
     setLifecycleReady(false);
     setResolving(false);
     cancelAutoCallTimer("session_changed");
@@ -1299,6 +1366,12 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [classId, sessionId, deviceId, openJoinedClass]);
 
   useEffect(() => {
+    if (!err || pathname !== "/room") return;
+    if (!isInviteJoinFailureMessage(err)) return;
+    logInviteErrorUi(buildInviteErrorUiSnapshot("err_state_visible", { err }));
+  }, [err, pathname, buildInviteErrorUiSnapshot]);
+
+  useEffect(() => {
     if (pathname !== "/room") return;
     if (!invite || !classId || !sessionId) return;
 
@@ -1316,7 +1389,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     });
 
     logInviteRoute("stored", { classId, sessionId, invite: true });
-  }, [pathname, invite, classId, sessionId]);
+    clearInviteRoomError("invite_route_detected");
+  }, [pathname, invite, classId, sessionId, clearInviteRoomError]);
 
   useEffect(() => {
     if (pathname !== "/room") return;
@@ -2533,6 +2607,23 @@ const name = rawName === "You" ? "参加者" : rawName;
     );
   };
 
+  const logInviteUiSnapshot = (
+    reason: string,
+    overrides?: {
+      err?: string;
+      suppressed?: boolean;
+      membershipExists?: boolean;
+      sessionMemberExists?: boolean;
+    }
+  ) => {
+    logInviteErrorUi(
+      buildInviteErrorUiSnapshot(reason, {
+        joinOpGen,
+        ...overrides,
+      })
+    );
+  };
+
   async function redirectToResolvedSession(params: {
     oldSessionId: string;
     nextSessionId: string;
@@ -2644,6 +2735,7 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     setMemberCount((prev) => Math.max(prev, 1));
     setErr("");
+    clearInviteRoomError("apply_join_success");
 
     const snapshot = readSessionMembersSnapshot(sessionId, classId);
     if (snapshot && snapshot.members.length >= 2) {
@@ -2754,6 +2846,11 @@ const name = rawName === "You" ? "参加者" : rawName;
   let joinResultError = "";
   const joinStartMs = Date.now();
 
+  if (invite) {
+    inviteJoinTraceRef.current = createEmptyInviteJoinApiTrace();
+    clearInviteRoomError("join_start");
+  }
+
   try {
     if (!roomLifecycleReadyRef.current) {
       setResolving(true);
@@ -2813,9 +2910,17 @@ const name = rawName === "You" ? "参加者" : rawName;
 
       const inviteJson = await readJsonSafe(inviteRes);
 
+      const errCode = String(inviteJson?.error ?? `http_${inviteRes.status}`);
+      inviteJoinTraceRef.current.inviteJoinOk =
+        inviteRes.ok && inviteJson?.ok === true;
+      inviteJoinTraceRef.current.inviteJoinStatus = inviteRes.status;
+      inviteJoinTraceRef.current.inviteJoinError =
+        inviteRes.ok && inviteJson?.ok ? "" : errCode;
+
       if (!inviteRes.ok || !inviteJson?.ok) {
-        const errCode = String(inviteJson?.error ?? `http_${inviteRes.status}`);
         const recovered = await fetchViewerSessionMembership(joinTarget);
+        inviteJoinTraceRef.current.membershipExists = recovered.inSession;
+        inviteJoinTraceRef.current.sessionMemberExists = recovered.inSession;
         if (recovered.inSession) {
           console.log(
             `[room-join] invite-recover reason=already_member error=${errCode} ` +
@@ -2852,8 +2957,18 @@ const name = rawName === "You" ? "参加者" : rawName;
           throw new Error("参加できるクラス数の上限に達しています");
         }
 
+        logInviteUiSnapshot("invite_api_failed", {
+          err: "招待されたクラスへの参加に失敗しました",
+        });
         throw new Error("招待されたクラスへの参加に失敗しました");
       }
+
+      inviteJoinTraceRef.current.inviteJoinOk = true;
+      inviteJoinTraceRef.current.inviteJoinError = "";
+      inviteJoinTraceRef.current.membershipExists = true;
+      inviteJoinTraceRef.current.sessionMemberExists = true;
+      clearInviteRoomError("invite_api_success");
+      setErr("");
 
       logInviteJoinClient("success", { classId, sessionId, deviceId });
       hasClassMembershipHintRef.current = true;
@@ -2894,12 +3009,19 @@ const name = rawName === "You" ? "参加者" : rawName;
           cache: "no-store",
         }
       )
-        .then((bgRes) => {
+        .then(async (bgRes) => {
+          inviteJoinTraceRef.current.sessionJoinOk = bgRes.ok;
+          inviteJoinTraceRef.current.sessionJoinStatus = bgRes.status;
           if (bgRes.ok) {
             console.log(
               `[room-join] invite session_join background ok session=${sessionId.slice(-6)}`
             );
+            return;
           }
+          const bgJson = await readJsonSafe(bgRes);
+          inviteJoinTraceRef.current.sessionJoinError = String(
+            bgJson?.error ?? `http_${bgRes.status}`
+          );
         })
         .catch(() => {});
 
@@ -2968,6 +3090,10 @@ const name = rawName === "You" ? "参加者" : rawName;
         json = null;
       }
       const joinParseMs = Date.now() - joinParseStartMs;
+      inviteJoinTraceRef.current.sessionJoinOk = res.ok && json?.ok === true;
+      inviteJoinTraceRef.current.sessionJoinStatus = res.status;
+      inviteJoinTraceRef.current.sessionJoinError =
+        res.ok && json?.ok ? "" : String(json?.error || rawText || res.status);
 
       if (!res.ok || !json?.ok) {
         const error = json?.error || rawText;
@@ -3135,8 +3261,54 @@ const name = rawName === "You" ? "参加者" : rawName;
         requireInviteDone: invite,
       });
       if (settledAfterInvite.settled) {
+        clearInviteRoomError("catch_settled");
         joinResultOk = true;
         joinResultStatus = settledAfterInvite.status ?? "invite_join_settled";
+        return;
+      }
+
+      const membership = await fetchViewerSessionMembership(joinTarget);
+      inviteJoinTraceRef.current.membershipExists = membership.inSession;
+      inviteJoinTraceRef.current.sessionMemberExists = membership.inSession;
+
+      if (membership.inSession) {
+        logInviteUiSnapshot("catch_recover_membership", {
+          membershipExists: true,
+          sessionMemberExists: true,
+        });
+        joinResultOk = true;
+        joinResultStatus = "catch_membership_recover";
+        await applyJoinSuccess({
+          ok: true,
+          sessionId: joinTarget.sessionId,
+          classId: joinTarget.classId,
+          alreadyInSession: true,
+          memberCount: membership.memberCount,
+          fastPath: "catch_membership_recover",
+        });
+        clearInviteRoomError("catch_membership_recover");
+        return;
+      }
+
+      if (joinOpGen !== roomOpGenRef.current) {
+        logInviteUiSnapshot("catch_suppressed_stale_op_gen", {
+          suppressed: true,
+          err: String(e?.message ?? ""),
+        });
+        joinResultError = "stale_error_suppressed";
+        return;
+      }
+
+      if (!canApplyJoinResult(joinTarget)) {
+        logInviteUiSnapshot("catch_suppressed_identity", {
+          suppressed: true,
+          err: String(e?.message ?? ""),
+        });
+        if (shouldAbortJoin()) {
+          logJoinIgnoredResult("op_stale");
+          scheduleJoinRetry("stale_join_result", 500, joinKey);
+        }
+        joinResultError = "identity_mismatch_suppressed";
         return;
       }
 
@@ -3150,20 +3322,36 @@ const name = rawName === "You" ? "参加者" : rawName;
       if (shouldAbortJoin() && canApplyJoinResult(joinTarget)) {
         const settled = await settleJoinIfMembershipReady("catch_op_stale");
         if (settled.settled) {
+          clearInviteRoomError("catch_op_stale_settled");
           joinResultOk = true;
           joinResultStatus = settled.status ?? "stale_settled";
           return;
         }
       }
 
+      const message = String(e?.message ?? "参加に失敗しました");
+      const isInviteFailure =
+        invite && isInviteJoinFailureMessage(message);
+
+      if (isInviteFailure) {
+        logInviteUiSnapshot("catch_show", { err: message });
+        joinResultOk = false;
+        joinResultError = message;
+        joinedSessionKeyRef.current = null;
+        setLifecycleReady(false);
+        setResolving(false);
+        setErr(message);
+        return;
+      }
+
       joinResultOk = false;
-      joinResultError = String(e?.message ?? "join_failed");
+      joinResultError = message;
 
       joinedSessionKeyRef.current = null;
       setLifecycleReady(false);
       setResolving(false);
 
-      setErr(e?.message ?? "参加に失敗しました");
+      setErr(message);
     } finally {
       logJoinResult({
         ok: joinResultOk,
@@ -3289,6 +3477,8 @@ const name = rawName === "You" ? "参加者" : rawName;
   selfRejoinSessionIfMissing,
   probeRoomFastReady,
   router,
+  buildInviteErrorUiSnapshot,
+  clearInviteRoomError,
 ]);
 
   useEffect(() => {
