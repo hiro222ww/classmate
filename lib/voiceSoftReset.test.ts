@@ -62,6 +62,15 @@ describe("evaluateVoiceSoftResetTrigger", () => {
     expect(evaluateVoiceSoftResetTrigger(base)).toBe("track_no_playback_evidence");
   });
 
+  it("does not soft reset while awaiting active offer", () => {
+    expect(
+      evaluateVoiceSoftResetTrigger({
+        ...base,
+        awaitingActiveOffer: true,
+      })
+    ).toBeNull();
+  });
+
   it("does not repeat soft reset on the same connectionId", () => {
     expect(
       evaluateVoiceSoftResetTrigger({

@@ -32,6 +32,7 @@ export type VoiceSoftResetEvalInput = {
   negotiationComplete?: boolean;
   passiveFallbackOfferSent?: boolean;
   softResetAlreadyOnConnection?: boolean;
+  awaitingActiveOffer?: boolean;
 };
 
 export function shouldBlockVoiceSoftReset(
@@ -77,6 +78,7 @@ export function evaluateVoiceSoftResetTrigger(
   const nowMs = input.nowMs ?? Date.now();
 
   if (input.joinAgeMs < INITIAL_BIDIRECTIONAL_CHECK_MS) return null;
+  if (input.awaitingActiveOffer) return null;
   if (shouldBlockVoiceSoftReset(input)) return null;
   if (input.softResetAttempts >= MAX_VOICE_SOFT_RESET_ATTEMPTS) {
     return "max_attempts";

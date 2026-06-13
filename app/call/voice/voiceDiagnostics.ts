@@ -1643,7 +1643,8 @@ export type PassiveOfferSkipReason =
   | "signaling_busy"
   | "mic_blocked"
   | "deduped"
-  | "awaiting_reconnect_offer";
+  | "awaiting_reconnect_offer"
+  | "not_initial_connect";
 
 export function logPassiveOfferSkip(params: {
   remoteId: string;

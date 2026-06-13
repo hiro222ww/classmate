@@ -34,6 +34,7 @@ type Member = {
   screen?: string | null;
   last_seen_at?: string | null;
   is_in_call?: boolean;
+  joined_at?: string | null;
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";

@@ -37,6 +37,7 @@ export type SignalPayload = {
   sdp?: RTCSessionDescriptionInit | null;
   candidate?: RTCIceCandidateInit | null;
   resetReason?: string;
+  voiceEpoch?: number;
 };
 
 export type SignalRow = {

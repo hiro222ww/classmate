@@ -161,6 +161,7 @@ type Member = {
   lastSpokeAt?: number;
   is_in_call?: boolean;
   screen?: string | null;
+  joined_at?: string | null;
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
@@ -254,6 +255,7 @@ function mapSnapshotMemberToCallMember(member: SessionMemberSnapshotRow): Member
     avatar_url: member.avatar_url ?? null,
     is_in_call: member.is_in_call ?? undefined,
     screen: member.screen ?? undefined,
+    joined_at: member.joined_at ?? undefined,
   };
 }
 
@@ -870,6 +872,7 @@ export default function CallClient() {
               avatar_url: String(m.avatar_url ?? "").trim() || null,
               is_in_call: m.is_in_call === true,
               screen: String(m.screen ?? "").trim() || null,
+              joined_at: String(m.joined_at ?? "").trim() || null,
             })
           );
         }
