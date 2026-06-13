@@ -272,10 +272,19 @@ export function classifyOneWayAudioSubClass(params: {
     params.playSuccess &&
     (params.currentTimeAdvanced || params.level >= CONFIRMED_LEVEL_THRESHOLD)
   ) {
-    if (params.level <= 0 && inboundActive) {
-      return "D6";
-    }
     return "OK";
+  }
+
+  if (params.level <= 0 && inboundActive) {
+    if (
+      params.playSuccess ||
+      params.currentTimeAdvanced ||
+      params.inboundDeltaBytes > 0 ||
+      params.inboundDeltaPackets > 0
+    ) {
+      return "OK";
+    }
+    return "D6";
   }
 
   if (params.elementPaused === true) {

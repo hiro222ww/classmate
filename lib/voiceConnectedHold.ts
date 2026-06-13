@@ -67,7 +67,12 @@ export function isPeerUiConnectedHoldActive(
   return getPeerConnectedUiHoldMs(record, nowMs) > 0;
 }
 
-const TRANSIENT_SUB_CLASSES = new Set<OneWayAudioSubClass>(["D2", "D3", "D5"]);
+const TRANSIENT_SUB_CLASSES = new Set<OneWayAudioSubClass>([
+  "D2",
+  "D3",
+  "D5",
+  "D6",
+]);
 
 export function shouldSuppressTransientSubClassDuringHold(
   subClass: OneWayAudioSubClass,
