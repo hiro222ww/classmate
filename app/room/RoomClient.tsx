@@ -325,6 +325,50 @@ function parseJoinKeySessionId(joinKey: string) {
   return String(joinKey.split(":")[0] ?? "").trim();
 }
 
+function parseJoinKeyClassId(joinKey: string) {
+  return String(joinKey.split(":")[1] ?? "").trim();
+}
+
+async function fetchViewerSessionMembership(params: {
+  sessionId: string;
+  classId: string;
+  deviceId: string;
+}): Promise<{ inSession: boolean; memberCount: number }> {
+  const sessionId = String(params.sessionId ?? "").trim();
+  const classId = String(params.classId ?? "").trim();
+  const deviceId = String(params.deviceId ?? "").trim();
+  if (!sessionId || !classId || !deviceId) {
+    return { inSession: false, memberCount: 0 };
+  }
+
+  try {
+    const qs = new URLSearchParams({
+      sessionId,
+      classId,
+      lite: "1",
+      fast: "1",
+      viewerDeviceId: deviceId,
+    });
+    const res = await fetch(`/api/session/status?${qs.toString()}`, {
+      cache: "no-store",
+    });
+    const json = (await res.json().catch(() => null)) as SessionStatusResponse | null;
+    if (!res.ok || !json?.ok) {
+      return { inSession: false, memberCount: 0 };
+    }
+    const members = Array.isArray(json.members) ? json.members : [];
+    const inSession =
+      json.viewerState?.inSessionMembers === true ||
+      members.some((member) => String(member.device_id ?? "").trim() === deviceId);
+    return {
+      inSession,
+      memberCount: Math.max(members.length, Number(json.memberCount ?? 0)),
+    };
+  } catch {
+    return { inSession: false, memberCount: 0 };
+  }
+}
+
 async function rematchRoomSession(params: {
   deviceId: string;
   classId: string;
@@ -973,6 +1017,23 @@ export default function RoomClient() {
       const targetSessionId = parseJoinKeySessionId(joinKey);
 
       if (targetSessionId && identity.sessionId !== targetSessionId) {
+        const targetClassId = parseJoinKeyClassId(joinKey);
+        if (
+          isInviteJoinGraceActive(inviteJoinGraceUntilRef.current) &&
+          hasClassMembershipHintRef.current &&
+          identity.sessionId &&
+          identity.classId &&
+          targetClassId &&
+          identity.classId === targetClassId
+        ) {
+          console.log(
+            `[room-join] retry realign reason=invite_grace ` +
+              `target=${targetSessionId.slice(-6)} current=${identity.sessionId.slice(-6)}`
+          );
+          joinedSessionKeyRef.current = null;
+          void retryJoinRef.current?.();
+          return;
+        }
         console.log(
           `[room-join] retry blocked reason=stale_session_not_current ` +
             `target=${targetSessionId.slice(-6)} current=${identity.sessionId.slice(-6)}`
@@ -1015,6 +1076,23 @@ export default function RoomClient() {
           targetSessionId &&
           currentIdentity.sessionId !== targetSessionId
         ) {
+          const targetClassId = parseJoinKeyClassId(joinKey);
+          if (
+            isInviteJoinGraceActive(inviteJoinGraceUntilRef.current) &&
+            hasClassMembershipHintRef.current &&
+            currentIdentity.sessionId &&
+            currentIdentity.classId &&
+            targetClassId &&
+            currentIdentity.classId === targetClassId
+          ) {
+            console.log(
+              `[room-join] retry realign reason=invite_grace ` +
+                `target=${targetSessionId.slice(-6)} current=${currentIdentity.sessionId.slice(-6)}`
+            );
+            joinedSessionKeyRef.current = null;
+            void retryJoinRef.current?.();
+            return;
+          }
           console.log(
             `[room-join] retry blocked reason=stale_session_not_current ` +
               `target=${targetSessionId.slice(-6)} current=${currentIdentity.sessionId.slice(-6)}`
@@ -2612,6 +2690,64 @@ const name = rawName === "You" ? "参加者" : rawName;
     }
   }
 
+  async function settleJoinIfMembershipReady(
+    context: string,
+    opts?: { requireInviteDone?: boolean }
+  ): Promise<{
+    settled: boolean;
+    status?: string;
+    memberCount?: number;
+  }> {
+    if (!canApplyJoinResult(joinTarget)) return { settled: false };
+
+    const inviteDone =
+      invite && inviteJoinDoneKeyRef.current === joinKey;
+    const inviteGrace = isInviteJoinGraceActive(inviteJoinGraceUntilRef.current);
+
+    if (opts?.requireInviteDone && !inviteDone) return { settled: false };
+
+    let inSession = inviteDone || hasClassMembershipHintRef.current;
+    let memberCount = 1;
+
+    if (!inSession) {
+      const membership = await fetchViewerSessionMembership(joinTarget);
+      inSession = membership.inSession;
+      memberCount = membership.memberCount;
+    }
+
+    if (!inSession && !inviteGrace && !inviteDone) return { settled: false };
+
+    if (!inSession && (inviteGrace || inviteDone)) {
+      const rejoinOk = await selfRejoinSessionIfMissing(`stale_settle:${context}`);
+      if (!rejoinOk) {
+        const membership = await fetchViewerSessionMembership(joinTarget);
+        if (!membership.inSession) return { settled: false };
+        memberCount = membership.memberCount;
+      }
+    } else if (!inSession) {
+      return { settled: false };
+    }
+
+    console.log(
+      `[room-join] stale-settled context=${context} inviteDone=${inviteDone ? 1 : 0} ` +
+        `session=${joinTarget.sessionId.slice(-6)} class=${joinTarget.classId.slice(-6)}`
+    );
+
+    await applyJoinSuccess({
+      ok: true,
+      sessionId: joinTarget.sessionId,
+      classId: joinTarget.classId,
+      alreadyInSession: true,
+      memberCount,
+      fastPath: inviteDone ? "invite_join_settle" : "stale_settle",
+    });
+    return {
+      settled: true,
+      status: inviteDone ? "invite_join_settled" : "stale_settled",
+      memberCount,
+    };
+  }
+
   async function runJoinWork() {
   let joinResultOk = false;
   let joinResultStatus = "pending";
@@ -2626,9 +2762,17 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     if (shouldAbortJoin()) {
       logRoomAsyncIgnored(classId, "op_stale", "join");
+      const settled = await settleJoinIfMembershipReady("join_start");
+      if (settled.settled) {
+        joinResultOk = true;
+        joinResultStatus = settled.status ?? "stale_settled";
+        return;
+      }
       if (!canApplyJoinResult(joinTarget)) {
         logJoinIgnoredResult("op_stale");
         scheduleJoinRetry("stale_join_result", 500, joinKey);
+      } else {
+        console.log("[room-join] apply-result despite=op_stale context=join_start");
       }
       setResolving(false);
       joinResultError = "op_stale";
@@ -2671,6 +2815,25 @@ const name = rawName === "You" ? "参加者" : rawName;
 
       if (!inviteRes.ok || !inviteJson?.ok) {
         const errCode = String(inviteJson?.error ?? `http_${inviteRes.status}`);
+        const recovered = await fetchViewerSessionMembership(joinTarget);
+        if (recovered.inSession) {
+          console.log(
+            `[room-join] invite-recover reason=already_member error=${errCode} ` +
+              `session=${sessionId.slice(-6)}`
+          );
+          joinResultOk = true;
+          joinResultStatus = "invite_already_member";
+          await applyJoinSuccess({
+            ok: true,
+            sessionId,
+            classId,
+            alreadyInSession: true,
+            memberCount: recovered.memberCount,
+            fastPath: "invite_recover",
+          });
+          return;
+        }
+
         logInviteJoinClient("failed", {
           classId,
           sessionId,
@@ -2699,9 +2862,48 @@ const name = rawName === "You" ? "参加者" : rawName;
       markAutoCallOnce(sessionId, deviceId);
       inviteJoinDoneKeyRef.current = joinKey;
       console.log(
-        "[room-join] invite-join-done session_join=fast_expected " +
+        "[room-join] invite-join-done fast_path=apply " +
           `class=${classId.slice(-6)} session=${sessionId.slice(-6)}`
       );
+
+      joinResultOk = true;
+      joinResultStatus = "invite_join";
+      await applyJoinSuccess({
+        ok: true,
+        sessionId,
+        classId,
+        alreadyInSession: true,
+        memberCount: 1,
+        fastPath: "invite_join",
+      });
+
+      void fetch(
+        `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            classId: classId || undefined,
+            deviceId,
+            name,
+            capacity: 5,
+            invite: true,
+            openJoinedClass,
+          }),
+          cache: "no-store",
+        }
+      )
+        .then((bgRes) => {
+          if (bgRes.ok) {
+            console.log(
+              `[room-join] invite session_join background ok session=${sessionId.slice(-6)}`
+            );
+          }
+        })
+        .catch(() => {});
+
+      return;
     }
 
     console.log("[room join] request", {
@@ -2713,9 +2915,21 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     if (shouldAbortJoin()) {
       logRoomAsyncIgnored(classId, "op_stale", "join_before_session_join");
+      const settled = await settleJoinIfMembershipReady("join_before_session_join", {
+        requireInviteDone: invite,
+      });
+      if (settled.settled) {
+        joinResultOk = true;
+        joinResultStatus = settled.status ?? "stale_settled";
+        return;
+      }
       if (!canApplyJoinResult(joinTarget)) {
         logJoinIgnoredResult("op_stale");
         scheduleJoinRetry("stale_join_result", 500, joinKey);
+      } else {
+        console.log(
+          "[room-join] apply-result despite=op_stale context=join_before_session_join"
+        );
       }
       setResolving(false);
       joinResultError = "op_stale";
@@ -2889,6 +3103,12 @@ const name = rawName === "You" ? "参加者" : rawName;
       const applyDespiteStale = canApplyJoinResult(joinTarget);
 
       if (staleAfterResponse && !applyDespiteStale) {
+        const settled = await settleJoinIfMembershipReady("join_after_session_join");
+        if (settled.settled) {
+          joinResultOk = true;
+          joinResultStatus = settled.status ?? "stale_settled";
+          return;
+        }
         logJoinIgnoredResult("op_stale");
         scheduleJoinRetry("stale_join_result", 500, joinKey);
         setResolving(false);
@@ -2911,11 +3131,29 @@ const name = rawName === "You" ? "参加者" : rawName;
           `fastPath=${json?.alreadyInSession ? 1 : 0}`
       );
     } catch (e: any) {
+      const settledAfterInvite = await settleJoinIfMembershipReady("catch", {
+        requireInviteDone: invite,
+      });
+      if (settledAfterInvite.settled) {
+        joinResultOk = true;
+        joinResultStatus = settledAfterInvite.status ?? "invite_join_settled";
+        return;
+      }
+
       if (shouldAbortJoin() && !canApplyJoinResult(joinTarget)) {
         logJoinIgnoredResult("op_stale");
         scheduleJoinRetry("stale_join_result", 500, joinKey);
         joinResultError = "op_stale";
         return;
+      }
+
+      if (shouldAbortJoin() && canApplyJoinResult(joinTarget)) {
+        const settled = await settleJoinIfMembershipReady("catch_op_stale");
+        if (settled.settled) {
+          joinResultOk = true;
+          joinResultStatus = settled.status ?? "stale_settled";
+          return;
+        }
       }
 
       joinResultOk = false;
