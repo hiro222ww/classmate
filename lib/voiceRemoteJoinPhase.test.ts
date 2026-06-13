@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allowsPassiveFallbackOffer,
   shouldBlockSoftResetForJoinPhase,
+  shouldSendPassiveOfferAfterWaitScheduleFailed,
 } from "./voiceRemoteJoinPhase";
 
 describe("allowsPassiveFallbackOffer", () => {
@@ -24,5 +25,37 @@ describe("shouldBlockSoftResetForJoinPhase", () => {
       true
     );
     expect(shouldBlockSoftResetForJoinPhase("initial_connect")).toBe(false);
+  });
+});
+
+describe("shouldSendPassiveOfferAfterWaitScheduleFailed", () => {
+  it("never sends passive offer after auto_hard_reset", () => {
+    expect(
+      shouldSendPassiveOfferAfterWaitScheduleFailed({
+        reconnectReason: "auto_hard_reset",
+        joinPhase: "initial_connect",
+      })
+    ).toBe(false);
+    expect(
+      shouldSendPassiveOfferAfterWaitScheduleFailed({
+        reconnectReason: "auto_hard_reset",
+        joinPhase: "awaiting_active_offer",
+      })
+    ).toBe(false);
+  });
+
+  it("allows passive offer only during initial_connect for other reasons", () => {
+    expect(
+      shouldSendPassiveOfferAfterWaitScheduleFailed({
+        reconnectReason: "passive_on_join",
+        joinPhase: "initial_connect",
+      })
+    ).toBe(true);
+    expect(
+      shouldSendPassiveOfferAfterWaitScheduleFailed({
+        reconnectReason: "passive_on_join",
+        joinPhase: "awaiting_active_offer",
+      })
+    ).toBe(false);
   });
 });

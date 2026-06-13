@@ -142,6 +142,7 @@ import {
 import {
   allowsPassiveFallbackOffer,
   shouldBlockSoftResetForJoinPhase,
+  shouldSendPassiveOfferAfterWaitScheduleFailed,
   type RemoteJoinPhase,
 } from "@/lib/voiceRemoteJoinPhase";
 import { bumpLocalCallEntryGeneration } from "@/lib/voiceLocalCallEntry";
@@ -1202,6 +1203,7 @@ export function usePeerConnections({
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const processedSignalIdsRef = useRef<Set<number>>(new Set());
+  const wrongTargetIgnoredCountRef = useRef<Map<string, number>>(new Map());
   const reconnectTimersRef = useRef<Map<string, number>>(new Map());
   const peerStatesRef = useRef<Map<string, PeerState>>(new Map());
 
@@ -8628,10 +8630,21 @@ export function usePeerConnections({
 
       const compact = compactDeviceId(remoteId);
       const oldConnectionId = getCurrentConnectionId(remoteId);
+      const isOfferOwner = deviceId < remoteId;
+
+      logVoicePeerRole({
+        localDeviceId: deviceId,
+        remoteDeviceId: remoteId,
+        role: isOfferOwner ? "active" : "passive",
+        reason,
+        localGreater: deviceId > remoteId,
+      });
 
       voiceProdLog(
         `[voice-peer] peer-state-reset remote=${compact} reason=${reason} ` +
-          `epoch=${voiceEpoch} oldConnectionId=${compactConnectionId(oldConnectionId)}`
+          `epoch=${voiceEpoch} oldConnectionId=${compactConnectionId(oldConnectionId)} ` +
+          `role=${isOfferOwner ? "active" : "passive"} ` +
+          `next=${isOfferOwner ? "offer-send" : "waiting_for_active_offer"}`
       );
 
       peerAutoRecoveryFrozenRef.current.delete(remoteId);
@@ -8677,7 +8690,6 @@ export function usePeerConnections({
       assignConnectionId(remoteId, newConnectionId, reason);
       connectStartedAtRef.current.set(remoteId, Date.now());
 
-      const isOfferOwner = deviceId < remoteId;
       const offerReason =
         opts?.offerReason ??
         (reason === "reconnect_request_received"
@@ -8847,6 +8859,13 @@ export function usePeerConnections({
       startedPeersRef.current.delete(remoteId);
       setPeerState(remoteId, "connecting");
 
+      const isOfferOwner = deviceId < remoteId;
+      if (mode === "auto" && deviceId > remoteId) {
+        setRemoteJoinPhase(remoteId, "awaiting_active_offer");
+      } else if (mode === "auto") {
+        setRemoteJoinPhase(remoteId, "initial_connect");
+      }
+
       if (deviceId > remoteId) {
         passiveReconnectStateRef.current.set(remoteId, {
           connectionId: newConnectionId,
@@ -8880,6 +8899,7 @@ export function usePeerConnections({
       getCurrentConnectionId,
       getPeerAnswerWaitState,
       setPeerState,
+      setRemoteJoinPhase,
     ]
   );
 
@@ -8996,6 +9016,49 @@ export function usePeerConnections({
         return;
       }
 
+      const joinPhase = remoteJoinPhaseRef.current.get(remoteId);
+      if (
+        reconnectReason === "auto_hard_reset" ||
+        !shouldSendPassiveOfferAfterWaitScheduleFailed({
+          reconnectReason,
+          joinPhase,
+        })
+      ) {
+        setRemoteJoinPhase(remoteId, "awaiting_active_offer");
+        passiveReconnectStateRef.current.set(remoteId, {
+          connectionId,
+          reconnectReason,
+          sentAt: null,
+          retryUsed: false,
+          retryTimerId: null,
+          hardResetAt: Date.now(),
+        });
+        voiceProdLog(
+          `[voice-peer] waiting_for_active_offer remote=${compactDeviceId(remoteId)} ` +
+            `reason=${reconnectReason} connectionId=${compactConnectionId(connectionId)} ` +
+            `joinPhase=awaiting_active_offer trigger=beginReconnectAfterHardReset`
+        );
+        if (!opts?.skipReconnectRequest) {
+          const sent = await sendReconnectRequest(
+            remoteId,
+            connectionId,
+            reconnectReason
+          );
+          if (sent) {
+            passiveReconnectStateRef.current.set(remoteId, {
+              connectionId,
+              reconnectReason,
+              sentAt: Date.now(),
+              retryUsed: false,
+              retryTimerId: null,
+              hardResetAt: Date.now(),
+            });
+          }
+        }
+        schedulePassiveReconnectRequestRetry(remoteId);
+        return;
+      }
+
       const scheduled = schedulePassiveWaitOfferTimeout(remoteId, reconnectReason, {
         forceReschedule: true,
       });
@@ -9031,6 +9094,7 @@ export function usePeerConnections({
       schedulePassiveWaitOfferTimeout,
       sendReconnectRequest,
       setPeerState,
+      setRemoteJoinPhase,
       shouldSuppressAutoVoiceRecoveryForPeer,
       startPeerOffer,
     ]
@@ -11335,6 +11399,8 @@ export function usePeerConnections({
         return;
       }
       if (row.to_device_id && row.to_device_id !== deviceId) {
+        const priorWrong = wrongTargetIgnoredCountRef.current.get(remoteId) ?? 0;
+        wrongTargetIgnoredCountRef.current.set(remoteId, priorWrong + 1);
         logVoiceSignalIgnored({
           reason: "wrong_target",
           type: signalType,
@@ -11351,11 +11417,20 @@ export function usePeerConnections({
         row.signal_type === "answer" ||
         row.signal_type === "reconnect-request"
       ) {
+        const priorWrongTargetIgnored =
+          wrongTargetIgnoredCountRef.current.get(remoteId) ?? 0;
+        if (priorWrongTargetIgnored > 0) {
+          wrongTargetIgnoredCountRef.current.delete(remoteId);
+        }
         voiceProdLog(
           `[voice-signal] inbound type=${row.signal_type} from=${compactDeviceId(remoteId)} ` +
             `connectionId=${compactConnectionId(row.payload?.connectionId)} ` +
             `currentConnectionId=${compactConnectionId(getCurrentConnectionId(remoteId))} ` +
-            `target=${compactDeviceId(row.to_device_id ?? deviceId)}`
+            `target=${compactDeviceId(row.to_device_id ?? deviceId)} ` +
+            `role=${deviceId < remoteId ? "active" : "passive"} ` +
+            (priorWrongTargetIgnored > 0
+              ? `priorWrongTargetIgnored=${priorWrongTargetIgnored}`
+              : "")
         );
       } else if (row.signal_type === "ice") {
         debugConsoleLog(
@@ -12411,6 +12486,18 @@ export function usePeerConnections({
     }
 
     if (localCallEntryGenerationRef.current > 1) {
+      if (remoteIds.length >= 2) {
+        const roleMatrix = remoteIds
+          .map(
+            (remoteId) =>
+              `${compactDeviceId(remoteId)}:${deviceId < remoteId ? "active" : "passive"}`
+          )
+          .join(",");
+        voiceProdLog(
+          `[voice-mesh] rejoin-role-matrix local=${compactDeviceId(deviceId)} ` +
+            `remotes=${roleMatrix} generation=${localCallEntryGenerationRef.current}`
+        );
+      }
       for (const remoteId of remoteIds) {
         if (localReentryResetSentRef.current.has(remoteId)) continue;
         localReentryResetSentRef.current.add(remoteId);

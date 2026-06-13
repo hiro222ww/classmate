@@ -19,3 +19,12 @@ export function shouldBlockSoftResetForJoinPhase(
 ): boolean {
   return phase === "awaiting_active_offer";
 }
+
+/** Passive offer fallback after schedulePassiveWaitOfferTimeout returns false. */
+export function shouldSendPassiveOfferAfterWaitScheduleFailed(params: {
+  reconnectReason: string;
+  joinPhase: RemoteJoinPhase | undefined;
+}): boolean {
+  if (params.reconnectReason === "auto_hard_reset") return false;
+  return allowsPassiveFallbackOffer(params.joinPhase);
+}
