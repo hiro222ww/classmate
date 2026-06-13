@@ -122,9 +122,13 @@ import {
   isRemoteAudioHealthyNow,
   applyCallMemberStatusHysteresis,
   computeAudioUnhealthySinceMs,
+  logCallStatusTransition,
+  mapCallStatusLabelToPhase,
+  resolveCallStatusTransitionLog,
   resolveCallMemberStatus,
   resolveDisplayManualAudioReconnect,
   resolveEffectivePeerConnection,
+  type CallStatusPhase,
   type PeerLabelHysteresisState,
 } from "@/lib/memberPresenceStatus";
 import {
@@ -300,6 +304,7 @@ export default function CallClient() {
   const prevCallStatusRef = useRef<Record<string, string>>({});
   const prevCallStatusPeerLogRef = useRef<Record<string, string>>({});
   const peerLabelHysteresisRef = useRef<Record<string, PeerLabelHysteresisState>>({});
+  const peerStatusPhaseRef = useRef<Record<string, CallStatusPhase>>({});
   const missingRemoteAudioWarnedRef = useRef<Set<string>>(new Set());
   const manualPeerHardResetRef = useRef<
     (remoteId: string) => void | Promise<void>
@@ -1592,8 +1597,31 @@ export default function CallClient() {
         audioActuallyPlaying: audioHealth?.audioActuallyPlaying === true,
         playbackActive: audioHealth?.playbackActive === true,
         audioConfirmedStrict: audioHealth?.audioConfirmedStrict === true,
+        lastPlaybackConfirmedAt:
+          diag?.lastPlaybackConfirmedAt ??
+          (audioHealth?.audioConfirmedStrict === true ? nowMs : null),
       });
       peerLabelHysteresisRef.current[memberId] = labelState;
+
+      if (!isMe) {
+        const nextPhase = mapCallStatusLabelToPhase(status.text, status.reason);
+        const prevPhase = peerStatusPhaseRef.current[memberId] ?? "other";
+        const transition = resolveCallStatusTransitionLog({
+          prevPhase,
+          nextPhase,
+          statusReason: status.reason,
+        });
+        if (transition) {
+          logCallStatusTransition({
+            remoteDeviceId: memberId,
+            from: transition.from,
+            to: transition.to,
+            reason: transition.reason,
+            text: status.text,
+          });
+        }
+        peerStatusPhaseRef.current[memberId] = nextPhase;
+      }
 
       if (!isMe && diag) {
         setRemoteAudioPipelinePeerContext(memberId, {

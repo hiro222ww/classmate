@@ -1,4 +1,4 @@
-import { debugConsoleLog } from "@/lib/debugVoiceLog";
+import { debugConsoleLog, voiceProdLog } from "@/lib/debugVoiceLog";
 import {
   resolveMemberParticipationForUi,
   sanitizePresenceForUi,
@@ -22,7 +22,120 @@ export const RECONNECT_BUTTON_STALL_MS = 15_000;
 export const UI_RECONNECT_BUTTON_MIN_UNHEALTHY_MS = 17_000;
 export const UI_LABEL_CONFIRMING_DELAY_MS = 2500;
 export const UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS = 5000;
+export const UI_RECENT_CONFIRMED_HOLD_MS = 8000;
 export const REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD = 0.02;
+
+export type CallStatusPhase =
+  | "checking"
+  | "connected"
+  | "connected_soft"
+  | "unstable"
+  | "other";
+
+export function mapCallStatusLabelToPhase(
+  text: string,
+  reason?: string
+): CallStatusPhase {
+  if (text === "通話中") {
+    if (
+      reason?.includes("strict") ||
+      reason?.includes("confirmed_strict") ||
+      reason === "remote_audio_confirmed_strict" ||
+      reason === "peer_connected_audio_strict"
+    ) {
+      return "connected";
+    }
+    return "connected_soft";
+  }
+  if (text === "音声確認中" || text === "音声受信中") return "checking";
+  if (text === "音声が不安定です") return "unstable";
+  return "other";
+}
+
+export function hasRemoteAudioSoftConnectedEvidence(params: {
+  health: RemoteAudioHealthInput | null;
+  trackLive: boolean;
+  hasRemoteStream: boolean;
+  transportConnected: boolean;
+  recentPlaySuccess: boolean;
+  showReconnectButton: boolean;
+}): boolean {
+  if (params.showReconnectButton) return false;
+  if (!params.transportConnected || !params.trackLive || !params.hasRemoteStream) {
+    return false;
+  }
+  const health = params.health;
+  if (health?.audioConfirmedStrict === true) return false;
+  if (!health?.playSuccess && !params.recentPlaySuccess) return false;
+  return (
+    params.recentPlaySuccess ||
+    health?.currentTimeAdvanced === true ||
+    health?.verified === true ||
+    health?.audioActuallyPlaying === true ||
+    health?.playbackActive === true
+  );
+}
+
+export function logCallStatusTransition(params: {
+  remoteDeviceId: string;
+  from: string;
+  to: string;
+  reason: string;
+  text?: string;
+}) {
+  voiceProdLog(
+    `[call-status] from=${params.from} to=${params.to} reason=${params.reason} ` +
+      `remote=${params.remoteDeviceId.slice(-4)}` +
+      (params.text ? ` text=${params.text}` : "")
+  );
+}
+
+export function logCallStatusSuppressUnstable(params: {
+  remoteDeviceId: string;
+  reason: string;
+  previousText: string;
+}) {
+  voiceProdLog(
+    `[call-status] suppress_unstable reason=${params.reason} remote=${params.remoteDeviceId.slice(-4)} ` +
+      `previous=${params.previousText}`
+  );
+}
+
+export function resolveCallStatusTransitionLog(params: {
+  prevPhase: CallStatusPhase;
+  nextPhase: CallStatusPhase;
+  statusReason: string;
+}): { from: string; to: string; reason: string } | null {
+  if (params.prevPhase === params.nextPhase) return null;
+
+  if (params.nextPhase === "connected_soft") {
+    if (params.prevPhase === "checking" || params.prevPhase === "other") {
+      return {
+        from: "checking",
+        to: "connected_soft",
+        reason: "remote_track_playing",
+      };
+    }
+  }
+
+  if (params.nextPhase === "connected") {
+    const from =
+      params.prevPhase === "connected_soft"
+        ? "connected_soft"
+        : params.prevPhase === "checking" || params.prevPhase === "other"
+          ? "checking"
+          : null;
+    if (from) {
+      return {
+        from,
+        to: "connected",
+        reason: "audio_confirmed_strict",
+      };
+    }
+  }
+
+  return null;
+}
 
 const STABLE_CONNECTED_LABELS = new Set(["通話中", "音声受信中"]);
 const SOFTER_DOWNGRADE_LABELS = new Set([
@@ -260,6 +373,7 @@ export function applyCallMemberStatusHysteresis(params: {
   audioActuallyPlaying: boolean;
   playbackActive: boolean;
   audioConfirmedStrict?: boolean;
+  lastPlaybackConfirmedAt?: number | null;
 }): {
   status: typeof params.candidate;
   state: PeerLabelHysteresisState;
@@ -299,6 +413,9 @@ export function applyCallMemberStatusHysteresis(params: {
 
   const keepConnectedEvidence =
     params.audioConfirmedStrict === true ||
+    (params.lastPlaybackConfirmedAt != null &&
+      params.nowMs - params.lastPlaybackConfirmedAt <
+        UI_RECENT_CONFIRMED_HOLD_MS) ||
     params.recentPlaySuccess ||
     params.audioActuallyPlaying ||
     params.playbackActive;
@@ -395,10 +512,42 @@ export function applyCallMemberStatusHysteresis(params: {
   if (
     hadStableConnected &&
     candidate.text === "音声が不安定です" &&
+    keepConnectedEvidence
+  ) {
+    logCallStatusSuppressUnstable({
+      remoteDeviceId: params.remoteDeviceId,
+      reason: "recent_confirmed",
+      previousText,
+    });
+    return {
+      status: {
+        ...candidate,
+        ...REMOTE_AUDIO_LABEL_STYLE.connected,
+        text: previousText,
+        reason: "hysteresis_hold_unstable_recent_confirmed",
+      },
+      state: {
+        displayedText: previousText,
+        displayedReason: prev?.displayedReason ?? candidate.reason,
+        stableConnectedSinceMs: prev?.stableConnectedSinceMs ?? params.nowMs,
+        pendingDowngradeText: null,
+        pendingDowngradeSinceMs: null,
+      },
+    };
+  }
+
+  if (
+    hadStableConnected &&
+    candidate.text === "音声が不安定です" &&
     !keepConnectedEvidence
   ) {
     const pendingSince = prev?.pendingDowngradeSinceMs ?? params.nowMs;
     if (params.nowMs - pendingSince < UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS) {
+      logCallStatusSuppressUnstable({
+        remoteDeviceId: params.remoteDeviceId,
+        reason: "recent_confirmed_pending",
+        previousText,
+      });
       logUiLabelHold({
         remoteDeviceId: params.remoteDeviceId,
         previous: previousText,
@@ -530,6 +679,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   trackLive: boolean;
   hasRemoteStream: boolean;
   recentPlaySuccess: boolean;
+  transportConnected?: boolean;
   transportUnconfirmed?: boolean;
   lastOnTrackAt?: number | null;
   lastUnmuteAt?: number | null;
@@ -571,6 +721,24 @@ export function resolveUserFacingRemoteAudioLabel(params: {
       ...REMOTE_AUDIO_LABEL_STYLE.connected,
       text: "通話中",
       reason: "remote_audio_confirmed_strict",
+    };
+  }
+
+  const softConnected = hasRemoteAudioSoftConnectedEvidence({
+    health,
+    trackLive: params.trackLive,
+    hasRemoteStream: params.hasRemoteStream,
+    transportConnected: params.transportConnected === true,
+    recentPlaySuccess: params.recentPlaySuccess,
+    showReconnectButton: params.showReconnectButton,
+  });
+
+  if (softConnected) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.connected,
+      text: "通話中",
+      reason: "remote_track_playing",
     };
   }
 
@@ -672,6 +840,16 @@ export function isRemoteAudioHealthyNow(params: {
   if (!trackLive || !params.hasRemoteStream) return false;
 
   if (health?.audioConfirmedStrict === true) return true;
+
+  if (
+    health?.playSuccess === true &&
+    (health.currentTimeAdvanced === true ||
+      health.verified === true ||
+      health.audioActuallyPlaying === true ||
+      health.playbackActive === true)
+  ) {
+    return true;
+  }
 
   const lastPlaySuccessAt =
     health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt ?? null;
@@ -1246,12 +1424,25 @@ export function resolveCallMemberStatus(params: {
       trackLive,
       hasRemoteStream,
       recentPlaySuccess,
+      transportConnected,
       transportUnconfirmed: params.transportUnconfirmed,
       lastOnTrackAt: params.lastOnTrackAt,
       lastUnmuteAt: params.lastUnmuteAt,
       lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
       nowMs,
     });
+  const softConnected = hasRemoteAudioSoftConnectedEvidence({
+    health,
+    trackLive,
+    hasRemoteStream,
+    transportConnected,
+    recentPlaySuccess,
+    showReconnectButton,
+  });
+  const recentConfirmed =
+    health?.audioConfirmedStrict === true ||
+    (params.lastPlaybackConfirmedAt != null &&
+      nowMs - params.lastPlaybackConfirmedAt < UI_RECENT_CONFIRMED_HOLD_MS);
   const screen = String(params.screen ?? "").trim();
   const stable = isStableVoiceJoinMode();
   const inSessionMember = params.inSessionMember !== false;
@@ -1499,6 +1690,16 @@ export function resolveCallMemberStatus(params: {
       };
     }
 
+    if (softConnected) {
+      return {
+        ...REMOTE_AUDIO_LABEL_STYLE.connected,
+        text: "通話中",
+        reason: "peer_connected_audio_soft",
+        source: "peerState",
+        statusSource: "remote_audio_health",
+      };
+    }
+
     if (
       audioHealthy ||
       recentPlaySuccess ||
@@ -1541,6 +1742,8 @@ export function resolveCallMemberStatus(params: {
     hasRemoteStream &&
     trackLive &&
     health?.audioConfirmedStrict !== true &&
+    !recentConfirmed &&
+    !softConnected &&
     !audioHealthy &&
     !recentSignals &&
     (health?.lastAttachAt == null ||

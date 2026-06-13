@@ -28,6 +28,7 @@ export type OneWayAudioSubClassLabel =
 export const AUDIO_STRICT_CONFIRM_TIMEOUT_MS = 8000;
 export const AUDIO_STATS_POLL_INTERVAL_MS = 2000;
 export const AUDIO_DIAG_LOG_THROTTLE_MS = 2000;
+export const REMOTE_TRACK_RTP_WARMUP_MS = 2500;
 
 const CONFIRMED_LEVEL_THRESHOLD = 0.02;
 const inboundDeltaByPeer = new Map<string, number>();
@@ -165,6 +166,8 @@ export function classifyOneWayAudioFromConfirmInput(
     senderTrackEnabled?: boolean;
     localSenderExpected?: boolean;
     userIntentionallyMuted?: boolean;
+    remoteTrackReceivedAtMs?: number | null;
+    nowMs?: number;
   }
 ): OneWayAudioSubClass {
   const remoteTrackReceived =
@@ -193,6 +196,8 @@ export function classifyOneWayAudioFromConfirmInput(
     senderTrackEnabled: opts?.senderTrackEnabled ?? false,
     localSenderExpected: opts?.localSenderExpected,
     userIntentionallyMuted: opts?.userIntentionallyMuted,
+    remoteTrackReceivedAtMs: opts?.remoteTrackReceivedAtMs,
+    nowMs: opts?.nowMs,
   });
 }
 
@@ -217,6 +222,8 @@ export function classifyOneWayAudioSubClass(params: {
   senderTrackEnabled: boolean;
   localSenderExpected?: boolean;
   userIntentionallyMuted?: boolean;
+  remoteTrackReceivedAtMs?: number | null;
+  nowMs?: number;
 }): OneWayAudioSubClass {
   if (!params.iceConnected) return "OK";
   if (params.playbackStrict) return "OK";
@@ -232,6 +239,16 @@ export function classifyOneWayAudioSubClass(params: {
       (params.inboundBytesTotal ?? 0) > 0);
 
   if (!inboundActive) {
+    const nowMs = params.nowMs ?? Date.now();
+    const receivedAt = params.remoteTrackReceivedAtMs;
+    if (
+      receivedAt != null &&
+      nowMs - receivedAt < REMOTE_TRACK_RTP_WARMUP_MS &&
+      params.playSuccess
+    ) {
+      return "OK";
+    }
+
     const senderShouldBeLive =
       params.localSenderExpected !== false && !params.userIntentionallyMuted;
     if (

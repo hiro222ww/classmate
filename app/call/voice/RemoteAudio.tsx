@@ -866,13 +866,15 @@ export default function RemoteAudio({
         opts?.attempt != null && opts?.maxAttempts != null
           ? ` attempt=${opts.attempt}/${opts.maxAttempts}`
           : "";
-      logRemoteAudioEvent("play-start", remoteId, instanceId, {
-        reason,
-        paused: el.paused ? 1 : 0,
-        muted: el.muted ? 1 : 0,
-        srcObjectSet: el.srcObject === stream ? 1 : 0,
-        readyState: el.readyState,
-      });
+      if (!confirmedStrictLoggedRef.current) {
+        logRemoteAudioEvent("play-start", remoteId, instanceId, {
+          reason,
+          paused: el.paused ? 1 : 0,
+          muted: el.muted ? 1 : 0,
+          srcObjectSet: el.srcObject === stream ? 1 : 0,
+          readyState: el.readyState,
+        });
+      }
       if (!confirmedStrictLoggedRef.current) {
         debugConsoleLog(
           `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason}${attemptLabel} ` +

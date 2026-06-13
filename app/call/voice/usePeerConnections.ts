@@ -2196,6 +2196,7 @@ export function usePeerConnections({
       const playbackStrict =
         opts?.playbackStrict ??
         (marks.audio_confirmed_strict || health?.audioConfirmedStrict === true);
+      const timestamps = peerSignalTimestampsRef.current.get(remoteId);
 
       return classifyOneWayAudioSubClass({
         iceConnected,
@@ -2221,6 +2222,8 @@ export function usePeerConnections({
           sender?.track?.enabled ?? localTrack?.enabled ?? false,
         localSenderExpected,
         userIntentionallyMuted: userMutedRef.current,
+        remoteTrackReceivedAtMs: timestamps?.lastOnTrackAt ?? null,
+        nowMs: Date.now(),
       });
     },
     [
