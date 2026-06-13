@@ -1632,6 +1632,31 @@ export function logPassiveOfferRescheduled(params: {
   );
 }
 
+export type PassiveOfferSkipReason =
+  | "not_passive_role"
+  | "auto_recovery_frozen"
+  | "pipeline_mark"
+  | "live_remote_stream"
+  | "playback_evidence"
+  | "fallback_already_sent"
+  | "negotiation_phase"
+  | "signaling_busy"
+  | "mic_blocked"
+  | "deduped";
+
+export function logPassiveOfferSkip(params: {
+  remoteId: string;
+  triggerReason: string;
+  reason: PassiveOfferSkipReason;
+  detail?: string;
+}) {
+  voiceProdLog(
+    `[voice-peer] passive-offer-skip remote=${compactDeviceId(params.remoteId)} ` +
+      `trigger=${params.triggerReason} reason=${params.reason}` +
+      (params.detail ? ` detail=${params.detail}` : "")
+  );
+}
+
 export function logVoiceStartBlocked(
   remoteId: string,
   reason: VoiceStartBlockedReason

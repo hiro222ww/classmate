@@ -28,6 +28,10 @@ export type VoiceSoftResetEvalInput = {
   softResetAttempts: number;
   lastSoftResetAt: number | null;
   nowMs?: number;
+  userIntentionallyMuted?: boolean;
+  negotiationComplete?: boolean;
+  passiveFallbackOfferSent?: boolean;
+  softResetAlreadyOnConnection?: boolean;
 };
 
 export function shouldBlockVoiceSoftReset(
@@ -48,9 +52,17 @@ export function isBidirectionalAudioEstablished(
     | "subClass"
     | "audioConfirmedStrict"
     | "hasPlaybackEvidence"
+    | "userIntentionallyMuted"
   >
 ): boolean {
   if (input.audioConfirmedStrict || input.hasPlaybackEvidence) return true;
+  if (input.userIntentionallyMuted) {
+    return (
+      input.remoteTrackReceived &&
+      input.inboundDeltaBytes > 0 &&
+      input.subClass === "OK"
+    );
+  }
   return (
     input.remoteTrackReceived &&
     input.inboundDeltaBytes > 0 &&
@@ -69,6 +81,7 @@ export function evaluateVoiceSoftResetTrigger(
   if (input.softResetAttempts >= MAX_VOICE_SOFT_RESET_ATTEMPTS) {
     return "max_attempts";
   }
+  if (input.softResetAlreadyOnConnection) return null;
   if (
     input.lastSoftResetAt != null &&
     nowMs - input.lastSoftResetAt < VOICE_SOFT_RESET_MIN_INTERVAL_MS
@@ -83,6 +96,8 @@ export function evaluateVoiceSoftResetTrigger(
     return "no_remote_track_ice_connected";
   }
 
+  if (!input.negotiationComplete) return null;
+
   if (
     input.remoteTrackReceived &&
     !input.hasPlaybackEvidence &&
@@ -91,14 +106,25 @@ export function evaluateVoiceSoftResetTrigger(
     return "track_no_playback_evidence";
   }
 
-  if (
-    (input.inboundDeltaBytes > 0 && input.outboundDeltaBytes <= 0) ||
-    (input.outboundDeltaBytes > 0 && input.inboundDeltaBytes <= 0)
-  ) {
+  const inboundOnly =
+    input.inboundDeltaBytes > 0 && input.outboundDeltaBytes <= 0;
+  const outboundOnly =
+    input.outboundDeltaBytes > 0 && input.inboundDeltaBytes <= 0;
+
+  if (inboundOnly || outboundOnly) {
+    if (
+      input.userIntentionallyMuted &&
+      input.outboundDeltaBytes <= 0 &&
+      inboundOnly
+    ) {
+      return null;
+    }
     return "one_way_rtp";
   }
 
   if (input.subClass !== "OK") return "one_way_audio_subclass";
+
+  if (input.userIntentionallyMuted) return null;
 
   return "bidirectional_not_established";
 }
