@@ -1,4 +1,16 @@
 export type SessionMemberSnapshotRow = {
+  device_id?: string | null;
+  display_name?: string | null;
+  display_name_source?: string | null;
+  photo_path?: string | null;
+  avatar_url?: string | null;
+  joined_at?: string | null;
+  is_in_call?: boolean | null;
+  screen?: string | null;
+  last_seen_at?: string | null;
+};
+
+type StoredSessionMemberSnapshotRow = {
   device_id: string;
   display_name?: string | null;
   display_name_source?: string | null;
@@ -13,7 +25,7 @@ export type SessionMemberSnapshotRow = {
 export type SessionMembersSnapshot = {
   sessionId: string;
   classId: string;
-  members: SessionMemberSnapshotRow[];
+  members: StoredSessionMemberSnapshotRow[];
   updatedAt: number;
 };
 
@@ -26,7 +38,7 @@ function snapshotKey(sessionId: string, classId: string): string {
 
 function normalizeSnapshotMember(
   member: SessionMemberSnapshotRow
-): SessionMemberSnapshotRow | null {
+): StoredSessionMemberSnapshotRow | null {
   const deviceId = String(member.device_id ?? "").trim();
   if (!deviceId) return null;
   return {
@@ -54,7 +66,7 @@ export function writeSessionMembersSnapshot(
 
   const normalized = members
     .map((member) => normalizeSnapshotMember(member))
-    .filter((member): member is SessionMemberSnapshotRow => member != null);
+    .filter((member): member is StoredSessionMemberSnapshotRow => member != null);
   if (normalized.length === 0) return;
 
   const payload: SessionMembersSnapshot = {
@@ -90,7 +102,7 @@ export function readSessionMembersSnapshot(
 
     const members = parsed.members
       .map((member) => normalizeSnapshotMember(member))
-      .filter((member): member is SessionMemberSnapshotRow => member != null);
+      .filter((member): member is StoredSessionMemberSnapshotRow => member != null);
     if (members.length === 0) return null;
 
     return {

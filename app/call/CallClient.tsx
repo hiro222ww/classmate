@@ -142,6 +142,12 @@ import {
 } from "@/lib/localMicMuteState";
 import type { RemotePlaybackHealth } from "@/app/call/voice/RemoteAudio";
 import {
+  clearLocalLeftCall,
+  hasLocalLeftCall,
+  LOCAL_LEFT_CALL_EXPLICIT_REASON,
+  markLocalLeftCall,
+} from "@/lib/localCallExit";
+import {
   readSessionMembersSnapshot,
   writeSessionMembersSnapshot,
   type SessionMemberSnapshotRow,
@@ -238,9 +244,11 @@ function getCallNavigationType(): string {
   return entry?.type ?? "unknown";
 }
 
-function mapSnapshotMemberToCallMember(member: SessionMemberSnapshotRow): Member {
+function mapSnapshotMemberToCallMember(member: SessionMemberSnapshotRow): Member | null {
+  const deviceId = String(member.device_id ?? "").trim();
+  if (!deviceId) return null;
   return {
-    device_id: member.device_id,
+    device_id: deviceId,
     display_name: String(member.display_name ?? "").trim() || "参加者",
     photo_path: member.photo_path ?? null,
     avatar_url: member.avatar_url ?? null,
@@ -677,31 +685,6 @@ export default function CallClient() {
     });
   }, [deviceId]);
 
-  useEffect(() => {
-    if (!sessionId || !classId || !deviceId) return;
-
-    const snapshot = readSessionMembersSnapshot(sessionId, classId);
-    if (!snapshot || snapshot.members.length === 0) return;
-
-    const seeded = snapshot.members
-      .map((member) => applyLocalLeftCallOverride(mapSnapshotMemberToCallMember(member)))
-      .filter((member) => String(member.device_id ?? "").trim());
-
-    if (seeded.length === 0) return;
-
-    setMembers((prev) => {
-      const merged = mergeSeededCallMembers(prev, seeded);
-      if (areMembersListEquivalent(prev, merged)) return prev;
-      console.log(
-        `[call-members] seed-from-snapshot count=${merged.length} ` +
-          `session=${sessionId.slice(-6)} ageMs=${Date.now() - snapshot.updatedAt}`
-      );
-      membersSyncRevisionRef.current += 1;
-      setMembersSyncRevision(membersSyncRevisionRef.current);
-      return merged;
-    });
-  }, [sessionId, classId, deviceId, applyLocalLeftCallOverride]);
-
   const applyLocalLeftCallOverride = useCallback(
     (member: Member): Member => {
       const did = String(member.device_id ?? "").trim();
@@ -721,6 +704,33 @@ export default function CallClient() {
     },
     [sessionId]
   );
+
+  useEffect(() => {
+    if (!sessionId || !classId || !deviceId) return;
+
+    const snapshot = readSessionMembersSnapshot(sessionId, classId);
+    if (!snapshot || snapshot.members.length === 0) return;
+
+    const seeded = snapshot.members
+      .map((member) => mapSnapshotMemberToCallMember(member))
+      .filter((member): member is Member => member != null)
+      .map((member) => applyLocalLeftCallOverride(member))
+      .filter((member) => String(member.device_id ?? "").trim());
+
+    if (seeded.length === 0) return;
+
+    setMembers((prev) => {
+      const merged = mergeSeededCallMembers(prev, seeded);
+      if (areMembersListEquivalent(prev, merged)) return prev;
+      console.log(
+        `[call-members] seed-from-snapshot count=${merged.length} ` +
+          `session=${sessionId.slice(-6)} ageMs=${Date.now() - snapshot.updatedAt}`
+      );
+      membersSyncRevisionRef.current += 1;
+      setMembersSyncRevision(membersSyncRevisionRef.current);
+      return merged;
+    });
+  }, [sessionId, classId, deviceId, applyLocalLeftCallOverride]);
 
   /** Leave the call and return to Room — keeps session_members; updates presence only. */
   const markSelfLeftCall = useCallback(() => {
