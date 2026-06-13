@@ -71,6 +71,8 @@ export type RemoteAudioConfirmInput = {
   playFailed: boolean;
   inboundDeltaBytes: number;
   inboundDeltaPackets: number;
+  /** True when playback is active with RTP/level evidence (not time-advance alone). */
+  playbackActive?: boolean;
 };
 
 export function setPeerInboundDeltaBytes(remoteId: string, delta: number) {
@@ -97,15 +99,22 @@ export function getPeerOutboundDeltaBytes(remoteId: string): number {
   return outboundDeltaByPeer.get(compactDeviceId(remoteId)) ?? 0;
 }
 
-export function evaluateAudioConfirmedStrict(input: RemoteAudioConfirmInput): boolean {
+export function evaluateAudioConfirmedStrict(
+  input: RemoteAudioConfirmInput,
+  opts?: { alreadyConfirmed?: boolean }
+): boolean {
   const hasLiveTrack =
     input.audioTracks >= 1 && input.trackReadyState === "live" && !input.trackMuted;
 
-  const hasPlaybackProgress =
-    input.currentTimeAdvanced ||
+  const hasStrongPlaybackEvidence =
     input.level >= CONFIRMED_LEVEL_THRESHOLD ||
     input.inboundDeltaBytes > 0 ||
-    input.inboundDeltaPackets > 0;
+    input.inboundDeltaPackets > 0 ||
+    input.playbackActive === true;
+
+  const hasPlaybackProgress = opts?.alreadyConfirmed
+    ? input.currentTimeAdvanced || hasStrongPlaybackEvidence
+    : hasStrongPlaybackEvidence;
 
   return (
     input.hasElement &&
@@ -155,6 +164,7 @@ export function classifyOneWayAudioFromConfirmInput(
     senderTrackMuted?: boolean;
     senderTrackEnabled?: boolean;
     localSenderExpected?: boolean;
+    userIntentionallyMuted?: boolean;
   }
 ): OneWayAudioSubClass {
   const remoteTrackReceived =
@@ -182,6 +192,7 @@ export function classifyOneWayAudioFromConfirmInput(
     senderTrackMuted: opts?.senderTrackMuted ?? false,
     senderTrackEnabled: opts?.senderTrackEnabled ?? false,
     localSenderExpected: opts?.localSenderExpected,
+    userIntentionallyMuted: opts?.userIntentionallyMuted,
   });
 }
 
@@ -205,6 +216,7 @@ export function classifyOneWayAudioSubClass(params: {
   senderTrackMuted: boolean;
   senderTrackEnabled: boolean;
   localSenderExpected?: boolean;
+  userIntentionallyMuted?: boolean;
 }): OneWayAudioSubClass {
   if (!params.iceConnected) return "OK";
   if (params.playbackStrict) return "OK";
@@ -220,7 +232,8 @@ export function classifyOneWayAudioSubClass(params: {
       (params.inboundBytesTotal ?? 0) > 0);
 
   if (!inboundActive) {
-    const senderShouldBeLive = params.localSenderExpected !== false;
+    const senderShouldBeLive =
+      params.localSenderExpected !== false && !params.userIntentionallyMuted;
     if (
       senderShouldBeLive &&
       (params.outboundDeltaBytes <= 0 ||
@@ -335,6 +348,7 @@ export function logRemoteAudioConfirmCheck(params: {
   senderTrackMuted?: boolean;
   senderTrackEnabled?: boolean;
   localSenderExpected?: boolean;
+  userIntentionallyMuted?: boolean;
 }) {
   const remote = compactDeviceId(params.remoteId);
   const c = params.check;
@@ -347,6 +361,7 @@ export function logRemoteAudioConfirmCheck(params: {
         senderTrackMuted: params.senderTrackMuted,
         senderTrackEnabled: params.senderTrackEnabled,
         localSenderExpected: params.localSenderExpected,
+        userIntentionallyMuted: params.userIntentionallyMuted,
       });
   const subSuffix =
     subClass !== "OK" ? ` sub=${subClass}(${describeOneWayAudioSubClass(subClass)})` : "";
@@ -414,6 +429,7 @@ export function logVoiceRtpDiagnosticsProd(params: {
   remoteTrackEnabled?: boolean;
   remoteTrackReadyState?: string;
   force?: boolean;
+  userIntentionallyMuted?: boolean;
 }) {
   const remote = compactDeviceId(params.remoteId);
   const sub =
@@ -421,6 +437,8 @@ export function logVoiceRtpDiagnosticsProd(params: {
   const subSuffix = sub
     ? ` sub=${sub}(${describeOneWayAudioSubClass(sub)})`
     : "";
+  const mutedSuffix =
+    params.userIntentionallyMuted === true ? " userMutedExpected=1" : "";
   const line =
     `[voice-stats] remote=${remote} ` +
     `inbound bytes=${params.stats.inboundBytes} delta=${params.stats.deltaInboundBytes} ` +
@@ -433,7 +451,7 @@ export function logVoiceRtpDiagnosticsProd(params: {
     `localTrack ready=${params.localTrackReadyState} muted=${params.localTrackMuted ? 1 : 0} ` +
     `enabled=${params.localTrackEnabled ? 1 : 0} ` +
     `sender ready=${params.senderTrackReadyState} muted=${params.senderTrackMuted ? 1 : 0} ` +
-    `enabled=${params.senderTrackEnabled ? 1 : 0}${subSuffix}`;
+    `enabled=${params.senderTrackEnabled ? 1 : 0}${mutedSuffix}${subSuffix}`;
 
   if (sub || params.force) {
     voiceProdLog(line);

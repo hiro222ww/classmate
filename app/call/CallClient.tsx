@@ -1591,6 +1591,7 @@ export default function CallClient() {
         ),
         audioActuallyPlaying: audioHealth?.audioActuallyPlaying === true,
         playbackActive: audioHealth?.playbackActive === true,
+        audioConfirmedStrict: audioHealth?.audioConfirmedStrict === true,
       });
       peerLabelHysteresisRef.current[memberId] = labelState;
 

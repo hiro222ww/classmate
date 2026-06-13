@@ -2220,6 +2220,7 @@ export function usePeerConnections({
         senderTrackEnabled:
           sender?.track?.enabled ?? localTrack?.enabled ?? false,
         localSenderExpected,
+        userIntentionallyMuted: userMutedRef.current,
       });
     },
     [
@@ -2346,6 +2347,15 @@ export function usePeerConnections({
       subClass: OneWayAudioSubClass,
       stats: PeerRtpStatsSnapshot
     ) => {
+      const marks = getPeerPipelineMarks(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId);
+      if (
+        marks.audio_confirmed_strict ||
+        health?.audioConfirmedStrict === true ||
+        peerAutoRecoveryFrozenRef.current.has(remoteId)
+      ) {
+        return;
+      }
       if (audioStrictRecoveryAttemptedRef.current.has(remoteId)) return;
       audioStrictRecoveryAttemptedRef.current.add(remoteId);
 
@@ -2404,9 +2414,30 @@ export function usePeerConnections({
       const now = Date.now();
       const marks = getPeerPipelineMarks(remoteId);
       const health = remotePlaybackHealthRef.current.get(remoteId) ?? null;
-      const subClass = marks.audio_confirmed_strict
-        ? ("OK" as OneWayAudioSubClass)
-        : classifyPeerAudioSubClass(remoteId, { stats, health });
+
+      if (health?.audioConfirmedStrict && !marks.audio_confirmed_strict) {
+        touchPeerSignal(remoteId, "playback_confirmed");
+        markVoicePerf("audio_confirmed_strict", { remoteId });
+        markVoicePerf("audio_confirmed", { remoteId });
+        markPeerAutoRecoveryFrozenRef.current(
+          remoteId,
+          "audio_confirmed_strict"
+        );
+        logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)} source=stats_poll`);
+      }
+
+      if (
+        marks.audio_confirmed_strict ||
+        health?.audioConfirmedStrict === true
+      ) {
+        refreshConnectedVoiceLogForAudioStrictRef.current(
+          remoteId,
+          "stats_poll"
+        );
+        return;
+      }
+
+      const subClass = classifyPeerAudioSubClass(remoteId, { stats, health });
 
       const lastLog = audioDiagLogAtRef.current.get(remoteId) ?? 0;
       const shouldLog =
@@ -2466,28 +2497,8 @@ export function usePeerConnections({
           remoteTrackEnabled: remoteTrack?.enabled,
           remoteTrackReadyState: remoteTrack?.readyState,
           force: opts?.forceLog === true,
+          userIntentionallyMuted: userMutedRef.current,
         });
-      }
-
-      if (health?.audioConfirmedStrict && !marks.audio_confirmed_strict) {
-        touchPeerSignal(remoteId, "playback_confirmed");
-        markVoicePerf("audio_confirmed_strict", { remoteId });
-        markVoicePerf("audio_confirmed", { remoteId });
-        markPeerAutoRecoveryFrozenRef.current(
-          remoteId,
-          "audio_confirmed_strict"
-        );
-        logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)} source=stats_poll`);
-      }
-
-      if (
-        marks.audio_confirmed_strict ||
-        health?.audioConfirmedStrict === true
-      ) {
-        refreshConnectedVoiceLogForAudioStrictRef.current(
-          remoteId,
-          "stats_poll"
-        );
       }
 
       if (!marks.audio_confirmed_strict && subClass !== "OK") {
@@ -2530,7 +2541,10 @@ export function usePeerConnections({
       if (health.playSuccessEvent) {
         touchPeerSignal(remoteId, "play_success");
         markVoicePerf("audio_play_success", { remoteId });
-        pollPeerAudioDiagnosticsRef.current(remoteId, { forceLog: true });
+        const marks = getPeerPipelineMarks(remoteId);
+        if (!health.audioConfirmedStrict && !marks.audio_confirmed_strict) {
+          pollPeerAudioDiagnosticsRef.current(remoteId, { forceLog: true });
+        }
       }
 
       if (health.playbackActive && !health.audioConfirmedStrict) {
@@ -4369,6 +4383,13 @@ export function usePeerConnections({
 
   const triggerRemoteAudioReplay = useCallback(
     (remoteId: string, reason: string) => {
+      if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
+        debugConsoleLog(
+          `[voice-peer] triggerRemoteAudioReplay blocked remote=${compactDeviceId(remoteId)} reason=${reason} block=established_peer`
+        );
+        return;
+      }
+
       const dedupeKey = `${remoteId}|${reason}`;
       const now = Date.now();
       const lastReplay = audioReplayAtRef.current.get(dedupeKey) ?? 0;
@@ -4420,7 +4441,7 @@ export function usePeerConnections({
         };
       });
     },
-    [ensureRemoteAudioMounted, members, writeRemoteAudiosSync]
+    [ensureRemoteAudioMounted, members, shouldSuppressAutoVoiceRecoveryForPeer, writeRemoteAudiosSync]
   );
 
   useEffect(() => {
@@ -4436,6 +4457,8 @@ export function usePeerConnections({
       const remoteIds = getRemoteIds();
 
       for (const remoteId of remoteIds) {
+        if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) continue;
+
         const media = getPeerMedia(remoteId);
         if (media.remoteTracksCount === 0 && !media.hasRemoteStream) continue;
 

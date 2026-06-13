@@ -259,6 +259,7 @@ export function applyCallMemberStatusHysteresis(params: {
   recentPlaySuccess: boolean;
   audioActuallyPlaying: boolean;
   playbackActive: boolean;
+  audioConfirmedStrict?: boolean;
 }): {
   status: typeof params.candidate;
   state: PeerLabelHysteresisState;
@@ -297,6 +298,7 @@ export function applyCallMemberStatusHysteresis(params: {
   }
 
   const keepConnectedEvidence =
+    params.audioConfirmedStrict === true ||
     params.recentPlaySuccess ||
     params.audioActuallyPlaying ||
     params.playbackActive;
@@ -669,6 +671,8 @@ export function isRemoteAudioHealthyNow(params: {
   const trackLive = trackReady === "live";
   if (!trackLive || !params.hasRemoteStream) return false;
 
+  if (health?.audioConfirmedStrict === true) return true;
+
   const lastPlaySuccessAt =
     health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt ?? null;
   const recentPlaySuccess = isRecentPlaySuccess(lastPlaySuccessAt, params.nowMs);
@@ -717,6 +721,9 @@ export function resolveManualAudioReconnect(params: {
   if (params.isMe) return { show: false, reason: "is_me" };
   if (params.reconnectRequestPending) {
     return { show: false, reason: "reconnect_request_pending" };
+  }
+  if (params.remoteAudioHealth?.audioConfirmedStrict === true) {
+    return { show: false, reason: "audio_confirmed_strict" };
   }
   if (params.autoHardResetInProgress) {
     return { show: false, reason: "auto_hard_reset_in_progress" };
@@ -782,6 +789,7 @@ export function resolveManualAudioReconnect(params: {
   const audioStalled =
     params.hasRemoteStream &&
     trackReady === "live" &&
+    health?.audioConfirmedStrict !== true &&
     health?.audioActuallyPlaying !== true &&
     (health?.lastPlaySuccessAt == null ||
       now - health.lastPlaySuccessAt >= RECONNECT_BUTTON_STALL_MS) &&
@@ -1532,6 +1540,7 @@ export function resolveCallMemberStatus(params: {
   const stalledAudio =
     hasRemoteStream &&
     trackLive &&
+    health?.audioConfirmedStrict !== true &&
     !audioHealthy &&
     !recentSignals &&
     (health?.lastAttachAt == null ||

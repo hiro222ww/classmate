@@ -355,13 +355,25 @@ function buildRemoteAudioConfirmInput(params: {
   stream: MediaStream;
   health: Pick<
     RemotePlaybackHealth,
-    "playSuccess" | "currentTimeAdvanced" | "trackMuted" | "trackReady" | "level"
+    | "playSuccess"
+    | "currentTimeAdvanced"
+    | "trackMuted"
+    | "trackReady"
+    | "level"
+    | "playbackActive"
   >;
   remoteId: string;
   playFailed: boolean;
 }): RemoteAudioConfirmInput {
   const { el, stream, health, remoteId, playFailed } = params;
   const track = getPlaybackTrack(el, stream);
+  const inboundDeltaBytes = getPeerInboundDeltaBytes(remoteId);
+  const inboundDeltaPackets = getPeerInboundDeltaPackets(remoteId);
+  const playbackActiveEvidence =
+    health.playbackActive &&
+    (health.level >= CONFIRMED_LEVEL_THRESHOLD ||
+      inboundDeltaBytes > 0 ||
+      inboundDeltaPackets > 0);
   return {
     hasElement: true,
     srcObjectSet: el.srcObject === stream,
@@ -379,8 +391,9 @@ function buildRemoteAudioConfirmInput(params: {
     level: health.level,
     playSuccess: health.playSuccess,
     playFailed,
-    inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
-    inboundDeltaPackets: getPeerInboundDeltaPackets(remoteId),
+    inboundDeltaBytes,
+    inboundDeltaPackets,
+    playbackActive: playbackActiveEvidence,
   };
 }
 
@@ -393,6 +406,15 @@ type PlayAttemptReason =
   | "reattach_after_silent_playback"
   | "canplay"
   | "user_unlock";
+
+const POST_CONFIRM_PLAY_SUPPRESS_REASONS = new Set<PlayAttemptReason>([
+  "user_unlock",
+  "reattach_after_silent_playback",
+  "replay",
+  "play_missing_retry",
+  "stream_present_but_never_played",
+  "canplay",
+]);
 
 function delayMs(ms: number) {
   return new Promise<void>((resolve) => {
@@ -456,6 +478,7 @@ export default function RemoteAudio({
   } | null>(null);
   const confirmedStrictLoggedRef = useRef(false);
   const levelDetectedLoggedRef = useRef(false);
+  const postConfirmPlaySuppressedLoggedRef = useRef(false);
   const attachLogThrottleRef = useRef(
     new Map<
       string,
@@ -562,7 +585,9 @@ export default function RemoteAudio({
         remoteId,
         playFailed: playFailedAtRef.current != null,
       });
-      const audioConfirmedStrict = evaluateAudioConfirmedStrict(confirmInput);
+      const audioConfirmedStrict = evaluateAudioConfirmedStrict(confirmInput, {
+        alreadyConfirmed: confirmedStrictLoggedRef.current,
+      });
       logRemoteAudioConfirmCheck({
         remoteId,
         check: confirmInput,
@@ -574,7 +599,13 @@ export default function RemoteAudio({
           currentTime: el.currentTime.toFixed(2),
           level: baseHealth.level.toFixed(3),
           advanced: baseHealth.currentTimeAdvanced ? 1 : 0,
+          inboundDeltaBytes: confirmInput.inboundDeltaBytes,
+          inboundDeltaPkts: confirmInput.inboundDeltaPackets,
         });
+        if (periodicCheckIntervalRef.current != null) {
+          window.clearInterval(periodicCheckIntervalRef.current);
+          periodicCheckIntervalRef.current = null;
+        }
       }
       const health: RemotePlaybackHealth = {
         ...baseHealth,
@@ -586,31 +617,33 @@ export default function RemoteAudio({
       }
       emitPlaybackHealth(health);
 
-      const now = Date.now();
-      logRemoteAudioPipeline({
-        remoteDeviceId: remoteId,
-        hasPc: true,
-        conn: "-",
-        ice: "-",
-        hasStream: !!stream,
-        trackReady: health.trackReady,
-        ontrackAgeMs: lastAttachAtRef.current
-          ? now - lastAttachAtRef.current
-          : null,
-        attached: el.srcObject === stream,
-        audioPaused: el.paused,
-        audioMuted: el.muted,
-        volume: el.volume,
-        readyState: el.readyState,
-        playSuccessAgeMs: playSuccessAtRef.current
-          ? now - playSuccessAtRef.current
-          : null,
-        currentTime: el.currentTime,
-        advanced: health.currentTimeAdvanced,
-        level: health.level,
-        audioActuallyPlaying: health.audioActuallyPlaying,
-        outputState: getSinkId(el),
-      });
+      if (!confirmedStrictLoggedRef.current) {
+        const now = Date.now();
+        logRemoteAudioPipeline({
+          remoteDeviceId: remoteId,
+          hasPc: true,
+          conn: "-",
+          ice: "-",
+          hasStream: !!stream,
+          trackReady: health.trackReady,
+          ontrackAgeMs: lastAttachAtRef.current
+            ? now - lastAttachAtRef.current
+            : null,
+          attached: el.srcObject === stream,
+          audioPaused: el.paused,
+          audioMuted: el.muted,
+          volume: el.volume,
+          readyState: el.readyState,
+          playSuccessAgeMs: playSuccessAtRef.current
+            ? now - playSuccessAtRef.current
+            : null,
+          currentTime: el.currentTime,
+          advanced: health.currentTimeAdvanced,
+          level: health.level,
+          audioActuallyPlaying: health.audioActuallyPlaying,
+          outputState: getSinkId(el),
+        });
+      }
 
       return health;
     },
@@ -795,6 +828,20 @@ export default function RemoteAudio({
       }
 
       const reason = opts?.reason ?? (opts?.fromUnlock ? "user_unlock" : "mount_or_stream_changed");
+      if (
+        confirmedStrictLoggedRef.current &&
+        POST_CONFIRM_PLAY_SUPPRESS_REASONS.has(reason)
+      ) {
+        if (!postConfirmPlaySuppressedLoggedRef.current) {
+          postConfirmPlaySuppressedLoggedRef.current = true;
+          debugConsoleLog(
+            `[remote-audio] play-suppressed remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+              `reason=${reason} cause=audio_confirmed_strict ${formatVoiceModeSuffix()}`
+          );
+        }
+        return;
+      }
+
       const allowWithoutGesture =
         opts?.fromUnlock === true ||
         reason === "mount_or_stream_changed" ||
@@ -826,11 +873,13 @@ export default function RemoteAudio({
         srcObjectSet: el.srcObject === stream ? 1 : 0,
         readyState: el.readyState,
       });
-      debugConsoleLog(
-        `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason}${attemptLabel} ` +
-          `paused=${el.paused} muted=${el.muted} volume=${el.volume} readyState=${el.readyState} ` +
-          `srcObjectSet=${el.srcObject === stream} ${formatVoiceModeSuffix()}`
-      );
+      if (!confirmedStrictLoggedRef.current) {
+        debugConsoleLog(
+          `[remote-audio] play-attempt remote=${compactRemoteId(remoteId)} instance=${instanceId} reason=${reason}${attemptLabel} ` +
+            `paused=${el.paused} muted=${el.muted} volume=${el.volume} readyState=${el.readyState} ` +
+            `srcObjectSet=${el.srcObject === stream} ${formatVoiceModeSuffix()}`
+        );
+      }
 
       try {
         await applyOutputDevice();
@@ -854,18 +903,20 @@ export default function RemoteAudio({
         provisionalPlaybackStartedAtRef.current = now;
 
         const playbackTrack = getPlaybackTrack(el, stream);
-        logRemoteAudioEvent("play-success", remoteId, instanceId, {
-          reason,
-          currentTime: el.currentTime.toFixed(2),
-          paused: el.paused ? 1 : 0,
-          muted: el.muted ? 1 : 0,
-          trackMuted: playbackTrack?.muted ? 1 : 0,
-          trackEnabled: playbackTrack?.enabled ? 1 : 0,
-          trackReady: playbackTrack?.readyState ?? "-",
-          inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
-          inboundDeltaPkts: getPeerInboundDeltaPackets(remoteId),
-        });
-        logRemoteAudioCompact(remoteId, el, stream, "play-success");
+        if (!confirmedStrictLoggedRef.current) {
+          logRemoteAudioEvent("play-success", remoteId, instanceId, {
+            reason,
+            currentTime: el.currentTime.toFixed(2),
+            paused: el.paused ? 1 : 0,
+            muted: el.muted ? 1 : 0,
+            trackMuted: playbackTrack?.muted ? 1 : 0,
+            trackEnabled: playbackTrack?.enabled ? 1 : 0,
+            trackReady: playbackTrack?.readyState ?? "-",
+            inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
+            inboundDeltaPkts: getPeerInboundDeltaPackets(remoteId),
+          });
+          logRemoteAudioCompact(remoteId, el, stream, "play-success");
+        }
 
         const health = publishPlaybackHealth(el, {
           playSuccess: true,
@@ -937,7 +988,14 @@ export default function RemoteAudio({
   const reattachAudioElement = useCallback(
     async (reason: string, attempt: number) => {
       const el = ref.current;
-      if (!el || !stream || reattachInProgressRef.current) return;
+      if (
+        !el ||
+        !stream ||
+        reattachInProgressRef.current ||
+        confirmedStrictLoggedRef.current
+      ) {
+        return;
+      }
 
       reattachInProgressRef.current = true;
       lastAttachedStreamIdRef.current = null;
@@ -1047,6 +1105,11 @@ export default function RemoteAudio({
           firstConfirmedAtRef.current = Date.now();
           silentReattachAttemptsRef.current = 0;
           unconfirmedTimeoutFiredRef.current = false;
+          if (periodicCheckIntervalRef.current != null) {
+            window.clearInterval(periodicCheckIntervalRef.current);
+            periodicCheckIntervalRef.current = null;
+          }
+          return;
         }
 
         logPlaybackCheck({
@@ -1129,6 +1192,7 @@ export default function RemoteAudio({
   }, [schedulePlaybackChecks]);
 
   const unlockRemoteAudio = useCallback(() => {
+    if (confirmedStrictLoggedRef.current) return;
     void playAudio({ fromUnlock: true, reason: "user_unlock" });
   }, [playAudio]);
 
