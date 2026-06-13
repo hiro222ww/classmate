@@ -84,14 +84,32 @@ export function logCallReadyCheck(
 export function logCallReadyStuck(
   reason: CallReadyStuckReason,
   snap: CallReadinessSnapshot,
-  stuckMs: number
+  stuckMs: number,
+  extra?: {
+    awaitingAnswer?: boolean;
+    playbackEvidence?: boolean;
+  }
 ) {
+  const extraSuffix = extra
+    ? ` awaitingAnswer=${extra.awaitingAnswer === true ? 1 : 0} ` +
+      `playbackEvidence=${extra.playbackEvidence === true ? 1 : 0}`
+    : "";
   voiceProdLog(
     `[call-ready-stuck] reason=${reason} stuckMs=${stuckMs} ` +
       `session=${snap.sessionId.slice(-6)} members=${snap.members} remoteIds=${snap.remoteIds} ` +
       `micReady=${snap.micReady ? 1 : 0} signalReady=${snap.signalReady ? 1 : 0} ` +
-      `settingsReady=${snap.settingsReady ? 1 : 0} turnReady=${snap.turnReady ? 1 : 0}`
+      `settingsReady=${snap.settingsReady ? 1 : 0} turnReady=${snap.turnReady ? 1 : 0}` +
+      extraSuffix
   );
+}
+
+export function resetCallReadinessSessionLog(sessionId: string) {
+  const sid = String(sessionId ?? "").trim();
+  if (!sid) return;
+  initialCallReadyCheckLogged.delete(sid);
+  if (lastCallReadyCheckKey.startsWith(`${sid.slice(-6)}|`)) {
+    lastCallReadyCheckKey = "";
+  }
 }
 
 /** Show reconnect UI when prerequisites stay unmet this long. */

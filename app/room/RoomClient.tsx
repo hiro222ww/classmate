@@ -109,6 +109,10 @@ import {
   logRoomAsyncIgnored,
   logRoomRematchBlocked,
 } from "@/lib/leftClassMembership";
+import {
+  readSessionMembersSnapshot,
+  writeSessionMembersSnapshot,
+} from "@/lib/sessionMembersSnapshot";
 
 type MemberRow = {
   device_id?: string;
@@ -852,6 +856,44 @@ export default function RoomClient() {
       return false;
     },
     []
+  );
+
+  const canApplyRoomFetchDespiteStale = useCallback(
+    (capturedOpGen: number, cid: string, sid: string) => {
+      if (capturedOpGen === roomOpGenRef.current) return false;
+      if (isClassLeftLocally(cid)) return false;
+      if (typeof window !== "undefined" && window.location.pathname !== "/room") {
+        return false;
+      }
+      const current = roomIdentityRef.current;
+      return (
+        current.classId === String(cid ?? "").trim() &&
+        current.sessionId === String(sid ?? "").trim()
+      );
+    },
+    []
+  );
+
+  const shouldApplyRoomFetchResult = useCallback(
+    (
+      capturedOpGen: number,
+      cid: string,
+      sid: string,
+      context: string
+    ): boolean => {
+      if (!shouldAbortRoomAsync(capturedOpGen, cid, context)) {
+        return true;
+      }
+      if (canApplyRoomFetchDespiteStale(capturedOpGen, cid, sid)) {
+        console.log(
+          `[room-fetch] apply-result despite=op_stale context=${context} ` +
+            `session=${String(sid ?? "").slice(-6)} gen=${capturedOpGen}->${roomOpGenRef.current}`
+        );
+        return true;
+      }
+      return false;
+    },
+    [canApplyRoomFetchDespiteStale, shouldAbortRoomAsync]
   );
 
   const canApplyJoinResult = useCallback(
@@ -1725,7 +1767,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       const opGen = roomOpGenRef.current;
 
       const rejoinOk = await selfRejoinSessionIfMissing();
-      if (shouldAbortRoomAsync(opGen, classId, "fetchStatus_after_rejoin")) {
+      if (!shouldApplyRoomFetchResult(opGen, classId, sessionId, "fetchStatus_after_rejoin")) {
         return;
       }
       if (!rejoinOk) {
@@ -1758,7 +1800,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           { kind: "members", maxAttempts: 3 }
         );
 
-        if (shouldAbortRoomAsync(opGen, classId, "fetchStatus_response")) {
+        if (!shouldApplyRoomFetchResult(opGen, classId, sessionId, "fetchStatus_response")) {
           return;
         }
 
@@ -1918,7 +1960,7 @@ if (!res.ok || !json?.ok) {
         });
 
         if (redirectRemoved) {
-          if (shouldAbortRoomAsync(opGen, classId, "fetchStatus_redirect")) {
+          if (!shouldApplyRoomFetchResult(opGen, classId, sessionId, "fetchStatus_redirect")) {
             return;
           }
           setErr("このクラスから退出済みです。");
@@ -1928,7 +1970,8 @@ if (!res.ok || !json?.ok) {
           return;
         }
 
-        lastSuccessfulFetchOpGenRef.current = opGen;
+        lastSuccessfulFetchOpGenRef.current = roomOpGenRef.current;
+        writeSessionMembersSnapshot(sessionId, classId, incomingMembers);
 
         if (incomingMembers.length >= 2) {
           membersCount2StreakRef.current += 1;
@@ -1998,6 +2041,7 @@ if (!res.ok || !json?.ok) {
       router,
       selfRejoinSessionIfMissing,
       shouldAbortRoomAsync,
+      shouldApplyRoomFetchResult,
       isBlockedClosedSession,
     ]
   );
@@ -2376,6 +2420,12 @@ const name = rawName === "You" ? "参加者" : rawName;
   console.log("[room join] skip duplicate");
   setLifecycleReady(true);
   setResolving(false);
+  void fetchStatus({
+    force: true,
+    fast: true,
+    afterJoinPending: true,
+    reason: "duplicate_join_refresh",
+  });
   return;
 }
 
@@ -2516,6 +2566,27 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     setMemberCount((prev) => Math.max(prev, 1));
     setErr("");
+
+    const snapshot = readSessionMembersSnapshot(sessionId, classId);
+    if (snapshot && snapshot.members.length >= 2) {
+      setMembers((prev) => {
+        const incoming = snapshot.members.map((member) =>
+          applyRoomLocalLeftOverride(member as MemberRow, sessionId)
+        );
+        const { merged } = mergeSessionMembersPreservingRemoved(prev, incoming, {
+          sessionId,
+          context: "room",
+          memberLastInListAt: memberLastInListAtRef.current,
+        });
+        if (merged.length <= prev.length) return prev;
+        console.log(
+          `[room-members] seed-from-snapshot count=${merged.length} ` +
+            `session=${sessionId.slice(-6)} reason=join_success`
+        );
+        return merged;
+      });
+      setMemberCount((prev) => Math.max(prev, snapshot.members.length));
+    }
 
     const postJoinKey = `${classId}:${sessionId}`;
     if (roomPostJoinFetchKeyRef.current !== postJoinKey) {
@@ -2985,6 +3056,32 @@ const name = rawName === "You" ? "参加者" : rawName;
   useEffect(() => {
     if (!sessionId || !classId) return;
     if (pathname !== "/room") return;
+
+    const snapshot = readSessionMembersSnapshot(sessionId, classId);
+    if (!snapshot || snapshot.members.length === 0) return;
+
+    setMembers((prev) => {
+      const incoming = snapshot.members.map((member) =>
+        applyRoomLocalLeftOverride(member as MemberRow, sessionId)
+      );
+      const { merged } = mergeSessionMembersPreservingRemoved(prev, incoming, {
+        sessionId,
+        context: "room",
+        memberLastInListAt: memberLastInListAtRef.current,
+      });
+      if (merged.length <= prev.length) return prev;
+      console.log(
+        `[room-members] seed-from-snapshot count=${merged.length} ` +
+          `session=${sessionId.slice(-6)} reason=room_mount`
+      );
+      return merged;
+    });
+    setMemberCount((prev) => Math.max(prev, snapshot.members.length));
+  }, [sessionId, classId, pathname]);
+
+  useEffect(() => {
+    if (!sessionId || !classId) return;
+    if (pathname !== "/room") return;
     if (!roomSessionReady || sessionResolving) return;
 
     const postJoinKey = `${classId}:${sessionId}`;
@@ -3332,6 +3429,7 @@ const name = rawName === "You" ? "参加者" : rawName;
               console.log(`[room-call-start] blocked reason=${blockReason}`);
               return;
             }
+            writeSessionMembersSnapshot(sessionId, classId, members);
             router.push(
               withDev(
                 `/call?sessionId=${encodeURIComponent(

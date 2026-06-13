@@ -90,6 +90,28 @@ export function logCallRender(params: {
   );
 }
 
+export function logCallMembersLatency(params: {
+  sessionId: string;
+  deviceId: string;
+  fromDisplayMembers: number;
+  toDisplayMembers: number;
+  fromRemoteMembers: number;
+  toRemoteMembers: number;
+  elapsedMs: number;
+  source?: string;
+}) {
+  voiceProdLogOnStateChange(
+    `call-members-latency:${tailSessionId(params.sessionId)}:${tailDeviceId(params.deviceId)}`,
+    `${params.fromDisplayMembers}->${params.toDisplayMembers}|${params.fromRemoteMembers}->${params.toRemoteMembers}|${params.elapsedMs}`,
+    `[call-members-latency] session=${tailSessionId(params.sessionId)} ` +
+      `device=${tailDeviceId(params.deviceId)} ` +
+      `from=${params.fromDisplayMembers} to=${params.toDisplayMembers} ` +
+      `remoteFrom=${params.fromRemoteMembers} remoteTo=${params.toRemoteMembers} ` +
+      `elapsedMs=${params.elapsedMs}` +
+      (params.source ? ` source=${params.source}` : "")
+  );
+}
+
 export function logVoiceLayerRenderCheck(params: {
   shouldRender: boolean;
   blockingReason: string;

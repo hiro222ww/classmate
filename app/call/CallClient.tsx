@@ -53,6 +53,7 @@ import {
   formatCallReadinessWaitMetrics,
   logCallReadyCheck,
   logCallReadyStuck,
+  resetCallReadinessSessionLog,
   resolveCallReadyStuckReason,
   updateCallReadinessWaitState,
   VOICE_PLAYBACK_CONNECT_TARGET_MS,
@@ -62,6 +63,7 @@ import {
 import {
   computeRemoteMemberIds,
   logCallMembersDebug,
+  logCallMembersLatency,
   logCallRender,
   logVoiceLayerRenderCheck,
   resolveVoiceLayerBlockingReason,
@@ -140,11 +142,10 @@ import {
 } from "@/lib/localMicMuteState";
 import type { RemotePlaybackHealth } from "@/app/call/voice/RemoteAudio";
 import {
-  clearLocalLeftCall,
-  hasLocalLeftCall,
-  LOCAL_LEFT_CALL_EXPLICIT_REASON,
-  markLocalLeftCall,
-} from "@/lib/localCallExit";
+  readSessionMembersSnapshot,
+  writeSessionMembersSnapshot,
+  type SessionMemberSnapshotRow,
+} from "@/lib/sessionMembersSnapshot";
 
 type Member = {
   device_id: string;
@@ -237,6 +238,32 @@ function getCallNavigationType(): string {
   return entry?.type ?? "unknown";
 }
 
+function mapSnapshotMemberToCallMember(member: SessionMemberSnapshotRow): Member {
+  return {
+    device_id: member.device_id,
+    display_name: String(member.display_name ?? "").trim() || "参加者",
+    photo_path: member.photo_path ?? null,
+    avatar_url: member.avatar_url ?? null,
+    is_in_call: member.is_in_call ?? undefined,
+    screen: member.screen ?? undefined,
+  };
+}
+
+function mergeSeededCallMembers(prev: Member[], seeded: Member[]): Member[] {
+  const byId = new Map<string, Member>();
+  for (const member of seeded) {
+    const id = String(member.device_id ?? "").trim();
+    if (id) byId.set(id, member);
+  }
+  for (const member of prev) {
+    const id = String(member.device_id ?? "").trim();
+    if (!id) continue;
+    const existing = byId.get(id);
+    byId.set(id, existing ? { ...existing, ...member, lastSpokeAt: member.lastSpokeAt } : member);
+  }
+  return Array.from(byId.values());
+}
+
 export default function CallClient() {
   const router = useRouter();
   const pathname = usePathname();
@@ -258,8 +285,39 @@ export default function CallClient() {
     memberLastInCallAtRef.current = new Map();
     resetVoicePerfSession(sessionId);
     resetSessionVoiceCache(sessionId);
+    resetCallReadinessSessionLog(sessionId);
     markVoicePerf("call_screen_mounted");
-  }, [sessionId]);
+
+    callMembersLatencyRef.current = {
+      startedAt: Date.now(),
+      fromDisplayMembers: 1,
+      fromRemoteMembers: 0,
+      logged: false,
+    };
+    voiceReadinessRef.current = {
+      remoteIds: [],
+      settingsReady: false,
+      signalReady: false,
+      turnReady: false,
+      voiceEnabled: true,
+      awaitingAnswerPeerIds: [],
+      anyAwaitingAnswer: false,
+    };
+    voiceConnectStartedAtRef.current = null;
+    voicePlaybackPromptLoggedRef.current = false;
+    callReadySinceRef.current = null;
+    callReadyStuckLoggedRef.current = false;
+    setShowCallStuckReconnect(false);
+    setShowVoiceReconnectPrompt(false);
+    setRemoteAudioHealth({});
+    memberEmptyStreakRef.current = 0;
+    memberDropStreakRef.current = 0;
+
+    if (deviceId) {
+      clearLocalLeftCall(sessionId, deviceId);
+      localExitedPeersRef.current.delete(deviceId);
+    }
+  }, [sessionId, deviceId]);
 
   const profileEditHref = useMemo(
     () =>
@@ -341,6 +399,17 @@ export default function CallClient() {
   const renderCountRef = useRef(0);
   const lastFetchAtRef = useRef<number | null>(null);
   const realtimeFetchDebounceRef = useRef<number | null>(null);
+  const callMembersLatencyRef = useRef<{
+    startedAt: number | null;
+    fromDisplayMembers: number;
+    fromRemoteMembers: number;
+    logged: boolean;
+  }>({
+    startedAt: null,
+    fromDisplayMembers: 0,
+    fromRemoteMembers: 0,
+    logged: false,
+  });
   const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
   const [showVoiceReconnectPrompt, setShowVoiceReconnectPrompt] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
@@ -439,6 +508,11 @@ export default function CallClient() {
       logCallLifecycle("unmount", { sessionId, deviceId });
       setPeerStates({});
       setPeerDiagnostics({});
+      setRemoteAudioHealth({});
+      voiceConnectStartedAtRef.current = null;
+      voicePlaybackPromptLoggedRef.current = false;
+      callReadySinceRef.current = null;
+      callReadyStuckLoggedRef.current = false;
     };
   }, [sessionId, deviceId, members.length]);
 
@@ -603,6 +677,31 @@ export default function CallClient() {
     });
   }, [deviceId]);
 
+  useEffect(() => {
+    if (!sessionId || !classId || !deviceId) return;
+
+    const snapshot = readSessionMembersSnapshot(sessionId, classId);
+    if (!snapshot || snapshot.members.length === 0) return;
+
+    const seeded = snapshot.members
+      .map((member) => applyLocalLeftCallOverride(mapSnapshotMemberToCallMember(member)))
+      .filter((member) => String(member.device_id ?? "").trim());
+
+    if (seeded.length === 0) return;
+
+    setMembers((prev) => {
+      const merged = mergeSeededCallMembers(prev, seeded);
+      if (areMembersListEquivalent(prev, merged)) return prev;
+      console.log(
+        `[call-members] seed-from-snapshot count=${merged.length} ` +
+          `session=${sessionId.slice(-6)} ageMs=${Date.now() - snapshot.updatedAt}`
+      );
+      membersSyncRevisionRef.current += 1;
+      setMembersSyncRevision(membersSyncRevisionRef.current);
+      return merged;
+    });
+  }, [sessionId, classId, deviceId, applyLocalLeftCallOverride]);
+
   const applyLocalLeftCallOverride = useCallback(
     (member: Member): Member => {
       const did = String(member.device_id ?? "").trim();
@@ -633,9 +732,18 @@ export default function CallClient() {
     localExitedPeersRef.current.add(did);
     setPeerStates({});
     setPeerDiagnostics({});
+    setRemoteAudioHealth({});
     prevCallStatusRef.current = {};
     prevCallStatusPeerLogRef.current = {};
     everConnectedPeersRef.current.clear();
+    voiceConnectStartedAtRef.current = null;
+    voicePlaybackPromptLoggedRef.current = false;
+    setShowVoiceReconnectPrompt(false);
+    setShowCallStuckReconnect(false);
+    callReadySinceRef.current = null;
+    callReadyStuckLoggedRef.current = false;
+
+    writeSessionMembersSnapshot(sessionId, classId, members);
 
     setMembers((prev) =>
       prev.map((member) =>
@@ -660,7 +768,7 @@ export default function CallClient() {
         console.warn("[call] optimistic room presence failed", e);
       });
     }
-  }, [classId, deviceId, sessionId]);
+  }, [classId, deviceId, sessionId, members]);
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
@@ -933,6 +1041,8 @@ export default function CallClient() {
           });
           logVoicePerfPipeline(`reason=${reason}`);
         }
+
+        writeSessionMembersSnapshot(sessionId, classId, nextMembers);
 
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
@@ -1921,6 +2031,40 @@ export default function CallClient() {
     return next;
   }, [members, deviceId]);
 
+  useEffect(() => {
+    const latency = callMembersLatencyRef.current;
+    const displayCount = members.length;
+    const remoteCount = remoteMemberIds.length;
+
+    if (displayCount <= 1 && remoteCount === 0) {
+      if (latency.startedAt == null) {
+        latency.startedAt = Date.now();
+        latency.fromDisplayMembers = displayCount;
+        latency.fromRemoteMembers = remoteCount;
+      }
+      return;
+    }
+
+    if (
+      !latency.logged &&
+      displayCount >= 2 &&
+      remoteCount >= 1 &&
+      latency.startedAt != null
+    ) {
+      logCallMembersLatency({
+        sessionId,
+        deviceId,
+        fromDisplayMembers: latency.fromDisplayMembers,
+        toDisplayMembers: displayCount,
+        fromRemoteMembers: latency.fromRemoteMembers,
+        toRemoteMembers: remoteCount,
+        elapsedMs: Date.now() - latency.startedAt,
+        source: "call_entry",
+      });
+      latency.logged = true;
+    }
+  }, [members.length, remoteMemberIds.length, sessionId, deviceId]);
+
   useLayoutEffect(() => {
     renderCountRef.current += 1;
   });
@@ -2024,7 +2168,10 @@ export default function CallClient() {
       if (stuckMs < CALL_READY_STUCK_MS) return;
       if (!callReadyStuckLoggedRef.current) {
         callReadyStuckLoggedRef.current = true;
-        logCallReadyStuck(stuckReason, snap, stuckMs);
+        logCallReadyStuck(stuckReason, snap, stuckMs, {
+          awaitingAnswer: voiceReadinessRef.current.anyAwaitingAnswer,
+          playbackEvidence: hasPlaybackEvidence,
+        });
       }
       setShowCallStuckReconnect(true);
     },
@@ -2101,16 +2248,22 @@ export default function CallClient() {
 
       if (!voicePlaybackPromptLoggedRef.current) {
         voicePlaybackPromptLoggedRef.current = true;
+        const voice = voiceReadinessRef.current;
         console.log(
           `[call-ready-stuck] reason=playback_evidence_timeout elapsedMs=${elapsedMs} ` +
-            `targetMs=${VOICE_PLAYBACK_CONNECT_TARGET_MS} remotes=${remoteMemberIds.length}`
+            `targetMs=${VOICE_PLAYBACK_CONNECT_TARGET_MS} remotes=${remoteMemberIds.length} ` +
+            `members=${members.length} remoteIds=${voice.remoteIds.length} ` +
+            `signalReady=${voice.signalReady ? 1 : 0} settingsReady=${voice.settingsReady ? 1 : 0} ` +
+            `turnReady=${voice.turnReady ? 1 : 0} micReady=${micReady ? 1 : 0} ` +
+            `callLayerMounted=${voiceLayerMountedRef.current ? 1 : 0} ` +
+            `awaitingAnswer=${voice.anyAwaitingAnswer ? 1 : 0}`
         );
       }
       setShowVoiceReconnectPrompt(true);
     }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [remoteMemberIds.length, sessionId, voiceLayerShouldRender]);
+  }, [members.length, micReady, remoteMemberIds.length, sessionId, voiceLayerShouldRender]);
 
   const handleCallStuckReconnect = useCallback(() => {
     if (voiceReadinessRef.current.anyAwaitingAnswer) {
