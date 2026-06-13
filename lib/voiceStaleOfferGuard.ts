@@ -9,6 +9,8 @@ export type EstablishedPeerStaleOfferInput = {
   remoteTracksCount: number;
   hasRemoteStream: boolean;
   hasPlaybackEvidence: boolean;
+  /** When true, receiver has no inbound RTP despite a remote track — accept replacement offers. */
+  inboundRtpMissing?: boolean;
 };
 
 export function isPeerTransportDead(conn: string, ice: string): boolean {
@@ -49,6 +51,8 @@ export function shouldRejectEstablishedPeerStaleOffer(
     (input.remoteTracksCount > 0 && input.hasRemoteStream);
 
   if (!hasEstablishedMedia) return false;
+
+  if (input.inboundRtpMissing) return false;
 
   return isPeerTransportUsableForStaleOffer(input.conn, input.ice);
 }

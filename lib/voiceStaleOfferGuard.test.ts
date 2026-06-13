@@ -68,6 +68,20 @@ describe("shouldRejectEstablishedPeerStaleOffer", () => {
       })
     ).toBe(false);
   });
+
+  it("does not reject replacement offer when inbound RTP is missing", () => {
+    expect(
+      shouldRejectEstablishedPeerStaleOffer({
+        currentConnectionId: "local__remote__1__abc",
+        incomingConnectionId: "local__remote__2__def",
+        conn: "connected",
+        ice: "connected",
+        sig: "stable",
+        ...establishedMedia,
+        inboundRtpMissing: true,
+      })
+    ).toBe(false);
+  });
 });
 
 describe("isPeerTransportDead", () => {
