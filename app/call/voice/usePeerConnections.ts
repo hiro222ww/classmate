@@ -154,6 +154,7 @@ import {
   getPeerInboundDeltaBytes,
   getPeerInboundDeltaPackets,
   getPeerOutboundDeltaBytes,
+  hasStrongInboundPlaybackEvidence,
   logLocalAudioSenderCheck,
   logVoiceOneWayAudioSubClass,
   logVoiceRtpDiagnosticsProd,
@@ -2743,11 +2744,11 @@ export function usePeerConnections({
           }
         });
       } else if (
-        health.playbackActive ||
-        health.currentTimeAdvanced ||
-        (health.level ?? 0) >= 0.02 ||
-        getPeerInboundDeltaBytes(remoteId) > 0 ||
-        getPeerInboundDeltaPackets(remoteId) > 0
+      hasStrongInboundPlaybackEvidence({
+        level: health.level,
+        inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
+        inboundDeltaPackets: getPeerInboundDeltaPackets(remoteId),
+      })
       ) {
         voiceProdLog(
           `[voice-peer] playback_evidence remote=${compactDeviceId(remoteId)} ` +
@@ -2759,6 +2760,18 @@ export function usePeerConnections({
         );
         cancelPassiveWaitOffer(remoteId, "playback_evidence");
         markPeerAutoRecoveryFrozenRef.current(remoteId, "playback_evidence");
+      } else if (
+        health.playSuccess &&
+        health.currentTimeAdvanced &&
+        !health.audioConfirmedStrict
+      ) {
+        debugConsoleLog(
+          `[voice-peer] playback-provisional-only remote=${compactDeviceId(remoteId)} ` +
+            `currentTimeAdvanced=1 inboundDeltaBytes=${getPeerInboundDeltaBytes(remoteId)} ` +
+            `inboundDeltaPkts=${getPeerInboundDeltaPackets(remoteId)} ` +
+            `trackMuted=${health.trackMuted ? 1 : 0} level=${(health.level ?? 0).toFixed(3)} ` +
+            `${formatVoiceModeSuffix()}`
+        );
       } else if (health.playbackActive) {
         markVoicePerf("playback_advanced", { remoteId });
         debugConsoleLog(
@@ -3741,12 +3754,11 @@ export function usePeerConnections({
 
     return (
       health?.audioConfirmedStrict === true ||
-      health?.audioActuallyPlaying === true ||
-      health?.playbackActive === true ||
-      health?.currentTimeAdvanced === true ||
-      (health?.level ?? 0) >= 0.02 ||
-      getPeerInboundDeltaBytes(remoteId) > 0 ||
-      getPeerInboundDeltaPackets(remoteId) > 0 ||
+      hasStrongInboundPlaybackEvidence({
+        level: health?.level,
+        inboundDeltaBytes: getPeerInboundDeltaBytes(remoteId),
+        inboundDeltaPackets: getPeerInboundDeltaPackets(remoteId),
+      }) ||
       timestamps.lastPlaybackConfirmedAt != null
     );
   }, []);

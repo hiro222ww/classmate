@@ -1627,6 +1627,7 @@ export default function CallClient() {
               trackReady: audioHealth?.trackReady ?? diag?.trackReady ?? "-",
               hasRemoteStream: diag?.hasRemoteStream ?? false,
               nowMs,
+              remoteDeviceId: memberId,
             })
             ? true
             : audioHealth
@@ -1667,6 +1668,7 @@ export default function CallClient() {
         nowMs,
         debugUi: isVoiceLayerDebugEnabled(),
         audioUnhealthySinceMs,
+        remoteDeviceId: memberId,
       });
 
       const rawStatus = resolveCallMemberStatus({
@@ -1705,6 +1707,7 @@ export default function CallClient() {
           audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
         showReconnectButton: manualReconnect.show,
         nowMs,
+        remoteDeviceId: memberId,
       });
 
       const { status, state: labelState } = applyCallMemberStatusHysteresis({
@@ -2678,6 +2681,7 @@ export default function CallClient() {
                     memberAudioHealth?.trackReady ?? diag?.trackReady ?? "-",
                   wasPeerConnected: everConnectedPeersRef.current.has(memberId),
                 }),
+                remoteDeviceId: memberId,
               }).show;
             const avatarEager = i < 4;
 

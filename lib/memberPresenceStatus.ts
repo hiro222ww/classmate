@@ -7,6 +7,12 @@ import {
 } from "@/lib/memberStatus";
 import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
 import {
+  getPeerInboundDeltaBytes,
+  getPeerInboundDeltaPackets,
+  hasRemotePlaybackStartedEvidence,
+  hasStrongInboundPlaybackEvidence,
+} from "@/lib/voiceAudioDiagnostics";
+import {
   UI_CONNECTED_SOFT_HOLD_MS,
   UI_CONNECTED_STRICT_HOLD_MS,
 } from "@/lib/voiceConnectedHold";
@@ -67,6 +73,7 @@ export function hasRemoteAudioSoftConnectedEvidence(params: {
   transportConnected: boolean;
   recentPlaySuccess: boolean;
   showReconnectButton: boolean;
+  remoteDeviceId?: string;
 }): boolean {
   if (params.showReconnectButton) return false;
   if (!params.transportConnected || !params.trackLive || !params.hasRemoteStream) {
@@ -74,14 +81,23 @@ export function hasRemoteAudioSoftConnectedEvidence(params: {
   }
   const health = params.health;
   if (health?.audioConfirmedStrict === true) return false;
-  if (!health?.playSuccess && !params.recentPlaySuccess) return false;
-  return (
-    params.recentPlaySuccess ||
-    health?.currentTimeAdvanced === true ||
-    health?.verified === true ||
-    health?.audioActuallyPlaying === true ||
-    health?.playbackActive === true
-  );
+
+  const remoteId = String(params.remoteDeviceId ?? "").trim();
+  const inboundDeltaBytes = remoteId
+    ? getPeerInboundDeltaBytes(remoteId)
+    : 0;
+  const inboundDeltaPackets = remoteId
+    ? getPeerInboundDeltaPackets(remoteId)
+    : 0;
+
+  return hasRemotePlaybackStartedEvidence({
+    playSuccess: health?.playSuccess,
+    recentPlaySuccess: params.recentPlaySuccess,
+    trackMuted: health?.trackMuted,
+    trackLive: params.trackLive,
+    inboundDeltaBytes,
+    inboundDeltaPackets,
+  });
 }
 
 export function logCallStatusTransition(params: {
@@ -156,6 +172,7 @@ export type RemoteAudioHealthInput = {
   playSuccess?: boolean;
   lastPlaySuccessAt?: number | null;
   currentTimeAdvanced?: boolean;
+  trackMuted?: boolean;
   level?: number;
   trackReady?: string;
   playFailedAt?: number | null;
@@ -430,7 +447,6 @@ export function applyCallMemberStatusHysteresis(params: {
     (params.lastPlaybackConfirmedAt != null &&
       params.nowMs - params.lastPlaybackConfirmedAt <
         UI_RECENT_CONFIRMED_HOLD_MS) ||
-    params.recentPlaySuccess ||
     params.audioActuallyPlaying ||
     params.playbackActive;
 
@@ -671,6 +687,7 @@ export function resolveDisplayManualAudioReconnect(params: {
   nowMs?: number;
   debugUi?: boolean;
   audioUnhealthySinceMs?: number | null;
+  remoteDeviceId?: string;
 }): { show: boolean; reason: string } {
   const base = resolveManualAudioReconnect(params);
   if (!base.show) return base;
@@ -699,6 +716,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   lastUnmuteAt?: number | null;
   lastPlaySuccessAt?: number | null;
   nowMs: number;
+  remoteDeviceId?: string;
 }): {
   text: string;
   color: string;
@@ -745,6 +763,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
     transportConnected: params.transportConnected === true,
     recentPlaySuccess: params.recentPlaySuccess,
     showReconnectButton: params.showReconnectButton,
+    remoteDeviceId: params.remoteDeviceId,
   });
 
   if (softConnected) {
@@ -847,6 +866,7 @@ export function isRemoteAudioHealthyNow(params: {
   hasRemoteStream: boolean;
   nowMs: number;
   lastPlaySuccessAt?: number | null;
+  remoteDeviceId?: string;
 }): boolean {
   const health = params.health;
   const trackReady = health?.trackReady ?? params.trackReady;
@@ -855,12 +875,19 @@ export function isRemoteAudioHealthyNow(params: {
 
   if (health?.audioConfirmedStrict === true) return true;
 
+  const remoteId = String(params.remoteDeviceId ?? "").trim();
+  const inboundDeltaBytes = remoteId ? getPeerInboundDeltaBytes(remoteId) : 0;
+  const inboundDeltaPackets = remoteId ? getPeerInboundDeltaPackets(remoteId) : 0;
+  const strongPlayback = hasStrongInboundPlaybackEvidence({
+    level: health?.level,
+    inboundDeltaBytes,
+    inboundDeltaPackets,
+  });
+
   if (
     health?.playSuccess === true &&
-    (health.currentTimeAdvanced === true ||
-      health.verified === true ||
-      health.audioActuallyPlaying === true ||
-      health.playbackActive === true)
+    strongPlayback &&
+    health.audioActuallyPlaying === true
   ) {
     return true;
   }
@@ -871,18 +898,9 @@ export function isRemoteAudioHealthyNow(params: {
 
   if (health && isStalePlayFailure(health, params.nowMs)) return false;
 
-  if (health?.audioActuallyPlaying === true) return true;
-  if (recentPlaySuccess) return true;
-  if (health?.verified === true && recentPlaySuccess) return true;
-  if (health?.playSuccess === true && recentPlaySuccess) return true;
-  if (health?.playbackActive === true && recentPlaySuccess) return true;
-
-  if (
-    health &&
-    recentPlaySuccess &&
-    (health.currentTimeAdvanced === true ||
-      (health.level ?? 0) > REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD)
-  ) {
+  if (health?.audioActuallyPlaying === true && strongPlayback) return true;
+  if (strongPlayback && recentPlaySuccess) return true;
+  if (health?.verified === true && strongPlayback && recentPlaySuccess) {
     return true;
   }
 
@@ -909,6 +927,7 @@ export function resolveManualAudioReconnect(params: {
   reconnectRequestPending?: boolean;
   wasPeerConnected?: boolean;
   nowMs?: number;
+  remoteDeviceId?: string;
 }): { show: boolean; reason: string } {
   if (params.isMe) return { show: false, reason: "is_me" };
   if (params.reconnectRequestPending) {
@@ -938,6 +957,7 @@ export function resolveManualAudioReconnect(params: {
       hasRemoteStream: params.hasRemoteStream,
       nowMs: now,
       lastPlaySuccessAt: params.lastPlaySuccessAt,
+      remoteDeviceId: params.remoteDeviceId,
     })
   ) {
     return { show: false, reason: "audio_healthy" };
@@ -1003,6 +1023,7 @@ export function resolveManualAudioReconnect(params: {
         hasRemoteStream: params.hasRemoteStream,
         nowMs: now,
         lastPlaySuccessAt: params.lastPlaySuccessAt,
+        remoteDeviceId: params.remoteDeviceId,
       })
     ) {
       return { show: false, reason: "auto_hard_reset_give_up_recovered" };
@@ -1361,6 +1382,7 @@ export function resolveCallMemberStatus(params: {
   p2pRetryExhausted?: boolean;
   showReconnectButton?: boolean;
   nowMs?: number;
+  remoteDeviceId?: string;
 }): {
   text: string;
   color: string;
@@ -1401,6 +1423,7 @@ export function resolveCallMemberStatus(params: {
       autoHardResetGiveUp: params.autoHardResetGiveUp,
       wasPeerConnected: params.wasPeerConnected,
       nowMs,
+      remoteDeviceId: params.remoteDeviceId,
     }).show;
 
   const audioHealthy = isRemoteAudioHealthyNow({
@@ -1409,6 +1432,7 @@ export function resolveCallMemberStatus(params: {
     hasRemoteStream,
     nowMs,
     lastPlaySuccessAt: params.lastPlaySuccessAt,
+    remoteDeviceId: params.remoteDeviceId,
   });
   const recentPlaySuccess = isRecentPlaySuccess(
     health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
@@ -1444,6 +1468,7 @@ export function resolveCallMemberStatus(params: {
       lastUnmuteAt: params.lastUnmuteAt,
       lastPlaySuccessAt: health?.lastPlaySuccessAt ?? params.lastPlaySuccessAt,
       nowMs,
+      remoteDeviceId: params.remoteDeviceId,
     });
   const softConnected = hasRemoteAudioSoftConnectedEvidence({
     health,
@@ -1452,6 +1477,7 @@ export function resolveCallMemberStatus(params: {
     transportConnected,
     recentPlaySuccess,
     showReconnectButton,
+    remoteDeviceId: params.remoteDeviceId,
   });
   const recentConfirmed =
     health?.audioConfirmedStrict === true ||

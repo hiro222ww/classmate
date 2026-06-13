@@ -21,6 +21,7 @@ import {
   evaluateAudioConfirmedStrict,
   getPeerInboundDeltaBytes,
   getPeerInboundDeltaPackets,
+  hasStrongInboundPlaybackEvidence,
   logRemoteAudioConfirmCheck,
   type RemoteAudioConfirmInput,
 } from "@/lib/voiceAudioDiagnostics";
@@ -261,6 +262,7 @@ function logRemoteAudioCompact(
 function evaluateRemotePlaybackHealth(params: {
   el: HTMLAudioElement;
   stream: MediaStream;
+  remoteId: string;
   playSuccess: boolean;
   playSuccessEvent?: boolean;
   currentTime: number;
@@ -277,6 +279,7 @@ function evaluateRemotePlaybackHealth(params: {
   const {
     el,
     stream,
+    remoteId,
     playSuccess,
     playSuccessEvent = false,
     currentTime,
@@ -302,12 +305,20 @@ function evaluateRemotePlaybackHealth(params: {
   const currentTimeAdvanced =
     previousCurrentTime != null && currentTime > previousCurrentTime + 0.01;
 
+  const inboundDeltaBytes = getPeerInboundDeltaBytes(remoteId);
+  const inboundDeltaPackets = getPeerInboundDeltaPackets(remoteId);
+  const strongPlaybackEvidence = hasStrongInboundPlaybackEvidence({
+    level,
+    inboundDeltaBytes,
+    inboundDeltaPackets,
+  });
+
   const confirmedActive =
     playSuccess &&
     trackReady === "live" &&
     !elPaused &&
     !trackMuted &&
-    (currentTimeAdvanced || level > CONFIRMED_LEVEL_THRESHOLD);
+    strongPlaybackEvidence;
 
   const provisionalEligible =
     playSuccess &&
@@ -334,10 +345,7 @@ function evaluateRemotePlaybackHealth(params: {
     !trackMuted &&
     trackReady === "live" &&
     !elPaused &&
-    (currentTimeAdvanced ||
-      level > 0.02 ||
-      webAudioFallback ||
-      (voicePolicy.voiceMode !== "ios_conservative" && afterMs >= 1500));
+    (strongPlaybackEvidence || webAudioFallback);
 
   const audioActuallyPlaying = confirmedActive;
 
@@ -579,6 +587,7 @@ export default function RemoteAudio({
       const baseHealth = evaluateRemotePlaybackHealth({
         el,
         stream,
+        remoteId,
         playSuccess: params.playSuccess,
         playSuccessEvent: params.playSuccessEvent,
         currentTime: params.currentTime,
@@ -808,6 +817,7 @@ export default function RemoteAudio({
         evaluateRemotePlaybackHealth({
           el,
           stream,
+          remoteId,
           playSuccess: false,
           currentTime: el.currentTime,
           level: levelRef.current,

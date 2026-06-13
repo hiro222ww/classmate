@@ -30,7 +30,7 @@ export const AUDIO_STATS_POLL_INTERVAL_MS = 2000;
 export const AUDIO_DIAG_LOG_THROTTLE_MS = 2000;
 export const REMOTE_TRACK_RTP_WARMUP_MS = 2500;
 
-const CONFIRMED_LEVEL_THRESHOLD = 0.02;
+export const CONFIRMED_LEVEL_THRESHOLD = 0.02;
 const inboundDeltaByPeer = new Map<string, number>();
 const inboundDeltaPacketsByPeer = new Map<string, number>();
 const outboundDeltaByPeer = new Map<string, number>();
@@ -100,6 +100,39 @@ export function getPeerOutboundDeltaBytes(remoteId: string): number {
   return outboundDeltaByPeer.get(compactDeviceId(remoteId)) ?? 0;
 }
 
+export function hasStrongInboundPlaybackEvidence(params: {
+  level?: number;
+  inboundDeltaBytes?: number;
+  inboundDeltaPackets?: number;
+}): boolean {
+  return (
+    (params.level ?? 0) >= CONFIRMED_LEVEL_THRESHOLD ||
+    (params.inboundDeltaBytes ?? 0) > 0 ||
+    (params.inboundDeltaPackets ?? 0) > 0
+  );
+}
+
+export function hasRemotePlaybackStartedEvidence(params: {
+  playSuccess?: boolean;
+  recentPlaySuccess?: boolean;
+  trackMuted?: boolean;
+  trackLive?: boolean;
+  inboundDeltaBytes?: number;
+  inboundDeltaPackets?: number;
+}): boolean {
+  if (!params.playSuccess && !params.recentPlaySuccess) return false;
+  if (params.trackLive === false) return false;
+
+  if (params.trackMuted === true) {
+    const inboundActive =
+      (params.inboundDeltaBytes ?? 0) > 0 ||
+      (params.inboundDeltaPackets ?? 0) > 0;
+    if (!inboundActive) return false;
+  }
+
+  return true;
+}
+
 export function evaluateAudioConfirmedStrict(
   input: RemoteAudioConfirmInput,
   opts?: { alreadyConfirmed?: boolean }
@@ -107,11 +140,11 @@ export function evaluateAudioConfirmedStrict(
   const hasLiveTrack =
     input.audioTracks >= 1 && input.trackReadyState === "live" && !input.trackMuted;
 
-  const hasStrongPlaybackEvidence =
-    input.level >= CONFIRMED_LEVEL_THRESHOLD ||
-    input.inboundDeltaBytes > 0 ||
-    input.inboundDeltaPackets > 0 ||
-    input.playbackActive === true;
+  const hasStrongPlaybackEvidence = hasStrongInboundPlaybackEvidence({
+    level: input.level,
+    inboundDeltaBytes: input.inboundDeltaBytes,
+    inboundDeltaPackets: input.inboundDeltaPackets,
+  });
 
   const hasPlaybackProgress = opts?.alreadyConfirmed
     ? input.currentTimeAdvanced || hasStrongPlaybackEvidence
@@ -270,17 +303,23 @@ export function classifyOneWayAudioSubClass(params: {
 
   if (
     params.playSuccess &&
-    (params.currentTimeAdvanced || params.level >= CONFIRMED_LEVEL_THRESHOLD)
+    hasStrongInboundPlaybackEvidence({
+      level: params.level,
+      inboundDeltaBytes: params.inboundDeltaBytes,
+      inboundDeltaPackets: params.inboundDeltaPackets,
+    })
   ) {
     return "OK";
   }
 
   if (params.level <= 0 && inboundActive) {
     if (
-      params.playSuccess ||
-      params.currentTimeAdvanced ||
-      params.inboundDeltaBytes > 0 ||
-      params.inboundDeltaPackets > 0
+      params.playSuccess &&
+      hasStrongInboundPlaybackEvidence({
+        level: params.level,
+        inboundDeltaBytes: params.inboundDeltaBytes,
+        inboundDeltaPackets: params.inboundDeltaPackets,
+      })
     ) {
       return "OK";
     }
