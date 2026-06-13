@@ -558,6 +558,58 @@ export function logVoiceSignalIgnored(params: {
   voiceProdLog(parts.join(" "));
 }
 
+export function logVoiceStaleOfferIgnoredUsablePeer(params: {
+  remoteId: string;
+  expected?: string | null;
+  got?: string | null;
+  sig?: string;
+  conn?: string;
+  ice?: string;
+  hasRemoteStream?: boolean;
+  tracks?: number;
+  audioConfirmedStrict?: boolean;
+}) {
+  const parts = [
+    `[voice-signal] ignored stale offer because existing peer is still usable`,
+    `remote=${compactDeviceId(params.remoteId)}`,
+    `expected=${compactConnectionId(params.expected)}`,
+    `got=${compactConnectionId(params.got)}`,
+    `sig=${params.sig ?? "-"}`,
+    `conn=${params.conn ?? "-"}`,
+    `ice=${params.ice ?? "-"}`,
+    `hasRemoteStream=${params.hasRemoteStream === true}`,
+    `tracks=${params.tracks ?? 0}`,
+    `audioConfirmedStrict=${params.audioConfirmedStrict === true}`,
+  ];
+  console.warn(parts.join(" "));
+  voiceProdLog(parts.join(" "));
+}
+
+export function logVoiceRecoveryReplacingFailedPeer(params: {
+  remoteId: string;
+  oldConnectionId?: string | null;
+  newConnectionId?: string | null;
+  sig?: string;
+  conn?: string;
+  ice?: string;
+  hasRemoteStream?: boolean;
+  tracks?: number;
+}) {
+  const parts = [
+    `[voice-recovery] replacing-failed-peer-for-new-offer`,
+    `remote=${compactDeviceId(params.remoteId)}`,
+    `oldConnectionId=${compactConnectionId(params.oldConnectionId)}`,
+    `newConnectionId=${compactConnectionId(params.newConnectionId)}`,
+    `sig=${params.sig ?? "-"}`,
+    `conn=${params.conn ?? "-"}`,
+    `ice=${params.ice ?? "-"}`,
+    `hasRemoteStream=${params.hasRemoteStream === true}`,
+    `tracks=${params.tracks ?? 0}`,
+  ];
+  console.warn(parts.join(" "));
+  voiceProdLog(parts.join(" "));
+}
+
 export function logVoiceGlareDetected(params: {
   remoteId: string;
   localConnectionId?: string | null;

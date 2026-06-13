@@ -48,7 +48,9 @@ import {
   logVoiceGlareRollbackStart,
   logVoiceNegotiationGap,
   logVoicePeerCompetition,
+  logVoiceRecoveryReplacingFailedPeer,
   logVoiceRemoteTrackReceived,
+  logVoiceStaleOfferIgnoredUsablePeer,
   markVoiceNegotiationStep,
   mapEnsureSkipToVoiceStartBlocked,
   resetVoiceNegotiationSteps,
@@ -82,7 +84,7 @@ import {
   type IceDisconnectedGuardInput,
   type IceDisconnectedSuppressReason,
 } from "@/lib/voiceIceDisconnectedGuard";
-import { shouldRejectEstablishedPeerStaleOffer } from "@/lib/voiceStaleOfferGuard";
+import { shouldRejectEstablishedPeerStaleOffer, isPeerTransportDead } from "@/lib/voiceStaleOfferGuard";
 import {
   makeStableConnectionId,
   resolveOfferConnectionConflict,
@@ -709,6 +711,11 @@ function evaluateStaleSignalRecoverAction(params: {
   const sig = pc.signalingState;
   const conn = pc.connectionState;
   const ice = pc.iceConnectionState;
+
+  if (isPeerTransportDead(conn, ice)) {
+    return "accept_sync";
+  }
+
   const unconfirmed = confirmedAt == null;
   const noTracks = remoteTracksCount === 0 && !hasRemoteStream;
 
@@ -4793,6 +4800,13 @@ export function usePeerConnections({
       }
 
       const playbackEvidence = getPlaybackEstablishedEvidence(remoteId);
+      const pcForMutation = pcsRef.current.get(remoteId);
+      const transportDead =
+        !!pcForMutation &&
+        isPeerTransportDead(
+          pcForMutation.connectionState,
+          pcForMutation.iceConnectionState
+        );
       const mutationBlock = evaluateVoicePeerMutationBlock({
         kind: "close",
         evidence: playbackEvidence,
@@ -4801,6 +4815,7 @@ export function usePeerConnections({
           caller,
           force: opts?.force,
           manualHealPass: manualHardResetHealPassRef.current.has(remoteId),
+          transportDead,
         },
       });
       if (mutationBlock.blocked) {
@@ -6502,40 +6517,60 @@ export function usePeerConnections({
           return existing;
         }
 
-        const media = getPeerMedia(remoteId);
-        const timestamps =
-          peerSignalTimestampsRef.current.get(remoteId) ??
-          emptyPeerSignalTimestamps();
-        const recoverAction = evaluateStaleSignalRecoverAction({
-          signalType: "create_pc",
-          pc: existing,
-          remoteTracksCount: media.remoteTracksCount,
-          hasRemoteStream: media.hasRemoteStream,
-          confirmedAt: timestamps.lastPlaybackConfirmedAt,
-        });
+        if (!isUsablePeerConnection(existing)) {
+          const deadMedia = getPeerMedia(remoteId);
+          logVoiceRecoveryReplacingFailedPeer({
+            remoteId,
+            oldConnectionId: currentId,
+            newConnectionId: connectionId,
+            sig: existing.signalingState,
+            conn: existing.connectionState,
+            ice: existing.iceConnectionState,
+            hasRemoteStream: deadMedia.hasRemoteStream,
+            tracks: deadMedia.remoteTracksCount,
+          });
+          closePeer(remoteId, {
+            clearConnectionId: false,
+            preserveRemoteAudio: false,
+            reason: "replace_failed_peer_new_offer",
+            caller: "createPeerConnection",
+          });
+        } else {
+          const media = getPeerMedia(remoteId);
+          const timestamps =
+            peerSignalTimestampsRef.current.get(remoteId) ??
+            emptyPeerSignalTimestamps();
+          const recoverAction = evaluateStaleSignalRecoverAction({
+            signalType: "create_pc",
+            pc: existing,
+            remoteTracksCount: media.remoteTracksCount,
+            hasRemoteStream: media.hasRemoteStream,
+            confirmedAt: timestamps.lastPlaybackConfirmedAt,
+          });
 
-        if (recoverAction !== "reject") {
-          assignConnectionId(remoteId, connectionId, "create_pc_id_sync");
-          return existing;
-        }
+          if (recoverAction !== "reject") {
+            assignConnectionId(remoteId, connectionId, "create_pc_id_sync");
+            return existing;
+          }
 
-        logVoicePeerCompetition({
-          remoteId,
-          action: "create_pc_replace",
-          reason: "connection_id_mismatch",
-          role,
-          connectionId,
-          existingConnectionId: currentId,
-          sig: existing.signalingState,
-          conn: existing.connectionState,
-        });
-        const closed = closePeer(remoteId, {
-          ...CLOSE_FOR_RECONNECT,
-          caller: "createPeerConnection",
-          reason: "connection_id_mismatch",
-        });
-        if (!closed) {
-          return existing;
+          logVoicePeerCompetition({
+            remoteId,
+            action: "create_pc_replace",
+            reason: "connection_id_mismatch",
+            role,
+            connectionId,
+            existingConnectionId: currentId,
+            sig: existing.signalingState,
+            conn: existing.connectionState,
+          });
+          const closed = closePeer(remoteId, {
+            ...CLOSE_FOR_RECONNECT,
+            caller: "createPeerConnection",
+            reason: "connection_id_mismatch",
+          });
+          if (!closed) {
+            return existing;
+          }
         }
       }
 
@@ -10795,12 +10830,50 @@ export function usePeerConnections({
       if (row.signal_type === "offer") {
         if (
           currentConnectionId !== incomingConnectionId &&
+          existingPc &&
+          isPeerTransportDead(
+            existingPc.connectionState,
+            existingPc.iceConnectionState
+          )
+        ) {
+          logVoiceRecoveryReplacingFailedPeer({
+            remoteId,
+            oldConnectionId: currentConnectionId,
+            newConnectionId: incomingConnectionId,
+            sig: existingPc.signalingState,
+            conn: existingPc.connectionState,
+            ice: existingPc.iceConnectionState,
+            hasRemoteStream: media.hasRemoteStream,
+            tracks: media.remoteTracksCount,
+          });
+          closePeer(remoteId, {
+            clearConnectionId: false,
+            preserveRemoteAudio: false,
+            reason: "replace_failed_peer_new_offer",
+            caller: "handleSignal",
+          });
+        }
+
+        if (
+          currentConnectionId !== incomingConnectionId &&
           shouldRejectIncomingStaleOffer(
             remoteId,
             incomingConnectionId,
             existingPc
           )
         ) {
+          const offerMarksForIgnore = getPeerPipelineMarks(remoteId);
+          logVoiceStaleOfferIgnoredUsablePeer({
+            remoteId,
+            expected: currentConnectionId,
+            got: incomingConnectionId,
+            sig: existingPc?.signalingState ?? "-",
+            conn: existingPc?.connectionState ?? "-",
+            ice: existingPc?.iceConnectionState ?? "-",
+            hasRemoteStream: media.hasRemoteStream,
+            tracks: media.remoteTracksCount,
+            audioConfirmedStrict: offerMarksForIgnore.audio_confirmed_strict,
+          });
           logVoiceSignalIgnored({
             reason: "stale_offer_established_peer",
             type: "offer",

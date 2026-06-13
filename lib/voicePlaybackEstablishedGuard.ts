@@ -13,7 +13,13 @@ export type VoicePeerMutationContext = {
   caller: string;
   manualHealPass?: boolean;
   force?: boolean;
+  transportDead?: boolean;
 };
+
+const DEAD_PEER_REPLACEMENT_REASONS = new Set([
+  "replace_failed_peer_new_offer",
+  "connection_id_mismatch",
+]);
 
 export type VoicePeerMutationBlockResult = {
   blocked: boolean;
@@ -92,6 +98,14 @@ export function evaluateVoicePeerMutationBlock(params: {
   };
 
   if (isManualVoicePeerReconnectMutation(params.ctx)) {
+    return empty;
+  }
+
+  if (
+    params.kind === "close" &&
+    params.ctx.transportDead === true &&
+    DEAD_PEER_REPLACEMENT_REASONS.has(params.ctx.reason)
+  ) {
     return empty;
   }
 

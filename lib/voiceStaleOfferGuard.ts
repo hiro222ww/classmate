@@ -11,11 +11,36 @@ export type EstablishedPeerStaleOfferInput = {
   hasPlaybackEvidence: boolean;
 };
 
+export function isPeerTransportDead(conn: string, ice: string): boolean {
+  return (
+    conn === "failed" ||
+    conn === "closed" ||
+    ice === "failed" ||
+    ice === "closed"
+  );
+}
+
+export function isPeerTransportUsableForStaleOffer(
+  conn: string,
+  ice: string
+): boolean {
+  if (isPeerTransportDead(conn, ice)) return false;
+
+  const pcHealthyOrConnecting =
+    conn === "connected" || conn === "connecting";
+
+  const iceUsable = ice !== "failed" && ice !== "closed";
+
+  return pcHealthyOrConnecting && iceUsable;
+}
+
 export function shouldRejectEstablishedPeerStaleOffer(
   input: EstablishedPeerStaleOfferInput
 ): boolean {
   if (!input.currentConnectionId) return false;
   if (input.currentConnectionId === input.incomingConnectionId) return false;
+
+  if (isPeerTransportDead(input.conn, input.ice)) return false;
 
   const hasEstablishedMedia =
     input.hasPlaybackEvidence ||
@@ -25,12 +50,5 @@ export function shouldRejectEstablishedPeerStaleOffer(
 
   if (!hasEstablishedMedia) return false;
 
-  const transportUsable =
-    input.conn === "connected" ||
-    input.conn === "connecting" ||
-    input.sig === "stable" ||
-    input.ice === "connected" ||
-    input.ice === "completed";
-
-  return transportUsable;
+  return isPeerTransportUsableForStaleOffer(input.conn, input.ice);
 }
