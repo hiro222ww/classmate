@@ -131,7 +131,6 @@ import {
   resolveDisplayManualAudioReconnect,
   resolveEffectivePeerConnection,
   simplifyUserFacingStatusText,
-  isUnstableParticipationStatus,
   type CallStatusPhase,
   type PeerLabelHysteresisState,
 } from "@/lib/memberPresenceStatus";
@@ -1779,7 +1778,7 @@ export default function CallClient() {
         });
       }
 
-      if (isUnstableParticipationStatus(status.text, status.reason) && !isMe) {
+      if (status.text === "音声が不安定です" && !isMe) {
         const lastOnTrackAgeMs =
           diag?.lastOnTrackAt != null && nowMs > 0
             ? nowMs - diag.lastOnTrackAt

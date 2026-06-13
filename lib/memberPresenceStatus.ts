@@ -584,7 +584,7 @@ export function applyCallMemberStatusHysteresis(params: {
 
   if (
     hadStableConnected &&
-    candidate.text === "接続が不安定です" &&
+    candidate.text === "音声が不安定です" &&
     keepConnectedEvidence
   ) {
     logCallStatusSuppressUnstable({
@@ -611,7 +611,7 @@ export function applyCallMemberStatusHysteresis(params: {
 
   if (
     hadStableConnected &&
-    candidate.text === "接続が不安定です" &&
+    candidate.text === "音声が不安定です" &&
     !keepConnectedEvidence
   ) {
     const pendingSince = prev?.pendingDowngradeSinceMs ?? params.nowMs;
@@ -1810,7 +1810,7 @@ export function resolveCallMemberStatus(params: {
   if (params.autoHardResetGiveUp && !audioHealthy && !transportRecovering) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
-      text: "接続が不安定です",
+      text: "音声が不安定です",
       reason: "auto_hard_reset_give_up",
       source: "autoHardReset",
     };
@@ -1841,7 +1841,7 @@ export function resolveCallMemberStatus(params: {
   ) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
-      text: "接続が不安定です",
+      text: "音声が不安定です",
       reason: playFailedRecently
         ? "remote_audio_play_failed"
         : trackEnded
