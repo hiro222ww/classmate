@@ -167,6 +167,12 @@ type Member = {
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
 
+import {
+  CALL_MEMBERS_ACTIVE_POLL_MS,
+  CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
+  logCallMembersSync,
+} from "@/lib/callMembersSync";
+
 const CALL_MEMBERS_POLL_MS = 15_000;
 const CALL_REALTIME_FETCH_DEBOUNCE_MS = 2000;
 const CALL_NOW_MS_TICK_MS = 2000;
@@ -915,6 +921,7 @@ export default function CallClient() {
               context: "call",
               explicitLeftIds: localExitedPeersRef.current,
               memberLastInListAt: memberLastInCallAtRef.current,
+              preserveGraceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
             }
           );
 
@@ -980,6 +987,12 @@ export default function CallClient() {
                 extra: `ignore=${decision.ignoreReason ?? "-"}`,
               });
               if (areMembersListEquivalent(prev, nextDisplay)) return prev;
+              logCallMembersSync({
+                reason,
+                prev,
+                next: nextDisplay,
+                context: "call",
+              });
               membersChanged = true;
               return nextDisplay;
             }
@@ -1020,6 +1033,12 @@ export default function CallClient() {
             );
             return prev;
           }
+          logCallMembersSync({
+            reason,
+            prev,
+            next: nextDisplay,
+            context: "call",
+          });
           membersChanged = true;
           return nextDisplay;
         });
@@ -1282,12 +1301,16 @@ export default function CallClient() {
 
   useEffect(() => {
     if (!sessionId) return;
-    if (members.length >= 2) return;
+
+    const pollMs =
+      members.length >= 2 ? CALL_MEMBERS_ACTIVE_POLL_MS : CALL_MEMBERS_POLL_MS;
+    const pollReason =
+      members.length >= 2 ? "poll_active_call" : "poll_member_shortage";
 
     const timer = window.setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
-      void fetchMembers("poll_member_shortage");
-    }, CALL_MEMBERS_POLL_MS);
+      void fetchMembers(pollReason);
+    }, pollMs);
 
     return () => window.clearInterval(timer);
   }, [sessionId, fetchMembers, members.length]);

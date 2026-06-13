@@ -55,6 +55,27 @@ describe("applyCallMemberInCallHysteresis", () => {
     );
   });
 
+  it("drops missing remote after live absent grace expires", () => {
+    const prev = [
+      { device_id: viewer, is_in_call: true },
+      { device_id: remote, is_in_call: true },
+    ];
+    const incoming = [{ device_id: viewer, is_in_call: true }];
+    const lastInCallAt = new Map([[remote, startedAt]]);
+
+    const out = applyCallMemberInCallHysteresis(prev, incoming, {
+      sessionId,
+      viewerDeviceId: viewer,
+      firstFastMembersAt: startedAt,
+      localExitedPeers: new Set(),
+      memberLastInCallAt: lastInCallAt,
+      nowMs:
+        startedAt + CALL_MEMBER_IN_CALL_HYSTERESIS_MS + 15_000,
+    });
+
+    expect(out.some((m) => m.device_id === remote)).toBe(false);
+  });
+
   it("applies false after hysteresis window", () => {
     const prev = [
       { device_id: viewer, is_in_call: true },

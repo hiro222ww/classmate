@@ -155,6 +155,19 @@ export function mergeSessionMembersPreservingRemoved<T extends MemberRow>(
       continue;
     }
 
+    const graceMs = opts.preserveGraceMs ?? SESSION_MEMBER_PRESERVE_MS;
+    const lastAt = opts.memberLastInListAt.get(did);
+    if (lastAt == null || now - lastAt >= graceMs) {
+      if (isDebugLogEnabled()) {
+        logDebug(
+          "members",
+          `[member-drop] reason=grace_expired device=${did.slice(-4)} ` +
+            `context=${opts.context} missingForMs=${lastAt != null ? now - lastAt : "-"}`
+        );
+      }
+      continue;
+    }
+
     merged.push(existing);
     preservedIds.push(did);
     logMemberDropIgnored({

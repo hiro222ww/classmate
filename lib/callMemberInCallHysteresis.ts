@@ -1,6 +1,6 @@
 import { debugConsoleLog } from "@/lib/debugVoiceLog";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
-import { SESSION_MEMBER_PRESERVE_MS } from "@/lib/sessionMemberListMerge";
+import { CALL_LIVE_MEMBER_ABSENT_GRACE_MS } from "@/lib/callMembersSync";
 import {
   isStableVoiceJoinMode,
   STABLE_REMOTE_PEER_GRACE_MS,
@@ -140,17 +140,17 @@ export function applyCallMemberInCallHysteresis<T extends CallMemberInCallRow>(
     }
 
     const lastAt = opts.memberLastInCallAt.get(did);
-    const withinSessionGrace =
-      lastAt != null && now - lastAt < SESSION_MEMBER_PRESERVE_MS;
+    const withinAbsentGrace =
+      lastAt != null && now - lastAt < CALL_LIVE_MEMBER_ABSENT_GRACE_MS;
     const withinInCallGrace =
       lastAt != null && now - lastAt < REMOTE_MEMBER_PRESENCE_GRACE_MS;
     const withinFast =
       opts.firstFastMembersAt != null &&
       now - opts.firstFastMembersAt < CALL_MEMBER_IN_CALL_HYSTERESIS_MS;
     const shouldPreserve =
-      withinSessionGrace ||
       withinFast ||
-      (existing.is_in_call === true && withinInCallGrace);
+      (existing.is_in_call === true && withinInCallGrace) ||
+      (existing.is_in_call === true && withinAbsentGrace);
 
     if (shouldPreserve) {
       debugConsoleLog(
