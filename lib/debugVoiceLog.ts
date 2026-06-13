@@ -1,8 +1,14 @@
 /**
  * Voice / call debug logging — off in production by default.
  * Enable: NEXT_PUBLIC_DEBUG_VOICE=true | ?debugVoice=1 | localStorage debugVoice=1
+ *         or general debug logs: ?debugLogs=1 | classmate_debug_logs=1 | development
  * Disable: ?debugVoice=0 | localStorage.removeItem("debugVoice")
  */
+
+import {
+  isDebugLogEnabled,
+  shouldEmitProductionLogArgs,
+} from "@/lib/debugLog";
 
 export type DebugVoiceCategory =
   | "voice"
@@ -88,6 +94,7 @@ function maybePrintDisableHint() {
 }
 
 export function isDebugVoiceEnabled(): boolean {
+  if (isDebugLogEnabled()) return true;
   if (process.env.NEXT_PUBLIC_DEBUG_VOICE === "true") return true;
   if (process.env.DEBUG_VOICE === "true") return true;
 
@@ -255,9 +262,11 @@ export function getDebugVoiceRingBuffer() {
 
 const prodStateLog = new Map<string, string>();
 
-/** Always-on voice/call diagnostics for Web Inspector triage (not gated by debugVoice). */
+/** Production voice/call diagnostics (filtered unless debug is on). */
 export function voiceProdLog(...args: unknown[]) {
-  console.log(...args.map(sanitizeArg));
+  if (isDebugVoiceEnabled() || shouldEmitProductionLogArgs(...args)) {
+    console.log(...args.map(sanitizeArg));
+  }
 }
 
 /** Log only when stateKey changes for dedupeKey. */

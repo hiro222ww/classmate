@@ -1,4 +1,5 @@
 import { isExplicitMemberLeave } from "@/lib/memberStatus";
+import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 import {
   isPresenceFresh,
   PRESENCE_FRESH_MS_HOME,
@@ -81,7 +82,9 @@ export function logMemberSource(params: {
   }
   memberSourceLogState.set(params.context, { key, atMs: now });
 
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "members",
     `[member-source] context=${params.context} session=${sessionTail} ` +
       `sessionMembers=${params.sessionMembers} presenceActive=${params.presenceActive} ` +
       `presenceStale=${params.presenceStale} displayMembers=${params.displayMembers} ` +
@@ -95,7 +98,9 @@ export function logMemberDropIgnored(params: {
   reason: string;
   context?: MemberListContext;
 }) {
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "members",
     `[member-drop] reason=${params.reason} device=${params.deviceId.slice(-4)}` +
       (params.context ? ` context=${params.context}` : "")
   );
@@ -105,7 +110,9 @@ export function logPresenceStaleKept(params: {
   deviceId: string;
   context: MemberListContext;
 }) {
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "presence",
     `[presence] stale device=${params.deviceId.slice(-4)} keptInMembers=1 ` +
       `context=${params.context}`
   );
@@ -138,10 +145,13 @@ export function mergeSessionMembersPreservingRemoved<T extends MemberRow>(
     if (!did || incomingIds.has(did)) continue;
 
     if (isExplicitMemberLeave(opts.sessionId, did, opts.explicitLeftIds)) {
-      console.log(
-        `[member-drop] reason=explicit_leave device=${did.slice(-4)} ` +
-          `context=${opts.context}`
-      );
+      if (isDebugLogEnabled()) {
+        logDebug(
+          "members",
+          `[member-drop] reason=explicit_leave device=${did.slice(-4)} ` +
+            `context=${opts.context}`
+        );
+      }
       continue;
     }
 

@@ -1,4 +1,5 @@
 import { isDebugVoiceEnabled, voiceProdLog } from "@/lib/debugVoiceLog";
+import { isDebugLogEnabled } from "@/lib/debugLog";
 
 export type CallReadyStuckReason =
   | "mic_not_ready"
@@ -56,8 +57,8 @@ export function logCallReadyCheck(
     const sessionKey = snap.sessionId;
     if (initialCallReadyCheckLogged.has(sessionKey)) return;
     initialCallReadyCheckLogged.add(sessionKey);
-  } else if (reason === "interval") {
-    if (!isDebugVoiceEnabled()) return;
+  } else   if (reason === "interval") {
+    if (!isDebugLogEnabled() && !isDebugVoiceEnabled()) return;
   }
 
   const key = buildCallReadyStateKey(snap);

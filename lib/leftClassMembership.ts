@@ -1,4 +1,5 @@
 import { clearLocallyHiddenClass, markLocallyHiddenClass } from "@/lib/localHiddenClasses";
+import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 
 const KEY_PREFIX = "classmate_left_class";
 
@@ -19,20 +20,26 @@ export function logRoomAsyncIgnored(
   reason: string,
   context?: string
 ) {
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "room",
     `[room-async] ignored reason=${reason} class=${tailLeftClassId(classId)}` +
       (context ? ` context=${context}` : "")
   );
 }
 
 export function logRoomRematchBlocked(classId: string, reason = "class_left") {
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "room",
     `[room-rematch] blocked reason=${reason} class=${tailLeftClassId(classId)}`
   );
 }
 
 export function logHomeOpenClassBlocked(classId: string) {
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "room",
     `[home-openClass] blocked reason=class_left class=${tailLeftClassId(classId)}`
   );
 }

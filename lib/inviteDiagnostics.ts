@@ -1,5 +1,7 @@
 /** Client/server helpers for invite join diagnostics (no credentials). */
 
+import { isDebugLogEnabled, logInfo, logWarn } from "@/lib/debugLog";
+
 export const INVITE_JOIN_GRACE_MS = 18_000;
 export const INVITE_MEMBER_EMPTY_STREAK_REQUIRED = 5;
 export const INVITE_LINK_EXPIRED_MESSAGE =
@@ -81,7 +83,18 @@ export function logInviteRoute(
   }
   if (params.step) parts.push(`step=${params.step}`);
   if (params.error) parts.push(`error=${params.error}`);
-  console.log(parts.join(" "));
+  const line = parts.join(" ");
+  if (
+    event === "join-failed" ||
+    event === "mismatch" ||
+    params.error
+  ) {
+    logWarn(line);
+    return;
+  }
+  if (isDebugLogEnabled()) {
+    logInfo(line);
+  }
 }
 
 export function isInviteJoinGraceActive(untilMs: number) {
@@ -108,13 +121,24 @@ export function logInviteJoinClient(
           ? "[invite-join] failed"
           : "[invite-join] step";
 
-  console.log(
+  const line =
     `${tag} class=${tailId(params.classId)} session=${tailId(params.sessionId)} ` +
-      `device=${tailId(params.deviceId)}` +
-      (params.deviceReady != null ? ` device-ready=${params.deviceReady}` : "") +
-      (params.step ? ` step=${params.step}` : "") +
-      (params.error ? ` error=${params.error}` : "")
-  );
+    `device=${tailId(params.deviceId)}` +
+    (params.deviceReady != null ? ` device-ready=${params.deviceReady}` : "") +
+    (params.step ? ` step=${params.step}` : "") +
+    (params.error ? ` error=${params.error}` : "");
+
+  if (event === "failed" || params.error) {
+    logWarn(line);
+    return;
+  }
+  if (event === "success") {
+    logInfo(line);
+    return;
+  }
+  if (isDebugLogEnabled()) {
+    logInfo(line);
+  }
 }
 
 export function logRoomMembersInviteGraceIgnored(params: {
@@ -123,7 +147,8 @@ export function logRoomMembersInviteGraceIgnored(params: {
   previousCount: number;
   emptyStreak: number;
 }) {
-  console.log(
+  if (!isDebugLogEnabled()) return;
+  logInfo(
     `[room-members] empty-after-invite ignored reason=${params.reason} ` +
       `graceMs=${params.graceMsRemaining} previousCount=${params.previousCount} ` +
       `streak=${params.emptyStreak}`
@@ -229,5 +254,5 @@ export function logInviteErrorUi(params: {
   if (params.inviteError) parts.push(`inviteApiError=${params.inviteError}`);
   if (params.sessionJoinError) parts.push(`sessionJoinError=${params.sessionJoinError}`);
   if (params.err) parts.push(`err=${params.err}`);
-  console.log(parts.join(" "));
+  logWarn(parts.join(" "));
 }

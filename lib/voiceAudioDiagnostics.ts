@@ -3,7 +3,6 @@
 import {
   debugConsoleLog,
   voiceProdLog,
-  voiceProdLogThrottle,
 } from "@/lib/debugVoiceLog";
 import { compactDeviceId } from "@/app/call/voice/voiceDiagnostics";
 
@@ -526,11 +525,7 @@ export function logVoiceRtpDiagnosticsProd(params: {
     `sender ready=${params.senderTrackReadyState} muted=${params.senderTrackMuted ? 1 : 0} ` +
     `enabled=${params.senderTrackEnabled ? 1 : 0}${mutedSuffix}${subSuffix}`;
 
-  if (sub || params.force) {
-    voiceProdLog(line);
-  } else {
-    voiceProdLogThrottle(`voice-stats:${remote}`, 3000, line);
-  }
+  debugConsoleLog(line);
 }
 
 export function logVoiceRtpStats(params: {
@@ -583,7 +578,6 @@ export function logVoiceOneWayAudioSubClass(params: {
     `currentTimeAdvanced=${params.currentTimeAdvanced === true} ` +
     `paused=${params.paused === true} trackLive=${params.trackLive !== false} ` +
     `playFailed=${params.playFailed === true}`;
-  voiceProdLog(line);
   debugConsoleLog(line);
 }
 

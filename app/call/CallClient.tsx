@@ -130,6 +130,8 @@ import {
   resolveCallMemberStatus,
   resolveDisplayManualAudioReconnect,
   resolveEffectivePeerConnection,
+  simplifyUserFacingStatusText,
+  isUnstableParticipationStatus,
   type CallStatusPhase,
   type PeerLabelHysteresisState,
 } from "@/lib/memberPresenceStatus";
@@ -724,7 +726,7 @@ export default function CallClient() {
     setMembers((prev) => {
       const merged = mergeSeededCallMembers(prev, seeded);
       if (areMembersListEquivalent(prev, merged)) return prev;
-      console.log(
+      debugConsoleLog(
         `[call-members] seed-from-snapshot count=${merged.length} ` +
           `session=${sessionId.slice(-6)} ageMs=${Date.now() - snapshot.updatedAt}`
       );
@@ -794,7 +796,7 @@ export default function CallClient() {
       if (!sessionId || !classId) return;
       if (fetchingRef.current) {
         pendingFetchReasonRef.current = reason;
-        console.log(
+        debugConsoleLog(
           `[call-perf] fetchMembers skip=in_flight reason=${reason}`
         );
         return;
@@ -1014,7 +1016,7 @@ export default function CallClient() {
           });
 
           if (areMembersListEquivalent(prev, nextDisplay)) {
-            console.log(
+            debugConsoleLog(
               `[call-perf] fetchMembers apply skipped=same_members reason=${reason}`
             );
             return prev;
@@ -1085,7 +1087,7 @@ export default function CallClient() {
         const pending = pendingFetchReasonRef.current;
         pendingFetchReasonRef.current = null;
         if (pending) {
-          console.log(
+          debugConsoleLog(
             `[call-perf] fetchMembers coalescedRun reason=${pending}`
           );
           void fetchMembers(pending);
@@ -1393,7 +1395,7 @@ export default function CallClient() {
 
   const handleSoftResetExhausted = useCallback(
     (remoteId: string, reason: string) => {
-      console.log(
+      voiceProdLog(
         `[call-soft-reset] exhausted remote=${remoteId.slice(-4)} reason=${reason}`
       );
       setShowVoiceReconnectPrompt(true);
@@ -1777,7 +1779,7 @@ export default function CallClient() {
         });
       }
 
-      if (status.text === "音声が不安定です" && !isMe) {
+      if (isUnstableParticipationStatus(status.text, status.reason) && !isMe) {
         const lastOnTrackAgeMs =
           diag?.lastOnTrackAt != null && nowMs > 0
             ? nowMs - diag.lastOnTrackAt
@@ -2265,7 +2267,7 @@ export default function CallClient() {
       if (!voicePlaybackPromptLoggedRef.current) {
         voicePlaybackPromptLoggedRef.current = true;
         const voice = voiceReadinessRef.current;
-        console.log(
+        voiceProdLog(
           `[call-ready-stuck] reason=playback_evidence_timeout elapsedMs=${elapsedMs} ` +
             `targetMs=${VOICE_PLAYBACK_CONNECT_TARGET_MS} remotes=${remoteMemberIds.length} ` +
             `members=${members.length} remoteIds=${voice.remoteIds.length} ` +
@@ -2283,7 +2285,7 @@ export default function CallClient() {
 
   const handleCallStuckReconnect = useCallback(() => {
     if (voiceReadinessRef.current.anyAwaitingAnswer) {
-      console.log(
+      debugConsoleLog(
         `[call-ready-stuck] manual-reconnect-blocked reason=awaiting_remote_answer ` +
           `peers=${voiceReadinessRef.current.awaitingAnswerPeerIds
             .map((id) => id.slice(-4))
@@ -2307,7 +2309,7 @@ export default function CallClient() {
   }, [buildCallReadinessSnapshot, deviceId, fetchMembers, members]);
 
   const handleVoiceReconnectPrompt = useCallback(() => {
-    console.log("[call-soft-reset] manual-reconnect-requested");
+    debugConsoleLog("[call-soft-reset] manual-reconnect-requested");
     handleCallStuckReconnect();
   }, [handleCallStuckReconnect]);
 
@@ -2469,7 +2471,7 @@ export default function CallClient() {
           {showVoiceReconnectPrompt ? (
             <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
-                音声が片方向のままです。接続をやり直してください
+                接続が不安定です。入り直してください
               </span>
               <button
                 type="button"
@@ -2816,7 +2818,7 @@ export default function CallClient() {
                         fontWeight: 800,
                       }}
                     >
-                      {isSpeaking ? "発話中" : status.text}
+                      {isSpeaking ? "発話中" : simplifyUserFacingStatusText(status.text)}
                     </div>
 
                     {showManualAudioReconnect && memberId ? (

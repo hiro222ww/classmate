@@ -554,8 +554,7 @@ export function logVoiceSignalIgnored(params: {
     );
   }
 
-  console.warn(parts.join(" "));
-  voiceProdLog(parts.join(" "));
+  debugConsoleLog(parts.join(" "));
 }
 
 export function logVoiceStaleOfferIgnoredUsablePeer(params: {

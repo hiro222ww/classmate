@@ -87,10 +87,6 @@ function compactMediaId(id: string | null | undefined): string {
 }
 
 const PROD_REMOTE_AUDIO_TAGS = new Set([
-  "mount",
-  "srcObject attached",
-  "play-start",
-  "play-success",
   "play-failed",
   "audio_confirmed_strict",
 ]);

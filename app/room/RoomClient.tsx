@@ -118,6 +118,7 @@ import {
   readSessionMembersSnapshot,
   writeSessionMembersSnapshot,
 } from "@/lib/sessionMembersSnapshot";
+import { roomLog } from "@/lib/roomClientLog";
 
 type MemberRow = {
   device_id?: string;
@@ -422,7 +423,7 @@ async function rematchRoomSession(params: {
     openJoinedClassId: params.openJoinedClassId ?? null,
   });
 
-  console.log("[room] rematch match-join-v2 request body =", rematchBody);
+  roomLog("[room] rematch match-join-v2 request body =", rematchBody);
 
   const rematchRes = await fetch("/api/class/match-join-v2", {
     method: "POST",
@@ -443,13 +444,13 @@ async function rematchRoomSession(params: {
     rematchRes?.ok && rematchJson?.ok && nextSessionId && nextClassId
   );
 
-  console.log("[room] rematch match-join-v2 response =", {
+  roomLog("[room] rematch match-join-v2 response =", {
     ok: rematchJson?.ok,
     sessionId: nextSessionId,
     sessionStatus: rematchJson?.sessionStatus ?? rematchJson?.session_status,
     error: rematchJson?.error,
   });
-  console.log(`[room-perf] rematch ms=${Date.now() - rematchStartMs}`);
+  roomLog(`[room-perf] rematch ms=${Date.now() - rematchStartMs}`);
 
   const classLeft =
     isClassLeftLocally(classId) ||
@@ -477,7 +478,7 @@ async function rematchRoomSession(params: {
     })
   ) {
     const oldTail = String(params.oldSessionId ?? "").slice(-6) || "-";
-    console.log(
+    roomLog(
       `[room-rematch] apply-result despite=op_stale oldSession=${oldTail} ` +
         `newSession=${nextSessionId.slice(-6)}`
     );
@@ -857,7 +858,7 @@ export default function RoomClient() {
     if (autoCallTimerRef.current !== null) {
       window.clearTimeout(autoCallTimerRef.current);
       autoCallTimerRef.current = null;
-      console.log(`[room-auto-call] cancel reason=${reason}`);
+      roomLog(`[room-auto-call] cancel reason=${reason}`);
     }
     autoCallArmKeyRef.current = null;
   }, []);
@@ -866,7 +867,7 @@ export default function RoomClient() {
     const current = joinInFlightKeyRef.current;
     if (!current) return;
     if (expectedKey && current !== expectedKey) return;
-    console.log(`[room-join] in-flight clear key=${current}`);
+    roomLog(`[room-join] in-flight clear key=${current}`);
     joinInFlightKeyRef.current = null;
     joinInFlightPromiseRef.current = null;
   }, []);
@@ -878,7 +879,7 @@ export default function RoomClient() {
       }
       roomOpGenRef.current += 1;
       if (process.env.NODE_ENV === "development") {
-        console.log(
+        roomLog(
           `[room-async] bump reason=${reason} gen=${roomOpGenRef.current}`
         );
       }
@@ -935,7 +936,7 @@ export default function RoomClient() {
         return true;
       }
       if (canApplyRoomFetchDespiteStale(capturedOpGen, cid, sid)) {
-        console.log(
+        roomLog(
           `[room-fetch] apply-result despite=op_stale context=${context} ` +
             `session=${String(sid ?? "").slice(-6)} gen=${capturedOpGen}->${roomOpGenRef.current}`
         );
@@ -1052,13 +1053,13 @@ export default function RoomClient() {
     if (joinRetryTimerRef.current != null) {
       window.clearTimeout(joinRetryTimerRef.current);
       joinRetryTimerRef.current = null;
-      console.log(`[room-join] retry canceled reason=${reason}`);
+      roomLog(`[room-join] retry canceled reason=${reason}`);
     }
     if (joinSelfRejoinTimerRef.current != null) {
       window.clearTimeout(joinSelfRejoinTimerRef.current);
       joinSelfRejoinTimerRef.current = null;
     }
-    console.log(`[room-join] recovery-cancel reason=${reason}`);
+    roomLog(`[room-join] recovery-cancel reason=${reason}`);
   }, []);
 
   const markSessionClosed = useCallback((closedSessionId: string) => {
@@ -1076,7 +1077,7 @@ export default function RoomClient() {
   const scheduleJoinRetry = useCallback(
     (reason: string, delayMs: number, joinKey: string) => {
       if (typeof window !== "undefined" && window.location.pathname !== "/room") {
-        console.log(`[room-join] retry blocked reason=stale_session_not_current`);
+        roomLog(`[room-join] retry blocked reason=stale_session_not_current`);
         return;
       }
 
@@ -1093,7 +1094,7 @@ export default function RoomClient() {
           targetClassId &&
           identity.classId === targetClassId
         ) {
-          console.log(
+          roomLog(
             `[room-join] retry realign reason=invite_grace ` +
               `target=${targetSessionId.slice(-6)} current=${identity.sessionId.slice(-6)}`
           );
@@ -1101,7 +1102,7 @@ export default function RoomClient() {
           void retryJoinRef.current?.();
           return;
         }
-        console.log(
+        roomLog(
           `[room-join] retry blocked reason=stale_session_not_current ` +
             `target=${targetSessionId.slice(-6)} current=${identity.sessionId.slice(-6)}`
         );
@@ -1109,7 +1110,7 @@ export default function RoomClient() {
       }
 
       if (isBlockedClosedSession(identity.sessionId)) {
-        console.log(
+        roomLog(
           `[room-join] retry blocked reason=old_session_closed session=${identity.sessionId.slice(-6)}`
         );
         return;
@@ -1117,7 +1118,7 @@ export default function RoomClient() {
 
       const retryCount = joinRetryCountByKeyRef.current.get(joinKey) ?? 0;
       if (retryCount >= MAX_JOIN_RETRY) {
-        console.log(
+        roomLog(
           `[room-join] retry blocked reason=max_retry_exceeded key=${joinKey.slice(-12)} count=${retryCount}`
         );
         return;
@@ -1128,13 +1129,13 @@ export default function RoomClient() {
       }
 
       joinRetryCountByKeyRef.current.set(joinKey, retryCount + 1);
-      console.log(
+      roomLog(
         `[room-join] retry reason=${reason} delayMs=${delayMs} attempt=${retryCount + 1}/${MAX_JOIN_RETRY}`
       );
       joinRetryTimerRef.current = window.setTimeout(() => {
         joinRetryTimerRef.current = null;
         if (typeof window !== "undefined" && window.location.pathname !== "/room") {
-          console.log(`[room-join] retry blocked reason=stale_session_not_current`);
+          roomLog(`[room-join] retry blocked reason=stale_session_not_current`);
           return;
         }
         if (joinedSessionKeyRef.current === joinKey) return;
@@ -1152,7 +1153,7 @@ export default function RoomClient() {
             targetClassId &&
             currentIdentity.classId === targetClassId
           ) {
-            console.log(
+            roomLog(
               `[room-join] retry realign reason=invite_grace ` +
                 `target=${targetSessionId.slice(-6)} current=${currentIdentity.sessionId.slice(-6)}`
             );
@@ -1160,7 +1161,7 @@ export default function RoomClient() {
             void retryJoinRef.current?.();
             return;
           }
-          console.log(
+          roomLog(
             `[room-join] retry blocked reason=stale_session_not_current ` +
               `target=${targetSessionId.slice(-6)} current=${currentIdentity.sessionId.slice(-6)}`
           );
@@ -1175,14 +1176,14 @@ export default function RoomClient() {
           return;
         }
         if (isBlockedClosedSession(currentIdentity.sessionId)) {
-          console.log(
+          roomLog(
             `[room-join] retry blocked reason=old_session_closed session=${currentIdentity.sessionId.slice(-6)}`
           );
           return;
         }
         const latestCount = joinRetryCountByKeyRef.current.get(joinKey) ?? 0;
         if (latestCount > MAX_JOIN_RETRY) {
-          console.log(`[room-join] retry blocked reason=max_retry_exceeded`);
+          roomLog(`[room-join] retry blocked reason=max_retry_exceeded`);
           return;
         }
         joinedSessionKeyRef.current = null;
@@ -1320,7 +1321,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       })
         .then((res) => {
           if (res.ok) {
-            console.log(
+            roomLog(
               `[room] return-home presence=screen=home class=${cid.slice(-6)} ` +
                 `session=${sessionId.slice(-6)} device=${did.slice(-4)}`
             );
@@ -1354,7 +1355,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const joinedSession = joinedKey.includes(":")
       ? joinedKey.split(":")[0]
       : joinedKey || "-";
-    console.log(
+    roomLog(
       `[room-session] device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
         `session=${sessionId.slice(-6)} urlSession=${sessionId.slice(-6)} ` +
         `joinedSession=${
@@ -1439,7 +1440,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     if (getNavigationType() === "reload") {
       const sanitized = sanitizeLocalLeftCallAfterReload(sessionId, deviceId);
       if (sanitized.cleared) {
-        console.log(
+        roomLog(
           `[room-status] reload-cleared-local-exit reason=${sanitized.previousReason ?? "-"} ` +
             `session=${sessionId.slice(-8)} device=${deviceId.slice(-3)}`
         );
@@ -1775,7 +1776,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   ): Promise<boolean> => {
     if (!sessionId || !classId || !deviceId) return true;
     if (isBlockedClosedSession(sessionId)) {
-      console.log(
+      roomLog(
         `[session-members] self-rejoin blocked reason=old_session_closed session=${sessionId.slice(-6)}`
       );
       return false;
@@ -1812,7 +1813,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const rawName = String(displayName ?? "").trim() || "参加者";
     const name = rawName === "You" ? "参加者" : rawName;
 
-    console.log(
+    roomLog(
       `[session-members] self-rejoin start reason=${reason} context=room device=${deviceId.slice(-4)} ` +
         `session=${sessionId.slice(-6)} class=${classId.slice(-6)}`
     );
@@ -1854,7 +1855,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
       joinedSessionKeyRef.current = `${sessionId}:${classId}:${deviceId}:${name}`;
       hasClassMembershipHintRef.current = true;
-      console.log(
+      roomLog(
         `[session-members] self-rejoin ok context=room device=${deviceId.slice(-4)} ` +
           `session=${sessionId.slice(-6)} memberCount=${joinJson.memberCount ?? "-"}`
       );
@@ -1895,7 +1896,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           `${sessionId}|${classId}|`
         )
       ) {
-        console.log(
+        roomLog(
           `[room-perf] fetchStatus skip=ready_manual_suppressed reason=${fetchReason}`
         );
         return;
@@ -1910,7 +1911,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
       if (fetchStatusInFlightRef.current && !opts?.force) {
         fetchStatusPendingRef.current = true;
-        console.log(
+        roomLog(
           `[room-perf] fetchStatus skip=in_flight reason=${fetchReason}`
         );
         return fetchStatusInFlightRef.current;
@@ -1980,7 +1981,7 @@ if (!res.ok || !json?.ok) {
           (member) => applyRoomLocalLeftOverride(member, sessionId)
         );
 
-        console.log(
+        roomLog(
           `[session-members] api-result context=room count=${incomingMembers.length} ` +
             `ids=${compactMemberDeviceIds(incomingMembers)} session=${sessionId.slice(-6)}`
         );
@@ -2103,7 +2104,7 @@ if (!res.ok || !json?.ok) {
           const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
           const nextNorm = JSON.stringify(normalizeMemberCompare(mergedMembers));
           if (prevNorm === nextNorm) {
-            console.log(
+            roomLog(
               `[room-perf] fetchStatus apply skipped=same_members reason=${fetchReason}`
             );
             return prev;
@@ -2141,7 +2142,7 @@ if (!res.ok || !json?.ok) {
           memberLastInListAtRef.current.size
         );
         const inCallCount = incomingMembers.filter((m) => m.is_in_call === true).length;
-        console.log(
+        roomLog(
           `[session-members] context=room session=${sessionId.slice(-6)} ` +
             `count=${incomingMembers.length} display=${displayCount} ` +
             `ids=${compactMemberDeviceIds(incomingMembers)} ` +
@@ -2166,14 +2167,14 @@ if (!res.ok || !json?.ok) {
       } catch (e: any) {
         if (e?.name !== "AbortError") setSoftConnectionError("status");
       } finally {
-        console.log(
+        roomLog(
           `[room-perf] fetchStatus ms=${Date.now() - fetchStatusStartMs} reason=${fetchReason}`
         );
         window.clearTimeout(timer);
         fetchStatusInFlightRef.current = null;
         if (fetchStatusPendingRef.current) {
           fetchStatusPendingRef.current = false;
-          console.log(
+          roomLog(
             `[room-perf] fetchStatus coalescedRun reason=pending_coalesce`
           );
           void fetchStatus({ force: true, fast: opts?.fast, reason: "pending_coalesce" });
@@ -2269,18 +2270,18 @@ if (!res.ok || !json?.ok) {
       roomFastReadyKeyRef.current = fastKey;
 
       if (roomLifecycleStartRef.current != null) {
-        console.log(
+        roomLog(
           `[room-perf] ready ms=${Date.now() - roomLifecycleStartRef.current} path=fast_ready`
         );
         roomLifecycleStartRef.current = null;
       }
 
       const applyMs = Date.now() - applyStartMs;
-      console.log(
+      roomLog(
         `[room-perf] join networkMs=${networkMs} parseMs=${parseMs} applyMs=${applyMs} ` +
           `totalMs=${Date.now() - totalStartMs} path=fast_ready_probe`
       );
-      console.log(
+      roomLog(
         `[room-ready] fast-path members=${incomingMembers.length} self=1 ` +
           `session=${sessionId.slice(-6)} device=${deviceId.slice(-4)}`
       );
@@ -2330,7 +2331,7 @@ if (!res.ok || !json?.ok) {
       });
 
       if (res?.ok && process.env.NEXT_PUBLIC_DEBUG_VOICE === "1") {
-        console.log(
+        roomLog(
           `[room] presence update screen=room session=${sessionId.slice(-6)} ` +
             `class=${classId.slice(-6)} device=${deviceId.slice(-4)}`
         );
@@ -2437,7 +2438,7 @@ if (!res.ok || !json?.ok) {
             ignoredStale += 1;
             if (sessionMemberIds.has(did)) {
               nextMap[did] = mapped;
-              console.log(
+              roomLog(
                 `[presence] stale device=${did.slice(-4)} keptInMembers=1 context=room`
               );
             }
@@ -2447,7 +2448,7 @@ if (!res.ok || !json?.ok) {
           nextMap[did] = mapped;
         }
 
-        console.log(
+        roomLog(
           `[room] presence map session=${sessionId.slice(-6)} count=${Object.keys(nextMap).length} ` +
             `ignoredNonMember=${ignoredNonMember} ignoredStale=${ignoredStale} ` +
             `sessionMembers=${sessionMemberIds.size}`
@@ -2570,7 +2571,7 @@ const name = rawName === "You" ? "参加者" : rawName;
   const joinKey = `${sessionId}:${classId}:${deviceId}:${name}`;
 
   if (joinedSessionKeyRef.current === joinKey) {
-  console.log("[room join] skip duplicate");
+  roomLog("[room join] skip duplicate");
   setLifecycleReady(true);
   setResolving(false);
   void fetchStatus({
@@ -2594,7 +2595,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     (typeof window !== "undefined" && window.location.pathname !== "/room");
 
   const logJoinIgnoredResult = (reason: string) => {
-    console.log(`[room-join] ignored-result reason=${reason}`);
+    roomLog(`[room-join] ignored-result reason=${reason}`);
   };
 
   const logJoinResult = (params: {
@@ -2602,7 +2603,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     status?: string;
     error?: string;
   }) => {
-    console.log(
+    roomLog(
       `[room-join] result ok=${params.ok ? 1 : 0} ` +
         `status=${params.status ?? "-"} error=${params.error ?? "-"}`
     );
@@ -2631,11 +2632,11 @@ const name = rawName === "You" ? "参加者" : rawName;
     nextClassId: string;
     reason: string;
   }) {
-    console.log(
+    roomLog(
       `[room-rematch] redirect oldSession=${params.oldSessionId.slice(-6)} ` +
         `newSession=${params.nextSessionId.slice(-6)} reason=${params.reason}`
     );
-    console.log(
+    roomLog(
       `[room-session] resolve-before-start reason=${params.reason} ` +
         `oldSession=${params.oldSessionId.slice(-6)}`
     );
@@ -2662,7 +2663,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       );
     }
 
-    console.log(
+    roomLog(
       `[room-session] resolved-joinable-session newSession=${params.nextSessionId.slice(-6)}`
     );
 
@@ -2678,7 +2679,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     `${classId}:${sessionId}:${deviceId}:${openJoinedClass}`;
 
   async function applyJoinSuccess(json: SessionJoinResponse) {
-    console.log(
+    roomLog(
       `[room-session] join-success device=${deviceId.slice(-4)} class=${classId.slice(-6)} ` +
         `session=${sessionId.slice(-6)} urlSession=${sessionId.slice(-6)} ` +
         `joinedSession=${String(json?.sessionId ?? sessionId).slice(-6)} ` +
@@ -2691,7 +2692,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     setLifecycleReady(true);
     setResolving(false);
     if (roomLifecycleStartRef.current != null) {
-      console.log(
+      roomLog(
         `[room-perf] ready ms=${Date.now() - roomLifecycleStartRef.current}`
       );
       roomLifecycleStartRef.current = null;
@@ -2750,7 +2751,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           memberLastInListAt: memberLastInListAtRef.current,
         });
         if (merged.length <= prev.length) return prev;
-        console.log(
+        roomLog(
           `[room-members] seed-from-snapshot count=${merged.length} ` +
             `session=${sessionId.slice(-6)} reason=join_success`
         );
@@ -2769,12 +2770,12 @@ const name = rawName === "You" ? "参加者" : rawName;
         reason: "post_join",
       });
     } else {
-      console.log("[room-perf] fetchStatus skip=post_join_coalesced");
+      roomLog("[room-perf] fetchStatus skip=post_join_coalesced");
     }
 
     const reportedCount = Number(json?.memberCount ?? 0);
     if (reportedCount <= 0) {
-      console.log(`[room-members] invalid-zero-after-join`);
+      roomLog(`[room-members] invalid-zero-after-join`);
       const rejoinOk = await selfRejoinSessionIfMissing("missing_after_join");
       if (rejoinOk) {
         setLifecycleReady(true);
@@ -2821,7 +2822,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       return { settled: false };
     }
 
-    console.log(
+    roomLog(
       `[room-join] stale-settled context=${context} inviteDone=${inviteDone ? 1 : 0} ` +
         `session=${joinTarget.sessionId.slice(-6)} class=${joinTarget.classId.slice(-6)}`
     );
@@ -2870,7 +2871,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         logJoinIgnoredResult("op_stale");
         scheduleJoinRetry("stale_join_result", 500, joinKey);
       } else {
-        console.log("[room-join] apply-result despite=op_stale context=join_start");
+        roomLog("[room-join] apply-result despite=op_stale context=join_start");
       }
       setResolving(false);
       joinResultError = "op_stale";
@@ -2923,7 +2924,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         inviteJoinTraceRef.current.membershipExists = recovered.inSession;
         inviteJoinTraceRef.current.sessionMemberExists = recovered.inSession;
         if (recovered.inSession) {
-          console.log(
+          roomLog(
             `[room-join] invite-recover reason=already_member error=${errCode} ` +
               `session=${sessionId.slice(-6)}`
           );
@@ -2976,7 +2977,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         resolvedSessionId &&
         resolvedSessionId !== sessionId
       ) {
-        console.log(
+        roomLog(
           `[invite-join] session-redirect from=${sessionId.slice(-6)} ` +
             `to=${resolvedSessionId.slice(-6)} requested=${requestedSessionId.slice(-6)} ` +
             `reason=${String(inviteJson?.sessionFallbackReason ?? "-")}`
@@ -3005,7 +3006,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       markJoinedClassesStale(classId);
       markAutoCallOnce(sessionId, deviceId);
       inviteJoinDoneKeyRef.current = joinKey;
-      console.log(
+      roomLog(
         "[room-join] invite-join-done fast_path=apply " +
           `class=${classId.slice(-6)} session=${sessionId.slice(-6)}`
       );
@@ -3042,7 +3043,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           inviteJoinTraceRef.current.sessionJoinOk = bgRes.ok;
           inviteJoinTraceRef.current.sessionJoinStatus = bgRes.status;
           if (bgRes.ok) {
-            console.log(
+            roomLog(
               `[room-join] invite session_join background ok session=${sessionId.slice(-6)}`
             );
             return;
@@ -3057,7 +3058,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       return;
     }
 
-    console.log("[room join] request", {
+    roomLog("[room join] request", {
       urlSessionId: sessionId,
       classId,
       deviceId,
@@ -3078,7 +3079,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         logJoinIgnoredResult("op_stale");
         scheduleJoinRetry("stale_join_result", 500, joinKey);
       } else {
-        console.log(
+        roomLog(
           "[room-join] apply-result despite=op_stale context=join_before_session_join"
         );
       }
@@ -3272,7 +3273,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       }
 
       if (staleAfterResponse && applyDespiteStale) {
-        console.log("[room-join] apply-result despite=op_stale");
+        roomLog("[room-join] apply-result despite=op_stale");
       }
 
       joinResultOk = true;
@@ -3280,7 +3281,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       const joinApplyStartMs = Date.now();
       await applyJoinSuccess(json);
       const joinApplyMs = Date.now() - joinApplyStartMs;
-      console.log(
+      roomLog(
         `[room-perf] join networkMs=${joinNetworkMs} parseMs=${joinParseMs} ` +
           `applyMs=${joinApplyMs} totalMs=${Date.now() - joinStartMs} ` +
           `fastPath=${json?.alreadyInSession ? 1 : 0}`
@@ -3397,13 +3398,13 @@ const name = rawName === "You" ? "参加者" : rawName;
         (member) => String(member.device_id ?? "").trim() === deviceId
       );
     if (selfReady) {
-      console.log("[room-members] skip reason=members_already_ready");
+      roomLog("[room-members] skip reason=members_already_ready");
       return;
     }
 
-    console.log(`[room-members] wait reason=join_result_pending`);
+    roomLog(`[room-members] wait reason=join_result_pending`);
     if (isBlockedClosedSession(sessionId)) {
-      console.log(
+      roomLog(
         `[session-members] self-rejoin blocked reason=old_session_closed session=${sessionId.slice(-6)}`
       );
       return;
@@ -3430,7 +3431,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     const inFlightKey = buildJoinInFlightKey();
     const existing = joinInFlightPromiseRef.current;
     if (joinInFlightKeyRef.current === inFlightKey && existing) {
-      console.log(
+      roomLog(
         `[room-join] skip reason=join_in_flight key=${inFlightKey}`
       );
       return existing.finally(() => {
@@ -3438,7 +3439,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       });
     }
 
-    console.log(`[room-join] in-flight start key=${inFlightKey}`);
+    roomLog(`[room-join] in-flight start key=${inFlightKey}`);
     joinInFlightKeyRef.current = inFlightKey;
 
     const promise = runJoinWork().finally(() => {
@@ -3449,7 +3450,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       joinSelfRejoinTimerRef.current = window.setTimeout(() => {
         joinSelfRejoinTimerRef.current = null;
         if (isBlockedClosedSession(sessionId)) {
-          console.log(
+          roomLog(
             `[session-members] self-rejoin blocked reason=old_session_closed session=${sessionId.slice(-6)}`
           );
           return;
@@ -3527,7 +3528,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         memberLastInListAt: memberLastInListAtRef.current,
       });
       if (merged.length <= prev.length) return prev;
-      console.log(
+      roomLog(
         `[room-members] seed-from-snapshot count=${merged.length} ` +
           `session=${sessionId.slice(-6)} reason=room_mount`
       );
@@ -3543,14 +3544,14 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     const postJoinKey = `${classId}:${sessionId}`;
     if (roomPostJoinFetchKeyRef.current === postJoinKey) {
-      console.log("[room-perf] fetchStatus skip=initial_sync_post_join_done");
+      roomLog("[room-perf] fetchStatus skip=initial_sync_post_join_done");
     } else {
       void fetchStatus({ force: true, fast: true, reason: "initial_sync" });
     }
 
     const presenceSync = window.setTimeout(() => {
       if (roomMembersFetchFingerprintRef.current.startsWith(`${sessionId}|${classId}|`)) {
-        console.log("[room-perf] fetchStatus skip=presence_sync_ready");
+        roomLog("[room-perf] fetchStatus skip=presence_sync_ready");
         return;
       }
       void fetchStatus({ force: true, reason: "presence_sync_delayed" });
@@ -3633,22 +3634,22 @@ const name = rawName === "You" ? "参加者" : rawName;
     }
 
     if (openJoinedClass) {
-      console.log("[room-auto-call] skip reason=open_joined_class");
+      roomLog("[room-auto-call] skip reason=open_joined_class");
       return;
     }
 
     if (getNavigationType() === "reload") {
-      console.log("[room-auto-call] skip reason=reload");
+      roomLog("[room-auto-call] skip reason=reload");
       return;
     }
 
     if (hasLocalLeftCall(sessionId, deviceId)) {
-      console.log("[room-auto-call] skip reason=return_from_call");
+      roomLog("[room-auto-call] skip reason=return_from_call");
       return;
     }
 
     if (!hasAutoCallOnce(sessionId, deviceId)) {
-      console.log("[room-auto-call] skip reason=flag_missing|already_consumed");
+      roomLog("[room-auto-call] skip reason=flag_missing|already_consumed");
       return;
     }
 
@@ -3721,7 +3722,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     }
 
     autoCallArmKeyRef.current = armKey;
-    console.log(
+    roomLog(
       `[room-auto-call] arm reason=initial_match_once delayMs=${AUTO_CALL_STABLE_DELAY_MS}`
     );
 
@@ -3732,25 +3733,25 @@ const name = rawName === "You" ? "参加者" : rawName;
       const identity = roomIdentityRef.current;
       const currentArmKey = `${identity.sessionId}:${identity.classId}:${identity.deviceId}`;
       if (currentArmKey !== armKey) {
-        console.log("[room-auto-call] cancel reason=session_changed");
+        roomLog("[room-auto-call] cancel reason=session_changed");
         return;
       }
 
       if (autoCallAttemptedRef.current) return;
 
       if (document.hidden) {
-        console.log("[room-auto-call] cancel reason=page_hidden");
+        roomLog("[room-auto-call] cancel reason=page_hidden");
         return;
       }
 
       if (lastSuccessfulFetchOpGenRef.current !== roomOpGenRef.current) {
-        console.log("[room-auto-call] cancel reason=op_stale");
+        roomLog("[room-auto-call] cancel reason=op_stale");
         return;
       }
 
       const joinedKeyPrefix = `${identity.sessionId}:${identity.classId}:${identity.deviceId}:`;
       if (!(joinedSessionKeyRef.current ?? "").startsWith(joinedKeyPrefix)) {
-        console.log("[room-auto-call] cancel reason=members_unstable");
+        roomLog("[room-auto-call] cancel reason=members_unstable");
         return;
       }
 
@@ -3759,7 +3760,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       const viewerJoined = ids.includes(viewerId);
       const peerJoined = ids.some((id) => id !== viewerId);
       if (ids.length < 2 || !viewerJoined || !peerJoined) {
-        console.log("[room-auto-call] cancel reason=members_unstable");
+        roomLog("[room-auto-call] cancel reason=members_unstable");
         return;
       }
 
@@ -3769,17 +3770,17 @@ const name = rawName === "You" ? "参加者" : rawName;
         countStreak >= 2 ||
         (since !== null && Date.now() - since >= AUTO_CALL_MEMBERS_STABLE_MS);
       if (!stillStable || !presenceMapSeen2Ref.current) {
-        console.log("[room-auto-call] cancel reason=members_unstable");
+        roomLog("[room-auto-call] cancel reason=members_unstable");
         return;
       }
 
       if (!consumeAutoCallOnce(identity.sessionId, identity.deviceId)) {
-        console.log("[room-auto-call] skip reason=flag_missing|already_consumed");
+        roomLog("[room-auto-call] skip reason=flag_missing|already_consumed");
         return;
       }
 
       autoCallAttemptedRef.current = true;
-      console.log("[room-auto-call] allow reason=initial_match_stable");
+      roomLog("[room-auto-call] allow reason=initial_match_stable");
 
       const callHref = withDev(
         `/call?sessionId=${encodeURIComponent(identity.sessionId)}&classId=${encodeURIComponent(
@@ -3883,7 +3884,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           onStartCall={() => {
             const blockReason = isCallStartBlocked();
             if (blockReason) {
-              console.log(`[room-call-start] blocked reason=${blockReason}`);
+              roomLog(`[room-call-start] blocked reason=${blockReason}`);
               return;
             }
             writeSessionMembersSnapshot(sessionId, classId, members);

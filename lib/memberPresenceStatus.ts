@@ -39,6 +39,49 @@ export {
 export const UI_RECENT_CONFIRMED_HOLD_MS = 8000;
 export const REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD = 0.02;
 
+/** User-facing status copy (diagnostic reasons stay in logs only). */
+export function simplifyUserFacingStatusText(text: string): string {
+  const value = String(text ?? "").trim();
+  if (!value) return "接続中…";
+  if (value === "通話中" || value === "音声受信中") return "通話中";
+  if (
+    value === "音声確認中" ||
+    value === "接続処理中" ||
+    value === "接続準備中" ||
+    value === "接続中" ||
+    value === "接続待ち" ||
+    value === "音声を調整中" ||
+    value === "接続を調整中" ||
+    value === "マイク準備中"
+  ) {
+    return "接続中…";
+  }
+  if (value === "再接続中" || value === "再接続を試みています") {
+    return "再接続中…";
+  }
+  if (value === "音声が不安定です" || value === "接続が不安定です") {
+    return "接続が不安定です";
+  }
+  if (value === "接続に失敗") {
+    return "接続できませんでした。入り直してください";
+  }
+  return value;
+}
+
+export function isUnstableParticipationStatus(text: string, reason?: string) {
+  const value = String(text ?? "").trim();
+  const r = String(reason ?? "");
+  return (
+    value === "音声が不安定です" ||
+    value === "接続が不安定です" ||
+    r.includes("auto_hard_reset_give_up") ||
+    r.includes("remote_audio_play_failed") ||
+    r.includes("remote_audio_track_ended") ||
+    r.includes("remote_audio_no_live_stream") ||
+    r.includes("remote_audio_stalled")
+  );
+}
+
 export type CallStatusPhase =
   | "checking"
   | "connected"
@@ -62,7 +105,7 @@ export function mapCallStatusLabelToPhase(
     return "connected_soft";
   }
   if (text === "音声確認中" || text === "音声受信中") return "checking";
-  if (text === "音声が不安定です") return "unstable";
+  if (text === "音声が不安定です" || text === "接続が不安定です") return "unstable";
   return "other";
 }
 
@@ -541,7 +584,7 @@ export function applyCallMemberStatusHysteresis(params: {
 
   if (
     hadStableConnected &&
-    candidate.text === "音声が不安定です" &&
+    candidate.text === "接続が不安定です" &&
     keepConnectedEvidence
   ) {
     logCallStatusSuppressUnstable({
@@ -568,7 +611,7 @@ export function applyCallMemberStatusHysteresis(params: {
 
   if (
     hadStableConnected &&
-    candidate.text === "音声が不安定です" &&
+    candidate.text === "接続が不安定です" &&
     !keepConnectedEvidence
   ) {
     const pendingSince = prev?.pendingDowngradeSinceMs ?? params.nowMs;
@@ -1767,7 +1810,7 @@ export function resolveCallMemberStatus(params: {
   if (params.autoHardResetGiveUp && !audioHealthy && !transportRecovering) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
-      text: "音声が不安定です",
+      text: "接続が不安定です",
       reason: "auto_hard_reset_give_up",
       source: "autoHardReset",
     };
@@ -1798,7 +1841,7 @@ export function resolveCallMemberStatus(params: {
   ) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
-      text: "音声が不安定です",
+      text: "接続が不安定です",
       reason: playFailedRecently
         ? "remote_audio_play_failed"
         : trackEnded
