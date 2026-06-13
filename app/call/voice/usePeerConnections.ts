@@ -317,6 +317,9 @@ function canEnsurePeerWithoutLocalTrack(
   return isReceiveOnlyMutedSession(releaseMicOnMute, userMutedRef);
 }
 
+function isSoftResetRejoinReason(reason: string): boolean {
+  return reason === "soft_reset_rejoin" || reason.startsWith("soft_reset_");
+}
 function isRejoinNegotiationReason(reason: string): boolean {
   return (
     reason === "passive_on_join" ||
@@ -348,6 +351,16 @@ function hasPassiveRemoteNeedingPc(
     (remoteId) =>
       selfId > remoteId && peerNeedsPc(remoteId)
   );
+}
+
+function isPassiveAwaitingReconnectOffer(
+  deviceId: string,
+  remoteId: string,
+  passiveReconnectStateRef: React.MutableRefObject<
+    Map<string, PassiveReconnectState>
+  >
+): boolean {
+  return deviceId > remoteId && passiveReconnectStateRef.current.has(remoteId);
 }
 
 function findPeerAudioSender(pc: RTCPeerConnection): RTCRtpSender | null {
@@ -7957,6 +7970,19 @@ export function usePeerConnections({
 
   const runPassiveFallbackOffer = useCallback(
     (remoteId: string, triggerReason: string) => {
+      if (
+        isPassiveAwaitingReconnectOffer(deviceId, remoteId, passiveReconnectStateRef)
+      ) {
+        const awaitState = passiveReconnectStateRef.current.get(remoteId);
+        logPassiveOfferSkip({
+          remoteId,
+          triggerReason,
+          reason: "awaiting_reconnect_offer",
+          detail: awaitState?.reconnectReason ?? "fallback_offer",
+        });
+        return;
+      }
+
       if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
         logPassiveOfferSkip({
           remoteId,
@@ -8073,6 +8099,17 @@ export function usePeerConnections({
           remoteId,
           triggerReason,
           reason: "not_passive_role",
+        });
+        return false;
+      }
+
+      if (isPassiveAwaitingReconnectOffer(deviceId, remoteId, passiveReconnectStateRef)) {
+        const awaitState = passiveReconnectStateRef.current.get(remoteId);
+        logPassiveOfferSkip({
+          remoteId,
+          triggerReason,
+          reason: "awaiting_reconnect_offer",
+          detail: awaitState?.reconnectReason ?? "unknown",
         });
         return false;
       }
@@ -8262,6 +8299,10 @@ export function usePeerConnections({
         return;
       }
 
+      if (isPassiveAwaitingReconnectOffer(deviceId, remoteId, passiveReconnectStateRef)) {
+        return;
+      }
+
       clearNoStreamNoOfferTimer(remoteId);
 
       const selfMember = members.find((m) => m.device_id === deviceId);
@@ -8290,6 +8331,12 @@ export function usePeerConnections({
         });
 
         if (!deadlock) return;
+
+        if (
+          isPassiveAwaitingReconnectOffer(deviceId, remoteId, passiveReconnectStateRef)
+        ) {
+          return;
+        }
 
         debugConsoleLog(
           `[voice-peer] no-stream-no-offer-timeout remote=${compactDeviceId(remoteId)} action=force_offer ` +
@@ -8325,6 +8372,10 @@ export function usePeerConnections({
       opts?: { forceReschedule?: boolean; initialJoin?: boolean }
     ): boolean => {
       if (deviceId < remoteId) return false;
+
+      if (isPassiveAwaitingReconnectOffer(deviceId, remoteId, passiveReconnectStateRef)) {
+        return false;
+      }
 
       if (shouldSuppressAutoVoiceRecoveryForPeer(remoteId)) {
         return false;
@@ -8433,7 +8484,7 @@ export function usePeerConnections({
         logKind === "retry"
           ? "reconnect-request-retry"
           : "reconnect-request-sent";
-      debugConsoleLog(
+      voiceProdLog(
         `[voice-signal] ${logTag} remote=${compact} reason=${logReason} ` +
           `connectionId=${compactConnectionId(connectionId)} ${formatVoiceModeSuffix()}`
       );
@@ -8475,9 +8526,20 @@ export function usePeerConnections({
           clearPassiveReconnectState(remoteId);
           return;
         }
-        if (state.retryUsed) return;
+        if (state.retryUsed) {
+          voiceProdLog(
+            `[voice-signal] reconnect-request-retry-exhausted remote=${compactDeviceId(remoteId)} ` +
+              `connectionId=${compactConnectionId(state.connectionId)} reason=${state.reconnectReason}`
+          );
+          return;
+        }
 
         state.retryUsed = true;
+        voiceProdLog(
+          `[voice-signal] reconnect-request-retry-scheduled remote=${compactDeviceId(remoteId)} ` +
+            `connectionId=${compactConnectionId(state.connectionId)} reason=${state.reconnectReason} ` +
+            `delayMs=${RECONNECT_REQUEST_RETRY_MS}`
+        );
         void sendReconnectRequest(
           remoteId,
           state.connectionId,
@@ -9203,18 +9265,30 @@ export function usePeerConnections({
           reason,
         });
         setPeerState(remoteId, "connecting");
-        const scheduled = schedulePassiveWaitOfferTimeout(remoteId, reason, {
-          initialJoin:
-            isRejoinNegotiationReason(reason) ||
-            !isEndedStreamReconnectReason(reason),
-          forceReschedule: isRejoinNegotiationReason(reason),
-        });
-        scheduleNoStreamNoOfferTimeout(remoteId, reason);
-        if (!scheduled) {
-          debugConsoleLog(
-            `[voice-peer] passive-wait-not-scheduled remote=${compactDeviceId(remoteId)} ` +
-              `reason=${reason} ${formatVoiceModeSuffix()}`
+        const passiveAwait = passiveReconnectStateRef.current.get(remoteId);
+        if (passiveAwait || isSoftResetRejoinReason(reason)) {
+          if (passiveAwait) {
+            schedulePassiveReconnectRequestRetry(remoteId);
+          }
+          voiceProdLog(
+            `[voice-peer] passive_awaiting_reconnect_offer remote=${compactDeviceId(remoteId)} ` +
+              `reason=${reason} connectionId=${compactConnectionId(connectionId)} ` +
+              `awaiting=${passiveAwait ? 1 : 0}`
           );
+        } else {
+          const scheduled = schedulePassiveWaitOfferTimeout(remoteId, reason, {
+            initialJoin:
+              isRejoinNegotiationReason(reason) ||
+              !isEndedStreamReconnectReason(reason),
+            forceReschedule: isRejoinNegotiationReason(reason),
+          });
+          scheduleNoStreamNoOfferTimeout(remoteId, reason);
+          if (!scheduled) {
+            debugConsoleLog(
+              `[voice-peer] passive-wait-not-scheduled remote=${compactDeviceId(remoteId)} ` +
+                `reason=${reason} ${formatVoiceModeSuffix()}`
+            );
+          }
         }
       }
 
@@ -9253,6 +9327,7 @@ export function usePeerConnections({
       notifyStatus,
       schedulePassiveWaitOfferTimeout,
       scheduleNoStreamNoOfferTimeout,
+      schedulePassiveReconnectRequestRetry,
       sendReconnectRequest,
       setPeerState,
       signalReady,
@@ -9394,6 +9469,12 @@ export function usePeerConnections({
           reason: "soft_reset_rejoin",
           force: true,
         });
+        schedulePassiveReconnectRequestRetry(remoteId);
+        voiceProdLog(
+          `[voice-peer] passive_awaiting_reconnect_offer remote=${compactDeviceId(remoteId)} ` +
+            `connectionId=${compactConnectionId(newConnectionId)} reason=${reconnectReason} ` +
+            `reconnectSent=${sent ? 1 : 0}`
+        );
       }
 
       emitPeerStates();
@@ -9420,6 +9501,7 @@ export function usePeerConnections({
       hasRemotePlaybackEvidence,
       sendReconnectRequest,
       setPeerState,
+      schedulePassiveReconnectRequestRetry,
       startPeerOffer,
       writeRemoteAudios,
     ]
@@ -10804,6 +10886,14 @@ export function usePeerConnections({
       }
 
       if (!hasStream && !offeredPeersRef.current.has(remoteId)) {
+        if (
+          isPassiveAwaitingReconnectOffer(deviceId, remoteId, passiveReconnectStateRef)
+        ) {
+          logHealSkipHealthy(remoteId, "passive_awaiting_reconnect_offer", pc);
+          schedulePassiveReconnectRequestRetry(remoteId);
+          continue;
+        }
+
         if (transportHealthy && !noStreamDeadlock) {
           logHealSkipHealthy(remoteId, "no_stream_no_offer_pc_connected", pc);
           continue;
@@ -10841,7 +10931,13 @@ export function usePeerConnections({
               ensurePeerConnection(remoteId, "no_stream_no_offer_passive", {
                 force: true,
               });
-            } else {
+            } else if (
+              !isPassiveAwaitingReconnectOffer(
+                deviceId,
+                remoteId,
+                passiveReconnectStateRef
+              )
+            ) {
               schedulePassiveWaitOfferTimeout(
                 remoteId,
                 "no_stream_no_offer_passive_wait",
@@ -10989,6 +11085,7 @@ export function usePeerConnections({
     peerNeedsPc,
     isVoiceJoinStabilizing,
     scheduleNoStreamNoOfferTimeout,
+    schedulePassiveReconnectRequestRetry,
     schedulePassiveWaitOfferTimeout,
     scheduleReconnect,
     sessionId,
@@ -11044,7 +11141,11 @@ export function usePeerConnections({
         });
         return;
       }
-      if (row.signal_type === "offer" || row.signal_type === "answer") {
+      if (
+        row.signal_type === "offer" ||
+        row.signal_type === "answer" ||
+        row.signal_type === "reconnect-request"
+      ) {
         voiceProdLog(
           `[voice-signal] inbound type=${row.signal_type} from=${compactDeviceId(remoteId)} ` +
             `connectionId=${compactConnectionId(row.payload?.connectionId)} ` +
@@ -11119,6 +11220,11 @@ export function usePeerConnections({
 
         const isOfferOwner = deviceId < remoteId;
         if (isOfferOwner) {
+          voiceProdLog(
+            `[voice-signal] reconnect-request-handling remote=${compactDeviceId(remoteId)} ` +
+              `role=active decision=offer-send connectionId=${compactConnectionId(incomingConnectionId)} ` +
+              `offerReason=${offerReason}`
+          );
           await startPeerOffer(remoteId, {
             force: true,
             reason: offerReason,
@@ -11126,6 +11232,11 @@ export function usePeerConnections({
           return;
         }
 
+        voiceProdLog(
+          `[voice-signal] reconnect-request-handling remote=${compactDeviceId(remoteId)} ` +
+            `role=passive decision=wait_for_offer connectionId=${compactConnectionId(incomingConnectionId)} ` +
+            `offerReason=${offerReason}`
+        );
         passiveReconnectStateRef.current.set(remoteId, {
           connectionId: incomingConnectionId,
           reconnectReason: offerReason,
@@ -11140,6 +11251,7 @@ export function usePeerConnections({
           force: true,
         });
         setPeerState(remoteId, "connecting");
+        schedulePassiveReconnectRequestRetry(remoteId);
         return;
       }
 
@@ -11664,7 +11776,9 @@ export function usePeerConnections({
       getPeerMedia,
       runPeerHardReset,
       scheduleReconnect,
+      schedulePassiveReconnectRequestRetry,
       shouldRejectIncomingStaleOffer,
+      clearPeerNegotiationCycleState,
       startPeerOffer,
       sendSignal,
       sessionId,

@@ -1642,7 +1642,8 @@ export type PassiveOfferSkipReason =
   | "negotiation_phase"
   | "signaling_busy"
   | "mic_blocked"
-  | "deduped";
+  | "deduped"
+  | "awaiting_reconnect_offer";
 
 export function logPassiveOfferSkip(params: {
   remoteId: string;
