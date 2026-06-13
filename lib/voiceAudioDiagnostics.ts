@@ -167,6 +167,7 @@ export function classifyOneWayAudioFromConfirmInput(
     localSenderExpected?: boolean;
     userIntentionallyMuted?: boolean;
     remoteTrackReceivedAtMs?: number | null;
+    elementPaused?: boolean;
     nowMs?: number;
   }
 ): OneWayAudioSubClass {
@@ -197,6 +198,7 @@ export function classifyOneWayAudioFromConfirmInput(
     localSenderExpected: opts?.localSenderExpected,
     userIntentionallyMuted: opts?.userIntentionallyMuted,
     remoteTrackReceivedAtMs: opts?.remoteTrackReceivedAtMs,
+    elementPaused: opts?.elementPaused,
     nowMs: opts?.nowMs,
   });
 }
@@ -223,6 +225,7 @@ export function classifyOneWayAudioSubClass(params: {
   localSenderExpected?: boolean;
   userIntentionallyMuted?: boolean;
   remoteTrackReceivedAtMs?: number | null;
+  elementPaused?: boolean;
   nowMs?: number;
 }): OneWayAudioSubClass {
   if (!params.iceConnected) return "OK";
@@ -249,8 +252,11 @@ export function classifyOneWayAudioSubClass(params: {
       return "OK";
     }
 
-    const senderShouldBeLive =
-      params.localSenderExpected !== false && !params.userIntentionallyMuted;
+    if (params.userIntentionallyMuted) {
+      return "OK";
+    }
+
+    const senderShouldBeLive = params.localSenderExpected !== false;
     if (
       senderShouldBeLive &&
       (params.outboundDeltaBytes <= 0 ||
@@ -262,17 +268,19 @@ export function classifyOneWayAudioSubClass(params: {
     return "D2";
   }
 
-  const playbackUnconfirmed =
-    params.playbackUnconfirmed ??
-    params.paused === true;
-
-  if (playbackUnconfirmed || !params.currentTimeAdvanced) {
-    if (!params.playSuccess) return "D4";
-    return "D3";
+  if (
+    params.playSuccess &&
+    (params.currentTimeAdvanced || params.level >= CONFIRMED_LEVEL_THRESHOLD)
+  ) {
+    if (params.level <= 0 && inboundActive) {
+      return "D6";
+    }
+    return "OK";
   }
 
-  if (params.level <= 0 && inboundActive) {
-    return "D6";
+  if (params.elementPaused === true) {
+    if (!params.playSuccess) return "D4";
+    return "D3";
   }
 
   if (!params.playSuccess) return "D4";

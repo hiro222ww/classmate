@@ -6,6 +6,10 @@ import {
   type UnifiedMemberStatus,
 } from "@/lib/memberStatus";
 import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
+import {
+  UI_CONNECTED_SOFT_HOLD_MS,
+  UI_CONNECTED_STRICT_HOLD_MS,
+} from "@/lib/voiceConnectedHold";
 
 export type UiParticipationStatus = "in_call" | "waiting" | "offline";
 
@@ -22,6 +26,10 @@ export const RECONNECT_BUTTON_STALL_MS = 15_000;
 export const UI_RECONNECT_BUTTON_MIN_UNHEALTHY_MS = 17_000;
 export const UI_LABEL_CONFIRMING_DELAY_MS = 2500;
 export const UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS = 5000;
+export {
+  UI_CONNECTED_SOFT_HOLD_MS,
+  UI_CONNECTED_STRICT_HOLD_MS,
+} from "@/lib/voiceConnectedHold";
 export const UI_RECENT_CONFIRMED_HOLD_MS = 8000;
 export const REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD = 0.02;
 
@@ -374,6 +382,8 @@ export function applyCallMemberStatusHysteresis(params: {
   playbackActive: boolean;
   audioConfirmedStrict?: boolean;
   lastPlaybackConfirmedAt?: number | null;
+  connectedSoftAtMs?: number | null;
+  connectedStrictAtMs?: number | null;
 }): {
   status: typeof params.candidate;
   state: PeerLabelHysteresisState;
@@ -413,6 +423,10 @@ export function applyCallMemberStatusHysteresis(params: {
 
   const keepConnectedEvidence =
     params.audioConfirmedStrict === true ||
+    (params.connectedStrictAtMs != null &&
+      params.nowMs - params.connectedStrictAtMs < UI_CONNECTED_STRICT_HOLD_MS) ||
+    (params.connectedSoftAtMs != null &&
+      params.nowMs - params.connectedSoftAtMs < UI_CONNECTED_SOFT_HOLD_MS) ||
     (params.lastPlaybackConfirmedAt != null &&
       params.nowMs - params.lastPlaybackConfirmedAt <
         UI_RECENT_CONFIRMED_HOLD_MS) ||
@@ -1442,7 +1456,7 @@ export function resolveCallMemberStatus(params: {
   const recentConfirmed =
     health?.audioConfirmedStrict === true ||
     (params.lastPlaybackConfirmedAt != null &&
-      nowMs - params.lastPlaybackConfirmedAt < UI_RECENT_CONFIRMED_HOLD_MS);
+      nowMs - params.lastPlaybackConfirmedAt < UI_CONNECTED_STRICT_HOLD_MS);
   const screen = String(params.screen ?? "").trim();
   const stable = isStableVoiceJoinMode();
   const inSessionMember = params.inSessionMember !== false;

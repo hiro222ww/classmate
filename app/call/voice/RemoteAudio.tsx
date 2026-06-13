@@ -33,7 +33,16 @@ const CONFIRMED_LEVEL_THRESHOLD = 0.02;
 const REATTACH_DELAY_MS = 100;
 const AUDIO_OUTPUT_CONFIG_LOG_THROTTLE_MS = 10000;
 const PLAYBACK_CHECK_INTERVAL_MS = 2000;
+const UNLOCK_PLAY_DEDUPE_MS = 3000;
 const MAX_SILENT_REATTACH_ATTEMPTS = 3;
+
+function buildPlayDedupeKey(
+  remoteId: string,
+  stream: MediaStream
+): string {
+  const track = stream.getAudioTracks()[0];
+  return `${remoteId}|${stream.id}|${track?.id ?? "-"}`;
+}
 
 export type PlaybackActiveMode = "confirmed" | "provisional" | "none";
 
@@ -53,6 +62,7 @@ export type RemotePlaybackHealth = {
   lastAttachAt: number | null;
   audioActuallyPlaying: boolean;
   audioConfirmedStrict: boolean;
+  audioElementPaused?: boolean;
 };
 
 const PLAYBACK_HEALTH_LOG_THROTTLE_MS = 2000;
@@ -347,6 +357,7 @@ function evaluateRemotePlaybackHealth(params: {
     lastAttachAt,
     audioActuallyPlaying,
     audioConfirmedStrict: false,
+    audioElementPaused: elPaused,
   };
 }
 
@@ -478,7 +489,9 @@ export default function RemoteAudio({
   } | null>(null);
   const confirmedStrictLoggedRef = useRef(false);
   const levelDetectedLoggedRef = useRef(false);
+  const postConnectPlaybackHoldRef = useRef(false);
   const postConfirmPlaySuppressedLoggedRef = useRef(false);
+  const lastUnlockPlayDedupeRef = useRef<{ key: string; at: number } | null>(null);
   const attachLogThrottleRef = useRef(
     new Map<
       string,
@@ -614,6 +627,9 @@ export default function RemoteAudio({
       if (health.playbackActiveMode === "confirmed") {
         firstConfirmedAtRef.current = Date.now();
         silentReattachAttemptsRef.current = 0;
+      }
+      if (health.audioConfirmedStrict || health.playSuccess) {
+        postConnectPlaybackHoldRef.current = true;
       }
       emitPlaybackHealth(health);
 
@@ -828,6 +844,44 @@ export default function RemoteAudio({
       }
 
       const reason = opts?.reason ?? (opts?.fromUnlock ? "user_unlock" : "mount_or_stream_changed");
+
+      if (
+        (reason === "user_unlock" || opts?.fromUnlock) &&
+        stream
+      ) {
+        const dedupeKey = buildPlayDedupeKey(remoteId, stream);
+        const now = Date.now();
+        const prev = lastUnlockPlayDedupeRef.current;
+        if (
+          prev &&
+          prev.key === dedupeKey &&
+          now - prev.at < UNLOCK_PLAY_DEDUPE_MS
+        ) {
+          debugConsoleLog(
+            `[remote-audio] play-deduped remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+              `reason=${reason} key=${dedupeKey.slice(-24)} ${formatVoiceModeSuffix()}`
+          );
+          return;
+        }
+        lastUnlockPlayDedupeRef.current = { key: dedupeKey, at: now };
+      }
+
+      const playbackTrackEnded = isPlaybackTrackEnded(el, stream);
+      if (
+        postConnectPlaybackHoldRef.current &&
+        POST_CONFIRM_PLAY_SUPPRESS_REASONS.has(reason) &&
+        !playbackTrackEnded
+      ) {
+        if (!postConfirmPlaySuppressedLoggedRef.current) {
+          postConfirmPlaySuppressedLoggedRef.current = true;
+          debugConsoleLog(
+            `[remote-audio] play-suppressed remote=${compactRemoteId(remoteId)} instance=${instanceId} ` +
+              `reason=${reason} cause=connected_playback_hold ${formatVoiceModeSuffix()}`
+          );
+        }
+        return;
+      }
+
       if (
         confirmedStrictLoggedRef.current &&
         POST_CONFIRM_PLAY_SUPPRESS_REASONS.has(reason)
@@ -994,7 +1048,8 @@ export default function RemoteAudio({
         !el ||
         !stream ||
         reattachInProgressRef.current ||
-        confirmedStrictLoggedRef.current
+        confirmedStrictLoggedRef.current ||
+        postConnectPlaybackHoldRef.current
       ) {
         return;
       }

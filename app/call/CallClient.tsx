@@ -305,6 +305,9 @@ export default function CallClient() {
   const prevCallStatusPeerLogRef = useRef<Record<string, string>>({});
   const peerLabelHysteresisRef = useRef<Record<string, PeerLabelHysteresisState>>({});
   const peerStatusPhaseRef = useRef<Record<string, CallStatusPhase>>({});
+  const peerConnectedHoldAtRef = useRef<
+    Record<string, { softAt?: number; strictAt?: number }>
+  >({});
   const missingRemoteAudioWarnedRef = useRef<Set<string>>(new Set());
   const manualPeerHardResetRef = useRef<
     (remoteId: string) => void | Promise<void>
@@ -1600,6 +1603,10 @@ export default function CallClient() {
         lastPlaybackConfirmedAt:
           diag?.lastPlaybackConfirmedAt ??
           (audioHealth?.audioConfirmedStrict === true ? nowMs : null),
+        connectedSoftAtMs:
+          peerConnectedHoldAtRef.current[memberId]?.softAt ?? null,
+        connectedStrictAtMs:
+          peerConnectedHoldAtRef.current[memberId]?.strictAt ?? null,
       });
       peerLabelHysteresisRef.current[memberId] = labelState;
 
@@ -1619,6 +1626,19 @@ export default function CallClient() {
             reason: transition.reason,
             text: status.text,
           });
+          const holdState = peerConnectedHoldAtRef.current[memberId] ?? {};
+          if (transition.to === "connected_soft") {
+            peerConnectedHoldAtRef.current[memberId] = {
+              ...holdState,
+              softAt: nowMs,
+            };
+          }
+          if (transition.to === "connected") {
+            peerConnectedHoldAtRef.current[memberId] = {
+              softAt: holdState.softAt ?? nowMs,
+              strictAt: nowMs,
+            };
+          }
         }
         peerStatusPhaseRef.current[memberId] = nextPhase;
       }
