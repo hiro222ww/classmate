@@ -153,6 +153,21 @@ import {
   writeSessionMembersSnapshot,
   type SessionMemberSnapshotRow,
 } from "@/lib/sessionMembersSnapshot";
+import {
+  CALL_MEMBERS_ACTIVE_POLL_MS,
+  CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
+  logCallMembersSync,
+  logCallPeerRemoveRemote,
+  logCallPresenceStaleGrace,
+} from "@/lib/callMembersSync";
+import {
+  CALL_DEPARTED_LABEL_MS,
+  evaluateCallParticipationPriority,
+  logCallStatusPriority,
+  mapParticipationToStatusChoice,
+  resolveFinalStatusChoice,
+  shouldHideDepartedMemberFromGrid,
+} from "@/lib/callStatusPriority";
 
 type Member = {
   device_id: string;
@@ -163,15 +178,10 @@ type Member = {
   is_in_call?: boolean;
   screen?: string | null;
   joined_at?: string | null;
+  last_seen_at?: string | null;
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
-
-import {
-  CALL_MEMBERS_ACTIVE_POLL_MS,
-  CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
-  logCallMembersSync,
-} from "@/lib/callMembersSync";
 
 const CALL_MEMBERS_POLL_MS = 15_000;
 const CALL_REALTIME_FETCH_DEBOUNCE_MS = 2000;
@@ -393,6 +403,9 @@ export default function CallClient() {
   const memberDropStreakRef = useRef(0);
   const firstFastMembersAtRef = useRef<number | null>(null);
   const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
+  const apiSessionMemberIdsRef = useRef<Set<string>>(new Set());
+  const memberAbsentSinceRef = useRef<Map<string, number>>(new Map());
+  const recentlyDepartedUntilRef = useRef<Map<string, number>>(new Map());
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const voiceReadinessRef = useRef({
     remoteIds: [] as string[],
@@ -880,9 +893,47 @@ export default function CallClient() {
               is_in_call: m.is_in_call === true,
               screen: String(m.screen ?? "").trim() || null,
               joined_at: String(m.joined_at ?? "").trim() || null,
+              last_seen_at: String(m.last_seen_at ?? "").trim() || null,
             })
           );
         }
+
+        const nextApiIds = new Set(nextMembers.map((m) => m.device_id));
+        const syncNow = Date.now();
+        for (const id of Array.from(apiSessionMemberIdsRef.current)) {
+          if (nextApiIds.has(id)) continue;
+          if (!memberAbsentSinceRef.current.has(id)) {
+            memberAbsentSinceRef.current.set(id, syncNow);
+            logCallPresenceStaleGrace({
+              remoteId: id,
+              phase: "start",
+              graceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
+            });
+          } else {
+            const absentSince = memberAbsentSinceRef.current.get(id) ?? syncNow;
+            if (syncNow - absentSince >= CALL_LIVE_MEMBER_ABSENT_GRACE_MS) {
+              recentlyDepartedUntilRef.current.set(
+                id,
+                syncNow + CALL_DEPARTED_LABEL_MS
+              );
+              logCallPresenceStaleGrace({
+                remoteId: id,
+                phase: "expired",
+                graceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
+              });
+              logCallPeerRemoveRemote({
+                remoteId: id,
+                reason: "absent_grace_expired",
+                graceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
+              });
+            }
+          }
+        }
+        for (const id of nextApiIds) {
+          memberAbsentSinceRef.current.delete(id);
+          recentlyDepartedUntilRef.current.delete(id);
+        }
+        apiSessionMemberIdsRef.current = nextApiIds;
 
         if (
           shouldStartCallMemberInCallHysteresis(
@@ -1119,6 +1170,9 @@ export default function CallClient() {
     membersDisplayedRef.current = false;
     firstFastMembersAtRef.current = null;
     memberLastInCallAtRef.current = new Map();
+    apiSessionMemberIdsRef.current = new Set();
+    memberAbsentSinceRef.current = new Map();
+    recentlyDepartedUntilRef.current = new Map();
     callMountAtRef.current = Date.now();
     renderCountRef.current = 0;
     lastFetchAtRef.current = null;
@@ -1325,6 +1379,15 @@ export default function CallClient() {
       }
       return next;
     });
+
+    for (const id of Object.keys(peerLabelHysteresisRef.current)) {
+      if (!memberIds.has(id)) {
+        delete peerLabelHysteresisRef.current[id];
+        delete peerStatusPhaseRef.current[id];
+        delete peerConnectedHoldAtRef.current[id];
+        delete prevCallStatusRef.current[id];
+      }
+    }
   }, [members]);
 
   const handleRemoteCountChange = useCallback((_count: number) => {}, []);
@@ -1699,11 +1762,24 @@ export default function CallClient() {
         remoteDeviceId: memberId,
       });
 
+      const participation = evaluateCallParticipationPriority({
+        nowMs,
+        explicitLeft: localExitedCall,
+        inApiSessionMembers:
+          isMe || apiSessionMemberIdsRef.current.has(memberId),
+        absentSinceMs: memberAbsentSinceRef.current.get(memberId) ?? null,
+        isInCall,
+        lastSeenAt: member.last_seen_at,
+        lastInCallAtMs: memberLastInCallAtRef.current.get(memberId) ?? null,
+        screen: member.screen,
+      });
+
       const rawStatus = resolveCallMemberStatus({
         isMe,
         isMuted: userMuted,
         isInCall,
-        inSessionMember: true,
+        inSessionMember:
+          isMe || apiSessionMemberIdsRef.current.has(memberId),
         viewerOnCallScreen: isMe ? true : true,
         screen: isMe ? "call" : localExitedCall ? "room" : member.screen,
         localExitedCall,
@@ -1722,7 +1798,8 @@ export default function CallClient() {
         liveStreamHealHold: diag?.liveStreamHealHold === true,
         autoHardResetInProgress: diag?.autoHardResetInProgress === true,
         voicePeerRepairInProgress: diag?.voicePeerRepairInProgress === true,
-        autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
+        autoHardResetGiveUp:
+          participation.peerStillInCall && diag?.autoHardResetGiveUp === true,
         wasPeerConnected,
         remoteAudioVerified,
         remoteAudioHealth: audioHealth ?? null,
@@ -1734,9 +1811,12 @@ export default function CallClient() {
         lastUnmuteAt: diag?.lastUnmuteAt ?? null,
         lastPlaySuccessAt:
           audioHealth?.lastPlaySuccessAt ?? diag?.lastPlaySuccessAt ?? null,
-        showReconnectButton: manualReconnect.show,
+        showReconnectButton:
+          participation.peerStillInCall && manualReconnect.show,
         nowMs,
         remoteDeviceId: memberId,
+        participationPriority: participation.priority,
+        peerStillInCall: participation.peerStillInCall,
       });
 
       const { status, state: labelState } = applyCallMemberStatusHysteresis({
@@ -1948,6 +2028,19 @@ export default function CallClient() {
         prevCallStatusPeerLogRef.current[memberId] = peerLogSignature;
       }
 
+      if (!isMe) {
+        logCallStatusPriority({
+          remoteId: memberId,
+          chosen: resolveFinalStatusChoice({
+            participationPriority: participation.priority,
+            statusText: status.text,
+            statusReason: status.reason,
+          }),
+          reason: status.reason,
+          participationPriority: participation.priority,
+        });
+      }
+
       return status;
     },
     [callInfo, deviceId, userMuted, nowMs, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
@@ -2014,6 +2107,32 @@ export default function CallClient() {
       return 0;
     });
   }, [members, speakingMemberId, peerStates]);
+
+  const visibleMembers = useMemo(() => {
+    return sortedMembers.filter((member) => {
+      const memberId = String(member.device_id ?? "").trim();
+      if (!memberId) return false;
+      const localExitedCall =
+        localExitedPeersRef.current.has(memberId) ||
+        hasLocalLeftCall(sessionId, memberId);
+      const participation = evaluateCallParticipationPriority({
+        nowMs,
+        explicitLeft: localExitedCall,
+        inApiSessionMembers: apiSessionMemberIdsRef.current.has(memberId),
+        absentSinceMs: memberAbsentSinceRef.current.get(memberId) ?? null,
+        isInCall: member.is_in_call === true && !localExitedCall,
+        lastSeenAt: member.last_seen_at,
+        lastInCallAtMs: memberLastInCallAtRef.current.get(memberId) ?? null,
+        screen: member.screen,
+      });
+      return !shouldHideDepartedMemberFromGrid({
+        priority: participation.priority,
+        recentlyDepartedUntilMs:
+          recentlyDepartedUntilRef.current.get(memberId) ?? null,
+        nowMs,
+      });
+    });
+  }, [sortedMembers, nowMs, membersSyncRevision, sessionId]);
 
   const handleMicReadyChange = useCallback((ready: boolean) => {
     setMicReady(ready);
@@ -2665,7 +2784,7 @@ export default function CallClient() {
           }}
         >
           {Array.from({ length: capacity }).map((_, i) => {
-            const member = sortedMembers[i];
+            const member = visibleMembers[i];
             const isFilled = !!member;
             const isMe = member?.device_id === deviceId;
             const status = getMemberStatus(member);

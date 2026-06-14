@@ -5244,6 +5244,12 @@ export function usePeerConnections({
       voiceSessionMemberIdsRef.current.delete(id);
       voiceSessionMemberAbsentSinceRef.current.delete(id);
       markRemotePeerExplicitRemoved(remotePeerGraceRefsRef.current, id);
+      autoHardResetGiveUpRef.current.delete(id);
+      autoHardResetAttemptCountRef.current.delete(id);
+      autoHardResetInProgressRef.current.delete(id);
+      peerAutoRecoveryFrozenRef.current.delete(id);
+      bidirectionalEstablishedRef.current.delete(id);
+      voicePeerHealthRef.current.delete(id);
       logCallPresenceStaleGrace({
         remoteId: id,
         phase: "expired",
@@ -5251,12 +5257,13 @@ export function usePeerConnections({
       });
       logCallPeerRemoveRemote({
         remoteId: id,
-        reason: "stale",
+        reason: "absent_grace_expired",
         graceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
       });
       maybeClosePeerForMemberRemoval(id, "session_member_pruned");
+      emitPeerStates();
     }
-  }, [deviceId, members, membersSyncRevision, maybeClosePeerForMemberRemoval]);
+  }, [deviceId, emitPeerStates, members, membersSyncRevision, maybeClosePeerForMemberRemoval]);
 
   const attemptSignalingRecoverRef = useRef<
     (remoteId: string, source: string) => Promise<boolean>

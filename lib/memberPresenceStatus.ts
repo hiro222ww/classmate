@@ -6,6 +6,12 @@ import {
   type UnifiedMemberStatus,
 } from "@/lib/memberStatus";
 import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
+import type { CallParticipationPriority } from "@/lib/callStatusPriority";
+import {
+  mapParticipationToStatusChoice,
+  resolveParticipationPriorityStatus,
+  shouldShowVoiceUnstableStatus,
+} from "@/lib/callStatusPriority";
 import {
   getPeerInboundDeltaBytes,
   getPeerInboundDeltaPackets,
@@ -58,6 +64,9 @@ export function simplifyUserFacingStatusText(text: string): string {
   }
   if (value === "再接続中" || value === "再接続を試みています") {
     return "再接続中…";
+  }
+  if (value === "退出しました") {
+    return "退出しました";
   }
   if (value.includes("入り直してください")) {
     return "接続が不安定です。入り直してください";
@@ -467,6 +476,25 @@ export function applyCallMemberStatusHysteresis(params: {
   const candidate = params.candidate;
   const prev = params.previous;
   const previousText = prev?.displayedText ?? candidate.text;
+
+  if (
+    candidate.text === "退出しました" ||
+    candidate.reason === "explicit_left" ||
+    candidate.reason === "absent_expired" ||
+    candidate.reason === "presence_stale_expired"
+  ) {
+    return {
+      status: candidate,
+      state: {
+        displayedText: candidate.text,
+        displayedReason: candidate.reason,
+        stableConnectedSinceMs: null,
+        pendingDowngradeText: null,
+        pendingDowngradeSinceMs: null,
+      },
+    };
+  }
+
   const hadStableConnected =
     prev?.stableConnectedSinceMs != null ||
     STABLE_CONNECTED_LABELS.has(previousText);
@@ -1432,6 +1460,8 @@ export function resolveCallMemberStatus(params: {
   showReconnectButton?: boolean;
   nowMs?: number;
   remoteDeviceId?: string;
+  participationPriority?: CallParticipationPriority;
+  peerStillInCall?: boolean;
 }): {
   text: string;
   color: string;
@@ -1535,6 +1565,17 @@ export function resolveCallMemberStatus(params: {
   const screen = String(params.screen ?? "").trim();
   const stable = isStableVoiceJoinMode();
   const inSessionMember = params.inSessionMember !== false;
+  const participationPriority = params.participationPriority ?? "in_call";
+  const peerStillInCall = params.peerStillInCall !== false;
+  const participationStatus = resolveParticipationPriorityStatus(
+    participationPriority
+  );
+  const participationChoice = mapParticipationToStatusChoice(participationPriority);
+
+  if (participationStatus && participationChoice) {
+    return participationStatus;
+  }
+
   const forceWaiting = stable
     ? params.localExitedCall === true
     : params.localExitedCall === true ||
@@ -1543,7 +1584,11 @@ export function resolveCallMemberStatus(params: {
       params.isInCall !== true;
 
   const skipParticipationDowngrade =
-    stable && inSessionMember && !params.localExitedCall;
+    stable &&
+    inSessionMember &&
+    !params.localExitedCall &&
+    peerStillInCall &&
+    participationPriority === "in_call";
   const onCallScreen = params.viewerOnCallScreen !== false;
 
   if (params.isMe) {
@@ -1816,11 +1861,26 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.autoHardResetGiveUp && !audioHealthy && !transportRecovering) {
+    if (
+      shouldShowVoiceUnstableStatus({
+        peerStillInCall,
+        participationPriority,
+      })
+    ) {
+      return {
+        ...REMOTE_AUDIO_LABEL_STYLE.unstable,
+        text: "接続が不安定です。入り直してください",
+        reason: "auto_hard_reset_give_up",
+        source: "autoHardReset",
+      };
+    }
     return {
-      ...REMOTE_AUDIO_LABEL_STYLE.unstable,
-      text: "接続が不安定です。入り直してください",
-      reason: "auto_hard_reset_give_up",
-      source: "autoHardReset",
+      text: "退出しました",
+      color: "#6b7280",
+      chipBg: "#f3f4f6",
+      chipText: "#6b7280",
+      reason: "auto_hard_reset_give_up_member_gone",
+      source: "participation",
     };
   }
 
@@ -1842,6 +1902,7 @@ export function resolveCallMemberStatus(params: {
 
   if (
     !transportRecovering &&
+    shouldShowVoiceUnstableStatus({ peerStillInCall, participationPriority }) &&
     (playFailedRecently ||
       trackEnded ||
       (noLiveStream && params.wasPeerConnected) ||
