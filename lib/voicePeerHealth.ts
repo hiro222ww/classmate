@@ -108,10 +108,7 @@ export function updateVoicePeerHealthObservations(
   >
 ): void {
   if (snapshot.audioConfirmedStrict) {
-    entry.lastAudioConfirmedAt = snapshot.nowMs;
-    entry.repairStage = "observe";
-    entry.lastFailureReason = null;
-    entry.reconnectRequestCount = 0;
+    clearVoicePeerHealthOnAudioConfirmedStrict(entry, snapshot.nowMs);
   }
   if (snapshot.remoteTrackReceived && entry.lastRemoteTrackAt == null) {
     entry.lastRemoteTrackAt = snapshot.nowMs;
@@ -119,6 +116,75 @@ export function updateVoicePeerHealthObservations(
   if (snapshot.inboundDeltaPackets > 0) {
     entry.lastInboundPacketAt = snapshot.nowMs;
   }
+}
+
+export function clearVoicePeerHealthOnAudioConfirmedStrict(
+  entry: VoicePeerHealthEntry,
+  nowMs: number
+): void {
+  entry.lastAudioConfirmedAt = nowMs;
+  entry.repairStage = "observe";
+  entry.lastFailureReason = null;
+  entry.reconnectRequestCount = 0;
+  entry.retryCount = 0;
+  entry.lastRepairAt = null;
+}
+
+const STRONG_TRANSPORT_DEAD_REASONS = new Set([
+  "transport_failed",
+  "ice_disconnected_sustained",
+  "p2p_direct_failed",
+]);
+
+export function isVoicePeerAudioEstablishedProtected(params: {
+  snapshot: Pick<
+    VoicePeerHealthSnapshot,
+    "audioConfirmedStrict" | "autoRecoveryFrozen" | "hasPlaybackEvidence"
+  >;
+  entry: Pick<VoicePeerHealthEntry, "lastAudioConfirmedAt">;
+}): boolean {
+  return (
+    params.snapshot.audioConfirmedStrict ||
+    params.entry.lastAudioConfirmedAt != null ||
+    (params.snapshot.autoRecoveryFrozen && params.snapshot.hasPlaybackEvidence)
+  );
+}
+
+export function isStrongVoicePeerTransportDeadReason(reason: string): boolean {
+  return STRONG_TRANSPORT_DEAD_REASONS.has(reason);
+}
+
+export function shouldSkipVoicePeerRepair(params: {
+  snapshot: VoicePeerHealthSnapshot;
+  entry: VoicePeerHealthEntry;
+  classification: { state: VoicePeerHealthClassification; reason: string };
+}): string | null {
+  const { snapshot, entry, classification } = params;
+
+  if (
+    classification.state === "unconfirmed" &&
+    classification.reason === "audio_confirmed_strict_pending"
+  ) {
+    if (snapshot.hasPlaybackEvidence || snapshot.autoRecoveryFrozen) {
+      return "playback_evidence_pending";
+    }
+  }
+
+  if (!isVoicePeerAudioEstablishedProtected({ snapshot, entry })) {
+    return null;
+  }
+
+  if (classification.state === "healthy") {
+    return "already_audio_confirmed";
+  }
+
+  if (classification.state === "dead") {
+    return isStrongVoicePeerTransportDeadReason(classification.reason)
+      ? null
+      : "already_audio_confirmed";
+  }
+
+  return "already_audio_confirmed";
 }
 
 function hasActivePlaybackWithoutConfirmation(
@@ -248,6 +314,30 @@ export function classifyVoicePeerHealth(
     return { state: "healthy", reason: "playback_evidence" };
   }
 
+  if (entry.lastAudioConfirmedAt != null) {
+    if (snapshot.transportFailureReason) {
+      if (isStrongVoicePeerTransportDeadReason(snapshot.transportFailureReason)) {
+        return { state: "dead", reason: snapshot.transportFailureReason };
+      }
+    }
+    if (
+      snapshot.connectionState === "failed" ||
+      snapshot.iceConnectionState === "failed"
+    ) {
+      return { state: "dead", reason: "transport_failed" };
+    }
+    if (
+      snapshot.iceConnectionState === "disconnected" &&
+      snapshot.iceConnected === false
+    ) {
+      return { state: "dead", reason: "ice_disconnected_sustained" };
+    }
+    if (snapshot.remoteTrackReceived && snapshot.remoteTrackMuted) {
+      return { state: "stalled", reason: "remote_track_muted" };
+    }
+    return { state: "healthy", reason: "audio_confirmed_strict_frozen" };
+  }
+
   if (snapshot.transportFailureReason) {
     return { state: "dead", reason: snapshot.transportFailureReason };
   }
@@ -270,7 +360,8 @@ export function classifyVoicePeerHealth(
   if (
     snapshot.remoteTrackReceived &&
     snapshot.iceConnected &&
-    snapshot.inboundDeltaPackets <= 0
+    snapshot.inboundDeltaPackets <= 0 &&
+    !snapshot.hasPlaybackEvidence
   ) {
     const anchor = entry.lastRemoteTrackAt ?? entry.firstSeenAt;
     if (snapshot.nowMs - anchor >= VOICE_PEER_HEALTH_STALLED_INBOUND_MS) {
@@ -288,6 +379,9 @@ export function classifyVoicePeerHealth(
     snapshot.iceConnected &&
     snapshot.peerAgeMs >= VOICE_PEER_HEALTH_UNCONFIRMED_MS
   ) {
+    if (snapshot.hasPlaybackEvidence || snapshot.autoRecoveryFrozen) {
+      return { state: "healthy", reason: "playback_evidence_pending_strict" };
+    }
     return { state: "unconfirmed", reason: "audio_confirmed_strict_pending" };
   }
 
@@ -310,6 +404,16 @@ export function evaluateVoicePeerRepairAction(params: {
   classification: { state: VoicePeerHealthClassification; reason: string };
 }): VoicePeerRepairAction | null {
   const { snapshot, entry, classification } = params;
+
+  const skipReason = shouldSkipVoicePeerRepair(params);
+  if (skipReason) {
+    logVoicePeerHealthSkip({
+      remoteId: snapshot.remoteId,
+      reason: skipReason,
+      classificationReason: classification.reason,
+    });
+    return null;
+  }
 
   if (classification.state === "healthy") return null;
   if (snapshot.hardResetGiveUp || entry.repairStage === "give_up") return null;
@@ -430,5 +534,88 @@ export function logVoicePeerRepair(params: {
     "call",
     `[voice-peer-repair] remote=${params.remoteId.slice(-4)} ` +
       `stage=${params.stage} reason=${params.reason}${suffix}`
+  );
+}
+
+export function logVoicePeerHealthSkip(params: {
+  remoteId: string;
+  reason: string;
+  classificationReason?: string;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "call",
+    `[voice-peer-health] skip remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason}` +
+      (params.classificationReason
+        ? ` classification=${params.classificationReason}`
+        : "")
+  );
+}
+
+export function logVoicePeerRepairClear(params: {
+  remoteId: string;
+  reason: string;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "call",
+    `[voice-peer-repair] clear remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason}`
+  );
+}
+
+export function logVoicePeerRepairFrozen(params: {
+  remoteId: string;
+  reason: string;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "call",
+    `[voice-peer-repair] frozen remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason}`
+  );
+}
+
+export function shouldSuppressInboundHealthReconnectRequest(params: {
+  resetReason: string;
+  incomingConnectionId: string;
+  currentConnectionId: string | null;
+  audioConfirmedStrict: boolean;
+  autoRecoveryFrozen: boolean;
+  hasPlaybackEvidence: boolean;
+  transportDead: boolean;
+}): boolean {
+  const resetReason = String(params.resetReason ?? "").trim();
+  const pendingHealthReconnect =
+    resetReason === "health_audio_confirmed_strict_pending" ||
+    resetReason.endsWith("audio_confirmed_strict_pending");
+
+  if (!pendingHealthReconnect) return false;
+
+  const sameConnection =
+    params.currentConnectionId != null &&
+    params.incomingConnectionId === params.currentConnectionId;
+  if (!sameConnection) return false;
+
+  if (params.transportDead) return false;
+
+  return (
+    params.audioConfirmedStrict ||
+    params.autoRecoveryFrozen ||
+    params.hasPlaybackEvidence
+  );
+}
+
+export function logVoicePeerRepairSuppressInboundReconnect(params: {
+  remoteId: string;
+  reason: string;
+  resetReason: string;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "call",
+    `[voice-peer-repair] suppress-inbound-reconnect remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason} resetReason=${params.resetReason}`
   );
 }

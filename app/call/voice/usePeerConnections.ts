@@ -136,13 +136,18 @@ import {
 } from "@/lib/voiceSoftReset";
 import {
   classifyVoicePeerHealth,
+  clearVoicePeerHealthOnAudioConfirmedStrict,
   createVoicePeerHealthEntry,
   evaluateVoicePeerRepairAction,
   evaluateVoicePeerTransportFailure,
   isVoicePeerRepairInProgress,
   logVoicePeerHealth,
   logVoicePeerRepair,
+  logVoicePeerRepairClear,
+  logVoicePeerRepairFrozen,
+  logVoicePeerRepairSuppressInboundReconnect,
   recordVoicePeerRepairAction,
+  shouldSuppressInboundHealthReconnectRequest,
   updateVoicePeerHealthObservations,
   VOICE_PEER_HEALTH_REPAIR_COOLDOWN_MS,
   type VoicePeerHealthEntry,
@@ -2770,6 +2775,11 @@ export function usePeerConnections({
         const healthEntry =
           voicePeerHealthRef.current.get(remoteId) ??
           createVoicePeerHealthEntry(Date.now());
+        const hadRepairStage = healthEntry.repairStage;
+        clearVoicePeerHealthOnAudioConfirmedStrict(
+          healthEntry,
+          Date.now()
+        );
         updateVoicePeerHealthObservations(healthEntry, {
           nowMs: Date.now(),
           audioConfirmedStrict: true,
@@ -2777,19 +2787,26 @@ export function usePeerConnections({
           inboundDeltaPackets: 1,
         });
         voicePeerHealthRef.current.set(remoteId, healthEntry);
-        if (healthEntry.repairStage !== "observe") {
+        if (hadRepairStage !== "observe") {
           logVoicePeerRepair({
             remoteId,
-            stage: healthEntry.repairStage,
+            stage: hadRepairStage,
             reason: "audio_confirmed_strict",
             success: true,
           });
-          healthEntry.repairStage = "observe";
+          logVoicePeerRepairClear({
+            remoteId,
+            reason: "audio_confirmed_strict",
+          });
         }
         markPeerAutoRecoveryFrozenRef.current(
           remoteId,
           "audio_confirmed_strict"
         );
+        logVoicePeerRepairFrozen({
+          remoteId,
+          reason: "audio_confirmed_strict",
+        });
         logVoicePerfPipeline(`remote=${compactDeviceId(remoteId)}`);
         refreshConnectedVoiceLogForAudioStrictRef.current(
           remoteId,
@@ -9957,7 +9974,11 @@ export function usePeerConnections({
 
       if (classification.state === "healthy") {
         if (audioConfirmedStrict && entry.repairStage !== "observe") {
-          entry.repairStage = "observe";
+          clearVoicePeerHealthOnAudioConfirmedStrict(entry, nowMs);
+          logVoicePeerRepairClear({
+            remoteId,
+            reason: "audio_confirmed_strict",
+          });
         }
         return false;
       }
@@ -11811,6 +11832,36 @@ export function usePeerConnections({
             `currentConnectionId=${compactConnectionId(getCurrentConnectionId(remoteId))} ` +
             `voiceEpoch=${incomingVoiceEpoch > 0 ? incomingVoiceEpoch : "-"}`
         );
+
+        const offerMarks = getPeerPipelineMarks(remoteId);
+        const playbackHealth = remotePlaybackHealthRef.current.get(remoteId) ?? null;
+        const audioConfirmedStrict =
+          offerMarks.audio_confirmed_strict ||
+          playbackHealth?.audioConfirmedStrict === true;
+        const currentConnectionId = getCurrentConnectionId(remoteId);
+        const existingPc = pcsRef.current.get(remoteId) ?? null;
+        const suppressInboundReconnect =
+          shouldSuppressInboundHealthReconnectRequest({
+            resetReason: requestReason,
+            incomingConnectionId,
+            currentConnectionId,
+            audioConfirmedStrict,
+            autoRecoveryFrozen: peerAutoRecoveryFrozenRef.current.has(remoteId),
+            hasPlaybackEvidence: hasRemotePlaybackEvidence(remoteId),
+            transportDead: isPeerTransportDead(
+              existingPc?.connectionState ?? "-",
+              existingPc?.iceConnectionState ?? "-"
+            ),
+          });
+
+        if (suppressInboundReconnect) {
+          logVoicePeerRepairSuppressInboundReconnect({
+            remoteId,
+            reason: "already_audio_confirmed",
+            resetReason: requestReason,
+          });
+          return;
+        }
 
         if (incomingVoiceEpoch > 0) {
           const track =
