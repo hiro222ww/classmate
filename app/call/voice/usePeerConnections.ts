@@ -2784,6 +2784,7 @@ export function usePeerConnections({
             reason: "audio_confirmed_strict",
             success: true,
           });
+          healthEntry.repairStage = "observe";
         }
         markPeerAutoRecoveryFrozenRef.current(
           remoteId,

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { getDeviceId } from "@/lib/device";
+import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 
 import {
   BOARD_BG,
@@ -34,7 +35,11 @@ type SharedCanvasBoardProps = {
   sessionId: string;
 };
 
+const BOARD_REALTIME_RESUBSCRIBE_MS = 4000;
+const BOARD_STATUS_RECONNECTING = "再接続中…";
+
 function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
+  const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef("");
   const displayNameRef = useRef("");
 
@@ -58,6 +63,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
   const channelRef =
     useRef<ReturnType<typeof supabaseBrowser.channel> | null>(null);
+  const realtimeSessionRef = useRef("");
+  const realtimeReconnectTimerRef = useRef<number | null>(null);
+  const realtimeHadFailureRef = useRef(false);
 
   const persistedRowsRef = useRef<ChalkStrokeRow[]>([]);
   const pendingRowsRef = useRef<ChalkStrokeRow[]>([]);
@@ -285,29 +293,42 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   };
 
   const loadAll = async () => {
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId) return;
+
     const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
       .select(
         "id, session_id, device_id, display_name, color, width, points, kind, created_at"
       )
-      .eq("session_id", sessionId)
+      .eq("session_id", activeSessionId)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true });
 
     if (error) {
-      console.error("[chalk] loadAll failed", {
-        sessionId,
-        message: error.message,
-      });
-      setInfo(`黒板ロード失敗: ${error.message}`);
+      if (isDebugLogEnabled()) {
+        logDebug("call", "[chalk] loadAll failed", {
+          sessionId: activeSessionId,
+          message: error.message,
+        });
+      }
+      if (realtimeHadFailureRef.current) {
+        setInfo(BOARD_STATUS_RECONNECTING);
+      } else {
+        setInfo(`黒板ロード失敗: ${error.message}`);
+      }
       return;
     }
+
+    if (sessionIdRef.current !== activeSessionId) return;
 
     const incoming = (data ?? []) as ChalkStrokeRow[];
 
     setPersistedRows(upsertRows(persistedRowsRef.current, incoming));
     redrawScene();
-    setInfo("");
+    if (!realtimeHadFailureRef.current) {
+      setInfo("");
+    }
   };
 
   const sendBroadcastStroke = async (payload: BroadcastStrokePayload) => {
@@ -522,6 +543,10 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   };
 
   useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
     deviceIdRef.current = getDeviceId();
 
     try {
@@ -548,114 +573,197 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   useEffect(() => {
     if (!sessionId) return;
 
-    const ch = supabaseBrowser
-      .channel(`chalk_live:${sessionId}`, {
-        config: {
-          broadcast: { self: false },
-        },
-      })
-      .on("broadcast", { event: "chalk_move" }, ({ payload }) => {
-        const p = payload as BroadcastStrokePayload;
+    realtimeSessionRef.current = sessionId;
+    realtimeHadFailureRef.current = false;
 
-        if (!p || p.sessionId !== sessionId) return;
-        if (p.deviceId === deviceIdRef.current) return;
+    const clearReconnectTimer = () => {
+      if (realtimeReconnectTimerRef.current != null) {
+        window.clearTimeout(realtimeReconnectTimerRef.current);
+        realtimeReconnectTimerRef.current = null;
+      }
+    };
 
-        const key = `${p.deviceId}:${p.strokeId}`;
+    const teardownChannel = () => {
+      const existing = channelRef.current;
+      channelRef.current = null;
+      if (existing) {
+        void supabaseBrowser.removeChannel(existing);
+      }
+    };
 
-        if (p.done) {
-          return;
-        }
+    const scheduleRealtimeResubscribe = (activeSessionId: string) => {
+      if (realtimeReconnectTimerRef.current != null) return;
+      realtimeReconnectTimerRef.current = window.setTimeout(() => {
+        realtimeReconnectTimerRef.current = null;
+        if (realtimeSessionRef.current !== activeSessionId) return;
+        connectRealtime(activeSessionId, true);
+      }, BOARD_REALTIME_RESUBSCRIBE_MS);
+    };
 
-        if (!p.points || p.points.length < 1) return;
+    const handleRealtimeDisconnect = (
+      activeSessionId: string,
+      status: string
+    ) => {
+      if (realtimeSessionRef.current !== activeSessionId) return;
 
-        const prev = remoteProgressRef.current[key] ?? [];
-        const nextPoints = [...prev];
+      realtimeHadFailureRef.current = true;
+      setInfo(BOARD_STATUS_RECONNECTING);
 
-        for (const pt of p.points) {
-          const last = nextPoints[nextPoints.length - 1];
-          if (!last || last.x !== pt.x || last.y !== pt.y) {
-            nextPoints.push(pt);
-          }
-        }
+      if (isDebugLogEnabled()) {
+        logDebug("call", "[chalk] realtime disconnected", {
+          sessionId: activeSessionId,
+          status,
+        });
+      }
 
-        remoteProgressRef.current[key] = nextPoints;
-        remoteStyleRef.current[key] = {
-          color: p.color,
-          width: p.width,
-        };
+      teardownChannel();
+      if (!drawingRef.current) {
+        void loadAll();
+      }
+      scheduleRealtimeResubscribe(activeSessionId);
+    };
 
-        redrawScene();
-      })
-      .on("broadcast", { event: "chalk_clear" }, ({ payload }) => {
-        const p = payload as BroadcastClearPayload;
+    const connectRealtime = (activeSessionId: string, isRetry: boolean) => {
+      if (realtimeSessionRef.current !== activeSessionId) return;
 
-        if (!p || p.sessionId !== sessionId) return;
-        if (p.deviceId === deviceIdRef.current) return;
+      clearReconnectTimer();
+      teardownChannel();
 
-        clearBarrierAtMsRef.current = Math.max(
-          clearBarrierAtMsRef.current,
-          p.clearAt
-        );
+      if (isRetry && isDebugLogEnabled()) {
+        logDebug("call", "[chalk] realtime resubscribe", {
+          sessionId: activeSessionId,
+        });
+      }
 
-        const remoteClearRow: ChalkStrokeRow = {
-          id: `remote-clear-${p.deviceId}-${p.clearAt}`,
-          session_id: sessionId,
-          device_id: p.deviceId,
-          display_name: "参加者",
-          color: BOARD_BG,
-          width: 1,
-          points: [],
-          kind: "clear",
-          created_at: new Date(p.clearAt).toISOString(),
-        };
+      const ch = supabaseBrowser
+        .channel(`chalk_live:${activeSessionId}`, {
+          config: {
+            broadcast: { self: false },
+          },
+        })
+        .on("broadcast", { event: "chalk_move" }, ({ payload }) => {
+          const p = payload as BroadcastStrokePayload;
 
-        resetBoardRowsForClear(remoteClearRow);
-        paintBase();
-        redrawScene();
-      })
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "call_chalk_strokes",
-          filter: `session_id=eq.${sessionId}`,
-        },
-        (payload: any) => {
-          const row = payload?.new as ChalkStrokeRow;
-          if (!row?.id) return;
+          if (!p || p.sessionId !== activeSessionId) return;
+          if (p.deviceId === deviceIdRef.current) return;
 
-          if (row.kind === "clear") {
-            resetBoardRowsForClear(row);
-            redrawScene();
+          const key = `${p.deviceId}:${p.strokeId}`;
+
+          if (p.done) {
             return;
           }
 
-          removeOneRemoteProgressFromDevice(String(row.device_id ?? "").trim());
-          setPersistedRows(upsertRows(persistedRowsRef.current, [row]));
+          if (!p.points || p.points.length < 1) return;
+
+          const prev = remoteProgressRef.current[key] ?? [];
+          const nextPoints = [...prev];
+
+          for (const pt of p.points) {
+            const last = nextPoints[nextPoints.length - 1];
+            if (!last || last.x !== pt.x || last.y !== pt.y) {
+              nextPoints.push(pt);
+            }
+          }
+
+          remoteProgressRef.current[key] = nextPoints;
+          remoteStyleRef.current[key] = {
+            color: p.color,
+            width: p.width,
+          };
 
           redrawScene();
-        }
-      );
+        })
+        .on("broadcast", { event: "chalk_clear" }, ({ payload }) => {
+          const p = payload as BroadcastClearPayload;
 
-    ch.subscribe((status) => {
-      if (status === "CHANNEL_ERROR") {
-        setInfo("黒板Realtime接続失敗");
-      } else if (status === "TIMED_OUT") {
-        setInfo("黒板Realtimeタイムアウト");
-      } else if (status === "SUBSCRIBED") {
-        setInfo("");
-        if (!drawingRef.current) {
-          void loadAll();
-        }
-      }
-    });
+          if (!p || p.sessionId !== activeSessionId) return;
+          if (p.deviceId === deviceIdRef.current) return;
 
-    channelRef.current = ch;
+          clearBarrierAtMsRef.current = Math.max(
+            clearBarrierAtMsRef.current,
+            p.clearAt
+          );
+
+          const remoteClearRow: ChalkStrokeRow = {
+            id: `remote-clear-${p.deviceId}-${p.clearAt}`,
+            session_id: activeSessionId,
+            device_id: p.deviceId,
+            display_name: "参加者",
+            color: BOARD_BG,
+            width: 1,
+            points: [],
+            kind: "clear",
+            created_at: new Date(p.clearAt).toISOString(),
+          };
+
+          resetBoardRowsForClear(remoteClearRow);
+          paintBase();
+          redrawScene();
+        })
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "call_chalk_strokes",
+            filter: `session_id=eq.${activeSessionId}`,
+          },
+          (payload: any) => {
+            const row = payload?.new as ChalkStrokeRow;
+            if (!row?.id) return;
+            if (row.session_id !== activeSessionId) return;
+
+            if (row.kind === "clear") {
+              resetBoardRowsForClear(row);
+              redrawScene();
+              return;
+            }
+
+            removeOneRemoteProgressFromDevice(String(row.device_id ?? "").trim());
+            setPersistedRows(upsertRows(persistedRowsRef.current, [row]));
+
+            redrawScene();
+          }
+        );
+
+      ch.subscribe((status) => {
+        if (realtimeSessionRef.current !== activeSessionId) return;
+
+        if (status === "SUBSCRIBED") {
+          realtimeHadFailureRef.current = false;
+          setInfo("");
+          if (isDebugLogEnabled()) {
+            logDebug("call", "[chalk] realtime subscribed", {
+              sessionId: activeSessionId,
+              isRetry,
+            });
+          }
+          if (!drawingRef.current) {
+            void loadAll();
+          }
+          return;
+        }
+
+        if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        ) {
+          handleRealtimeDisconnect(activeSessionId, status);
+        }
+      });
+
+      channelRef.current = ch;
+    };
+
+    connectRealtime(sessionId, false);
 
     return () => {
-      channelRef.current = null;
-      void supabaseBrowser.removeChannel(ch);
+      realtimeSessionRef.current = "";
+      realtimeHadFailureRef.current = false;
+      clearReconnectTimer();
+      teardownChannel();
+      setInfo("");
     };
   }, [sessionId]);
 
@@ -1127,7 +1235,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       ) : null}
 
       {info ? (
-        <div style={{ marginTop: 8, fontSize: 12, color: "#92400e", fontWeight: 800 }}>
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 12,
+            color: info === BOARD_STATUS_RECONNECTING ? "#6b7280" : "#92400e",
+            fontWeight: info === BOARD_STATUS_RECONNECTING ? 700 : 800,
+          }}
+        >
           {info}
         </div>
       ) : null}

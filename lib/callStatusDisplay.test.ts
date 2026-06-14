@@ -1,11 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
   PRE_CONFIRM_UNSTABLE_MIN_MS,
+  applyCallMemberStatusHysteresis,
   isUnstableStatusLabel,
   normalizeCallStatusDisplayText,
+  resolveCallMemberStatus,
+  resolveCallMemberUserDisplayText,
   shouldDeferPreConfirmUnstable,
   simplifyUserFacingStatusText,
 } from "./memberPresenceStatus";
+
+const baseRemoteStatusParams = {
+  isMe: false,
+  isMuted: false,
+  isInCall: true,
+  peerState: "connected" as const,
+  wasPeerConnected: true,
+  hasRemoteStream: true,
+  trackReady: "live",
+  conn: "connected",
+  ice: "connected",
+  hasPc: true,
+  nowMs: 100_000,
+  participationPriority: "in_call" as const,
+  peerStillInCall: true,
+};
 
 describe("call status display normalization", () => {
   const nowMs = 100_000;
@@ -101,5 +120,70 @@ describe("call status display normalization", () => {
         nowMs,
       })
     ).toBe(false);
+  });
+});
+
+describe("established audio display priority", () => {
+  const nowMs = 100_000;
+
+  it("shows 通話中 when strict confirmed even if repair is in progress", () => {
+    const status = resolveCallMemberStatus({
+      ...baseRemoteStatusParams,
+      voicePeerRepairInProgress: true,
+      remoteAudioHealth: {
+        audioConfirmedStrict: true,
+        trackReady: "live",
+        playSuccess: true,
+        audioActuallyPlaying: true,
+      },
+    });
+
+    expect(status.text).toBe("通話中");
+    expect(status.reason).toBe("remote_audio_confirmed_strict");
+  });
+
+  it("hysteresis promotes 再接続中 to 通話中 when strict confirmed", () => {
+    const candidate = {
+      text: "再接続中",
+      color: "#92400e",
+      chipBg: "#fffbeb",
+      chipText: "#b45309",
+      reason: "voice_peer_repair_in_progress",
+      source: "autoHardReset",
+    };
+
+    const out = applyCallMemberStatusHysteresis({
+      remoteDeviceId: "peer-1e8",
+      candidate,
+      previous: {
+        displayedText: "再接続中",
+        displayedReason: "voice_peer_repair_in_progress",
+        stableConnectedSinceMs: null,
+        pendingDowngradeText: null,
+        pendingDowngradeSinceMs: null,
+      },
+      nowMs,
+      isMe: false,
+      recentPlaySuccess: true,
+      audioActuallyPlaying: true,
+      playbackActive: true,
+      audioConfirmedStrict: true,
+      lastPlaybackConfirmedAt: nowMs - 1_000,
+      connectedSoftAtMs: null,
+      connectedStrictAtMs: nowMs - 1_000,
+    });
+
+    expect(out.status.text).toBe("通話中");
+    expect(out.state.displayedText).toBe("通話中");
+    expect(out.state.displayedReason).toBe("voice_peer_repair_in_progress");
+  });
+
+  it("user display text never shows 再接続中 when strict confirmed", () => {
+    expect(
+      resolveCallMemberUserDisplayText({
+        text: "再接続中",
+        audioConfirmedStrict: true,
+      })
+    ).toBe("通話中");
   });
 });

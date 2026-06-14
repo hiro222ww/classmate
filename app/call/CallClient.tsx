@@ -128,9 +128,9 @@ import {
   mapCallStatusLabelToPhase,
   resolveCallStatusTransitionLog,
   resolveCallMemberStatus,
+  resolveCallMemberUserDisplayText,
   resolveDisplayManualAudioReconnect,
   resolveEffectivePeerConnection,
-  simplifyUserFacingStatusText,
   type CallStatusPhase,
   type PeerLabelHysteresisState,
 } from "@/lib/memberPresenceStatus";
@@ -2963,7 +2963,22 @@ export default function CallClient() {
                         fontWeight: 800,
                       }}
                     >
-                      {isSpeaking ? "発話中" : simplifyUserFacingStatusText(status.text)}
+                      {isSpeaking
+                        ? "発話中"
+                        : resolveCallMemberUserDisplayText({
+                            text: status.text,
+                            audioConfirmedStrict:
+                              memberAudioHealth?.audioConfirmedStrict === true,
+                            playbackActive:
+                              memberAudioHealth?.playbackActive === true,
+                            audioActuallyPlaying:
+                              memberAudioHealth?.audioActuallyPlaying === true,
+                            recentPlaySuccess: isRecentPlaySuccess(
+                              memberAudioHealth?.lastPlaySuccessAt ??
+                                diag?.lastPlaySuccessAt,
+                              nowMs
+                            ),
+                          })}
                     </div>
 
                     {showManualAudioReconnect && memberId ? (

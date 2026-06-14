@@ -133,6 +133,99 @@ function resolvePreConfirmConnectingStatus(params: {
   };
 }
 
+const DOWNGRADE_DISPLAY_LABELS = new Set([
+  "再接続中",
+  "接続中",
+  "音声確認中",
+  "接続処理中",
+  "音声を調整中",
+  "接続を調整中",
+]);
+
+export type CallMemberStatusResult = {
+  text: string;
+  color: string;
+  chipBg: string;
+  chipText: string;
+  reason: string;
+  source: string;
+  statusSource?: string;
+};
+
+export function hasEstablishedAudioDisplayEvidence(params: {
+  health?: RemoteAudioHealthInput | null;
+  recentConfirmed?: boolean;
+  softConnected?: boolean;
+  audioHealthy?: boolean;
+  audioActuallyPlaying?: boolean;
+  playbackActive?: boolean;
+  recentPlaySuccess?: boolean;
+}): boolean {
+  if (params.health?.audioConfirmedStrict === true) return true;
+  if (params.recentConfirmed) return true;
+  if (params.softConnected) return true;
+  if (params.audioHealthy) return true;
+  if (params.audioActuallyPlaying || params.playbackActive) return true;
+  if (
+    params.recentPlaySuccess &&
+    (params.health?.playSuccess === true ||
+      params.health?.verified === true ||
+      params.health?.audioActuallyPlaying === true)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function resolveEstablishedAudioDisplayStatus(params: {
+  health?: RemoteAudioHealthInput | null;
+  softConnected?: boolean;
+  reason?: string;
+}): CallMemberStatusResult {
+  const strict = params.health?.audioConfirmedStrict === true;
+  return {
+    ...REMOTE_AUDIO_LABEL_STYLE.connected,
+    text: "通話中",
+    reason: strict
+      ? "remote_audio_confirmed_strict"
+      : params.reason ??
+        (params.softConnected
+          ? "remote_track_playing"
+          : "audio_established_display"),
+    source: "callStatus",
+    statusSource: "remote_audio_health",
+  };
+}
+
+function shouldPromoteEstablishedDisplayText(text: string): boolean {
+  const value = String(text ?? "").trim();
+  return (
+    DOWNGRADE_DISPLAY_LABELS.has(value) ||
+    INTERNAL_CONNECTING_LABELS.has(value) ||
+    isUnstableStatusLabel(value)
+  );
+}
+
+export function resolveCallMemberUserDisplayText(params: {
+  text: string;
+  audioConfirmedStrict?: boolean;
+  playbackActive?: boolean;
+  audioActuallyPlaying?: boolean;
+  recentPlaySuccess?: boolean;
+}): string {
+  const normalized = normalizeCallStatusDisplayText(params.text);
+  const established =
+    params.audioConfirmedStrict === true ||
+    params.audioActuallyPlaying === true ||
+    params.playbackActive === true ||
+    (params.recentPlaySuccess === true && normalized !== "退出しました");
+
+  if (established && (normalized === "再接続中" || normalized === "接続中")) {
+    return "通話中";
+  }
+  return simplifyUserFacingStatusText(normalized);
+}
+
 const STABLE_CONNECTED_LABELS = new Set(["通話中", "音声受信中"]);
 const SOFTER_DOWNGRADE_LABELS = new Set([
   "音声確認中",
@@ -148,11 +241,9 @@ function resolveHysteresisHoldText(params: {
   audioConfirmedStrict?: boolean;
 }): string {
   const previous = normalizeCallStatusDisplayText(params.previousText);
-  if (params.audioConfirmedStrict && STABLE_CONNECTED_LABELS.has(previous)) {
-    return previous;
-  }
-  if (STABLE_CONNECTED_LABELS.has(previous) && params.audioConfirmedStrict) {
-    return previous;
+  if (params.audioConfirmedStrict) {
+    if (STABLE_CONNECTED_LABELS.has(previous)) return previous;
+    return "通話中";
   }
   if (isUnstableStatusLabel(previous)) return "接続中";
   if (STABLE_CONNECTED_LABELS.has(previous)) return "接続中";
@@ -596,6 +687,41 @@ export function applyCallMemberStatusHysteresis(params: {
     prev?.displayedText ?? candidate.text
   );
 
+  const establishedDisplayEvidence =
+    params.audioConfirmedStrict === true ||
+    params.audioActuallyPlaying ||
+    params.playbackActive ||
+    params.recentPlaySuccess ||
+    (params.connectedStrictAtMs != null &&
+      params.nowMs - params.connectedStrictAtMs < UI_CONNECTED_STRICT_HOLD_MS) ||
+    (params.lastPlaybackConfirmedAt != null &&
+      params.nowMs - params.lastPlaybackConfirmedAt <
+        UI_RECENT_CONFIRMED_HOLD_MS);
+
+  if (
+    establishedDisplayEvidence &&
+    shouldPromoteEstablishedDisplayText(candidate.text)
+  ) {
+    const display = resolveEstablishedAudioDisplayStatus({
+      health: params.audioConfirmedStrict
+        ? ({ audioConfirmedStrict: true } as RemoteAudioHealthInput)
+        : null,
+      reason: params.audioConfirmedStrict
+        ? "display_override_audio_confirmed_strict"
+        : "display_override_playback_active",
+    });
+    return {
+      status: display,
+      state: {
+        displayedText: display.text,
+        displayedReason: candidate.reason,
+        stableConnectedSinceMs: params.nowMs,
+        pendingDowngradeText: null,
+        pendingDowngradeSinceMs: null,
+      },
+    };
+  }
+
   if (
     candidate.text === "退出しました" ||
     candidate.reason === "explicit_left" ||
@@ -947,21 +1073,21 @@ export function resolveUserFacingRemoteAudioLabel(params: {
     statusSource: "remote_audio_health",
   };
 
-  if (params.transportUnconfirmed === true) {
-    return {
-      ...base,
-      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-      text: "再接続中",
-      reason: "transport_unconfirmed",
-    };
-  }
-
   if (health?.audioConfirmedStrict === true && params.showReconnectButton === false) {
     return {
       ...base,
       ...REMOTE_AUDIO_LABEL_STYLE.connected,
       text: "通話中",
       reason: "remote_audio_confirmed_strict",
+    };
+  }
+
+  if (params.transportUnconfirmed === true) {
+    return {
+      ...base,
+      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+      text: "再接続中",
+      reason: "transport_unconfirmed",
     };
   }
 
@@ -978,8 +1104,8 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   if (softConnected) {
     return {
       ...base,
-      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-      text: "接続中",
+      ...REMOTE_AUDIO_LABEL_STYLE.connected,
+      text: "通話中",
       reason: "remote_track_playing",
     };
   }
@@ -1802,6 +1928,32 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
+  const audioEstablishedForDisplay = hasEstablishedAudioDisplayEvidence({
+    health,
+    recentConfirmed,
+    softConnected,
+    audioHealthy,
+    audioActuallyPlaying: health?.audioActuallyPlaying === true,
+    playbackActive: health?.playbackActive === true,
+    recentPlaySuccess,
+  });
+
+  if (audioEstablishedForDisplay) {
+    if (health?.audioConfirmedStrict === true) {
+      return resolveEstablishedAudioDisplayStatus({ health });
+    }
+
+    const establishedLabel = remoteAudioUserLabel();
+    if (shouldPromoteEstablishedDisplayText(establishedLabel.text)) {
+      return resolveEstablishedAudioDisplayStatus({
+        health,
+        softConnected,
+        reason: establishedLabel.reason,
+      });
+    }
+    return establishedLabel;
+  }
+
   if (params.autoHardResetInProgress || params.voicePeerRepairInProgress) {
     return {
       text: "再接続中",
@@ -1957,8 +2109,8 @@ export function resolveCallMemberStatus(params: {
 
     if (softConnected) {
       return {
-        ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-        text: "接続中",
+        ...REMOTE_AUDIO_LABEL_STYLE.connected,
+        text: "通話中",
         reason: "peer_connected_audio_soft",
         source: "peerState",
         statusSource: "remote_audio_health",
