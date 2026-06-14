@@ -1817,6 +1817,7 @@ export default function CallClient() {
         remoteDeviceId: memberId,
         participationPriority: participation.priority,
         peerStillInCall: participation.peerStillInCall,
+        audioUnhealthySinceMs,
       });
 
       const { status, state: labelState } = applyCallMemberStatusHysteresis({

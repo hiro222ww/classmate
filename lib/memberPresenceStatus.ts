@@ -1,4 +1,5 @@
 import { debugConsoleLog, voiceProdLog } from "@/lib/debugVoiceLog";
+import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 import {
   resolveMemberParticipationForUi,
   sanitizePresenceForUi,
@@ -43,6 +44,120 @@ export {
   UI_CONNECTED_STRICT_HOLD_MS,
 } from "@/lib/voiceConnectedHold";
 export const UI_RECENT_CONFIRMED_HOLD_MS = 8000;
+
+/** Before first audio_confirmed_strict, defer unstable labels for this long. */
+export const PRE_CONFIRM_UNSTABLE_MIN_MS = UI_RECONNECT_BUTTON_MIN_UNHEALTHY_MS;
+
+const INTERNAL_CONNECTING_LABELS = new Set([
+  "音声確認中",
+  "接続処理中",
+  "接続準備中",
+  "接続中",
+  "接続待ち",
+  "音声を調整中",
+  "接続を調整中",
+  "マイク準備中",
+]);
+
+export function isUnstableStatusLabel(text: string): boolean {
+  const value = String(text ?? "").trim();
+  return (
+    value === "音声が不安定です" ||
+    value === "接続が不安定です" ||
+    value.includes("接続が不安定です") ||
+    value.includes("入り直してください")
+  );
+}
+
+export function normalizeCallStatusDisplayText(text: string): string {
+  const value = String(text ?? "").trim();
+  if (!value) return "接続中";
+  if (isUnstableStatusLabel(value)) return value;
+  const simplified = simplifyUserFacingStatusText(value);
+  if (simplified === "接続中…") return "接続中";
+  if (simplified === "再接続中…") return "再接続中";
+  if (INTERNAL_CONNECTING_LABELS.has(value)) return "接続中";
+  return simplified;
+}
+
+export function shouldDeferPreConfirmUnstable(params: {
+  audioConfirmedStrict?: boolean;
+  recentConfirmed: boolean;
+  voicePeerRepairInProgress?: boolean;
+  autoHardResetInProgress?: boolean;
+  transportRecovering: boolean;
+  liveStreamHealHold?: boolean;
+  audioUnhealthySinceMs?: number | null;
+  nowMs: number;
+}): boolean {
+  if (params.audioConfirmedStrict || params.recentConfirmed) return false;
+  if (
+    params.voicePeerRepairInProgress ||
+    params.autoHardResetInProgress ||
+    params.transportRecovering ||
+    params.liveStreamHealHold
+  ) {
+    return true;
+  }
+  if (params.audioUnhealthySinceMs == null) return true;
+  return params.nowMs - params.audioUnhealthySinceMs < PRE_CONFIRM_UNSTABLE_MIN_MS;
+}
+
+function resolvePreConfirmConnectingStatus(params: {
+  voicePeerRepairInProgress?: boolean;
+  autoHardResetInProgress?: boolean;
+  transportRecovering?: boolean;
+  wasPeerConnected?: boolean;
+}): {
+  text: string;
+  color: string;
+  chipBg: string;
+  chipText: string;
+  reason: string;
+  source: string;
+} {
+  const reconnecting =
+    params.voicePeerRepairInProgress === true ||
+    params.autoHardResetInProgress === true ||
+    params.transportRecovering === true ||
+    params.wasPeerConnected === true;
+  return {
+    text: reconnecting ? "再接続中" : "接続中",
+    color: "#92400e",
+    chipBg: "#fffbeb",
+    chipText: "#b45309",
+    reason: reconnecting
+      ? "pre_confirm_reconnecting"
+      : "pre_confirm_connecting",
+    source: "callStatus",
+  };
+}
+
+const STABLE_CONNECTED_LABELS = new Set(["通話中", "音声受信中"]);
+const SOFTER_DOWNGRADE_LABELS = new Set([
+  "音声確認中",
+  "接続処理中",
+  "再接続中",
+  "接続中",
+  "音声を調整中",
+  "接続を調整中",
+]);
+
+function resolveHysteresisHoldText(params: {
+  previousText: string;
+  audioConfirmedStrict?: boolean;
+}): string {
+  const previous = normalizeCallStatusDisplayText(params.previousText);
+  if (params.audioConfirmedStrict && STABLE_CONNECTED_LABELS.has(previous)) {
+    return previous;
+  }
+  if (STABLE_CONNECTED_LABELS.has(previous) && params.audioConfirmedStrict) {
+    return previous;
+  }
+  if (isUnstableStatusLabel(previous)) return "接続中";
+  if (STABLE_CONNECTED_LABELS.has(previous)) return "接続中";
+  return previous === "再接続中" ? "再接続中" : "接続中";
+}
 export const REMOTE_AUDIO_LEVEL_ACTIVE_THRESHOLD = 0.02;
 
 /** User-facing status copy (diagnostic reasons stay in logs only). */
@@ -116,7 +231,14 @@ export function mapCallStatusLabelToPhase(
     }
     return "connected_soft";
   }
-  if (text === "音声確認中" || text === "音声受信中") return "checking";
+  if (
+    text === "接続中" ||
+    text === "再接続中" ||
+    text === "音声確認中" ||
+    text === "音声受信中"
+  ) {
+    return "checking";
+  }
   if (text === "音声が不安定です" || text === "接続が不安定です") return "unstable";
   return "other";
 }
@@ -174,9 +296,11 @@ export function logCallStatusSuppressUnstable(params: {
   reason: string;
   previousText: string;
 }) {
-  voiceProdLog(
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "call",
     `[call-status] suppress_unstable reason=${params.reason} remote=${params.remoteDeviceId.slice(-4)} ` +
-      `previous=${params.previousText}`
+      `previous=${normalizeCallStatusDisplayText(params.previousText)}`
   );
 }
 
@@ -215,13 +339,6 @@ export function resolveCallStatusTransitionLog(params: {
 
   return null;
 }
-
-const STABLE_CONNECTED_LABELS = new Set(["通話中", "音声受信中"]);
-const SOFTER_DOWNGRADE_LABELS = new Set([
-  "音声確認中",
-  "接続処理中",
-  "再接続中",
-]);
 
 export type RemoteAudioHealthInput = {
   playSuccess?: boolean;
@@ -475,7 +592,9 @@ export function applyCallMemberStatusHysteresis(params: {
 
   const candidate = params.candidate;
   const prev = params.previous;
-  const previousText = prev?.displayedText ?? candidate.text;
+  const previousText = normalizeCallStatusDisplayText(
+    prev?.displayedText ?? candidate.text
+  );
 
   if (
     candidate.text === "退出しました" ||
@@ -529,11 +648,13 @@ export function applyCallMemberStatusHysteresis(params: {
     STABLE_CONNECTED_LABELS.has(previousText) &&
     SOFTER_DOWNGRADE_LABELS.has(candidate.text)
   ) {
+    const normalizedCandidateText = normalizeCallStatusDisplayText(candidate.text);
+
     if (keepConnectedEvidence) {
       logUiLabelHold({
         remoteDeviceId: params.remoteDeviceId,
         previous: previousText,
-        candidate: candidate.text,
+        candidate: normalizedCandidateText,
         reason: "recent_playback_active",
       });
       return {
@@ -554,11 +675,11 @@ export function applyCallMemberStatusHysteresis(params: {
       };
     }
 
-    if (candidate.text === "音声確認中") {
+    if (normalizedCandidateText === "接続中") {
       logUiLabelHold({
         remoteDeviceId: params.remoteDeviceId,
         previous: previousText,
-        candidate: candidate.text,
+        candidate: normalizedCandidateText,
         reason: "short_transient",
       });
       return {
@@ -573,7 +694,7 @@ export function applyCallMemberStatusHysteresis(params: {
           displayedReason: prev?.displayedReason ?? candidate.reason,
           stableConnectedSinceMs:
             prev?.stableConnectedSinceMs ?? params.nowMs,
-          pendingDowngradeText: candidate.text,
+          pendingDowngradeText: normalizedCandidateText,
           pendingDowngradeSinceMs:
             prev?.pendingDowngradeSinceMs ?? params.nowMs,
         },
@@ -581,7 +702,7 @@ export function applyCallMemberStatusHysteresis(params: {
     }
 
     const pendingSince =
-      prev?.pendingDowngradeText === candidate.text &&
+      prev?.pendingDowngradeText === normalizedCandidateText &&
       prev.pendingDowngradeSinceMs != null
         ? prev.pendingDowngradeSinceMs
         : params.nowMs;
@@ -591,7 +712,7 @@ export function applyCallMemberStatusHysteresis(params: {
       logUiLabelHold({
         remoteDeviceId: params.remoteDeviceId,
         previous: previousText,
-        candidate: candidate.text,
+        candidate: normalizedCandidateText,
         reason: `downgrade_pending_${pendingMs}ms`,
       });
       return {
@@ -606,7 +727,7 @@ export function applyCallMemberStatusHysteresis(params: {
           displayedReason: prev?.displayedReason ?? candidate.reason,
           stableConnectedSinceMs:
             prev?.stableConnectedSinceMs ?? params.nowMs,
-          pendingDowngradeText: candidate.text,
+          pendingDowngradeText: normalizedCandidateText,
           pendingDowngradeSinceMs: pendingSince,
         },
       };
@@ -615,23 +736,27 @@ export function applyCallMemberStatusHysteresis(params: {
 
   if (
     hadStableConnected &&
-    candidate.text === "音声が不安定です" &&
+    isUnstableStatusLabel(candidate.text) &&
     keepConnectedEvidence
   ) {
+    const holdText = resolveHysteresisHoldText({
+      previousText,
+      audioConfirmedStrict: params.audioConfirmedStrict,
+    });
     logCallStatusSuppressUnstable({
       remoteDeviceId: params.remoteDeviceId,
       reason: "recent_confirmed",
-      previousText,
+      previousText: holdText,
     });
     return {
       status: {
         ...candidate,
         ...REMOTE_AUDIO_LABEL_STYLE.connected,
-        text: previousText,
+        text: holdText,
         reason: "hysteresis_hold_unstable_recent_confirmed",
       },
       state: {
-        displayedText: previousText,
+        displayedText: holdText,
         displayedReason: prev?.displayedReason ?? candidate.reason,
         stableConnectedSinceMs: prev?.stableConnectedSinceMs ?? params.nowMs,
         pendingDowngradeText: null,
@@ -642,45 +767,54 @@ export function applyCallMemberStatusHysteresis(params: {
 
   if (
     hadStableConnected &&
-    candidate.text === "音声が不安定です" &&
+    isUnstableStatusLabel(candidate.text) &&
     !keepConnectedEvidence
   ) {
     const pendingSince = prev?.pendingDowngradeSinceMs ?? params.nowMs;
     if (params.nowMs - pendingSince < UI_LABEL_DOWNGRADE_FROM_CONNECTED_MS) {
+      const holdText = resolveHysteresisHoldText({
+        previousText,
+        audioConfirmedStrict: params.audioConfirmedStrict,
+      });
       logCallStatusSuppressUnstable({
         remoteDeviceId: params.remoteDeviceId,
         reason: "recent_confirmed_pending",
-        previousText,
+        previousText: holdText,
       });
       logUiLabelHold({
         remoteDeviceId: params.remoteDeviceId,
-        previous: previousText,
-        candidate: candidate.text,
+        previous: holdText,
+        candidate: normalizeCallStatusDisplayText(candidate.text),
         reason: "unstable_not_sustained",
       });
       return {
         status: {
           ...candidate,
           ...REMOTE_AUDIO_LABEL_STYLE.connected,
-          text: previousText,
+          text: holdText,
           reason: "hysteresis_hold_unstable_pending",
         },
         state: {
-          displayedText: previousText,
+          displayedText: holdText,
           displayedReason: prev?.displayedReason ?? candidate.reason,
           stableConnectedSinceMs:
             prev?.stableConnectedSinceMs ?? params.nowMs,
-          pendingDowngradeText: candidate.text,
+          pendingDowngradeText: normalizeCallStatusDisplayText(candidate.text),
           pendingDowngradeSinceMs: pendingSince,
         },
       };
     }
   }
 
+  const normalizedStatus = {
+    ...candidate,
+    text: normalizeCallStatusDisplayText(candidate.text),
+  };
+
   return {
-    status: candidate,
+    status: normalizedStatus,
     state: {
-      displayedText: candidate.text,
+      displayedText: normalizedStatus.text,
       displayedReason: candidate.reason,
       stableConnectedSinceMs: STABLE_CONNECTED_LABELS.has(candidate.text)
         ? params.nowMs
@@ -817,7 +951,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
     return {
       ...base,
       ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-      text: "音声を調整中",
+      text: "再接続中",
       reason: "transport_unconfirmed",
     };
   }
@@ -844,8 +978,8 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   if (softConnected) {
     return {
       ...base,
-      ...REMOTE_AUDIO_LABEL_STYLE.connected,
-      text: "通話中",
+      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+      text: "接続中",
       reason: "remote_track_playing",
     };
   }
@@ -857,7 +991,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
     return {
       ...base,
       ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-      text: "音声確認中",
+      text: "接続中",
       reason: verified
         ? "remote_audio_verified_pending_strict"
         : "remote_audio_playback_pending_strict",
@@ -872,8 +1006,8 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   ) {
     return {
       ...base,
-      ...REMOTE_AUDIO_LABEL_STYLE.receiving,
-      text: "音声受信中",
+      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+      text: "接続中",
       reason: provisional
         ? "remote_audio_provisional_receiving"
         : "remote_audio_playback_receiving",
@@ -893,7 +1027,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
     return {
       ...base,
       ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-      text: "音声確認中",
+      text: "接続中",
       reason: "remote_audio_pre_play_confirming",
     };
   }
@@ -901,8 +1035,8 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   if (params.trackLive && params.hasRemoteStream) {
     return {
       ...base,
-      ...REMOTE_AUDIO_LABEL_STYLE.receiving,
-      text: "音声受信中",
+      ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+      text: "接続中",
       reason: "remote_audio_stream_live",
     };
   }
@@ -910,7 +1044,7 @@ export function resolveUserFacingRemoteAudioLabel(params: {
   return {
     ...base,
     ...REMOTE_AUDIO_LABEL_STYLE.processing,
-    text: "接続処理中",
+    text: "接続中",
     reason: "remote_audio_setup_in_progress",
   };
 }
@@ -1462,6 +1596,7 @@ export function resolveCallMemberStatus(params: {
   remoteDeviceId?: string;
   participationPriority?: CallParticipationPriority;
   peerStillInCall?: boolean;
+  audioUnhealthySinceMs?: number | null;
 }): {
   text: string;
   color: string;
@@ -1706,18 +1841,12 @@ export function resolveCallMemberStatus(params: {
           params.conn === "connecting")));
 
   if (transportRecovering) {
-    const adjustingConnection =
-      params.ice === "checking" || params.conn === "connecting";
-    return {
-      text: adjustingConnection ? "接続を調整中" : "音声を調整中",
-      color: "#92400e",
-      chipBg: "#fffbeb",
-      chipText: "#b45309",
-      reason: adjustingConnection
-        ? "transport_recovering_p2p_retry_connecting"
-        : "transport_recovering_p2p_retry",
-      source: "autoHardReset",
-    };
+    return resolvePreConfirmConnectingStatus({
+      voicePeerRepairInProgress: params.voicePeerRepairInProgress,
+      autoHardResetInProgress: params.autoHardResetInProgress,
+      transportRecovering: true,
+      wasPeerConnected: params.wasPeerConnected,
+    });
   }
 
   // A. RemoteAudio playback health overrides conn/ice while audio is actually playing.
@@ -1746,7 +1875,7 @@ export function resolveCallMemberStatus(params: {
     ) {
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-        text: "音声確認中",
+        text: "接続中",
         reason: "live_stream_heal_hold",
         source: "remoteAudioHealth",
         statusSource: "remote_audio_health",
@@ -1769,7 +1898,7 @@ export function resolveCallMemberStatus(params: {
     ) {
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-        text: "音声確認中",
+        text: "接続中",
         reason: "recent_remote_signal_pre_play",
         source: "remoteAudioHealth",
         statusSource: "remote_audio_health",
@@ -1798,14 +1927,14 @@ export function resolveCallMemberStatus(params: {
       ) {
         return {
           ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-          text: "音声確認中",
+          text: "接続中",
           reason: "orphan_remote_audio_provisional",
           source: "effectivePeerState",
         };
       }
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.processing,
-        text: params.wasPeerConnected ? "再接続中" : "接続処理中",
+        text: params.wasPeerConnected ? "再接続中" : "接続中",
         reason: "orphan_remote_audio_setup",
         source: "effectivePeerState",
       };
@@ -1828,8 +1957,8 @@ export function resolveCallMemberStatus(params: {
 
     if (softConnected) {
       return {
-        ...REMOTE_AUDIO_LABEL_STYLE.connected,
-        text: "通話中",
+        ...REMOTE_AUDIO_LABEL_STYLE.confirming,
+        text: "接続中",
         reason: "peer_connected_audio_soft",
         source: "peerState",
         statusSource: "remote_audio_health",
@@ -1844,7 +1973,7 @@ export function resolveCallMemberStatus(params: {
     ) {
       return {
         ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-        text: "音声確認中",
+        text: "接続中",
         reason: "peer_connected_audio_pending",
         source: "peerState",
         statusSource: "remote_audio_health",
@@ -1853,7 +1982,7 @@ export function resolveCallMemberStatus(params: {
 
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.confirming,
-      text: "音声確認中",
+      text: "接続中",
       reason: "peer_connected_wait_audio_strict",
       source: "peerState",
       statusSource: "remote_audio_health",
@@ -1900,6 +2029,34 @@ export function resolveCallMemberStatus(params: {
     (health?.lastAttachAt == null ||
       nowMs - health.lastAttachAt >= REMOTE_AUDIO_UNSTABLE_MS);
 
+  const deferUnstable = shouldDeferPreConfirmUnstable({
+    audioConfirmedStrict: health?.audioConfirmedStrict === true,
+    recentConfirmed,
+    voicePeerRepairInProgress: params.voicePeerRepairInProgress,
+    autoHardResetInProgress: params.autoHardResetInProgress,
+    transportRecovering,
+    liveStreamHealHold: params.liveStreamHealHold,
+    audioUnhealthySinceMs: params.audioUnhealthySinceMs,
+    nowMs,
+  });
+
+  if (
+    !transportRecovering &&
+    deferUnstable &&
+    shouldShowVoiceUnstableStatus({ peerStillInCall, participationPriority }) &&
+    (playFailedRecently ||
+      trackEnded ||
+      (noLiveStream && params.wasPeerConnected) ||
+      (stalledAudio && params.wasPeerConnected))
+  ) {
+    return resolvePreConfirmConnectingStatus({
+      voicePeerRepairInProgress: params.voicePeerRepairInProgress,
+      autoHardResetInProgress: params.autoHardResetInProgress,
+      transportRecovering,
+      wasPeerConnected: params.wasPeerConnected,
+    });
+  }
+
   if (
     !transportRecovering &&
     shouldShowVoiceUnstableStatus({ peerStillInCall, participationPriority }) &&
@@ -1925,7 +2082,7 @@ export function resolveCallMemberStatus(params: {
 
   if (params.peerState === "connecting") {
     return {
-      text: params.wasPeerConnected ? "再接続中" : "接続処理中",
+      text: params.wasPeerConnected ? "再接続中" : "接続中",
       color: "#92400e",
       chipBg: "#fffbeb",
       chipText: "#b45309",
@@ -1939,7 +2096,7 @@ export function resolveCallMemberStatus(params: {
   if (params.peerState === "failed") {
     if (params.p2pDirectFailedHoldActive || transportRecovering) {
       return {
-        text: "音声を調整中",
+        text: "再接続中",
         color: "#92400e",
         chipBg: "#fffbeb",
         chipText: "#b45309",
@@ -1973,7 +2130,7 @@ export function resolveCallMemberStatus(params: {
   if (!params.hasPc && !hasRemoteStream) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.processing,
-      text: "接続処理中",
+      text: "接続中",
       reason: "peer_idle_wait_offer",
       source: "peerState",
     };
@@ -1981,7 +2138,7 @@ export function resolveCallMemberStatus(params: {
 
   return {
     ...REMOTE_AUDIO_LABEL_STYLE.processing,
-    text: "接続処理中",
+    text: "接続中",
     reason: "peer_setup_in_progress",
     source: "peerState",
   };
