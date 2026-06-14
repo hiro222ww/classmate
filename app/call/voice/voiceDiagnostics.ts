@@ -347,6 +347,7 @@ export type PeerStatusDiagnostics = {
   autoHardResetInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   autoHardResetAttempts?: number;
+  voicePeerRepairInProgress?: boolean;
   reconnectRequestSent?: boolean;
   reconnectRequestPending?: boolean;
   transportUnconfirmed?: boolean;

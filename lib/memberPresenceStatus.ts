@@ -59,6 +59,9 @@ export function simplifyUserFacingStatusText(text: string): string {
   if (value === "再接続中" || value === "再接続を試みています") {
     return "再接続中…";
   }
+  if (value.includes("入り直してください")) {
+    return "接続が不安定です。入り直してください";
+  }
   if (value === "音声が不安定です" || value === "接続が不安定です") {
     return "接続が不安定です";
   }
@@ -724,6 +727,7 @@ export function resolveDisplayManualAudioReconnect(params: {
   liveStreamHealHold?: boolean;
   p2pDirectFailedHoldActive?: boolean;
   autoHardResetInProgress?: boolean;
+  voicePeerRepairInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   reconnectRequestPending?: boolean;
   wasPeerConnected?: boolean;
@@ -966,6 +970,7 @@ export function resolveManualAudioReconnect(params: {
   liveStreamHealHold?: boolean;
   p2pDirectFailedHoldActive?: boolean;
   autoHardResetInProgress?: boolean;
+  voicePeerRepairInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   reconnectRequestPending?: boolean;
   wasPeerConnected?: boolean;
@@ -979,7 +984,7 @@ export function resolveManualAudioReconnect(params: {
   if (params.remoteAudioHealth?.audioConfirmedStrict === true) {
     return { show: false, reason: "audio_confirmed_strict" };
   }
-  if (params.autoHardResetInProgress) {
+  if (params.autoHardResetInProgress || params.voicePeerRepairInProgress) {
     return { show: false, reason: "auto_hard_reset_in_progress" };
   }
 
@@ -1081,7 +1086,7 @@ export function resolveManualAudioReconnect(params: {
     return { show: false, reason: "p2p_direct_failed_hold_recovering" };
   }
 
-  if (params.autoHardResetInProgress) {
+  if (params.autoHardResetInProgress || params.voicePeerRepairInProgress) {
     return { show: false, reason: "auto_hard_reset_in_progress" };
   }
 
@@ -1408,6 +1413,7 @@ export function resolveCallMemberStatus(params: {
   transportUnconfirmed?: boolean;
   liveStreamHealHold?: boolean;
   autoHardResetInProgress?: boolean;
+  voicePeerRepairInProgress?: boolean;
   autoHardResetGiveUp?: boolean;
   wasPeerConnected: boolean;
   remoteAudioVerified?: boolean | null;
@@ -1616,13 +1622,15 @@ export function resolveCallMemberStatus(params: {
     };
   }
 
-  if (params.autoHardResetInProgress) {
+  if (params.autoHardResetInProgress || params.voicePeerRepairInProgress) {
     return {
-      text: "音声を調整中",
+      text: "再接続中",
       color: "#92400e",
       chipBg: "#fffbeb",
       chipText: "#b45309",
-      reason: "auto_hard_reset_in_progress",
+      reason: params.voicePeerRepairInProgress
+        ? "voice_peer_repair_in_progress"
+        : "auto_hard_reset_in_progress",
       source: "autoHardReset",
     };
   }
@@ -1810,7 +1818,7 @@ export function resolveCallMemberStatus(params: {
   if (params.autoHardResetGiveUp && !audioHealthy && !transportRecovering) {
     return {
       ...REMOTE_AUDIO_LABEL_STYLE.unstable,
-      text: "音声が不安定です",
+      text: "接続が不安定です。入り直してください",
       reason: "auto_hard_reset_give_up",
       source: "autoHardReset",
     };
