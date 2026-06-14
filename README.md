@@ -34,3 +34,10 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Vercel 本番 / 開発
+
+本番（`classmate` / `main`）と開発（`classmate-8inw` / `develop`）の分離手順・環境変数一覧は [docs/VERCEL_PROD_DEV.md](docs/VERCEL_PROD_DEV.md) を参照。
+
+- 安定版タグ: `good-voice-4devices-peer-health-stable`（`cff4fcb`）
+- 開発 branch: `develop`
