@@ -153,7 +153,6 @@ export async function createBillingPortalSession(params: {
     console.log("[stripePortal] cancel session", {
       configuration,
       configKind,
-      customerId: params.customerId,
       category,
       subscriptionId: existing.subscription.id,
     });
@@ -177,7 +176,6 @@ export async function createBillingPortalSession(params: {
   console.log("[stripePortal] subscription_update session", {
     configuration,
     configKind,
-    customerId: params.customerId,
     category,
     subscriptionId: existing.subscription.id,
   });

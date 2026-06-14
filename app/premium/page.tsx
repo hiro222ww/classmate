@@ -15,6 +15,7 @@ import {
 } from "@/lib/planTiers";
 import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
+import { BillingSupportSection } from "@/components/BillingSupportSection";
 
 type Entitlements = {
   class_slots?: number;
@@ -401,6 +402,8 @@ export default function PremiumPage() {
           支払い管理へ
         </Link>
       </SoftCard>
+
+      <BillingSupportSection />
     </main>
   );
 }

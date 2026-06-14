@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { getDeviceId } from "@/lib/device";
 
 type PortalAction =
@@ -254,6 +255,8 @@ function BillingPageInner() {
         updateLabel: "支援額を変更",
         cancelLabel: "テーマプランを解約",
       })}
+
+      <BillingSupportSection />
 
       <div
         style={{

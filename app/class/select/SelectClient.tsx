@@ -141,7 +141,7 @@ function Pill({ children }: { children: React.ReactNode }) {
 
 const AGE_FILTER_OFF_MIN = 0;
 const AGE_FILTER_OFF_MAX = 130;
-const AGE_FILTER_SLIDER_MIN = 18;
+const AGE_FILTER_SLIDER_MIN = 0;
 const AGE_FILTER_SLIDER_MAX = 130;
 const AGE_FILTER_OFF_PREFS: MatchPrefs = {
   min_age: AGE_FILTER_OFF_MIN,
@@ -150,7 +150,7 @@ const AGE_FILTER_OFF_PREFS: MatchPrefs = {
 const AGE_FILTER_ON_DEFAULT: MatchPrefs = { min_age: 18, max_age: 25 };
 
 const AGE_PREF_HELP_TEXT =
-  "年齢絞り込みをONにすると、指定した年齢範囲の相手とマッチしやすくなります。OFFの場合は年齢では絞り込みません。";
+  "年齢絞り込みをONにすると、指定した年齢条件に合う相手とマッチします。OFFの場合は年齢では絞り込みません。";
 
 function clampAge(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -245,6 +245,7 @@ export default function SelectClient() {
 
   const [showNarrow, setShowNarrow] = useState(false);
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
+  const [minorsEnabled, setMinorsEnabled] = useState(false);
 
   const [joinWindowOpen, setJoinWindowOpen] = useState(true);
   const [joinWindowText, setJoinWindowText] = useState("");
@@ -473,6 +474,14 @@ export default function SelectClient() {
       setClasses([]);
 
       try {
+        const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+        if (settingsRes.ok) {
+          const settingsJson = await settingsRes.json().catch(() => null);
+          if (alive) {
+            setMinorsEnabled(settingsJson?.minors_enabled === true);
+          }
+        }
+
         const sp = new URLSearchParams(window.location.search);
         const paid = sp.get("paid");
         const sessionId = sp.get("session_id");
@@ -1453,6 +1462,12 @@ return;
             <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>
               {displayMinAge} 〜 {displayMaxAge} 歳
             </div>
+
+            {!minorsEnabled && displayMinAge < 18 ? (
+              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
+                18歳未満のユーザーとのマッチングは、現在の設定では行われません。条件に合う相手とマッチします。
+              </p>
+            ) : null}
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 6 }}>

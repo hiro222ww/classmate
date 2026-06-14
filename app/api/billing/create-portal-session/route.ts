@@ -1,38 +1,56 @@
 // app/api/billing/create-portal-session/route.ts
 
 import { NextResponse } from "next/server";
-import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveAppOrigin } from "@/lib/appOrigin";
+import {
+  createBillingPortalSession,
+  type PortalAction,
+} from "@/lib/stripePortal";
 
 export const runtime = "nodejs";
 
-function originFromEnv() {
-  return (
-    process.env.NEXT_PUBLIC_APP_ORIGIN ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    "http://localhost:3000"
-  );
+const PORTAL_ACTIONS = new Set<PortalAction>([
+  "update_theme",
+  "update_slots",
+  "cancel_theme",
+  "cancel_slots",
+]);
+
+function normalizePortalAction(body: Record<string, unknown>): PortalAction | null {
+  const action = String(body.action ?? "").trim();
+  if (PORTAL_ACTIONS.has(action as PortalAction)) {
+    return action as PortalAction;
+  }
+
+  const kind = String(body.kind ?? "").trim();
+  if (kind === "theme") return "update_theme";
+  if (kind === "slot" || kind === "slots") return "update_slots";
+
+  return null;
 }
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = (await req.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
 
     const deviceId = String(body.deviceId ?? "").trim();
     const dev = String(body.dev ?? "").trim();
 
-    const kind = String(body.kind ?? "").trim();
-
-    if (kind !== "slot" && kind !== "theme") {
+    if (!deviceId) {
       return NextResponse.json(
-        { error: "invalid_portal_kind" },
+        { error: "deviceId_required" },
         { status: 400 }
       );
     }
 
-    if (!deviceId) {
+    const action = normalizePortalAction(body);
+    if (!action) {
       return NextResponse.json(
-        { error: "deviceId_required" },
+        { error: "invalid_portal_action" },
         { status: 400 }
       );
     }
@@ -44,12 +62,10 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (error) {
-      console.error("read user_billing_customers error:", error);
-
-      return NextResponse.json(
-        { error: "db_error" },
-        { status: 500 }
-      );
+      console.error("[billing] customer lookup failed", {
+        deviceTail: deviceId.slice(-4),
+      });
+      return NextResponse.json({ error: "db_error" }, { status: 500 });
     }
 
     if (!data?.stripe_customer_id) {
@@ -59,43 +75,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const origin = originFromEnv();
-
+    const origin = resolveAppOrigin();
     const returnUrl = dev
       ? `${origin}/billing?dev=${encodeURIComponent(dev)}`
       : `${origin}/billing`;
 
-    const configuration =
-      kind === "slot"
-        ? process.env.STRIPE_PORTAL_CONFIG_SLOTS
-        : process.env.STRIPE_PORTAL_CONFIG_THEME;
+    const result = await createBillingPortalSession({
+      customerId: data.stripe_customer_id,
+      returnUrl,
+      action,
+    });
 
-    if (!configuration) {
-      return NextResponse.json(
-        {
-          error: `portal_configuration_missing:${kind}`,
-        },
-        { status: 500 }
-      );
+    if (!result.ok) {
+      const status = result.error.startsWith("subscription_not_found")
+        ? 404
+        : 500;
+      return NextResponse.json({ error: result.error }, { status });
     }
 
-    const session = await stripe.billingPortal.sessions.create({
-      customer: data.stripe_customer_id,
-      return_url: returnUrl,
-      configuration,
-    });
-
-    return NextResponse.json({
-      url: session.url,
-    });
-  } catch (e: any) {
-    console.error("create portal session error:", e);
-
-    return NextResponse.json(
-      {
-        error: e?.message ?? "server_error",
-      },
-      { status: 500 }
+    return NextResponse.json({ url: result.url });
+  } catch (e: unknown) {
+    console.error(
+      "[billing] create portal session failed",
+      e instanceof Error ? e.message : "unknown"
     );
+    return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
 }

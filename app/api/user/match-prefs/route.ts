@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
+import { getMinorsEnabled } from "@/lib/minorsSettings";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -52,8 +53,14 @@ export async function POST(req: Request) {
 
   const minA = clamp(Number(minAge ?? 0), 0, 130);
   const maxA = clamp(Number(maxAge ?? 130), 0, 130);
-  const fixedMin = Math.min(minA, maxA);
-  const fixedMax = Math.max(minA, maxA);
+  let fixedMin = Math.min(minA, maxA);
+  let fixedMax = Math.max(minA, maxA);
+
+  const minorsEnabled = await getMinorsEnabled();
+  if (!minorsEnabled && fixedMax < 18) {
+    fixedMax = 18;
+    fixedMin = Math.min(fixedMin, fixedMax);
+  }
 
   const { error } = await sb
     .from("user_match_prefs")

@@ -1053,6 +1053,21 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       passive: false,
     });
 
+    const blockBoardDefault = (ev: Event) => {
+      if (isTouchLike && touchMode === "pan") return;
+      ev.preventDefault();
+    };
+
+    canvas.addEventListener("selectstart", blockBoardDefault);
+    canvas.addEventListener("dragstart", blockBoardDefault);
+
+    const boardSurface = boardSurfaceRef.current;
+    boardSurface?.addEventListener("selectstart", blockBoardDefault);
+    boardSurface?.addEventListener("dragstart", blockBoardDefault);
+    boardSurface?.addEventListener("gesturestart", blockBoardDefault);
+    boardSurface?.addEventListener("gesturechange", blockBoardDefault);
+    boardSurface?.addEventListener("gestureend", blockBoardDefault);
+
     window.addEventListener("pointerup", onUp, { passive: false });
     window.addEventListener("pointercancel", onCancel as EventListener, {
       passive: false,
@@ -1072,6 +1087,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       );
       canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("contextmenu", onCtx as EventListener);
+      canvas.removeEventListener("selectstart", blockBoardDefault);
+      canvas.removeEventListener("dragstart", blockBoardDefault);
+      boardSurface?.removeEventListener("selectstart", blockBoardDefault);
+      boardSurface?.removeEventListener("dragstart", blockBoardDefault);
+      boardSurface?.removeEventListener("gesturestart", blockBoardDefault);
+      boardSurface?.removeEventListener("gesturechange", blockBoardDefault);
+      boardSurface?.removeEventListener("gestureend", blockBoardDefault);
 
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel as EventListener);
@@ -1090,11 +1112,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
   return (
     <div
+      className="classmate-board-root"
       style={{
         marginTop: 10,
         userSelect: "none",
         WebkitUserSelect: "none",
         WebkitTouchCallout: "none",
+        WebkitTapHighlightColor: "transparent",
       }}
     >
       <div
@@ -1248,6 +1272,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       ) : null}
 
       <div
+        className="classmate-board-scroll"
         style={{
           marginTop: 10,
           borderRadius: 16,
@@ -1257,13 +1282,16 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           overflowX: "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
+          overscrollBehavior: "contain",
           userSelect: "none",
           WebkitUserSelect: "none",
           WebkitTouchCallout: "none",
+          WebkitTapHighlightColor: "transparent",
         }}
       >
         <div
           ref={boardSurfaceRef}
+          className="classmate-board-surface"
           style={{
             position: "relative",
             width: "100%",
@@ -1280,10 +1308,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             userSelect: "none",
             WebkitUserSelect: "none",
             WebkitTouchCallout: "none",
+            WebkitTapHighlightColor: "transparent",
+            touchAction: isTouchLike && touchMode === "pan" ? "pan-x pan-y" : "none",
           }}
         >
           <canvas
             ref={canvasRef}
+            className="classmate-board-canvas"
             style={{
               display: "block",
               width: "100%",
@@ -1291,6 +1322,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               userSelect: "none",
               WebkitUserSelect: "none",
               WebkitTouchCallout: "none",
+              WebkitTapHighlightColor: "transparent",
               touchAction: isTouchLike
                 ? touchMode === "pan"
                   ? "pan-x pan-y"

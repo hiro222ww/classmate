@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSellableCheckoutBody, computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
+import { resolveAppOrigin } from "@/lib/appOrigin";
 import {
   findActiveSubscriptionItem,
   updateSubscriptionItemPrice,
@@ -98,9 +99,7 @@ export async function POST(req: Request) {
     }
 
     const origin =
-      req.headers.get("origin") ||
-      process.env.NEXT_PUBLIC_APP_URL ||
-      "http://localhost:3000";
+      req.headers.get("origin")?.replace(/\/+$/, "") || resolveAppOrigin();
 
     const success_url = buildSuccessUrl(origin, dev);
     const cancel_url = buildCancelUrl(origin, dev);

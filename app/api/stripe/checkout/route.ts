@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { isSellablePriceId } from "@/lib/billingCatalog";
+import { resolveAppOrigin } from "@/lib/appOrigin";
 
 export async function POST(req: Request) {
   try {
@@ -42,10 +43,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
-    if (!baseUrl) {
-      throw new Error("NEXT_PUBLIC_APP_URL is missing");
-    }
+    const baseUrl = resolveAppOrigin();
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",

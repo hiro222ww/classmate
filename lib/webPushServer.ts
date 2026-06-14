@@ -33,9 +33,15 @@ function getVapidConfig() {
 }
 
 function buildPushOpenUrl(classId: string) {
-  const origin = String(process.env.NEXT_PUBLIC_APP_ORIGIN ?? "").trim();
+  const origin = String(
+    process.env.NEXT_PUBLIC_APP_ORIGIN ??
+      process.env.NEXT_PUBLIC_APP_URL ??
+      ""
+  )
+    .trim()
+    .replace(/\/+$/, "");
   const path = `/?pushOpenClassId=${encodeURIComponent(classId)}`;
-  return origin ? `${origin.replace(/\/$/, "")}${path}` : path;
+  return origin ? `${origin}${path}` : path;
 }
 
 async function markNotificationPushSent(eventId: string) {
