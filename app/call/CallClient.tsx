@@ -12,7 +12,15 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
-import { releaseSessionMic } from "./voice/useLocalMic";
+import {
+  releaseSessionMic,
+  requestCallMicrophone,
+  resetMicSessionForRejoin,
+} from "./voice/useLocalMic";
+import { MicEntryGate } from "@/components/MicEntryGate";
+import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
+import { detectInAppBrowser } from "@/lib/inAppBrowser";
+import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
@@ -159,6 +167,7 @@ import {
   logCallMembersSync,
   logCallPeerRemoveRemote,
   logCallPresenceStaleGrace,
+  logCallPresenceRemoteAbsent,
 } from "@/lib/callMembersSync";
 import {
   CALL_DEPARTED_LABEL_MS,
@@ -182,6 +191,8 @@ type Member = {
 };
 
 type PeerState = "idle" | "connecting" | "connected" | "failed";
+
+type VoiceEntryMode = "checking" | "gate" | "mic" | "listen_only";
 
 const CALL_MEMBERS_POLL_MS = 15_000;
 const CALL_REALTIME_FETCH_DEBOUNCE_MS = 2000;
@@ -337,6 +348,12 @@ export default function CallClient() {
     setShowCallStuckReconnect(false);
     setShowVoiceReconnectPrompt(false);
     setRemoteAudioHealth({});
+    setVoiceEntryMode("checking");
+    setGateBusy(false);
+    setGateError(null);
+    setMicReady(false);
+    setMicPermissionDenied(false);
+    resetMicSessionForRejoin("rejoin");
     memberEmptyStreakRef.current = 0;
     memberDropStreakRef.current = 0;
 
@@ -443,6 +460,13 @@ export default function CallClient() {
   const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
   const [showVoiceReconnectPrompt, setShowVoiceReconnectPrompt] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
+  const [voiceEntryMode, setVoiceEntryMode] = useState<VoiceEntryMode>("checking");
+  const [gateBusy, setGateBusy] = useState(false);
+  const [gateError, setGateError] = useState<{
+    title: string;
+    body: string;
+    showInAppHint: boolean;
+  } | null>(null);
   const retryMicPermissionRef = useRef<() => Promise<boolean>>(() =>
     Promise.resolve(false)
   );
@@ -904,6 +928,10 @@ export default function CallClient() {
           if (nextApiIds.has(id)) continue;
           if (!memberAbsentSinceRef.current.has(id)) {
             memberAbsentSinceRef.current.set(id, syncNow);
+            logCallPresenceRemoteAbsent({
+              remoteId: id,
+              reason: "session_member_missing",
+            });
             logCallPresenceStaleGrace({
               remoteId: id,
               phase: "start",
@@ -1537,9 +1565,10 @@ export default function CallClient() {
   const filled = members.length;
 
   const muteButtonLabel = useMemo(() => {
+    if (voiceEntryMode === "listen_only") return "聞き専";
     if (!micReady) return "マイク準備中…";
     return userMuted ? "ミュート解除" : "ミュート";
-  }, [micReady, userMuted]);
+  }, [micReady, userMuted, voiceEntryMode]);
 
   const getMemberStatus = useCallback(
     (member?: Member) => {
@@ -1564,6 +1593,74 @@ export default function CallClient() {
       const isInCall = isMe
         ? !selfExplicitlyLeft
         : member.is_in_call === true && !localExitedCall;
+
+      if (isMe && voiceEntryMode === "listen_only") {
+        const listenOnlyStatus = {
+          text: "聞き専",
+          color: "#6b7280",
+          chipBg: "#f3f4f6",
+          chipText: "#6b7280",
+          reason: "listen_only",
+          source: "localMic",
+        };
+        const prevText = prevCallStatusRef.current[memberId];
+        if (prevText !== listenOnlyStatus.text) {
+          logParticipationStatusDecision({
+            context: "call",
+            deviceId: memberId,
+            label: listenOnlyStatus.text,
+            status: "in_call",
+            used: listenOnlyStatus.source,
+            reason: listenOnlyStatus.reason,
+            sources: {
+              is_in_call: member.is_in_call ?? null,
+              screen: "call",
+              peerState: peerStates[memberId] ?? "idle",
+              micReady: false,
+              isMe: true,
+            },
+          });
+          prevCallStatusRef.current[memberId] = listenOnlyStatus.text;
+        }
+        return listenOnlyStatus;
+      }
+
+      if (
+        isMe &&
+        (voiceEntryMode === "checking" || voiceEntryMode === "gate")
+      ) {
+        const prepText = micPermissionDenied ? "マイク未許可" : "参加準備中";
+        const prepStatus = {
+          text: prepText,
+          color: "#92400e",
+          chipBg: "#fffbeb",
+          chipText: "#b45309",
+          reason: micPermissionDenied
+            ? "mic_permission_denied"
+            : "entry_gate",
+          source: "localMic",
+        };
+        const prevText = prevCallStatusRef.current[memberId];
+        if (prevText !== prepStatus.text) {
+          logParticipationStatusDecision({
+            context: "call",
+            deviceId: memberId,
+            label: prepStatus.text,
+            status: "waiting",
+            used: prepStatus.source,
+            reason: prepStatus.reason,
+            sources: {
+              is_in_call: member.is_in_call ?? null,
+              screen: member.screen ?? "room",
+              peerState: peerStates[memberId] ?? "idle",
+              micReady: false,
+              isMe: true,
+            },
+          });
+          prevCallStatusRef.current[memberId] = prepStatus.text;
+        }
+        return prepStatus;
+      }
 
       if (!micReady) {
         if (isMe) {
@@ -2044,7 +2141,7 @@ export default function CallClient() {
 
       return status;
     },
-    [callInfo, deviceId, userMuted, nowMs, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
+    [callInfo, deviceId, micPermissionDenied, userMuted, voiceEntryMode, nowMs, peerDiagnostics, peerStates, remoteAudioHealth, sessionId]
   );
 
   useEffect(() => {
@@ -2272,6 +2369,115 @@ export default function CallClient() {
 
   const voiceLayerShouldRender = voiceLayerBlockingReason === "-";
 
+  const voiceLayerActive =
+    voiceLayerShouldRender &&
+    (voiceEntryMode === "mic" || voiceEntryMode === "listen_only");
+
+  const handleGateRequestMic = useCallback(async () => {
+    if (!sessionId || !deviceId) return;
+    setGateBusy(true);
+    setGateError(null);
+    const result = await requestCallMicrophone({
+      sessionId,
+      deviceId,
+      userMuted: userMutedRef.current,
+      reason: "gate_request",
+    });
+    setGateBusy(false);
+    if (result.ok) {
+      console.log("[voice-entry] mode=mic gate_request");
+      setVoiceEntryMode("mic");
+      setMicPermissionDenied(false);
+      return;
+    }
+    console.log(
+      `[voice-entry] blocked reason=${result.permissionDenied ? "mic_permission_denied" : "mic_failed"}`
+    );
+    setGateError({
+      title: result.title,
+      body: result.message,
+      showInAppHint: result.showInAppBrowserHint,
+    });
+    setMicPermissionDenied(result.permissionDenied);
+  }, [deviceId, sessionId]);
+
+  const handleListenOnlyEntry = useCallback(() => {
+    console.log("[voice-entry] listen-only mode");
+    userMutedRef.current = true;
+    setUserMuted(true);
+    setMicPermissionDenied(false);
+    setGateError(null);
+    setVoiceEntryMode("listen_only");
+  }, []);
+
+  useEffect(() => {
+    const detection = detectInAppBrowser();
+    if (detection.detected) {
+      console.log(
+        `[browser] in-app-browser detected=true uaHint=${detection.uaHint}/${detection.platform}`
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!voiceLayerShouldRender) return;
+    if (!sessionId || !deviceId) return;
+
+    let cancelled = false;
+    setVoiceEntryMode("checking");
+    setGateError(null);
+
+    void (async () => {
+      const permissionState = await queryMicrophonePermissionState();
+      console.log(`[mic] permission-state ${permissionState}`);
+      if (cancelled) return;
+
+      if (permissionState === "granted") {
+        const result = await requestCallMicrophone({
+          sessionId,
+          deviceId,
+          userMuted: userMutedRef.current,
+          reason: "auto_granted",
+        });
+        if (cancelled) return;
+        if (result.ok) {
+          console.log("[voice-entry] mode=mic auto_granted");
+          setVoiceEntryMode("mic");
+          setMicPermissionDenied(false);
+          return;
+        }
+        console.log("[voice-entry] blocked reason=mic_permission_denied");
+        setGateError({
+          title: result.title,
+          body: result.message,
+          showInAppHint: result.showInAppBrowserHint,
+        });
+        setMicPermissionDenied(result.permissionDenied);
+        setVoiceEntryMode("gate");
+        return;
+      }
+
+      setVoiceEntryMode("gate");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, sessionId, voiceLayerShouldRender]);
+
+  useEffect(() => {
+    if (voiceEntryMode === "gate" || voiceEntryMode === "checking") {
+      handleVoiceCleanup();
+    }
+  }, [handleVoiceCleanup, voiceEntryMode]);
+
+  useEffect(() => {
+    return () => {
+      resetMicSessionForRejoin("leave");
+      releaseSessionMic("call_client_unmount");
+    };
+  }, []);
+
   const buildCallReadinessSnapshot = useCallback((): CallReadinessSnapshot => {
     const voice = voiceReadinessRef.current;
     return {
@@ -2374,7 +2580,7 @@ export default function CallClient() {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!voiceLayerShouldRender || remoteMemberIds.length === 0) {
+    if (!voiceLayerActive || remoteMemberIds.length === 0) {
       voiceConnectStartedAtRef.current = null;
       voicePlaybackPromptLoggedRef.current = false;
       return;
@@ -2425,7 +2631,7 @@ export default function CallClient() {
     }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [members.length, micReady, remoteMemberIds.length, sessionId, voiceLayerShouldRender]);
+  }, [members.length, micReady, remoteMemberIds.length, sessionId, voiceLayerActive]);
 
   const handleCallStuckReconnect = useCallback(() => {
     if (voiceReadinessRef.current.anyAwaitingAnswer) {
@@ -2534,7 +2740,7 @@ export default function CallClient() {
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      {voiceLayerShouldRender ? (
+      {voiceLayerActive ? (
         <CallVoiceLayer
           sessionId={sessionId}
           deviceId={deviceId}
@@ -2542,6 +2748,9 @@ export default function CallClient() {
           membersSyncRevision={membersSyncRevision}
           userMuted={userMuted}
           userMutedRef={userMutedRef}
+          listenOnly={voiceEntryMode === "listen_only"}
+          autoAcquireOnMount={voiceEntryMode === "mic"}
+          presenceMembers={members}
           onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
           onMicReadyChange={handleMicReadyChange}
           onMicPermissionDeniedChange={handleMicPermissionDeniedChange}
@@ -2559,6 +2768,23 @@ export default function CallClient() {
           onVoiceLayerMountedChange={handleVoiceLayerMountedChange}
           onSoftResetExhausted={handleSoftResetExhausted}
         />
+      ) : null}
+
+      {voiceLayerShouldRender &&
+      (voiceEntryMode === "checking" || voiceEntryMode === "gate") ? (
+        <>
+          <InAppBrowserNotice />
+          <MicEntryGate
+            busy={gateBusy || voiceEntryMode === "checking"}
+            errorTitle={gateError?.title}
+            errorBody={gateError?.body}
+            showInAppHint={gateError?.showInAppHint}
+            onRequestMic={() => {
+              void handleGateRequestMic();
+            }}
+            onListenOnly={handleListenOnlyEntry}
+          />
+        </>
       ) : null}
 
       <div
@@ -3068,7 +3294,9 @@ export default function CallClient() {
       >
         <div style={{ fontWeight: 900, fontSize: 15 }}>音声設定</div>
 
-        {(micPermissionDenied || (!micReady && callInfo.includes("許可"))) && (
+        {(micPermissionDenied ||
+          gateError ||
+          (!micReady && callInfo.includes("許可"))) && (
           <div
             style={{
               marginTop: 10,
@@ -3081,14 +3309,22 @@ export default function CallClient() {
             }}
           >
             <div style={{ fontWeight: 800 }}>
-              {callInfo ||
+              {gateError?.title ||
+                callInfo ||
                 (micPermissionDenied
-                  ? "マイクを許可してください"
+                  ? "マイクが許可されていません。ブラウザの設定からマイクを許可してから、もう一度お試しください。"
                   : "マイク準備中…")}
             </div>
+            {gateError?.body ? (
+              <div style={{ marginTop: 6, lineHeight: 1.65 }}>{gateError.body}</div>
+            ) : null}
             <button
               type="button"
               onClick={() => {
+                if (voiceEntryMode === "gate" || voiceEntryMode === "checking") {
+                  void handleGateRequestMic();
+                  return;
+                }
                 void retryMicPermissionRef.current();
               }}
               style={{
@@ -3102,7 +3338,7 @@ export default function CallClient() {
                 cursor: "pointer",
               }}
             >
-              再試行
+              もう一度試す
             </button>
           </div>
         )}
@@ -3117,7 +3353,7 @@ export default function CallClient() {
           }}
         >
           <button
-            disabled={!micReady}
+            disabled={voiceEntryMode === "listen_only" || !micReady}
             style={{
               padding: "10px 14px",
               borderRadius: 12,

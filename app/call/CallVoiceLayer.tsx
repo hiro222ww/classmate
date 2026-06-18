@@ -84,6 +84,9 @@ type CallVoiceLayerProps = {
     remoteId: string,
     reason: VoiceSoftResetTriggerReason
   ) => void;
+  listenOnly?: boolean;
+  autoAcquireOnMount?: boolean;
+  presenceMembers?: Member[];
 };
 
 export default function CallVoiceLayer({
@@ -109,6 +112,9 @@ export default function CallVoiceLayer({
   onMicPermissionDeniedChange,
   onMicRetryReady,
   onSoftResetExhausted,
+  listenOnly = false,
+  autoAcquireOnMount = true,
+  presenceMembers,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
@@ -124,6 +130,7 @@ export default function CallVoiceLayer({
     deviceId,
     userMuted,
     userMutedRef,
+    autoAcquireOnMount: listenOnly ? false : autoAcquireOnMount,
     onMicReadyChange,
     onMicLevelChange,
     onStatusChange,
@@ -144,6 +151,8 @@ export default function CallVoiceLayer({
     onStatusChange,
   });
 
+  const peerMicReady = listenOnly || mic.micInteractionReady;
+
   const peer = usePeerConnections({
     sessionId,
     deviceId,
@@ -151,8 +160,10 @@ export default function CallVoiceLayer({
     membersSyncRevision,
     userMuted,
     userMutedRef,
-    micReady: mic.micInteractionReady,
+    micReady: peerMicReady,
+    listenOnly,
     micPermissionDeniedRef: mic.micPermissionDeniedRef,
+    presenceMembers,
     signalReady: signaling.signalReady,
     localStreamRef: mic.localStreamRef,
     localAudioTrackRef: mic.localAudioTrackRef,

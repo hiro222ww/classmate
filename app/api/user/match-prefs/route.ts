@@ -1,13 +1,60 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabaseServer";
 import { getMinorsEnabled } from "@/lib/minorsSettings";
+import {
+  defaultMatchPrefs,
+  ensureMatchPrefsRow,
+  readMatchPrefs,
+  userProfileDeviceExists,
+} from "@/lib/matchPrefsStorage";
+import { supabaseServer } from "@/lib/supabaseServer";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function normalizeAgeRange(minAge: unknown, maxAge: unknown) {
+  const minA = clamp(Number(minAge ?? 0), 0, 130);
+  const maxA = clamp(Number(maxAge ?? 130), 0, 130);
+  let fixedMin = Math.min(minA, maxA);
+  let fixedMax = Math.max(minA, maxA);
+  return { fixedMin, fixedMax };
+}
+
+async function applyMinorsGuard(fixedMin: number, fixedMax: number) {
+  const minorsEnabled = await getMinorsEnabled();
+  if (!minorsEnabled && fixedMax < 18) {
+    fixedMax = 18;
+    fixedMin = Math.min(fixedMin, fixedMax);
+  }
+  return { fixedMin, fixedMax };
+}
+
+function profileRequiredResponse() {
+  return NextResponse.json(
+    {
+      error: "profile_required",
+      message: "プロフィール登録後に年齢条件を保存できます。",
+    },
+    { status: 409 }
+  );
+}
+
 export async function POST(req: Request) {
-  const { deviceId, minAge, maxAge, mode } = await req.json();
+  let body: {
+    deviceId?: string;
+    minAge?: number;
+    maxAge?: number;
+    mode?: string;
+  };
+
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+  }
+
+  const deviceId = String(body.deviceId ?? "").trim();
+  const mode = String(body.mode ?? "").trim();
 
   if (!deviceId) {
     return NextResponse.json({ error: "deviceId required" }, { status: 400 });
@@ -15,71 +62,81 @@ export async function POST(req: Request) {
 
   const sb = supabaseServer();
 
-  // user_profiles が未作成でも落とさず、prefs 行を確保
-  const { error: ensureErr } = await sb.rpc("ensure_match_prefs", {
-    p_device_id: deviceId,
-  });
-
-  if (ensureErr) {
+  let profileExists: boolean;
+  try {
+    profileExists = await userProfileDeviceExists(sb, deviceId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "profile_lookup_failed";
+    console.error("[match-prefs] profile lookup failed", {
+      deviceTail: deviceId.slice(-4),
+      message,
+    });
     return NextResponse.json(
-      { error: "ensure_match_prefs_failed", detail: ensureErr.message },
+      { error: "profile_lookup_failed", detail: message },
       { status: 500 }
     );
   }
 
   if (mode === "get") {
-    const { data, error } = await sb
-      .from("user_match_prefs")
-      .select("*")
-      .eq("device_id", deviceId)
-      .maybeSingle();
+    if (!profileExists) {
+      return NextResponse.json({
+        prefs: defaultMatchPrefs(deviceId),
+        profileRequired: true,
+      });
+    }
 
-    if (error) {
+    try {
+      const existing = await readMatchPrefs(sb, deviceId);
+      if (existing) {
+        return NextResponse.json({ prefs: existing });
+      }
+
+      const ensured = await ensureMatchPrefsRow(sb, deviceId);
+      return NextResponse.json({ prefs: ensured });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "match_prefs_get_failed";
+      console.error("[match-prefs] get failed", {
+        deviceTail: deviceId.slice(-4),
+        message,
+      });
       return NextResponse.json(
-        { error: "match_prefs_get_failed", detail: error.message },
+        { error: "match_prefs_get_failed", detail: message },
         { status: 500 }
       );
     }
+  }
 
-    // 念のため未作成時も安全に返す（OFF = 全年代）
-    return NextResponse.json({
-      prefs: data ?? {
-        device_id: deviceId,
-        min_age: 0,
-        max_age: 130,
-      },
+  if (!profileExists) {
+    return profileRequiredResponse();
+  }
+
+  const normalized = normalizeAgeRange(body.minAge, body.maxAge);
+  const guarded = await applyMinorsGuard(
+    normalized.fixedMin,
+    normalized.fixedMax
+  );
+
+  try {
+    const saved = await ensureMatchPrefsRow(sb, deviceId, {
+      min_age: guarded.fixedMin,
+      max_age: guarded.fixedMax,
     });
-  }
 
-  const minA = clamp(Number(minAge ?? 0), 0, 130);
-  const maxA = clamp(Number(maxAge ?? 130), 0, 130);
-  let fixedMin = Math.min(minA, maxA);
-  let fixedMax = Math.max(minA, maxA);
-
-  const minorsEnabled = await getMinorsEnabled();
-  if (!minorsEnabled && fixedMax < 18) {
-    fixedMax = 18;
-    fixedMin = Math.min(fixedMin, fixedMax);
-  }
-
-  const { error } = await sb
-    .from("user_match_prefs")
-    .update({
-      min_age: fixedMin,
-      max_age: fixedMax,
-    })
-    .eq("device_id", deviceId);
-
-  if (error) {
+    return NextResponse.json({
+      ok: true,
+      minAge: saved.min_age,
+      maxAge: saved.max_age,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "match_prefs_update_failed";
+    console.error("[match-prefs] save failed", {
+      deviceTail: deviceId.slice(-4),
+      message,
+    });
     return NextResponse.json(
-      { error: "match_prefs_update_failed", detail: error.message },
+      { error: "match_prefs_update_failed", detail: message },
       { status: 500 }
     );
   }
-
-  return NextResponse.json({
-    ok: true,
-    minAge: fixedMin,
-    maxAge: fixedMax,
-  });
 }

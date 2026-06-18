@@ -74,3 +74,35 @@ export function logCallPresenceStaleGrace(params: {
       `graceMs=${params.graceMs}`
   );
 }
+
+export function logCallPresenceRemoteAbsent(params: {
+  remoteId: string;
+  reason: string;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "presence",
+    `[call-presence] remote-absent remote=${params.remoteId.slice(-4)} reason=${params.reason}`
+  );
+}
+
+export function logVoiceRepairSkip(params: {
+  remoteId: string;
+  reason: string;
+}) {
+  console.log(
+    `[voice-repair] skip remote=${params.remoteId.slice(-4)} reason=${params.reason}`
+  );
+}
+
+export function logCallUiMemberStatus(params: {
+  remoteId: string;
+  label: string;
+  reason: string;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "call",
+    `[call-ui] status remote=${params.remoteId.slice(-4)} label=${params.label} reason=${params.reason}`
+  );
+}

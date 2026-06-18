@@ -53,7 +53,7 @@ export function evaluateCallParticipationPriority(params: {
       return {
         priority: "absent_grace",
         reason: "session_member_missing_initial",
-        peerStillInCall: true,
+        peerStillInCall: false,
       };
     }
     if (params.nowMs - since >= CALL_LIVE_MEMBER_ABSENT_GRACE_MS) {
@@ -66,7 +66,7 @@ export function evaluateCallParticipationPriority(params: {
     return {
       priority: "absent_grace",
       reason: "session_member_missing_grace",
-      peerStillInCall: true,
+      peerStillInCall: false,
     };
   }
 
@@ -105,7 +105,7 @@ export function evaluateCallParticipationPriority(params: {
     return {
       priority: "presence_stale_grace",
       reason: participationDown ? "in_call_false_grace" : "presence_stale_grace",
-      peerStillInCall: true,
+      peerStillInCall: false,
     };
   }
 
@@ -133,7 +133,7 @@ export function mapParticipationToStatusChoice(
       return "removed";
     case "absent_grace":
     case "presence_stale_grace":
-      return "reconnecting";
+      return "offline";
     default:
       return null;
   }
@@ -152,7 +152,7 @@ export function resolveParticipationPriorityStatus(priority: CallParticipationPr
     case "absent_expired":
     case "presence_stale_expired":
       return {
-        text: "退出しました",
+        text: "退出済み",
         color: "#6b7280",
         chipBg: "#f3f4f6",
         chipText: "#6b7280",
@@ -162,10 +162,10 @@ export function resolveParticipationPriorityStatus(priority: CallParticipationPr
     case "absent_grace":
     case "presence_stale_grace":
       return {
-        text: "再接続中",
-        color: "#92400e",
-        chipBg: "#fffbeb",
-        chipText: "#b45309",
+        text: "不在",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
         reason: priority,
         source: "participation",
       };
@@ -236,7 +236,9 @@ export function resolveFinalStatusChoice(params: {
   ) {
     return "unstable";
   }
-  if (params.statusText === "退出しました") return "removed";
+  if (params.statusText === "退出済み" || params.statusText === "退出しました") {
+    return "removed";
+  }
   if (
     params.statusText === "再接続中" ||
     params.statusText === "再接続を試みています"

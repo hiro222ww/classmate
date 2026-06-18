@@ -103,6 +103,17 @@ export function shouldDeferPreConfirmUnstable(params: {
   return params.nowMs - params.audioUnhealthySinceMs < PRE_CONFIRM_UNSTABLE_MIN_MS;
 }
 
+function shouldShowPeerReconnectingStatus(params: {
+  peerStillInCall: boolean;
+  participationPriority: CallParticipationPriority;
+}): boolean {
+  return (
+    params.peerStillInCall &&
+    params.participationPriority === "in_call" &&
+    shouldShowVoiceUnstableStatus(params)
+  );
+}
+
 function resolvePreConfirmConnectingStatus(params: {
   voicePeerRepairInProgress?: boolean;
   autoHardResetInProgress?: boolean;
@@ -1795,8 +1806,8 @@ export function resolveCallMemberStatus(params: {
     nowMs,
   });
 
-  const remoteAudioUserLabel = () =>
-    resolveUserFacingRemoteAudioLabel({
+  const remoteAudioUserLabel = () => {
+    const label = resolveUserFacingRemoteAudioLabel({
       health,
       showReconnectButton,
       trackLive,
@@ -1810,6 +1821,21 @@ export function resolveCallMemberStatus(params: {
       nowMs,
       remoteDeviceId: params.remoteDeviceId,
     });
+    if (
+      (label.text === "再接続中" || label.text === "再接続を試みています") &&
+      !allowPeerReconnectingLabel
+    ) {
+      return (
+        absentOverPeerReconnect() ?? {
+          ...label,
+          text: "不在",
+          reason: "not_in_call_transport_unconfirmed",
+          source: "participation",
+        }
+      );
+    }
+    return label;
+  };
   const softConnected = hasRemoteAudioSoftConnectedEvidence({
     health,
     trackLive,
@@ -1832,6 +1858,27 @@ export function resolveCallMemberStatus(params: {
     participationPriority
   );
   const participationChoice = mapParticipationToStatusChoice(participationPriority);
+
+  const allowPeerReconnectingLabel = shouldShowPeerReconnectingStatus({
+    peerStillInCall,
+    participationPriority,
+  });
+
+  const absentOverPeerReconnect = (): CallMemberStatusResult | null => {
+    if (allowPeerReconnectingLabel) return null;
+    if (participationStatus) return participationStatus;
+    if (!peerStillInCall || participationPriority !== "in_call") {
+      return {
+        text: "不在",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
+        reason: "not_in_call",
+        source: "participation",
+      };
+    }
+    return null;
+  };
 
   if (participationStatus && participationChoice) {
     return participationStatus;
@@ -1955,6 +2002,8 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.autoHardResetInProgress || params.voicePeerRepairInProgress) {
+    const absentStatus = absentOverPeerReconnect();
+    if (absentStatus) return absentStatus;
     return {
       text: "再接続中",
       color: "#92400e",
@@ -2156,7 +2205,7 @@ export function resolveCallMemberStatus(params: {
       };
     }
     return {
-      text: "退出しました",
+      text: "退出済み",
       color: "#6b7280",
       chipBg: "#f3f4f6",
       chipText: "#6b7280",
@@ -2233,6 +2282,8 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.peerState === "connecting") {
+    const absentStatus = absentOverPeerReconnect();
+    if (absentStatus) return absentStatus;
     return {
       text: params.wasPeerConnected ? "再接続中" : "接続中",
       color: "#92400e",
@@ -2246,6 +2297,8 @@ export function resolveCallMemberStatus(params: {
   }
 
   if (params.peerState === "failed") {
+    const absentStatus = absentOverPeerReconnect();
+    if (absentStatus) return absentStatus;
     if (params.p2pDirectFailedHoldActive || transportRecovering) {
       return {
         text: "再接続中",

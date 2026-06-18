@@ -7,6 +7,48 @@ export type VoiceMemberRow = {
   screen?: string | null;
 };
 
+/** True when member is on the call screen (not room/home/offline). */
+export function isMemberActiveOnCallScreen(
+  member: Pick<VoiceMemberRow, "screen">
+): boolean {
+  const screen = String(member.screen ?? "").trim().toLowerCase();
+  if (screen === "room" || screen === "home" || screen === "offline") {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Remotes actively on the call screen with is_in_call=true (raw API presence).
+ * Used for voice repair targeting and strict in-call UI — not session-wide stable override.
+ */
+export function getCallActiveRemoteDeviceIds(
+  members: ReadonlyArray<VoiceMemberRow>,
+  selfDeviceId: string,
+  opts?: {
+    sessionId?: string;
+    explicitLeftIds?: ReadonlySet<string>;
+  }
+): string[] {
+  const selfId = String(selfDeviceId ?? "").trim();
+  const sessionId = String(opts?.sessionId ?? "").trim();
+  const explicit = opts?.explicitLeftIds;
+
+  return members
+    .map((m) => String(m.device_id ?? "").trim())
+    .filter((id) => {
+      if (!id || id === selfId) return false;
+      if (explicit?.has(id)) return false;
+      if (sessionId && hasLocalLeftCall(sessionId, id)) return false;
+      const member = members.find(
+        (row) => String(row.device_id ?? "").trim() === id
+      );
+      if (!member) return false;
+      if (member.is_in_call !== true) return false;
+      return isMemberActiveOnCallScreen(member);
+    });
+}
+
 /** Session member device IDs for voice targeting (excludes self). */
 export function getSessionMemberRemoteDeviceIds(
   members: ReadonlyArray<{ device_id?: string | null }>,

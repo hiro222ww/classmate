@@ -216,6 +216,7 @@ import {
   UNMUTE_OUTBOUND_REPAIR_DELAY_MS,
 } from "@/lib/voiceMutePolicy";
 import {
+  getCallActiveRemoteDeviceIds,
   getSessionMemberRemoteDeviceIds,
   isLocalVoiceParticipant,
 } from "@/lib/voiceSessionMembers";
@@ -232,6 +233,7 @@ import {
   logCallPeerAddRemote,
   logCallPeerRemoveRemote,
   logCallPresenceStaleGrace,
+  logVoiceRepairSkip,
 } from "@/lib/callMembersSync";
 import {
   isExplicitPeerCloseReason,
@@ -345,13 +347,24 @@ function isReceiveOnlyMutedSession(
   return releaseMicOnMute && userMutedRef.current;
 }
 
-function canEnsurePeerWithoutLocalTrack(
-  isOfferOwner: boolean,
+function isReceiveOnlyVoiceMode(
+  listenOnly: boolean,
   releaseMicOnMute: boolean,
   userMutedRef: React.MutableRefObject<boolean>
 ): boolean {
+  return (
+    listenOnly || isReceiveOnlyMutedSession(releaseMicOnMute, userMutedRef)
+  );
+}
+
+function canEnsurePeerWithoutLocalTrack(
+  isOfferOwner: boolean,
+  releaseMicOnMute: boolean,
+  userMutedRef: React.MutableRefObject<boolean>,
+  listenOnly = false
+): boolean {
   if (!isOfferOwner) return true;
-  return isReceiveOnlyMutedSession(releaseMicOnMute, userMutedRef);
+  return isReceiveOnlyVoiceMode(listenOnly, releaseMicOnMute, userMutedRef);
 }
 
 function isSoftResetRejoinReason(reason: string): boolean {
@@ -481,6 +494,9 @@ type UsePeerConnectionsArgs = {
   }) => void;
   onSoftResetExhausted?: (remoteId: string, reason: VoiceSoftResetTriggerReason) => void;
   voiceLayerInstanceId?: string;
+  listenOnly?: boolean;
+  /** Raw session members for call-screen presence (defaults to `members`). */
+  presenceMembers?: Member[];
 };
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
@@ -1102,12 +1118,16 @@ export function usePeerConnections({
   onReadinessSnapshot,
   onSoftResetExhausted,
   voiceLayerInstanceId = "-",
+  listenOnly = false,
+  presenceMembers,
 }: UsePeerConnectionsArgs) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef(deviceId);
   const membersCountRef = useRef(members.length);
   const membersRef = useRef(members);
   membersRef.current = members;
+  const presenceMembersRef = useRef(members);
+  presenceMembersRef.current = presenceMembers ?? members;
   const remotePeerGraceRefsRef = useRef(createRemotePeerGraceRefs());
   const voiceSessionMemberIdsRef = useRef<Set<string>>(new Set());
   const voiceSessionMemberAbsentSinceRef = useRef<Map<string, number>>(new Map());
@@ -2022,15 +2042,22 @@ export function usePeerConnections({
   }, [activeMembers, deviceId, members, sessionId]);
 
   const getStrictRemoteIds = useCallback(() => {
-    if (isStableVoiceJoinMode()) {
-      return getSessionMemberRemoteIds();
-    }
-    const selfId = String(deviceId ?? "").trim();
-    return activeMembers
-      .filter((m) => m.is_in_call === true)
-      .map((m) => String(m.device_id ?? "").trim())
-      .filter((id) => id && id !== selfId);
-  }, [activeMembers, deviceId, getSessionMemberRemoteIds]);
+    return getCallActiveRemoteDeviceIds(
+      presenceMembersRef.current,
+      deviceId,
+      { sessionId }
+    );
+  }, [deviceId, sessionId]);
+
+  const isRemoteVoiceRepairEligible = useCallback(
+    (remoteId: string) => {
+      const id = String(remoteId ?? "").trim();
+      if (!id || id === deviceId) return false;
+      if (remotePeerGraceRefsRef.current.explicitRemoved.has(id)) return false;
+      return getStrictRemoteIds().includes(id);
+    },
+    [deviceId, getStrictRemoteIds]
+  );
 
   const getRemoteIds = useCallback(() => {
     const strict = getStrictRemoteIds();
@@ -2286,7 +2313,8 @@ export function usePeerConnections({
         isTransportMediaConnected(pc.connectionState, pc.iceConnectionState);
       const localTrack = getLocalAudioTrack(localAudioTrackRef, localStreamRef);
       const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
-      const receiveOnly = isReceiveOnlyMutedSession(
+      const receiveOnly = isReceiveOnlyVoiceMode(
+        listenOnly,
         voicePolicy.releaseMicOnMute,
         userMutedRef
       );
@@ -3366,7 +3394,8 @@ export function usePeerConnections({
     (remoteId: string) => {
       const isOfferOwner = deviceId < remoteId;
       const role: "active" | "passive" = isOfferOwner ? "active" : "passive";
-      const receiveOnly = isReceiveOnlyMutedSession(
+      const receiveOnly = isReceiveOnlyVoiceMode(
+        listenOnly,
         voicePolicy.releaseMicOnMute,
         userMutedRef
       );
@@ -5423,6 +5452,11 @@ export function usePeerConnections({
         return false;
       }
 
+      if (!isRemoteVoiceRepairEligible(remoteId)) {
+        logVoiceRepairSkip({ remoteId, reason: "remote_absent" });
+        return false;
+      }
+
       if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
         console.warn(
           `[voice-peer] reconnect-skip remote=${compactDeviceId(remoteId)} reason=${reasonRaw} source=${sourceRaw} ` +
@@ -5761,6 +5795,7 @@ export function usePeerConnections({
       buildVoicePlaybackBlockReason,
       logVoiceReconnectDecision,
       shouldSuppressTransportDisconnectReconnect,
+      isRemoteVoiceRepairEligible,
     ]
   );
 
@@ -8585,6 +8620,10 @@ export function usePeerConnections({
       logKind: "sent" | "retry" = "sent"
     ): Promise<boolean> => {
       const compact = compactDeviceId(remoteId);
+      if (!isRemoteVoiceRepairEligible(remoteId)) {
+        logVoiceRepairSkip({ remoteId, reason: "remote_absent" });
+        return false;
+      }
       const logReason =
         logKind === "retry" ? "no_offer_after_auto_hard_reset" : reason;
 
@@ -8621,7 +8660,7 @@ export function usePeerConnections({
 
       return true;
     },
-    [sendSignal]
+    [isRemoteVoiceRepairEligible, sendSignal]
   );
 
   useEffect(() => {
@@ -9165,6 +9204,10 @@ export function usePeerConnections({
     async (remoteId: string, triggerReason: string) => {
       if (!remoteId || remoteId === deviceId) return;
       if (!micReady || !signalReady) return;
+      if (!isRemoteVoiceRepairEligible(remoteId)) {
+        logVoiceRepairSkip({ remoteId, reason: "remote_absent" });
+        return;
+      }
       if (!isRemoteInCall(remoteId)) return;
       if (autoHardResetGiveUpRef.current.has(remoteId)) return;
       if (autoHardResetInProgressRef.current.has(remoteId)) return;
@@ -9221,6 +9264,7 @@ export function usePeerConnections({
       deviceId,
       emitPeerStates,
       isRemoteInCall,
+      isRemoteVoiceRepairEligible,
       micReady,
       runPeerHardReset,
       signalReady,
@@ -9455,7 +9499,8 @@ export function usePeerConnections({
         !canEnsurePeerWithoutLocalTrack(
           isOfferOwner,
           voicePolicy.releaseMicOnMute,
-          userMutedRef
+          userMutedRef,
+          listenOnly
         )
       ) {
         logEnsureSkipped(
@@ -10820,7 +10865,8 @@ export function usePeerConnections({
         localStreamRef
       );
 
-      const receiveOnly = isReceiveOnlyMutedSession(
+      const receiveOnly = isReceiveOnlyVoiceMode(
+        listenOnly,
         voicePolicy.releaseMicOnMute,
         userMutedRef
       );
@@ -11040,12 +11086,18 @@ export function usePeerConnections({
       return;
     }
 
+    if (micPermissionDeniedRef.current) {
+      runHealScan("healRun_mic_permission_denied");
+      return;
+    }
+
     if (!micReady && !passiveNeedsPc) {
       runHealScan("healRun_mic_not_ready");
       return;
     }
 
-    const receiveOnly = isReceiveOnlyMutedSession(
+    const receiveOnly = isReceiveOnlyVoiceMode(
+      listenOnly,
       voicePolicy.releaseMicOnMute,
       userMutedRef
     );
@@ -11105,7 +11157,7 @@ export function usePeerConnections({
     }
 
     for (const remoteId of remoteIds) {
-      if (!isRemoteInCall(remoteId)) {
+      if (!isRemoteVoiceRepairEligible(remoteId)) {
         continue;
       }
 
@@ -12813,7 +12865,8 @@ export function usePeerConnections({
       return;
     }
 
-    const receiveOnly = isReceiveOnlyMutedSession(
+    const receiveOnly = isReceiveOnlyVoiceMode(
+      listenOnly,
       voicePolicy.releaseMicOnMute,
       userMutedRef
     );
@@ -13124,7 +13177,8 @@ export function usePeerConnections({
 
   const isAllVoiceStartReady = useCallback((): boolean => {
     if (!isSettingsTurnSignalReady()) return false;
-    const receiveOnly = isReceiveOnlyMutedSession(
+    const receiveOnly = isReceiveOnlyVoiceMode(
+      listenOnly,
       voicePolicy.releaseMicOnMute,
       userMutedRef
     );
@@ -13203,7 +13257,8 @@ export function usePeerConnections({
     prevSettingsTurnSignalReadyRef.current = settingsReady;
 
     if (allReady && !wasAllReady) {
-      const receiveOnly = isReceiveOnlyMutedSession(
+      const receiveOnly = isReceiveOnlyVoiceMode(
+        listenOnly,
         voicePolicy.releaseMicOnMute,
         userMutedRef
       );
@@ -13296,7 +13351,8 @@ export function usePeerConnections({
   useEffect(() => {
     if (membersSyncRevision <= 0) return;
     if (isDocumentHidden()) return;
-    const receiveOnly = isReceiveOnlyMutedSession(
+    const receiveOnly = isReceiveOnlyVoiceMode(
+      listenOnly,
       voicePolicy.releaseMicOnMute,
       userMutedRef
     );
@@ -13488,6 +13544,7 @@ export function usePeerConnections({
       const sid = String(sessionIdRef.current ?? "").slice(-6) || "-";
       const did = compactDeviceId(deviceIdRef.current);
 
+      console.log(`[voice-cleanup] reason=${reason}`);
       debugConsoleLog(
         `[voice-peer] ${logTag} reason=${reason} session=${sid} device=${did} ` +
           `pcs=${pcCount} timers=${timerCount} remoteAudios=${remoteAudioCount} ` +

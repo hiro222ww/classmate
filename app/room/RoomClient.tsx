@@ -13,6 +13,7 @@ import {
   useSearchParams,
 } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
+import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
@@ -3906,6 +3907,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           startLabel="通話開始"
         >
           <div style={{ display: "grid", gap: 12 }}>
+            <InAppBrowserNotice compact />
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"

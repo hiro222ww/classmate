@@ -128,9 +128,6 @@ export default function PremiumPage() {
   const [ent, setEnt] = useState<Entitlements | null>(null);
   const [busyKey, setBusyKey] = useState("");
 
-  const [billingNoticeEnabled, setBillingNoticeEnabled] = useState(true);
-  const [billingNoticeText, setBillingNoticeText] = useState("");
-
   useEffect(() => {
     setDeviceId(getDeviceId());
   }, []);
@@ -161,26 +158,6 @@ export default function PremiumPage() {
       }
     })();
   }, [deviceId]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/settings", {
-          cache: "no-store",
-        });
-
-        const j = await r.json().catch(() => null);
-        const s = j?.settings;
-
-        if (!s) return;
-
-        setBillingNoticeEnabled(Boolean(s.billing_notice?.enabled));
-        setBillingNoticeText(String(s.billing_notice?.text ?? ""));
-      } catch {
-        // silent
-      }
-    })();
-  }, []);
 
   const currentSlots = Number(ent?.class_slots ?? 1);
   const currentTopicSupport = topicSupportRankFromPlan(ent?.plan);
@@ -306,21 +283,6 @@ export default function PremiumPage() {
         </div>
       </SoftCard>
 
-      {billingNoticeEnabled && billingNoticeText ? (
-        <SoftCard>
-          <div
-            style={{
-              fontSize: 13,
-              lineHeight: 1.8,
-              color: "#666",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {billingNoticeText}
-          </div>
-        </SoftCard>
-      ) : null}
-
       <SoftCard>
         <HelpTip label="テーマプランについて" content={TOPIC_PLAN_BETA_INTRO}>
           <div style={{ fontWeight: 900 }}>テーマプラン（任意の支援額）</div>
@@ -384,9 +346,8 @@ export default function PremiumPage() {
       </SoftCard>
 
       <SoftCard>
-        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: "#374151" }}>
-          テーマプランの支援額変更・クラス枠の変更はこの画面から Stripe Portal
-          の更新画面を開いて行い、解約や支払い方法・請求履歴はお支払い管理ページから行えます。
+        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#374151" }}>
+          プラン変更・解約は「支払い管理」から行えます。
         </p>
         <Link
           href={withDev("/billing")}

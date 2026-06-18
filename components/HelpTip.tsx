@@ -42,7 +42,10 @@ export function HelpTip({
         onClick={() => setPinned((value) => !value)}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        onBlur={() => setHover(false)}
+        onFocus={() => setHover(true)}
+        onBlur={() => {
+          setHover(false);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             setPinned(false);

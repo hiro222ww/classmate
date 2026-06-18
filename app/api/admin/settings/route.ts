@@ -24,8 +24,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     end: "21:30",
   },
   billing_notice: {
-    enabled: true,
-    text: "※ 現在、ベーシック・ミドル・プレミアムで利用できるテーマは同じです。プランの違いは、同時に参加できるクラス数です。",
+    enabled: false,
+    text: "",
   },
 };
 

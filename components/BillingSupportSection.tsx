@@ -1,12 +1,15 @@
 "use client";
 
+import { HelpTip } from "@/components/HelpTip";
 import {
   BILLING_BETA_NOTICE,
   BILLING_CONTACT_HELP,
-  BILLING_PORTAL_LOGIN_DETAIL,
-  BILLING_PORTAL_LOGIN_INTRO,
+  BILLING_CONTACT_INFO_ITEMS,
   BILLING_PORTAL_LOGIN_LINK_LABEL,
+  BILLING_PORTAL_LOGIN_TOOLTIP,
+  BILLING_PORTAL_SECTION_TITLE,
   BILLING_SUPPORT_EMAIL,
+  BILLING_TROUBLES_SUMMARY,
   getStripePortalLoginUrl,
 } from "@/lib/billingSupportCopy";
 
@@ -19,40 +22,71 @@ const cardStyle: React.CSSProperties = {
   gap: 12,
 };
 
+const linkButtonStyle: React.CSSProperties = {
+  display: "inline-block",
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "12px 16px",
+  borderRadius: 14,
+  border: "1px solid #111",
+  background: "#fff",
+  color: "#111",
+  fontWeight: 900,
+  textAlign: "center",
+  textDecoration: "none",
+  fontSize: 14,
+};
+
+const detailsStyle: React.CSSProperties = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 14,
+  padding: "12px 14px",
+  background: "#fafafa",
+};
+
 const mutedTextStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 13,
   color: "#6b7280",
-  lineHeight: 1.75,
+  lineHeight: 1.7,
 };
 
 type BillingSupportSectionProps = {
-  showBetaNotice?: boolean;
   showPortalLogin?: boolean;
-  showContact?: boolean;
-  title?: string;
+  showTroubles?: boolean;
+  showBetaNotice?: boolean;
 };
 
 export function BillingSupportSection({
-  showBetaNotice = true,
   showPortalLogin = true,
-  showContact = true,
-  title = "アプリに入れない場合の課金管理",
+  showTroubles = true,
+  showBetaNotice = true,
 }: BillingSupportSectionProps) {
   const portalLoginUrl = getStripePortalLoginUrl();
 
   return (
-    <>
+    <section
+      style={{ display: "grid", gap: 12 }}
+      aria-label="課金サポート情報"
+    >
       {showPortalLogin ? (
-        <section style={cardStyle}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 900 }}>{title}</div>
-            <p style={{ ...mutedTextStyle, marginTop: 8 }}>
-              {BILLING_PORTAL_LOGIN_INTRO}
-            </p>
-            <p style={{ ...mutedTextStyle, marginTop: 8 }}>
-              {BILLING_PORTAL_LOGIN_DETAIL}
-            </p>
+        <div style={cardStyle}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontWeight: 900, fontSize: 15 }}>
+              {BILLING_PORTAL_SECTION_TITLE}
+            </span>
+            <HelpTip
+              label="Stripe課金管理について"
+              maxWidth={320}
+              content={BILLING_PORTAL_LOGIN_TOOLTIP}
+            />
           </div>
 
           {portalLoginUrl ? (
@@ -60,62 +94,111 @@ export function BillingSupportSection({
               href={portalLoginUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                display: "inline-block",
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "14px 16px",
-                borderRadius: 14,
-                border: "1px solid #111",
-                background: "#fff",
-                color: "#111",
-                fontWeight: 900,
-                textAlign: "center",
-                textDecoration: "none",
-              }}
+              style={linkButtonStyle}
             >
               {BILLING_PORTAL_LOGIN_LINK_LABEL}
             </a>
           ) : (
             <p style={{ ...mutedTextStyle, fontSize: 12 }}>
-              課金管理ページへのリンクは現在準備中です。解約・プラン変更は下記メールでお問い合わせください。
+              Stripe の課金管理リンクは準備中です。下の「{BILLING_TROUBLES_SUMMARY}」をご確認ください。
             </p>
           )}
-        </section>
-      ) : null}
-
-      {showContact ? (
-        <section style={cardStyle}>
-          <div style={{ fontSize: 15, fontWeight: 900 }}>お問い合わせ</div>
-          <p style={mutedTextStyle}>{BILLING_CONTACT_HELP}</p>
-          <a
-            href={`mailto:${BILLING_SUPPORT_EMAIL}`}
-            style={{
-              color: "#111",
-              fontWeight: 900,
-              textDecoration: "underline",
-              textUnderlineOffset: 3,
-              fontSize: 14,
-            }}
-          >
-            {BILLING_SUPPORT_EMAIL}
-          </a>
-        </section>
+        </div>
       ) : null}
 
       {showBetaNotice ? (
-        <p
-          style={{
-            margin: 0,
-            fontSize: 12,
-            color: "#9ca3af",
-            lineHeight: 1.7,
-            padding: "0 4px",
-          }}
-        >
-          {BILLING_BETA_NOTICE}
-        </p>
+        <div style={{ padding: "0 4px" }}>
+          <HelpTip
+            label="β期間中のご利用について"
+            maxWidth={320}
+            content={BILLING_BETA_NOTICE}
+          >
+            <span
+              style={{
+                fontSize: 13,
+                color: "#9ca3af",
+                fontWeight: 700,
+              }}
+            >
+              β期間中のご利用について
+            </span>
+          </HelpTip>
+        </div>
       ) : null}
-    </>
+
+      {showTroubles ? (
+        <details style={detailsStyle}>
+          <summary
+            style={{
+              fontWeight: 900,
+              fontSize: 13,
+              color: "#374151",
+              cursor: "pointer",
+              listStylePosition: "outside",
+            }}
+          >
+            {BILLING_TROUBLES_SUMMARY}
+          </summary>
+
+          <div
+            style={{
+              marginTop: 12,
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <p style={mutedTextStyle}>{BILLING_PORTAL_LOGIN_TOOLTIP}</p>
+
+            {portalLoginUrl ? (
+              <a
+                href={portalLoginUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  ...linkButtonStyle,
+                  width: "auto",
+                  display: "inline-block",
+                  padding: "10px 14px",
+                  fontSize: 13,
+                }}
+              >
+                {BILLING_PORTAL_LOGIN_LINK_LABEL}
+              </a>
+            ) : null}
+
+            <p style={mutedTextStyle}>{BILLING_CONTACT_HELP}</p>
+
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: 18,
+                fontSize: 12,
+                color: "#6b7280",
+                lineHeight: 1.6,
+              }}
+            >
+              {BILLING_CONTACT_INFO_ITEMS.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+
+            <p style={{ ...mutedTextStyle, fontSize: 12 }}>
+              お問い合わせ:{" "}
+              <a
+                href={`mailto:${BILLING_SUPPORT_EMAIL}`}
+                style={{
+                  color: "#374151",
+                  fontWeight: 800,
+                  textDecoration: "underline",
+                  textUnderlineOffset: 2,
+                }}
+              >
+                {BILLING_SUPPORT_EMAIL}
+              </a>
+            </p>
+          </div>
+        </details>
+      ) : null}
+    </section>
   );
 }

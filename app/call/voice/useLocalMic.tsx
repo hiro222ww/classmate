@@ -9,6 +9,11 @@ import {
   shouldReleaseMicOnMute,
 } from "@/lib/callLifecycle";
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
+import {
+  classifyMicError,
+  formatMicErrorLog,
+  queryMicrophonePermissionState,
+} from "@/lib/micPermissionUi";
 import { formatVoiceModeSuffix, getVoiceModePolicy } from "@/lib/voiceClientEnv";
 
 type UseLocalMicArgs = {
@@ -16,6 +21,8 @@ type UseLocalMicArgs = {
   deviceId: string;
   userMuted: boolean;
   userMutedRef: React.MutableRefObject<boolean>;
+  /** When false, skip automatic getUserMedia on session mount. */
+  autoAcquireOnMount?: boolean;
   onMicReadyChange?: (ready: boolean) => void;
   onMicLevelChange?: (level: number) => void;
   onStatusChange?: (text: string) => void;
@@ -41,18 +48,13 @@ type MicSessionCache = {
 let activeMicCache: MicSessionCache | null = null;
 let acquirePromise: Promise<boolean> | null = null;
 
-async function queryMicrophonePermissionState(): Promise<string> {
-  if (typeof navigator === "undefined" || !navigator.permissions?.query) {
-    return "unsupported";
-  }
-  try {
-    const status = await navigator.permissions.query({
-      name: "microphone" as PermissionName,
-    });
-    return status.state;
-  } catch {
-    return "error";
-  }
+async function queryMicrophonePermissionStateLocal(): Promise<string> {
+  return queryMicrophonePermissionState();
+}
+
+function getMicErrorMessage(error: unknown): string {
+  const guidance = classifyMicError(error);
+  return `${guidance.title}。${guidance.body}`;
 }
 
 function getNavigationType(): string {
@@ -99,19 +101,83 @@ function isMicPermissionError(error: unknown): boolean {
   return name === "NotAllowedError" || name === "PermissionDeniedError";
 }
 
-function getMicErrorMessage(error: unknown): string {
-  const name = error instanceof DOMException ? error.name : "";
-  if (isMicPermissionError(error)) {
-    return "マイクの使用が許可されていません。ブラウザの設定でマイクを許可してください。";
-  }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "マイクが見つかりません。接続を確認してください。";
-  }
-  return "マイク取得に失敗しました。";
+const MIC_RETRY_FAILURE_MESSAGE =
+  "マイクが許可されていません。ブラウザの設定からマイクを許可してから、もう一度お試しください。";
+
+const gateStreamRef = { current: null as MediaStream | null };
+const gateTrackRef = { current: null as MediaStreamTrack | null };
+
+export function resetMicSessionForRejoin(reason: string) {
+  setMicPermissionDeniedLatch(false);
+  gateStreamRef.current = null;
+  gateTrackRef.current = null;
+  releaseSessionMic(`rejoin_${reason}`);
+  console.log(`[voice-cleanup] reason=${reason}`);
 }
 
-const MIC_RETRY_FAILURE_MESSAGE =
-  "ブラウザ設定でマイクを許可してから再読み込みしてください";
+export async function requestCallMicrophone(params: {
+  sessionId: string;
+  deviceId: string;
+  userMuted: boolean;
+  reason?: string;
+}): Promise<{
+  ok: boolean;
+  permissionDenied: boolean;
+  title: string;
+  message: string;
+  showInAppBrowserHint: boolean;
+  lastError?: unknown;
+}> {
+  const reason = params.reason ?? "user_request";
+  setMicPermissionDeniedLatch(false);
+
+  const permissionState = await queryMicrophonePermissionStateLocal();
+  console.log(`[mic] permission-state ${permissionState}`);
+  console.log(
+    `[mic] request-start reason=${reason} session=${compactSessionId(params.sessionId)}`
+  );
+
+  let lastError: unknown = null;
+  const ok = await ensureLocalMicStream({
+    reason,
+    sessionId: params.sessionId,
+    deviceId: params.deviceId,
+    getUserMuted: () => params.userMuted,
+    streamRef: gateStreamRef,
+    trackRef: gateTrackRef,
+    showInitialPermissionHint: true,
+    onMicPermissionDenied: (denied) => {
+      setMicPermissionDeniedLatch(denied);
+    },
+    onAcquireError: (error) => {
+      lastError = error;
+    },
+  });
+
+  if (ok) {
+    return {
+      ok: true,
+      permissionDenied: false,
+      title: "",
+      message: "",
+      showInAppBrowserHint: false,
+    };
+  }
+
+  const guidance = classifyMicError(lastError);
+  const failLog = formatMicErrorLog(lastError);
+  console.log(
+    `[mic] request-failed name=${failLog.name} message=${failLog.message}`
+  );
+  return {
+    ok: false,
+    permissionDenied: guidance.permissionDenied,
+    title: guidance.title,
+    message: guidance.body,
+    showInAppBrowserHint: guidance.showInAppBrowserHint,
+    lastError,
+  };
+}
 
 let micPermissionDeniedLatch = false;
 let micPermissionDeniedLogged = false;
@@ -441,8 +507,18 @@ async function ensureLocalMicStream(params: {
   trackRef: React.MutableRefObject<MediaStreamTrack | null>;
   showInitialPermissionHint?: boolean;
   onMicPermissionDenied?: (denied: boolean) => void;
+  onAcquireError?: (error: unknown) => void;
 }): Promise<boolean> {
-  if (isMicPermissionDeniedLatchActive() && params.reason !== "user_retry") {
+  const bypassPermissionLatch = new Set([
+    "user_retry",
+    "user_request",
+    "auto_granted",
+    "gate_request",
+  ]);
+  if (
+    isMicPermissionDeniedLatchActive() &&
+    !bypassPermissionLatch.has(params.reason)
+  ) {
     debugConsoleLog(
       `[local-mic] acquire-blocked reason=${params.reason} blockedBy=mic_permission_denied ${formatVoiceModeSuffix()}`
     );
@@ -473,6 +549,7 @@ async function ensureLocalMicStream(params: {
       getUserMuted,
       onLocalTrackMutedApplied,
       onMicPermissionDenied,
+      onAcquireError,
     } = params;
 
     const applyMuted = (track: MediaStreamTrack, applyReason: string) => {
@@ -561,7 +638,7 @@ async function ensureLocalMicStream(params: {
     }
 
     const navigationType = getNavigationType();
-    const permissionBefore = await queryMicrophonePermissionState();
+    const permissionBefore = await queryMicrophonePermissionStateLocal();
 
     logGetUserMediaAttempt({
       reason,
@@ -592,6 +669,9 @@ async function ensureLocalMicStream(params: {
     }
 
     try {
+      console.log(
+        `[mic] request-start reason=${reason} session=${compactSessionId(sessionId)}`
+      );
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: selectedMicId
           ? {
@@ -635,11 +715,20 @@ async function ensureLocalMicStream(params: {
         deviceId,
         trackLabel: track.label,
       });
+      console.log(
+        `[mic] request-success session=${compactSessionId(sessionId)}`
+      );
 
       return true;
     } catch (error) {
+      onAcquireError?.(error);
       onMicReadyChange?.(false);
-      const permissionDenied = isMicPermissionError(error);
+      const guidance = classifyMicError(error);
+      const failLog = formatMicErrorLog(error);
+      console.log(
+        `[mic] request-failed name=${failLog.name} message=${failLog.message}`
+      );
+      const permissionDenied = guidance.permissionDenied;
       if (permissionDenied) {
         setMicPermissionDeniedLatch(true);
         logMicPermissionDeniedDeduped(error);
@@ -647,7 +736,7 @@ async function ensureLocalMicStream(params: {
       if (reason === "user_retry" && permissionDenied) {
         onStatusChange?.(MIC_RETRY_FAILURE_MESSAGE);
       } else {
-        onStatusChange?.(getMicErrorMessage(error));
+        onStatusChange?.(`${guidance.title}。${guidance.body}`);
       }
       onMicPermissionDenied?.(permissionDenied);
       void logLocalMicFailed(error);
@@ -674,6 +763,7 @@ export function useLocalMic({
   deviceId,
   userMuted,
   userMutedRef,
+  autoAcquireOnMount = true,
   onMicReadyChange,
   onMicLevelChange,
   onStatusChange,
@@ -799,6 +889,11 @@ export function useLocalMic({
       syncMicPermissionDenied(false);
     }
 
+    if (gateStreamRef.current && gateTrackRef.current) {
+      localStreamRef.current = gateStreamRef.current;
+      localAudioTrackRef.current = gateTrackRef.current;
+    }
+
     const depsChanged: string[] = [];
     if (prevSessionMountDepsRef.current.sessionId !== sessionId) {
       depsChanged.push("sessionId");
@@ -828,6 +923,14 @@ export function useLocalMic({
         deviceId,
         userMuted: getUserMuted(),
       });
+
+      if (!autoAcquireOnMount) {
+        if (getCachedMic(sessionId).cache || localAudioTrackRef.current) {
+          bindMicCaptureState({ hasTrack: true });
+          notifyLocalMicTrackChange(localAudioTrackRef.current, "gate_cache");
+        }
+        return;
+      }
 
       if (isMicPermissionDeniedLatchActive()) {
         bindMicCaptureState({ hasTrack: false, mutedWithoutTrack: false });
@@ -942,6 +1045,7 @@ export function useLocalMic({
     releaseMicOnMutePolicy,
     notifyLocalMicTrackChange,
     syncMicPermissionDenied,
+    autoAcquireOnMount,
   ]);
 
   useEffect(() => {

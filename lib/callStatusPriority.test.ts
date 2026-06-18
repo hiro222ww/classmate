@@ -35,7 +35,7 @@ describe("callStatusPriority", () => {
       isInCall: true,
     });
     expect(grace.priority).toBe("absent_grace");
-    expect(grace.peerStillInCall).toBe(true);
+    expect(grace.peerStillInCall).toBe(false);
 
     const expired = evaluateCallParticipationPriority({
       nowMs,
@@ -105,8 +105,14 @@ describe("callStatusPriority", () => {
     ).toBe(true);
   });
 
-  it("maps removed participation to 退出しました label", () => {
+  it("maps removed participation to 退出済み label", () => {
     const label = resolveParticipationPriorityStatus("absent_expired");
-    expect(label?.text).toBe("退出しました");
+    expect(label?.text).toBe("退出済み");
+  });
+
+  it("maps grace participation to 不在 label", () => {
+    const label = resolveParticipationPriorityStatus("absent_grace");
+    expect(label?.text).toBe("不在");
+    expect(mapParticipationToStatusChoice("absent_grace")).toBe("offline");
   });
 });

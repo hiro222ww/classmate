@@ -589,12 +589,17 @@ export default function SelectClient() {
             console.log("[class/select] match-prefs loaded", {
               deviceId: id,
               nextPrefs,
+              profileRequired: pj.profileRequired === true,
             });
 
             if (!isAgeFilterOff(nextPrefs)) {
               lastOnPrefsRef.current = nextPrefs;
             }
             setPrefs(nextPrefs);
+          } else if (pr.status === 409 && pj?.error === "profile_required") {
+            console.log("[class/select] match-prefs deferred until profile", {
+              deviceId: id,
+            });
           } else {
             console.warn("[class/select] match-prefs get skipped", {
               status: pr.status,
@@ -635,6 +640,10 @@ export default function SelectClient() {
   async function savePrefs(next: MatchPrefs) {
     if (!deviceId) return;
 
+    if (hasProfile === false) {
+      return;
+    }
+
     const payload = matchPrefsForSubmit(next);
     setSavingPrefs(true);
     try {
@@ -649,20 +658,46 @@ export default function SelectClient() {
         cache: "no-store",
       });
 
+      const raw = await r.text();
+      let j: {
+        error?: string;
+        message?: string;
+        minAge?: number;
+        maxAge?: number;
+      } | null = null;
+
       try {
-        const j = await readJsonOrThrow(r, "match_prefs_save");
-        const savedPrefs = { min_age: j.minAge, max_age: j.maxAge };
-
-        console.log("[class/select] match-prefs saved", {
-          deviceId,
-          savedPrefs,
-        });
-
-        setPrefs(savedPrefs);
-        setPrefsLoaded(true);
-      } catch (e: any) {
-        alert(e?.message ?? "failed");
+        j = raw ? JSON.parse(raw) : null;
+      } catch {
+        j = null;
       }
+
+      if (!r.ok) {
+        if (j?.error === "profile_required") {
+          alert(
+            j.message ?? "プロフィール登録後に年齢条件を保存できます。"
+          );
+          goProfileIfNeeded("profile_required");
+          return;
+        }
+
+        throw new Error(j?.error ?? j?.message ?? `match_prefs_save:${r.status}`);
+      }
+
+      const savedPrefs = {
+        min_age: Number(j?.minAge ?? payload.min_age),
+        max_age: Number(j?.maxAge ?? payload.max_age),
+      };
+
+      console.log("[class/select] match-prefs saved", {
+        deviceId,
+        savedPrefs,
+      });
+
+      setPrefs(savedPrefs);
+      setPrefsLoaded(true);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "failed");
     } finally {
       setSavingPrefs(false);
     }
@@ -1420,7 +1455,13 @@ return;
             <button
               type="button"
               onClick={() => void handleAgeFilterToggle(false)}
-              disabled={savingPrefs || !deviceId || loading || !prefsLoaded}
+              disabled={
+                savingPrefs ||
+                !deviceId ||
+                loading ||
+                !prefsLoaded ||
+                hasProfile === false
+              }
               style={{
                 padding: "8px 14px",
                 border: "none",
@@ -1436,7 +1477,13 @@ return;
             <button
               type="button"
               onClick={() => void handleAgeFilterToggle(true)}
-              disabled={savingPrefs || !deviceId || loading || !prefsLoaded}
+              disabled={
+                savingPrefs ||
+                !deviceId ||
+                loading ||
+                !prefsLoaded ||
+                hasProfile === false
+              }
               style={{
                 padding: "8px 14px",
                 border: "none",
@@ -1456,6 +1503,10 @@ return;
         {!ageFilterEnabled ? (
           <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
             年齢では絞り込みません
+          </p>
+        ) : hasProfile === false ? (
+          <p style={{ margin: "12px 0 0", fontSize: 13, color: "#92400e", lineHeight: 1.6 }}>
+            プロフィール登録後に年齢条件を保存できます。
           </p>
         ) : (
           <div style={{ marginTop: 12 }}>

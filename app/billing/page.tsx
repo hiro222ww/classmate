@@ -212,11 +212,11 @@ function BillingPageInner() {
               margin: "10px 0 0",
               fontSize: 14,
               color: "#666",
-              lineHeight: 1.7,
+              lineHeight: 1.6,
             }}
           >
-            クラススロットとテーマプランを分けて管理できます。プラン変更・解約は
-            Stripe Portal から行います。支払い方法や請求履歴は、各プラン管理画面内で確認・変更できます。
+            クラス枠とテーマプランは、下のボタンから Stripe Portal
+            で変更・解約できます。
           </p>
         </div>
 
@@ -238,8 +238,7 @@ function BillingPageInner() {
 
       {renderPlanSection({
         title: "クラススロット",
-        description:
-          "クラス枠の変更や解約ができます。Portal 内で支払い方法・請求履歴も確認できます。",
+        description: "変更・解約は Stripe Portal から行います。",
         updateAction: "update_slots",
         cancelAction: "cancel_slots",
         updateLabel: "クラス枠を変更",
@@ -248,8 +247,7 @@ function BillingPageInner() {
 
       {renderPlanSection({
         title: "テーマプラン",
-        description:
-          "支援額の変更や解約ができます。Portal 内で支払い方法・請求履歴も確認できます。",
+        description: "変更・解約は Stripe Portal から行います。",
         updateAction: "update_theme",
         cancelAction: "cancel_theme",
         updateLabel: "支援額を変更",
@@ -261,13 +259,12 @@ function BillingPageInner() {
       <div
         style={{
           fontSize: 12,
-          color: "#666",
-          lineHeight: 1.7,
+          color: "#9ca3af",
+          lineHeight: 1.6,
           padding: "0 4px",
         }}
       >
-        ※ 解約は選択した種類の契約だけを対象にします。プラン変更は種類ごとの Stripe
-        Portal 更新画面を開き、表示される候補だけ選べます。
+        ※ 解約は選択した契約のみが対象です。
       </div>
 
       {msg ? (
