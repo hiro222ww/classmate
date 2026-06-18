@@ -154,7 +154,10 @@ export function mapParticipationToStatusChoice(
   }
 }
 
-export function resolveParticipationPriorityStatus(priority: CallParticipationPriority): {
+export function resolveParticipationPriorityStatus(
+  priority: CallParticipationPriority,
+  context?: { screen?: string | null }
+): {
   text: string;
   color: string;
   chipBg: string;
@@ -162,6 +165,8 @@ export function resolveParticipationPriorityStatus(priority: CallParticipationPr
   reason: string;
   source: string;
 } | null {
+  const screen = String(context?.screen ?? "").trim();
+
   switch (priority) {
     case "explicit_left":
       return {
@@ -192,6 +197,16 @@ export function resolveParticipationPriorityStatus(priority: CallParticipationPr
         source: "participation",
       };
     case "presence_stale_grace":
+      if (screen === "room" || screen === "home" || screen === "offline") {
+        return {
+          text: "待機中",
+          color: "#6b7280",
+          chipBg: "#f3f4f6",
+          chipText: "#6b7280",
+          reason: "not_on_call_screen",
+          source: "participation",
+        };
+      }
       return {
         text: "参加準備中",
         color: "#92400e",

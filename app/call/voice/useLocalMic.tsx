@@ -115,6 +115,13 @@ export function resetMicSessionForRejoin(reason: string) {
   console.log(`[voice-cleanup] reason=${reason}`);
 }
 
+export function isCallMicSessionActive(sessionId: string): boolean {
+  const normalizedSessionId = String(sessionId ?? "").trim();
+  if (!normalizedSessionId || !activeMicCache) return false;
+  if (activeMicCache.sessionId !== normalizedSessionId) return false;
+  return isAudioTrackUsable(activeMicCache.track);
+}
+
 export async function requestCallMicrophone(params: {
   sessionId: string;
   deviceId: string;

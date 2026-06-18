@@ -186,4 +186,22 @@ describe("established audio display priority", () => {
       })
     ).toBe("通話中");
   });
+
+  it("does not downgrade to 参加準備中 when audio is already strict confirmed", () => {
+    const status = resolveCallMemberStatus({
+      ...baseRemoteStatusParams,
+      isInCall: false,
+      screen: "room",
+      participationPriority: "presence_stale_grace",
+      peerStillInCall: true,
+      remoteAudioHealth: {
+        audioConfirmedStrict: true,
+        trackReady: "live",
+        playSuccess: true,
+        audioActuallyPlaying: true,
+      },
+    });
+
+    expect(status.text).toBe("通話中");
+  });
 });

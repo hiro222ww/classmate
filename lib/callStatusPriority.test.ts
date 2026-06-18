@@ -122,6 +122,11 @@ describe("callStatusPriority", () => {
     expect(resolveParticipationPriorityStatus("presence_stale_grace")?.text).toBe(
       "参加準備中"
     );
+    expect(
+      resolveParticipationPriorityStatus("presence_stale_grace", {
+        screen: "room",
+      })?.text
+    ).toBe("待機中");
     expect(mapParticipationToStatusChoice("absent_grace")).toBe("connecting");
     expect(mapParticipationToStatusChoice("presence_stale_grace")).toBe(
       "connecting"

@@ -14,6 +14,7 @@ import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
 import {
+  isCallMicSessionActive,
   releaseSessionMic,
   requestCallMicrophone,
   resetMicSessionForRejoin,
@@ -993,7 +994,6 @@ export default function CallClient() {
         }
         for (const id of nextApiIds) {
           memberAbsentSinceRef.current.delete(id);
-          memberJoinTransitionSinceRef.current.delete(id);
           recentlyDepartedUntilRef.current.delete(id);
         }
         apiSessionMemberIdsRef.current = nextApiIds;
@@ -1663,6 +1663,7 @@ export default function CallClient() {
 
       if (
         isMe &&
+        !micReady &&
         (voiceEntryMode === "checking" || voiceEntryMode === "gate")
       ) {
         const prepText = micPermissionDenied ? "マイク未許可" : "参加準備中";
@@ -2274,6 +2275,11 @@ export default function CallClient() {
     setMicReady(ready);
     if (ready) {
       markVoicePerf("local_mic_ready");
+      setVoiceEntryMode((mode) =>
+        mode === "checking" || mode === "gate" ? "mic" : mode
+      );
+      setGateError(null);
+      setMicPermissionDenied(false);
     }
   }, []);
 
@@ -2411,6 +2417,18 @@ export default function CallClient() {
     voiceLayerShouldRender &&
     (voiceEntryMode === "mic" || voiceEntryMode === "listen_only");
 
+  const showMicEntryGate =
+    voiceLayerShouldRender &&
+    !micReady &&
+    (voiceEntryMode === "checking" || voiceEntryMode === "gate");
+
+  const showMicPermissionWarning =
+    !micReady &&
+    (micPermissionDenied ||
+      gateError != null ||
+      ((voiceEntryMode === "checking" || voiceEntryMode === "gate") &&
+        callInfo.includes("許可")));
+
   const handleGateRequestMic = useCallback(async () => {
     if (!sessionId || !deviceId) return;
     setGateBusy(true);
@@ -2426,6 +2444,8 @@ export default function CallClient() {
       console.log("[voice-entry] mode=mic gate_request");
       setVoiceEntryMode("mic");
       setMicPermissionDenied(false);
+      setGateError(null);
+      setMicReady(true);
       return;
     }
     console.log(
@@ -2462,10 +2482,20 @@ export default function CallClient() {
     if (!sessionId || !deviceId) return;
 
     let cancelled = false;
-    setVoiceEntryMode("checking");
-    setGateError(null);
 
     void (async () => {
+      if (isCallMicSessionActive(sessionId)) {
+        console.log("[voice-entry] mode=mic session_cache");
+        setVoiceEntryMode("mic");
+        setMicPermissionDenied(false);
+        setGateError(null);
+        setMicReady(true);
+        return;
+      }
+
+      setVoiceEntryMode("checking");
+      setGateError(null);
+
       const permissionState = await queryMicrophonePermissionState();
       console.log(`[mic] permission-state ${permissionState}`);
       if (cancelled) return;
@@ -2482,6 +2512,8 @@ export default function CallClient() {
           console.log("[voice-entry] mode=mic auto_granted");
           setVoiceEntryMode("mic");
           setMicPermissionDenied(false);
+          setGateError(null);
+          setMicReady(true);
           return;
         }
         console.log("[voice-entry] blocked reason=mic_permission_denied");
@@ -2808,8 +2840,7 @@ export default function CallClient() {
         />
       ) : null}
 
-      {voiceLayerShouldRender &&
-      (voiceEntryMode === "checking" || voiceEntryMode === "gate") ? (
+      {showMicEntryGate ? (
         <>
           <InAppBrowserNotice />
           <MicEntryGate
@@ -3332,9 +3363,7 @@ export default function CallClient() {
       >
         <div style={{ fontWeight: 900, fontSize: 15 }}>音声設定</div>
 
-        {(micPermissionDenied ||
-          gateError ||
-          (!micReady && callInfo.includes("許可"))) && (
+        {showMicPermissionWarning ? (
           <div
             style={{
               marginTop: 10,
@@ -3379,7 +3408,7 @@ export default function CallClient() {
               もう一度試す
             </button>
           </div>
-        )}
+        ) : null}
 
         <div
           style={{

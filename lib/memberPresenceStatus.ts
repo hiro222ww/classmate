@@ -1855,9 +1855,18 @@ export function resolveCallMemberStatus(params: {
   const participationPriority = params.participationPriority ?? "in_call";
   const peerStillInCall = params.peerStillInCall !== false;
   const participationStatus = resolveParticipationPriorityStatus(
-    participationPriority
+    participationPriority,
+    { screen: params.screen }
   );
   const participationChoice = mapParticipationToStatusChoice(participationPriority);
+  const voiceEstablished =
+    health?.audioConfirmedStrict === true ||
+    recentConfirmed ||
+    softConnected ||
+    audioHealthy ||
+    params.effectivePeerState === "connected" ||
+    params.effectivePeerState === "connected_effective" ||
+    params.peerState === "connected";
 
   const allowPeerReconnectingLabel = shouldShowPeerReconnectingStatus({
     peerStillInCall,
@@ -1899,7 +1908,7 @@ export function resolveCallMemberStatus(params: {
     return null;
   };
 
-  if (participationStatus && participationChoice) {
+  if (participationStatus && participationChoice && !voiceEstablished) {
     return participationStatus;
   }
 
