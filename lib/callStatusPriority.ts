@@ -1,5 +1,6 @@
 import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 import { CALL_LIVE_MEMBER_ABSENT_GRACE_MS } from "@/lib/callMembersSync";
+import { CALL_JOIN_TRANSITION_GRACE_MS } from "@/lib/callPresenceGrace";
 import { isPresenceFresh } from "@/lib/memberPresenceStatus";
 import { getPresenceFreshMsForContext } from "@/lib/sessionMemberListMerge";
 
@@ -33,6 +34,7 @@ export function evaluateCallParticipationPriority(params: {
   isInCall: boolean;
   lastSeenAt?: string | null;
   lastInCallAtMs?: number | null;
+  joinTransitionSinceMs?: number | null;
   screen?: string | null;
 }): {
   priority: CallParticipationPriority;
@@ -93,8 +95,17 @@ export function evaluateCallParticipationPriority(params: {
       };
     }
 
-    const anchor = params.lastInCallAtMs ?? params.nowMs;
-    if (params.nowMs - anchor >= CALL_PRESENCE_STALE_GRACE_MS) {
+    const transitionAnchor =
+      params.joinTransitionSinceMs ??
+      params.lastInCallAtMs ??
+      lastSeenMs ??
+      params.nowMs;
+    const transitionElapsed = params.nowMs - transitionAnchor;
+    const transitionGraceMs = participationDown
+      ? CALL_JOIN_TRANSITION_GRACE_MS
+      : CALL_PRESENCE_STALE_GRACE_MS;
+
+    if (transitionElapsed >= transitionGraceMs) {
       return {
         priority: "presence_stale_expired",
         reason: participationDown ? "in_call_false_expired" : "presence_stale_expired",
@@ -104,8 +115,12 @@ export function evaluateCallParticipationPriority(params: {
 
     return {
       priority: "presence_stale_grace",
-      reason: participationDown ? "in_call_false_grace" : "presence_stale_grace",
-      peerStillInCall: false,
+      reason: participationDown
+        ? screen === "room"
+          ? "join_transition"
+          : "in_call_false_grace"
+        : "presence_stale_grace",
+      peerStillInCall: params.inApiSessionMembers,
     };
   }
 
@@ -133,7 +148,7 @@ export function mapParticipationToStatusChoice(
       return "removed";
     case "absent_grace":
     case "presence_stale_grace":
-      return "offline";
+      return "connecting";
     default:
       return null;
   }
@@ -149,8 +164,6 @@ export function resolveParticipationPriorityStatus(priority: CallParticipationPr
 } | null {
   switch (priority) {
     case "explicit_left":
-    case "absent_expired":
-    case "presence_stale_expired":
       return {
         text: "退出済み",
         color: "#6b7280",
@@ -159,13 +172,31 @@ export function resolveParticipationPriorityStatus(priority: CallParticipationPr
         reason: priority,
         source: "participation",
       };
-    case "absent_grace":
-    case "presence_stale_grace":
+    case "absent_expired":
+    case "presence_stale_expired":
       return {
         text: "不在",
         color: "#6b7280",
         chipBg: "#f3f4f6",
         chipText: "#6b7280",
+        reason: priority,
+        source: "participation",
+      };
+    case "absent_grace":
+      return {
+        text: "接続確認中",
+        color: "#92400e",
+        chipBg: "#fffbeb",
+        chipText: "#b45309",
+        reason: priority,
+        source: "participation",
+      };
+    case "presence_stale_grace":
+      return {
+        text: "参加準備中",
+        color: "#92400e",
+        chipBg: "#fffbeb",
+        chipText: "#b45309",
         reason: priority,
         source: "participation",
       };

@@ -9,6 +9,7 @@ import {
   shouldShowVoiceUnstableStatus,
 } from "./callStatusPriority";
 import { CALL_LIVE_MEMBER_ABSENT_GRACE_MS } from "./callMembersSync";
+import { CALL_JOIN_TRANSITION_GRACE_MS } from "./callPresenceGrace";
 
 describe("callStatusPriority", () => {
   const nowMs = 100_000;
@@ -56,9 +57,12 @@ describe("callStatusPriority", () => {
       absentSinceMs: null,
       isInCall: false,
       lastInCallAtMs: nowMs - 2_000,
-      screen: "call",
+      joinTransitionSinceMs: nowMs - 2_000,
+      screen: "room",
     });
     expect(grace.priority).toBe("presence_stale_grace");
+    expect(grace.peerStillInCall).toBe(true);
+    expect(grace.reason).toBe("join_transition");
 
     const expired = evaluateCallParticipationPriority({
       nowMs,
@@ -66,8 +70,9 @@ describe("callStatusPriority", () => {
       inApiSessionMembers: true,
       absentSinceMs: null,
       isInCall: false,
-      lastInCallAtMs: nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1,
-      screen: "call",
+      lastInCallAtMs: nowMs - CALL_JOIN_TRANSITION_GRACE_MS - 1,
+      joinTransitionSinceMs: nowMs - CALL_JOIN_TRANSITION_GRACE_MS - 1,
+      screen: "room",
     });
     expect(expired.priority).toBe("presence_stale_expired");
     expect(expired.peerStillInCall).toBe(false);
@@ -106,13 +111,29 @@ describe("callStatusPriority", () => {
   });
 
   it("maps removed participation to 退出済み label", () => {
-    const label = resolveParticipationPriorityStatus("absent_expired");
+    const label = resolveParticipationPriorityStatus("explicit_left");
     expect(label?.text).toBe("退出済み");
   });
 
-  it("maps grace participation to 不在 label", () => {
-    const label = resolveParticipationPriorityStatus("absent_grace");
-    expect(label?.text).toBe("不在");
-    expect(mapParticipationToStatusChoice("absent_grace")).toBe("offline");
+  it("maps grace participation to preparing labels", () => {
+    expect(resolveParticipationPriorityStatus("absent_grace")?.text).toBe(
+      "接続確認中"
+    );
+    expect(resolveParticipationPriorityStatus("presence_stale_grace")?.text).toBe(
+      "参加準備中"
+    );
+    expect(mapParticipationToStatusChoice("absent_grace")).toBe("connecting");
+    expect(mapParticipationToStatusChoice("presence_stale_grace")).toBe(
+      "connecting"
+    );
+  });
+
+  it("maps expired participation to 不在 label", () => {
+    expect(resolveParticipationPriorityStatus("absent_expired")?.text).toBe(
+      "不在"
+    );
+    expect(resolveParticipationPriorityStatus("presence_stale_expired")?.text).toBe(
+      "不在"
+    );
   });
 });

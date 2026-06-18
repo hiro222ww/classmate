@@ -1828,7 +1828,7 @@ export function resolveCallMemberStatus(params: {
       return (
         absentOverPeerReconnect() ?? {
           ...label,
-          text: "不在",
+          text: "接続確認中",
           reason: "not_in_call_transport_unconfirmed",
           source: "participation",
         }
@@ -1865,17 +1865,36 @@ export function resolveCallMemberStatus(params: {
   });
 
   const absentOverPeerReconnect = (): CallMemberStatusResult | null => {
+    if (
+      health?.audioConfirmedStrict === true ||
+      recentConfirmed ||
+      softConnected ||
+      audioHealthy
+    ) {
+      return null;
+    }
     if (allowPeerReconnectingLabel) return null;
     if (participationStatus) return participationStatus;
-    if (!peerStillInCall || participationPriority !== "in_call") {
-      return {
-        text: "不在",
-        color: "#6b7280",
-        chipBg: "#f3f4f6",
-        chipText: "#6b7280",
-        reason: "not_in_call",
-        source: "participation",
-      };
+    if (
+      participationPriority === "absent_expired" ||
+      participationPriority === "presence_stale_expired"
+    ) {
+      return (
+        participationStatus ?? {
+          text: "不在",
+          color: "#6b7280",
+          chipBg: "#f3f4f6",
+          chipText: "#6b7280",
+          reason: participationPriority,
+          source: "participation",
+        }
+      );
+    }
+    if (
+      participationPriority === "absent_grace" ||
+      participationPriority === "presence_stale_grace"
+    ) {
+      return participationStatus;
     }
     return null;
   };

@@ -232,9 +232,15 @@ import {
   CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
   logCallPeerAddRemote,
   logCallPeerRemoveRemote,
+  logCallPresenceAbsentConfirmed,
+  logCallPresenceAbsentGraceHold,
   logCallPresenceStaleGrace,
   logVoiceRepairSkip,
 } from "@/lib/callMembersSync";
+import {
+  evaluateRemoteVoiceRepairEligibility,
+  isMemberCallActive,
+} from "@/lib/callPresenceGrace";
 import {
   isExplicitPeerCloseReason,
   isStableVoiceJoinMode,
@@ -1131,6 +1137,7 @@ export function usePeerConnections({
   const remotePeerGraceRefsRef = useRef(createRemotePeerGraceRefs());
   const voiceSessionMemberIdsRef = useRef<Set<string>>(new Set());
   const voiceSessionMemberAbsentSinceRef = useRef<Map<string, number>>(new Map());
+  const remoteJoinTransitionSinceRef = useRef<Map<string, number>>(new Map());
   const voicePeerHealthRef = useRef<Map<string, VoicePeerHealthEntry>>(new Map());
   const offerEffectTrackedRemoteIdsRef = useRef<string[]>([]);
   const lastPeerCloseReasonRef = useRef<Map<string, string>>(new Map());
@@ -2053,11 +2060,58 @@ export function usePeerConnections({
     (remoteId: string) => {
       const id = String(remoteId ?? "").trim();
       if (!id || id === deviceId) return false;
-      if (remotePeerGraceRefsRef.current.explicitRemoved.has(id)) return false;
-      return getStrictRemoteIds().includes(id);
+
+      const member = presenceMembersRef.current.find(
+        (row) => String(row.device_id ?? "").trim() === id
+      );
+      const inSession =
+        getSessionMemberRemoteIds().includes(id) ||
+        voiceSessionMemberIdsRef.current.has(id);
+      const result = evaluateRemoteVoiceRepairEligibility({
+        remoteId: id,
+        selfDeviceId: deviceId,
+        nowMs: Date.now(),
+        member,
+        inSessionMembers: inSession,
+        absentSinceMs: voiceSessionMemberAbsentSinceRef.current.get(id) ?? null,
+        joinTransitionSinceMs:
+          remoteJoinTransitionSinceRef.current.get(id) ?? null,
+        explicitRemoved: remotePeerGraceRefsRef.current.explicitRemoved.has(id),
+        sessionId,
+      });
+
+      if (!result.eligible && result.skipReason) {
+        logVoiceRepairSkip({ remoteId: id, reason: result.skipReason });
+      }
+      return result.eligible;
     },
-    [deviceId, getStrictRemoteIds]
+    [deviceId, getSessionMemberRemoteIds, sessionId]
   );
+
+  useEffect(() => {
+    const now = Date.now();
+    const selfId = String(deviceId ?? "").trim();
+    for (const member of presenceMembersRef.current) {
+      const id = String(member.device_id ?? "").trim();
+      if (!id || id === selfId) continue;
+      if (isMemberCallActive(member)) {
+        remoteJoinTransitionSinceRef.current.delete(id);
+        continue;
+      }
+      if (!getSessionMemberRemoteDeviceIds(presenceMembersRef.current, selfId).includes(id)) {
+        continue;
+      }
+      const since = remoteJoinTransitionSinceRef.current.get(id);
+      if (since == null) {
+        remoteJoinTransitionSinceRef.current.set(id, now);
+        logCallPresenceAbsentGraceHold({
+          remoteId: id,
+          reason: "join_transition",
+          elapsedMs: 0,
+        });
+      }
+    }
+  }, [deviceId, members, membersSyncRevision, presenceMembers]);
 
   const getRemoteIds = useCallback(() => {
     const strict = getStrictRemoteIds();

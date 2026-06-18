@@ -168,7 +168,11 @@ import {
   logCallPeerRemoveRemote,
   logCallPresenceStaleGrace,
   logCallPresenceRemoteAbsent,
+  logCallPresenceAbsentCandidate,
+  logCallPresenceAbsentGraceHold,
+  logCallPresenceAbsentConfirmed,
 } from "@/lib/callMembersSync";
+import { isMemberCallActive } from "@/lib/callPresenceGrace";
 import {
   CALL_DEPARTED_LABEL_MS,
   evaluateCallParticipationPriority,
@@ -422,6 +426,7 @@ export default function CallClient() {
   const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
   const apiSessionMemberIdsRef = useRef<Set<string>>(new Set());
   const memberAbsentSinceRef = useRef<Map<string, number>>(new Map());
+  const memberJoinTransitionSinceRef = useRef<Map<string, number>>(new Map());
   const recentlyDepartedUntilRef = useRef<Map<string, number>>(new Map());
   const [membersSyncRevision, setMembersSyncRevision] = useState(0);
   const voiceReadinessRef = useRef({
@@ -924,10 +929,33 @@ export default function CallClient() {
 
         const nextApiIds = new Set(nextMembers.map((m) => m.device_id));
         const syncNow = Date.now();
+
+        for (const m of nextMembers) {
+          const id = String(m.device_id ?? "").trim();
+          if (!id || id === deviceId) continue;
+          if (isMemberCallActive(m)) {
+            memberJoinTransitionSinceRef.current.delete(id);
+          } else if (nextApiIds.has(id)) {
+            if (!memberJoinTransitionSinceRef.current.has(id)) {
+              memberJoinTransitionSinceRef.current.set(id, syncNow);
+              logCallPresenceAbsentGraceHold({
+                remoteId: id,
+                reason: "join_transition",
+                elapsedMs: 0,
+              });
+            }
+          }
+        }
+
         for (const id of Array.from(apiSessionMemberIdsRef.current)) {
           if (nextApiIds.has(id)) continue;
           if (!memberAbsentSinceRef.current.has(id)) {
             memberAbsentSinceRef.current.set(id, syncNow);
+            logCallPresenceAbsentCandidate({
+              remoteId: id,
+              reason: "session_member_missing",
+              elapsedMs: 0,
+            });
             logCallPresenceRemoteAbsent({
               remoteId: id,
               reason: "session_member_missing",
@@ -944,6 +972,11 @@ export default function CallClient() {
                 id,
                 syncNow + CALL_DEPARTED_LABEL_MS
               );
+              logCallPresenceAbsentConfirmed({
+                remoteId: id,
+                reason: "session_member_missing_grace_expired",
+                elapsedMs: syncNow - absentSince,
+              });
               logCallPresenceStaleGrace({
                 remoteId: id,
                 phase: "expired",
@@ -959,6 +992,7 @@ export default function CallClient() {
         }
         for (const id of nextApiIds) {
           memberAbsentSinceRef.current.delete(id);
+          memberJoinTransitionSinceRef.current.delete(id);
           recentlyDepartedUntilRef.current.delete(id);
         }
         apiSessionMemberIdsRef.current = nextApiIds;
@@ -1200,6 +1234,7 @@ export default function CallClient() {
     memberLastInCallAtRef.current = new Map();
     apiSessionMemberIdsRef.current = new Set();
     memberAbsentSinceRef.current = new Map();
+    memberJoinTransitionSinceRef.current = new Map();
     recentlyDepartedUntilRef.current = new Map();
     callMountAtRef.current = Date.now();
     renderCountRef.current = 0;
@@ -1865,6 +1900,8 @@ export default function CallClient() {
         inApiSessionMembers:
           isMe || apiSessionMemberIdsRef.current.has(memberId),
         absentSinceMs: memberAbsentSinceRef.current.get(memberId) ?? null,
+        joinTransitionSinceMs:
+          memberJoinTransitionSinceRef.current.get(memberId) ?? null,
         isInCall,
         lastSeenAt: member.last_seen_at,
         lastInCallAtMs: memberLastInCallAtRef.current.get(memberId) ?? null,

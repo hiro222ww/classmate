@@ -7,6 +7,9 @@ export const CALL_MEMBERS_ACTIVE_POLL_MS = 4_000;
 /** Shorter grace when a device disappears from session_members (not just is_in_call=false). */
 export const CALL_LIVE_MEMBER_ABSENT_GRACE_MS = 12_000;
 
+/** Grace while a session member is joining /call (room→call, mic gate, presence lag). */
+export const CALL_JOIN_TRANSITION_GRACE_MS = 12_000;
+
 export function logCallMembersSync(params: {
   reason: string;
   prev: Array<{ device_id?: string | null }>;
@@ -78,11 +81,48 @@ export function logCallPresenceStaleGrace(params: {
 export function logCallPresenceRemoteAbsent(params: {
   remoteId: string;
   reason: string;
+  elapsedMs?: number;
 }) {
   if (!isDebugLogEnabled()) return;
   logDebug(
     "presence",
-    `[call-presence] remote-absent remote=${params.remoteId.slice(-4)} reason=${params.reason}`
+    `[call-presence] remote-absent remote=${params.remoteId.slice(-4)} reason=${params.reason}` +
+      (params.elapsedMs != null ? ` elapsedMs=${params.elapsedMs}` : "")
+  );
+}
+
+export function logCallPresenceAbsentCandidate(params: {
+  remoteId: string;
+  reason: string;
+  elapsedMs: number;
+}) {
+  if (!isDebugLogEnabled()) return;
+  logDebug(
+    "presence",
+    `[call-presence] absent-candidate remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason} elapsedMs=${params.elapsedMs}`
+  );
+}
+
+export function logCallPresenceAbsentGraceHold(params: {
+  remoteId: string;
+  reason: string;
+  elapsedMs: number;
+}) {
+  console.log(
+    `[call-presence] absent-grace-hold remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason} elapsedMs=${params.elapsedMs}`
+  );
+}
+
+export function logCallPresenceAbsentConfirmed(params: {
+  remoteId: string;
+  reason: string;
+  elapsedMs: number;
+}) {
+  console.log(
+    `[call-presence] absent-confirmed remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason} elapsedMs=${params.elapsedMs}`
   );
 }
 
