@@ -17,6 +17,11 @@ import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
+import {
+  logRoomEntryClient,
+  logSessionJoinClient,
+} from "@/lib/entryFlowLog";
+import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
 import {
@@ -1844,6 +1849,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
       if (!joinRes.ok || !joinJson?.ok) {
         const joinError = String(joinJson?.error ?? joinRes.status);
+        logSessionJoinClient(deviceId, "failed", joinError);
         if (joinError === "membership_left") {
           logRoomAsyncIgnored(classId, "class_left", "self_rejoin");
         } else {
@@ -1854,6 +1860,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         }
         return false;
       }
+
+      logSessionJoinClient(deviceId, "success");
 
       joinedSessionKeyRef.current = `${sessionId}:${classId}:${deviceId}:${name}`;
       hasClassMembershipHintRef.current = true;
@@ -2702,6 +2710,8 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     hasClassMembershipHintRef.current = true;
     inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
+    logSessionJoinClient(deviceId, "success");
+    logRoomEntryClient(deviceId, "success");
 
     if (invite) {
       logInviteRoute("join-success", { classId, sessionId, invite: true });
@@ -3128,7 +3138,9 @@ const name = rawName === "You" ? "参加者" : rawName;
         res.ok && json?.ok ? "" : String(json?.error || rawText || res.status);
 
       if (!res.ok || !json?.ok) {
-        const error = json?.error || rawText;
+        const error = String(json?.error || rawText || res.status);
+        logSessionJoinClient(deviceId, "failed", error);
+        logRoomEntryClient(deviceId, "failed", error);
 
         logInviteJoinClient("failed", {
           classId,
@@ -3361,9 +3373,12 @@ const name = rawName === "You" ? "参加者" : rawName;
         }
       }
 
-      const message = String(e?.message ?? "参加に失敗しました");
+      const rawMessage = String(e?.message ?? "参加に失敗しました");
       const isInviteFailure =
-        invite && isInviteJoinFailureMessage(message);
+        invite && isInviteJoinFailureMessage(rawMessage);
+      const message = isInviteFailure
+        ? rawMessage
+        : resolveMatchJoinUserMessage(rawMessage, rawMessage);
 
       if (isInviteFailure) {
         logInviteUiSnapshot("catch_show", { err: message });

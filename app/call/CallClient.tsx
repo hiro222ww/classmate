@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { logCallEntryBlocked } from "@/lib/entryFlowLog";
 import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
@@ -2524,10 +2525,12 @@ export default function CallClient() {
         });
         setMicPermissionDenied(result.permissionDenied);
         setVoiceEntryMode("gate");
+        logCallEntryBlocked(deviceId, "mic_permission_denied");
         return;
       }
 
       setVoiceEntryMode("gate");
+      logCallEntryBlocked(deviceId, "mic_permission_gate");
     })();
 
     return () => {

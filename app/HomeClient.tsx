@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
+import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import {
+  logDeviceEnsureFailed,
+  logDeviceEnsureStart,
+  logDeviceEnsureSuccess,
+  logHomeEntryStart,
+  logProfileExists,
+} from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import { withDev } from "@/lib/withDev";
@@ -786,6 +794,14 @@ export default function HomeClient() {
           return;
         }
 
+        logHomeEntryStart(id);
+        if (!isValidDeviceUuid(id)) {
+          logDeviceEnsureFailed(id, "invalid_uuid_format");
+        } else {
+          logDeviceEnsureStart(id);
+          logDeviceEnsureSuccess(id, "home_mount");
+        }
+
         const refreshFromQuery =
           (searchParams.get("refreshClasses") ?? "").trim() === "1";
         const refreshFromStorage = consumeJoinedClassesRefresh();
@@ -843,8 +859,17 @@ export default function HomeClient() {
                 : null;
 
           setProfile(nextProfile);
+          logProfileExists(
+            id,
+            Boolean(
+              nextProfile &&
+                typeof nextProfile === "object" &&
+                String((nextProfile as { display_name?: string }).display_name ?? "").trim()
+            )
+          );
         } else {
           setProfile(null);
+          logProfileExists(id, false);
         }
       } catch (e: any) {
         console.error("[home] load error", e);

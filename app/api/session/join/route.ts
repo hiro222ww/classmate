@@ -17,6 +17,8 @@ import {
 } from "@/lib/admissionMembership";
 import { getAdmissionStatus } from "@/lib/admissionWindow";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
+import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import type { JoinStateSource } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
 import { logRoomJoinPerf } from "@/lib/roomJoinPerf";
@@ -215,6 +217,17 @@ export async function POST(req: Request) {
     if (!deviceId) {
       return NextResponse.json(
         { ok: false, error: "deviceId required" },
+        { status: 400 }
+      );
+    }
+
+    if (!isValidDeviceUuid(deviceId)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "device_id_invalid",
+          message: resolveMatchJoinUserMessage("device_id_invalid"),
+        },
         { status: 400 }
       );
     }

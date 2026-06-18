@@ -14,6 +14,20 @@ import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
 import { isUserProfileComplete } from "@/lib/profileClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { tierName } from "@/lib/planTiers";
+import { DEVICE_RESET_CONFIRM_MESSAGE, resetClassmateDeviceState } from "@/lib/deviceReset";
+import {
+  logDeviceEnsureFailed,
+  logDeviceEnsureStart,
+  logDeviceEnsureSuccess,
+  logMatchJoinClientFailed,
+  logMatchJoinClientStart,
+  logMatchJoinClientSuccess,
+  logMatchPrefsGet,
+  logProfileExists,
+} from "@/lib/entryFlowLog";
+import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
+import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { HelpTip } from "@/components/HelpTip";
 
 type World = {
@@ -252,6 +266,13 @@ export default function SelectClient() {
 
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileLoadError, setProfileLoadError] = useState(false);
+  const [deviceIdInvalid, setDeviceIdInvalid] = useState(false);
+  const [entryFailure, setEntryFailure] = useState<{
+    code: string;
+    message: string;
+  } | null>(null);
+  const lastJoinBoardRef = useRef<EntryBoard | null>(null);
 
   async function reloadCatalog() {
     try {
@@ -345,17 +366,28 @@ export default function SelectClient() {
           raw,
           dev,
         });
+        if (r.status >= 500) {
+          setProfileLoadError(true);
+          setHasProfile(null);
+          setProfile(null);
+          logProfileExists(id, false);
+          return null;
+        }
+        setProfileLoadError(false);
         setHasProfile(false);
         setProfile(null);
+        logProfileExists(id, false);
         return null;
       }
 
+      setProfileLoadError(false);
       const nextProfile: Profile | null = raw?.profile ?? null;
 
       const exists = isUserProfileComplete(nextProfile);
 
       setHasProfile(exists);
       setProfile(nextProfile);
+      logProfileExists(id, exists);
 
       console.log("[class/select] profile =", {
         requestedDeviceId: id,
@@ -368,10 +400,24 @@ export default function SelectClient() {
       return nextProfile;
     } catch (e) {
       console.error("[class/select] profile fetch failed", e);
-      setHasProfile(false);
+      setProfileLoadError(true);
+      setHasProfile(null);
       setProfile(null);
+      logProfileExists(id, false);
       return null;
     }
+  }
+
+  function handleResetDeviceAndReload() {
+    if (!window.confirm(DEVICE_RESET_CONFIRM_MESSAGE)) return;
+    resetClassmateDeviceState();
+    window.location.href = withDev("/");
+  }
+
+  function showEntryFailure(code: string, message?: string) {
+    const resolved = message?.trim() || resolveMatchJoinUserMessage(code);
+    setEntryFailure({ code, message: resolved });
+    logMatchJoinClientFailed(deviceId, code, resolved);
   }
 
   async function fetchEntitlements(id: string) {
@@ -463,7 +509,17 @@ export default function SelectClient() {
       setLoading(true);
       setBusy(false);
       setJoinLimitMessage("");
+      setEntryFailure(null);
+      setProfileLoadError(false);
       setDeviceId(id);
+      const deviceValid = isValidDeviceUuid(id);
+      setDeviceIdInvalid(!deviceValid);
+      if (!deviceValid) {
+        logDeviceEnsureFailed(id, "invalid_uuid_format");
+      } else {
+        logDeviceEnsureStart(id);
+        logDeviceEnsureSuccess(id, "select_init");
+      }
       setHasProfile(null);
       setProfile(null);
       setEnt(null);
@@ -596,10 +652,15 @@ export default function SelectClient() {
               lastOnPrefsRef.current = nextPrefs;
             }
             setPrefs(nextPrefs);
+            logMatchPrefsGet(
+              id,
+              pj.profileRequired === true ? "profile_required" : "saved"
+            );
           } else if (pr.status === 409 && pj?.error === "profile_required") {
             console.log("[class/select] match-prefs deferred until profile", {
               deviceId: id,
             });
+            logMatchPrefsGet(id, "profile_required");
           } else {
             console.warn("[class/select] match-prefs get skipped", {
               status: pr.status,
@@ -607,6 +668,7 @@ export default function SelectClient() {
               raw,
               deviceId: id,
             });
+            logMatchPrefsGet(id, "failed");
           }
         } catch (e) {
           console.warn("[class/select] match-prefs get failed (non-fatal)", e);
@@ -797,14 +859,32 @@ export default function SelectClient() {
 
   async function joinMatchedBoard(b: EntryBoard, forcedClassId?: string) {
     console.log("[select] clicked board =", b, "forcedClassId =", forcedClassId);
+    lastJoinBoardRef.current = b;
+    setEntryFailure(null);
 
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
       return;
     }
 
+    if (!isValidDeviceUuid(deviceId)) {
+      showEntryFailure(
+        "invalid_deviceId",
+        resolveMatchJoinUserMessage("invalid_deviceId")
+      );
+      return;
+    }
+
     if (hasProfile === false) {
       goProfileIfNeeded();
+      return;
+    }
+
+    if (hasProfile === null && profileLoadError) {
+      showEntryFailure(
+        "profile_load_failed",
+        "プロフィール情報の取得に失敗しました。もう一度試すか、端末情報をリセットしてください。"
+      );
       return;
     }
 
@@ -859,6 +939,8 @@ export default function SelectClient() {
         `[match-join] request-start requestId=${clientRequestId.slice(0, 8)} device=${String(deviceId).slice(-6)}`
       );
 
+      logMatchJoinClientStart(deviceId);
+
       const matchRes = await fetch("/api/class/match-join-v2", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -881,43 +963,51 @@ export default function SelectClient() {
           `requestId=${String(matchJson?.requestId ?? clientRequestId).slice(0, 8)}`
       );
 
-      if (!matchRes.ok || !matchJson?.ok) {
-        if (matchJson?.error === "profile_required") {
-          goProfileIfNeeded(matchJson?.error);
+      if (!matchRes.ok || !matchJson?.ok || matchJson?.joinStateOk === false) {
+        const errorCode = String(
+          matchJson?.error ?? (matchRes.ok ? "join_state_failed" : `http_${matchRes.status}`)
+        );
+        if (errorCode === "profile_required") {
+          goProfileIfNeeded(errorCode);
           return;
         }
 
-        if (matchJson?.error === "class_slots_limit") {
+        if (errorCode === "class_slots_limit") {
           setSlotsLimitUi(matchJson?.classSlots);
+          logMatchJoinClientFailed(deviceId, errorCode);
           return;
         }
 
         if (
-          matchJson?.error === "admission_closed" ||
-          matchJson?.error === "match_deadline_passed"
+          errorCode === "admission_closed" ||
+          errorCode === "match_deadline_passed"
         ) {
           alert(
             matchJson?.message ??
               "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
           );
+          logMatchJoinClientFailed(deviceId, errorCode, matchJson?.message);
           void reloadJoinWindow();
           return;
         }
 
-        if (matchJson?.error === "recruitment_closed") {
-          alert(
-            matchJson?.message ?? "このクラスは現在募集していません。"
-          );
+        if (errorCode === "recruitment_closed") {
+          alert(matchJson?.message ?? "このクラスは現在募集していません。");
+          logMatchJoinClientFailed(deviceId, errorCode, matchJson?.message);
           return;
         }
 
-        if (matchJson?.error === "gender_restricted_topic") {
+        if (errorCode === "gender_restricted_topic") {
           alert(matchJson?.message ?? GENDER_RESTRICTED_TOPIC_MESSAGE);
+          logMatchJoinClientFailed(deviceId, errorCode);
           return;
         }
 
-        alert(matchJson?.error ?? "match_join_failed");
-return;
+        showEntryFailure(
+          errorCode,
+          resolveMatchJoinUserMessage(errorCode, matchJson?.message)
+        );
+        return;
       }
 
       const classId = safeTrim(matchJson?.classId);
@@ -958,8 +1048,11 @@ return;
       }
 
       if (!classId || !sessionId) {
-        throw new Error("match_join_missing_ids");
+        showEntryFailure("match_join_missing_ids");
+        return;
       }
+
+      logMatchJoinClientSuccess(deviceId, classId, sessionId);
 
       if (!matchBody.openJoinedClass) {
         const autoCallDeviceId = String(deviceId || getDeviceId() || "").trim();
@@ -985,7 +1078,10 @@ return;
       window.location.href = roomUrl;
     } catch (e: any) {
       console.error(e);
-      alert(e?.message ?? "enter_board_failed");
+      showEntryFailure(
+        "enter_board_failed",
+        resolveMatchJoinUserMessage("server_error")
+      );
     } finally {
       setBusy(false);
     }
@@ -1334,6 +1430,32 @@ return;
           今所属しているクラスを見る
         </Link>
       </section>
+
+      {deviceIdInvalid ? (
+        <EntryFailurePanel
+          title="端末情報を確認してください"
+          message={resolveMatchJoinUserMessage("invalid_deviceId")}
+          errorCode="invalid_deviceId"
+          onResetDevice={handleResetDeviceAndReload}
+        />
+      ) : null}
+
+      {entryFailure ? (
+        <EntryFailurePanel
+          message={entryFailure.message}
+          errorCode={entryFailure.code}
+          onRetry={() => {
+            const board = lastJoinBoardRef.current;
+            if (board) {
+              void joinMatchedBoard(board);
+              return;
+            }
+            setEntryFailure(null);
+            void reloadCatalog();
+          }}
+          onResetDevice={handleResetDeviceAndReload}
+        />
+      ) : null}
 
       {joinLimitMessage ? (
         <div

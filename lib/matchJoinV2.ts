@@ -27,6 +27,9 @@ import {
   logMatchJoinStart,
   tailMatchId,
 } from "@/lib/matchJoinLogging";
+import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import { rollbackPartialJoinState } from "@/lib/joinStateRollback";
+import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { resolveOpenJoinedClassSession } from "@/lib/openJoinedClassSession";
 import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 
@@ -582,6 +585,17 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
+    if (!isValidDeviceUuid(deviceId)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "invalid_deviceId",
+          message: resolveMatchJoinUserMessage("invalid_deviceId"),
+        },
+        { status: 400 }
+      );
+    }
+
     const admissionBlocked = await enforceAdmissionForNewJoin({
       deviceId,
       classId: forcedClassId,
@@ -1005,10 +1019,25 @@ export async function matchJoinV2Post(req: Request) {
     });
 
     if (!joinState.ok) {
+      await rollbackPartialJoinState({
+        classId: classIdOut,
+        sessionId: resolvedSessionId,
+        deviceId,
+        failedStep: joinState.failedStep,
+      });
       console.warn(
         `[match-join] join-state-failed requestId=${requestId.slice(0, 8)} ` +
           `error=${joinState.error} class=${tailMatchId(String(row.class_id))} ` +
-          `session=${tailMatchId(String(row.session_id))}`
+          `session=${tailMatchId(resolvedSessionId)}`
+      );
+      return NextResponse.json(
+        {
+          ok: false,
+          error: joinState.error || "join_state_failed",
+          message: resolveMatchJoinUserMessage(joinState.error),
+          joinState,
+        },
+        { status: joinState.status === "blocked" ? 400 : 500 }
       );
     }
 
@@ -1041,7 +1070,7 @@ export async function matchJoinV2Post(req: Request) {
       selectionReason: resolvedSelectionReason || null,
       createdNewClass,
       raceMerged,
-      joinStateOk: joinState.ok,
+        joinStateOk: true,
       requestedCapacity,
       requestedMinAge,
       requestedMaxAge,
