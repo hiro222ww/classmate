@@ -1,12 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import AppLifecycleBoot from "@/components/AppLifecycleBoot";
+import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
 
+const appOrigin = resolveAppOrigin();
+
 export const metadata: Metadata = {
+  metadataBase: new URL(appOrigin),
   title: "classmate",
   description: "大人になっても自然と仲間ができる場所",
   manifest: "/manifest.webmanifest",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "classmate",
+    description: "大人になっても自然と仲間ができる場所",
+    url: appOrigin,
+    siteName: "classmate",
+    locale: "ja_JP",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

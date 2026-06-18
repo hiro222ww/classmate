@@ -98,8 +98,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
-    const origin =
-      req.headers.get("origin")?.replace(/\/+$/, "") || resolveAppOrigin();
+    const origin = resolveAppOrigin();
 
     const success_url = buildSuccessUrl(origin, dev);
     const cancel_url = buildCancelUrl(origin, dev);

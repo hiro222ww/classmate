@@ -9,6 +9,7 @@ import {
   deletePushSubscriptionByEndpoint,
   loadPushSubscriptionsForDevices,
 } from "@/lib/pushSubscriptions";
+import { buildAppUrl } from "@/lib/appOrigin";
 import { normalizeMeetingDeviceId } from "@/lib/meetingPlan";
 
 type WebPushPayload = {
@@ -33,15 +34,7 @@ function getVapidConfig() {
 }
 
 function buildPushOpenUrl(classId: string) {
-  const origin = String(
-    process.env.NEXT_PUBLIC_APP_ORIGIN ??
-      process.env.NEXT_PUBLIC_APP_URL ??
-      ""
-  )
-    .trim()
-    .replace(/\/+$/, "");
-  const path = `/?pushOpenClassId=${encodeURIComponent(classId)}`;
-  return origin ? `${origin}${path}` : path;
+  return buildAppUrl(`/?pushOpenClassId=${encodeURIComponent(classId)}`);
 }
 
 async function markNotificationPushSent(eventId: string) {

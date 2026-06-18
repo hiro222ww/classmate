@@ -13,6 +13,7 @@ import {
   useSearchParams,
 } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
+import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
@@ -3976,11 +3977,11 @@ const name = rawName === "You" ? "参加者" : rawName;
 
                   const inviterName = normalizeName(displayName) || "友達";
 
-                  const inviteUrl =
-                    `${location.origin}/room?invite=1&autojoin=1` +
-                    `&sessionId=${encodeURIComponent(sessionId)}` +
-                    `&classId=${encodeURIComponent(classId)}` +
-                    `&inviter=${encodeURIComponent(inviterName)}`;
+                  const inviteUrl = buildInviteRoomUrl({
+                    classId,
+                    sessionId,
+                    inviter: inviterName,
+                  });
 
                   try {
                     await navigator.clipboard.writeText(inviteUrl);

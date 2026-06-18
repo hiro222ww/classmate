@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallVoiceLayer from "./CallVoiceLayer";
 import {
@@ -2935,10 +2936,10 @@ export default function CallClient() {
                 return;
               }
 
-              const inviteUrl =
-                `${window.location.origin}/room?invite=1&autojoin=1` +
-                `&classId=${encodeURIComponent(classId)}` +
-                `&sessionId=${encodeURIComponent(sessionId)}`;
+              const inviteUrl = buildInviteRoomUrl({
+                classId,
+                sessionId,
+              });
 
               try {
                 await navigator.clipboard.writeText(inviteUrl);
