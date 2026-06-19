@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { getDeviceId } from "@/lib/device";
 import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
@@ -38,12 +38,29 @@ type SharedCanvasBoardProps = {
 const BOARD_REALTIME_RESUBSCRIBE_MS = 4000;
 const BOARD_STATUS_RECONNECTING = "再接続中…";
 
+const BOARD_TOUCH_GUARD: CSSProperties = {
+  userSelect: "none",
+  WebkitUserSelect: "none",
+  WebkitTouchCallout: "none",
+  WebkitTapHighlightColor: "transparent",
+  overscrollBehavior: "contain",
+};
+
+function boardTouchAction(
+  isTouchLike: boolean,
+  touchMode: "draw" | "pan"
+): CSSProperties["touchAction"] {
+  if (!isTouchLike) return "none";
+  return touchMode === "pan" ? "pan-x pan-y" : "none";
+}
+
 function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef("");
   const displayNameRef = useRef("");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const boardScrollRef = useRef<HTMLDivElement | null>(null);
   const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
 
   const drawingRef = useRef(false);
@@ -79,6 +96,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const [info, setInfo] = useState("");
   const [isTouchLike, setIsTouchLike] = useState(false);
   const [touchMode, setTouchMode] = useState<"draw" | "pan">("draw");
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
 
   const sounds = useBoardSounds();
 
@@ -479,7 +498,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     setInfo("");
   };
 
-  const onClear = async () => {
+  const performClear = async () => {
     const safeName = sanitizeDisplayName(displayNameRef.current);
 
     const optimisticRow: ChalkStrokeRow = {
@@ -541,6 +560,37 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     redrawScene();
     setInfo("");
   };
+
+  const requestClear = () => {
+    setShowClearConfirm(true);
+  };
+
+  const cancelClear = () => {
+    if (clearBusy) return;
+    setShowClearConfirm(false);
+  };
+
+  const confirmClear = async () => {
+    if (clearBusy) return;
+    setClearBusy(true);
+    try {
+      await performClear();
+      setShowClearConfirm(false);
+    } finally {
+      setClearBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showClearConfirm) return;
+
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") cancelClear();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showClearConfirm, clearBusy]);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -1061,12 +1111,17 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     canvas.addEventListener("selectstart", blockBoardDefault);
     canvas.addEventListener("dragstart", blockBoardDefault);
 
+    const boardScroll = boardScrollRef.current;
     const boardSurface = boardSurfaceRef.current;
-    boardSurface?.addEventListener("selectstart", blockBoardDefault);
-    boardSurface?.addEventListener("dragstart", blockBoardDefault);
-    boardSurface?.addEventListener("gesturestart", blockBoardDefault);
-    boardSurface?.addEventListener("gesturechange", blockBoardDefault);
-    boardSurface?.addEventListener("gestureend", blockBoardDefault);
+
+    for (const el of [boardScroll, boardSurface]) {
+      el?.addEventListener("selectstart", blockBoardDefault);
+      el?.addEventListener("dragstart", blockBoardDefault);
+      el?.addEventListener("contextmenu", blockBoardDefault);
+      el?.addEventListener("gesturestart", blockBoardDefault);
+      el?.addEventListener("gesturechange", blockBoardDefault);
+      el?.addEventListener("gestureend", blockBoardDefault);
+    }
 
     window.addEventListener("pointerup", onUp, { passive: false });
     window.addEventListener("pointercancel", onCancel as EventListener, {
@@ -1089,11 +1144,15 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       canvas.removeEventListener("contextmenu", onCtx as EventListener);
       canvas.removeEventListener("selectstart", blockBoardDefault);
       canvas.removeEventListener("dragstart", blockBoardDefault);
-      boardSurface?.removeEventListener("selectstart", blockBoardDefault);
-      boardSurface?.removeEventListener("dragstart", blockBoardDefault);
-      boardSurface?.removeEventListener("gesturestart", blockBoardDefault);
-      boardSurface?.removeEventListener("gesturechange", blockBoardDefault);
-      boardSurface?.removeEventListener("gestureend", blockBoardDefault);
+
+      for (const el of [boardScroll, boardSurface]) {
+        el?.removeEventListener("selectstart", blockBoardDefault);
+        el?.removeEventListener("dragstart", blockBoardDefault);
+        el?.removeEventListener("contextmenu", blockBoardDefault);
+        el?.removeEventListener("gesturestart", blockBoardDefault);
+        el?.removeEventListener("gesturechange", blockBoardDefault);
+        el?.removeEventListener("gestureend", blockBoardDefault);
+      }
 
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel as EventListener);
@@ -1115,10 +1174,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       className="classmate-board-root"
       style={{
         marginTop: 10,
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        WebkitTouchCallout: "none",
-        WebkitTapHighlightColor: "transparent",
+        ...BOARD_TOUCH_GUARD,
       }}
     >
       <div
@@ -1128,8 +1184,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           flexWrap: "wrap",
           alignItems: "center",
           justifyContent: "space-between",
-          userSelect: "none",
-          WebkitUserSelect: "none",
+          ...BOARD_TOUCH_GUARD,
         }}
       >
         <div
@@ -1138,8 +1193,9 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             gap: 8,
             flexWrap: "wrap",
             alignItems: "center",
-            userSelect: "none",
-            WebkitUserSelect: "none",
+            flex: "1 1 auto",
+            minWidth: 0,
+            ...BOARD_TOUCH_GUARD,
           }}
         >
           <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
@@ -1194,24 +1250,30 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             >
               黒板消し
             </button>
-
-            <button
-              type="button"
-              onClick={onClear}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 12,
-                border: "1px solid #ddd",
-                background: "#fff",
-                color: "#111",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
-              全消し
-            </button>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={requestClear}
+          aria-label="黒板をすべて消す"
+          style={{
+            flex: "0 0 auto",
+            marginLeft: isTouchLike ? 0 : 12,
+            marginTop: isTouchLike ? 4 : 0,
+            padding: isTouchLike ? "10px 14px" : "8px 12px",
+            minHeight: isTouchLike ? 44 : undefined,
+            borderRadius: 12,
+            border: "1px solid #fca5a5",
+            background: "#fff5f5",
+            color: "#b91c1c",
+            fontWeight: 900,
+            cursor: "pointer",
+            boxShadow: "0 0 0 1px rgba(185, 28, 28, 0.08)",
+          }}
+        >
+          🗑 全消し
+        </button>
       </div>
 
       {isTouchLike ? (
@@ -1272,6 +1334,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       ) : null}
 
       <div
+        ref={boardScrollRef}
         className="classmate-board-scroll"
         style={{
           marginTop: 10,
@@ -1282,11 +1345,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           overflowX: "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
-          overscrollBehavior: "contain",
-          userSelect: "none",
-          WebkitUserSelect: "none",
-          WebkitTouchCallout: "none",
-          WebkitTapHighlightColor: "transparent",
+          ...BOARD_TOUCH_GUARD,
+          touchAction: boardTouchAction(isTouchLike, touchMode),
         }}
       >
         <div
@@ -1305,11 +1365,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             background: BOARD_BG,
             boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
             overflow: "hidden",
-            userSelect: "none",
-            WebkitUserSelect: "none",
-            WebkitTouchCallout: "none",
-            WebkitTapHighlightColor: "transparent",
-            touchAction: isTouchLike && touchMode === "pan" ? "pan-x pan-y" : "none",
+            ...BOARD_TOUCH_GUARD,
+            touchAction: boardTouchAction(isTouchLike, touchMode),
           }}
         >
           <canvas
@@ -1319,15 +1376,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               display: "block",
               width: "100%",
               height: "100%",
-              userSelect: "none",
-              WebkitUserSelect: "none",
-              WebkitTouchCallout: "none",
-              WebkitTapHighlightColor: "transparent",
-              touchAction: isTouchLike
-                ? touchMode === "pan"
-                  ? "pan-x pan-y"
-                  : "none"
-                : "none",
+              ...BOARD_TOUCH_GUARD,
+              touchAction: boardTouchAction(isTouchLike, touchMode),
               cursor:
                 tool === "eraser"
                   ? "cell"
@@ -1338,6 +1388,100 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           />
         </div>
       </div>
+
+      {showClearConfirm ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="board-clear-title"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            background: "rgba(15, 23, 42, 0.45)",
+          }}
+          onClick={cancelClear}
+        >
+          <div
+            style={{
+              width: "min(360px, 100%)",
+              borderRadius: 18,
+              background: "#fff",
+              boxShadow: "0 24px 64px rgba(15, 23, 42, 0.24)",
+              padding: 20,
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2
+              id="board-clear-title"
+              style={{ margin: 0, fontSize: 18, fontWeight: 900, color: "#111827" }}
+            >
+              黒板をすべて消しますか？
+            </h2>
+            <p
+              style={{
+                margin: "10px 0 0",
+                fontSize: 14,
+                lineHeight: 1.6,
+                color: "#4b5563",
+                fontWeight: 700,
+              }}
+            >
+              この操作は元に戻せません。
+            </p>
+
+            <div
+              style={{
+                marginTop: 18,
+                display: "flex",
+                gap: 10,
+                justifyContent: "flex-end",
+                flexWrap: "wrap",
+              }}
+            >
+              <button
+                type="button"
+                onClick={cancelClear}
+                disabled={clearBusy}
+                style={{
+                  padding: isTouchLike ? "12px 16px" : "10px 14px",
+                  minHeight: isTouchLike ? 44 : undefined,
+                  borderRadius: 12,
+                  border: "1px solid #d1d5db",
+                  background: "#fff",
+                  color: "#111827",
+                  fontWeight: 900,
+                  cursor: clearBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmClear()}
+                disabled={clearBusy}
+                style={{
+                  padding: isTouchLike ? "12px 16px" : "10px 14px",
+                  minHeight: isTouchLike ? 44 : undefined,
+                  borderRadius: 12,
+                  border: "1px solid #dc2626",
+                  background: "#dc2626",
+                  color: "#fff",
+                  fontWeight: 900,
+                  cursor: clearBusy ? "not-allowed" : "pointer",
+                  opacity: clearBusy ? 0.7 : 1,
+                }}
+              >
+                すべて消す
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
