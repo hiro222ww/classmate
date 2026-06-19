@@ -10,6 +10,10 @@
     "test:probe": "node scripts/probe-match-join-v3.mjs",
     "test:verify-match-lock": "node scripts/verify-match-lock-migration.mjs",
     "test:prelaunch": "node scripts/run-prelaunch-tests.mjs",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:report": "playwright show-report playwright-report",
+    "e2e:install": "playwright install chromium webkit",
     "test:e2e:concurrent": "node scripts/e2e-concurrent-join.mjs",
     "test:e2e:recovery": "node scripts/e2e-recovery.mjs",
     "test:e2e:zombie": "node scripts/e2e-zombie-stale.mjs",
@@ -28,6 +32,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

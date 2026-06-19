@@ -27,7 +27,7 @@ import {
   logMatchJoinStart,
   tailMatchId,
 } from "@/lib/matchJoinLogging";
-import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import { rollbackPartialJoinState } from "@/lib/joinStateRollback";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { resolveOpenJoinedClassSession } from "@/lib/openJoinedClassSession";
@@ -585,7 +585,7 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
-    if (!isValidDeviceUuid(deviceId)) {
+    if (!isJoinAllowedDeviceId(deviceId)) {
       return NextResponse.json(
         {
           ok: false,

@@ -9,6 +9,13 @@ describe("deviceIdValidation", () => {
 
   it("rejects legacy timestamp ids", () => {
     expect(isValidDeviceUuid("1710000000000-abc123def456")).toBe(false);
+    expect(isLegacyStoredDeviceId("1710000000000-abc123def456")).toBe(true);
+  });
+
+  it("allows dev E2E device ids for join", () => {
+    expect(isJoinAllowedDeviceId("test-device-1")).toBe(true);
+    expect(isJoinAllowedDeviceId("webrtc-test-device-2")).toBe(true);
+    expect(isLegacyStoredDeviceId("test-device-1")).toBe(false);
   });
 
   it("tails device id safely", () => {

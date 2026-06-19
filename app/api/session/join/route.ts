@@ -17,7 +17,7 @@ import {
 } from "@/lib/admissionMembership";
 import { getAdmissionStatus } from "@/lib/admissionWindow";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
-import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import type { JoinStateSource } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
@@ -221,7 +221,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!isValidDeviceUuid(deviceId)) {
+    if (!isJoinAllowedDeviceId(deviceId)) {
       return NextResponse.json(
         {
           ok: false,

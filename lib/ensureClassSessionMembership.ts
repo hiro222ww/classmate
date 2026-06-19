@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { pruneSplitClassSessionMemberships } from "@/lib/classSessionSelection";
+import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import {
   auditJoinStateInvariants,
   tailJoinId,
@@ -91,7 +92,7 @@ export async function ensureClassSessionMembership(
   const invalid: string[] = [];
   if (!ids.classId || !isUuid(ids.classId)) invalid.push("invalid_classId");
   if (!ids.sessionId || !isUuid(ids.sessionId)) invalid.push("invalid_sessionId");
-  if (!ids.deviceId || !isUuid(ids.deviceId)) invalid.push("invalid_deviceId");
+  if (!ids.deviceId || !isJoinAllowedDeviceId(ids.deviceId)) invalid.push("invalid_deviceId");
 
   if (invalid.length > 0) {
     return {

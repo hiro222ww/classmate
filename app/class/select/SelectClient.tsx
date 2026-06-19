@@ -25,7 +25,7 @@ import {
   logMatchPrefsGet,
   logProfileExists,
 } from "@/lib/entryFlowLog";
-import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
+import { isJoinAllowedDeviceId, isLegacyStoredDeviceId } from "@/lib/deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { HelpTip } from "@/components/HelpTip";
@@ -512,8 +512,8 @@ export default function SelectClient() {
       setEntryFailure(null);
       setProfileLoadError(false);
       setDeviceId(id);
-      const deviceValid = isValidDeviceUuid(id);
-      setDeviceIdInvalid(!deviceValid);
+      const deviceValid = isJoinAllowedDeviceId(id);
+      setDeviceIdInvalid(isLegacyStoredDeviceId(id));
       if (!deviceValid) {
         logDeviceEnsureFailed(id, "invalid_uuid_format");
       } else {
@@ -867,7 +867,7 @@ export default function SelectClient() {
       return;
     }
 
-    if (!isValidDeviceUuid(deviceId)) {
+    if (!isJoinAllowedDeviceId(deviceId)) {
       showEntryFailure(
         "invalid_deviceId",
         resolveMatchJoinUserMessage("invalid_deviceId")
