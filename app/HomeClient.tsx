@@ -1955,7 +1955,7 @@ return () => {
           alert(
             json?.message ??
               (json?.error === "match_deadline_passed"
-                ? "このマッチングは締め切られました"
+                ? "このクラスへの参加受付は締め切られました"
                 : json?.error === "session_closed"
                   ? "このセッションは終了しています"
                   : "このクラスは現在募集していません")
@@ -2145,7 +2145,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           alert(
             json?.message ??
               (json?.error === "match_deadline_passed"
-                ? "このマッチングは締め切られました"
+                ? "このクラスへの参加受付は締め切られました"
                 : "このクラスは現在募集していません")
           );
           return;

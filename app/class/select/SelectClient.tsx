@@ -164,7 +164,7 @@ const AGE_FILTER_OFF_PREFS: MatchPrefs = {
 const AGE_FILTER_ON_DEFAULT: MatchPrefs = { min_age: 18, max_age: 25 };
 
 const AGE_PREF_HELP_TEXT =
-  "年齢絞り込みをONにすると、指定した年齢条件に合う相手とマッチします。OFFの場合は年齢では絞り込みません。";
+  "年齢絞り込みをONにすると、指定した年齢条件に合うクラスを探します。OFFの場合は年齢では絞り込みません。";
 
 function clampAge(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -1638,7 +1638,7 @@ export default function SelectClient() {
 
             {!minorsEnabled && displayMinAge < 18 ? (
               <p style={{ margin: "0 0 10px", fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
-                18歳未満のユーザーとのマッチングは、現在の設定では行われません。条件に合う相手とマッチします。
+                高校生以下は利用できません。条件に合うクラスを探します。
               </p>
             ) : null}
 

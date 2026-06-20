@@ -22,6 +22,7 @@ import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import type { JoinStateSource } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
 import { logRoomJoinPerf } from "@/lib/roomJoinPerf";
+import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -231,6 +232,9 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    const ageGuard = await enforceDeviceJoinAge(deviceId);
+    if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
 
     const ensured = await ensureJoinableSession(sessionId);
 

@@ -110,7 +110,7 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
           ...body,
           error: errKey,
           matchDeadlineAt: parsed.matchDeadlineAt ?? null,
-          message: "このマッチングは締め切られました",
+          message: "このクラスへの参加受付は締め切られました",
         },
         { status: 400 }
       );

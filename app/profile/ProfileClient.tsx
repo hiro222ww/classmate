@@ -553,7 +553,7 @@ export default function ProfileClient() {
 
       <p style={{ margin: 0, opacity: 0.7, fontSize: 13, lineHeight: 1.6 }}>
         {minorsEnabled !== true ? (
-          "現在は18歳以上の方のみ登録できます。"
+          "Classmateは大学生・専門学生・社会人向けです。高校生以下はご利用いただけません。"
         ) : (
           <>
             18歳未満の方は保護者の同意が必要です。

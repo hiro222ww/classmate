@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getMinorsEnabled } from "@/lib/minorsSettings";
+import {
+  applyAgeModeToMatchRange,
+  getEffectiveAgeMode,
+  getProfileAge,
+  checkSelfAgeForJoin,
+} from "@/lib/agePolicy";
 import {
   defaultMatchPrefs,
   ensureMatchPrefsRow,
@@ -7,6 +12,7 @@ import {
   userProfileDeviceExists,
 } from "@/lib/matchPrefsStorage";
 import { supabaseServer } from "@/lib/supabaseServer";
+import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -17,15 +23,6 @@ function normalizeAgeRange(minAge: unknown, maxAge: unknown) {
   const maxA = clamp(Number(maxAge ?? 130), 0, 130);
   let fixedMin = Math.min(minA, maxA);
   let fixedMax = Math.max(minA, maxA);
-  return { fixedMin, fixedMax };
-}
-
-async function applyMinorsGuard(fixedMin: number, fixedMax: number) {
-  const minorsEnabled = await getMinorsEnabled();
-  if (!minorsEnabled && fixedMax < 18) {
-    fixedMax = 18;
-    fixedMin = Math.min(fixedMin, fixedMax);
-  }
   return { fixedMin, fixedMax };
 }
 
@@ -110,16 +107,32 @@ export async function POST(req: Request) {
     return profileRequiredResponse();
   }
 
+  const ageMode = await getEffectiveAgeMode();
+  const selfAge = await getProfileAge(deviceId);
+  const ageCheck = checkSelfAgeForJoin(selfAge, ageMode);
+  if (!ageCheck.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: ageCheck.error,
+        message: ageCheck.message || resolveMatchJoinUserMessage(ageCheck.error),
+      },
+      { status: 403 }
+    );
+  }
+
   const normalized = normalizeAgeRange(body.minAge, body.maxAge);
-  const guarded = await applyMinorsGuard(
+  const guarded = applyAgeModeToMatchRange(
+    ageMode,
     normalized.fixedMin,
-    normalized.fixedMax
+    normalized.fixedMax,
+    selfAge
   );
 
   try {
     const saved = await ensureMatchPrefsRow(sb, deviceId, {
-      min_age: guarded.fixedMin,
-      max_age: guarded.fixedMax,
+      min_age: guarded.minAge,
+      max_age: guarded.maxAge,
     });
 
     return NextResponse.json({

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { getAgeFromBirthDate } from "@/lib/age";
 import { canViewMemberProfile } from "@/lib/memberProfileAccess";
-import { getMinorsEnabled } from "@/lib/minorsSettings";
+import {
+  adultOnlyUserMessage,
+  isMinorsRegistrationAllowed,
+} from "@/lib/agePolicy";
+import { moderateUserText } from "@/lib/contentModeration";
 import {
   isUserProfileComplete,
   normalizeProfileAge,
@@ -333,13 +337,14 @@ export async function POST(req: Request) {
   }
 
   if (age < 18) {
-    const minorsEnabled = await getMinorsEnabled();
+    const minorsAllowed = await isMinorsRegistrationAllowed();
 
-    if (minorsEnabled !== true) {
+    if (!minorsAllowed) {
       return NextResponse.json(
         {
           ok: false,
           error: "minors_disabled",
+          message: adultOnlyUserMessage(),
         },
         {
           status: 403,
@@ -362,6 +367,25 @@ export async function POST(req: Request) {
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
           },
         }
+      );
+    }
+  }
+
+  for (const field of [
+    { name: "display_name", value: display_name },
+    { name: "hobbies", value: hobbies ?? "" },
+    { name: "bio", value: bio ?? "" },
+  ]) {
+    const moderation = await moderateUserText(field.value);
+    if (!moderation.ok && moderation.block) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "contact_exchange_blocked",
+          message: moderation.message,
+          field: field.name,
+        },
+        { status: 400 }
       );
     }
   }

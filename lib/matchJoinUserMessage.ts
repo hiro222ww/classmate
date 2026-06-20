@@ -25,6 +25,14 @@ export function resolveMatchJoinUserMessage(
       return "このクラスは現在募集していません。";
     case "gender_restricted_topic":
       return "このテーマは参加条件により利用できません。";
+    case "adult_only":
+    case "minors_disabled":
+      return "Classmateは大学生・専門学生・社会人向けのサービスです。高校生以下はご利用いただけません。";
+    case "sensitive_topic_adult_only":
+    case "topic_min_age":
+      return "このテーマは利用条件により参加できません。";
+    case "contact_exchange_blocked":
+      return "連絡先交換や待ち合わせの誘導に見える内容は投稿できません。";
     case "membership_left":
       return "このクラスから退出済みのため、再参加できません。";
     case "match_join_incomplete":

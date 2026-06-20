@@ -100,7 +100,7 @@ export function MicEntryGate({
 
       <HelpTip
         label="聞き専について"
-        content="マイクを使わず、相手の音声だけ聞く参加方法です。後からマイクを許可して発話することもできます。"
+        content="マイクを使わず、他の参加者の音声だけ聞く参加方法です。後からマイクを許可して発話することもできます。"
       >
         <span style={{ fontSize: 12, color: "#9ca3af", fontWeight: 700 }}>
           聞き専とは

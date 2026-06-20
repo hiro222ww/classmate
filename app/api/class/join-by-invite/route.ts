@@ -6,6 +6,7 @@ import { tailJoinId } from "@/lib/joinStateInvariants";
 import { resolveInviteJoinSession } from "@/lib/inviteJoinSession";
 import { isDeadlinePassed } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
+import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 
 export const dynamic = "force-dynamic";
 
@@ -119,6 +120,9 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    const ageGuard = await enforceDeviceJoinAge(deviceId);
+    if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
 
     const { data: klass, error: classError } = await supabase
       .from("classes")

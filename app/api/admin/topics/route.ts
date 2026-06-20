@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "@/lib/adminAuth";
 import { normalizeGenderRestriction } from "@/lib/genderRestriction";
+import { adminActorFromRequest, writeAdminAuditLog } from "@/lib/adminAuditLog";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -301,6 +302,12 @@ export async function POST(req: Request) {
         return bad(400, "topic_key is required");
       }
 
+      const { data: beforeTopic } = await supabase
+        .from("topics")
+        .select("topic_key,is_sensitive,min_age")
+        .eq("topic_key", topic_key)
+        .maybeSingle();
+
       const updatePatch: any = {};
 
       if (typeof patch.title === "string") {
@@ -332,6 +339,31 @@ export async function POST(req: Request) {
         updatePatch.gender_restriction = normalizeGenderRestriction(
           patch.gender_restriction
         );
+      }
+
+      if (
+        typeof patch.is_sensitive === "boolean" ||
+        typeof patch.min_age === "number"
+      ) {
+        await writeAdminAuditLog({
+          actor: adminActorFromRequest(req),
+          action: "topic.age_or_sensitive",
+          target: topic_key,
+          before: {
+            is_sensitive: beforeTopic?.is_sensitive ?? null,
+            min_age: beforeTopic?.min_age ?? null,
+          },
+          after: {
+            is_sensitive:
+              typeof patch.is_sensitive === "boolean"
+                ? patch.is_sensitive
+                : beforeTopic?.is_sensitive ?? null,
+            min_age:
+              typeof patch.min_age === "number"
+                ? patch.min_age
+                : beforeTopic?.min_age ?? null,
+          },
+        });
       }
 
       const { error } =

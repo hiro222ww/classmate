@@ -32,6 +32,13 @@ import { rollbackPartialJoinState } from "@/lib/joinStateRollback";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { resolveOpenJoinedClassSession } from "@/lib/openJoinedClassSession";
 import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
+import {
+  applyAgeModeToMatchRange,
+  checkSelfAgeForJoin,
+  checkTopicAgeAccess,
+  getEffectiveAgeMode,
+  type AgeMode,
+} from "@/lib/agePolicy";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -80,7 +87,7 @@ function deadlineError(matchDeadlineAt?: string | null) {
       ok: false,
       error: "match_deadline_passed",
       matchDeadlineAt: matchDeadlineAt ?? null,
-      message: "このマッチングは締め切られました",
+      message: "このクラスへの参加受付は締め切られました",
     },
     { status: 400 }
   );
@@ -99,6 +106,8 @@ type ClassDeadlineRow = {
   world_key?: string | null;
   topic_key?: string | null;
   match_deadline_at?: string | null;
+  min_age?: number | null;
+  is_sensitive?: boolean | null;
 };
 
 type TopicDeadlineRow = {
@@ -109,6 +118,8 @@ type TopicDeadlineRow = {
 type TopicGenderRestrictionRow = {
   topic_key?: string | null;
   gender_restriction?: string | null;
+  is_sensitive?: boolean | null;
+  min_age?: number | null;
 };
 
 function resolveJoinDisplayName(profile: ProfileRow) {
@@ -317,7 +328,7 @@ async function getMatchPrefs(deviceId: string) {
 async function getForcedClassWithDeadline(classId: string) {
   const { data, error } = await supabase
     .from("classes")
-    .select("id,name,world_key,topic_key,match_deadline_at")
+    .select("id,name,world_key,topic_key,match_deadline_at,min_age,is_sensitive")
     .eq("id", classId)
     .maybeSingle();
 
@@ -482,7 +493,7 @@ async function getTopicGenderRestriction(topicKey: string | null) {
 
   const { data, error } = await supabase
     .from("topics")
-    .select("topic_key,gender_restriction")
+    .select("topic_key,gender_restriction,is_sensitive,min_age")
     .eq("topic_key", topicKey)
     .limit(1)
     .maybeSingle();
@@ -546,6 +557,37 @@ async function enforceAdmissionForNewJoin(params: {
   if (blocked) return blocked;
 
   return null;
+}
+
+function topicAgeBlockedResponse(
+  result: Extract<ReturnType<typeof checkTopicAgeAccess>, { ok: false }>
+) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: result.error,
+      message: result.message,
+    },
+    { status: 403 }
+  );
+}
+
+function resolveTopicAgeMeta(params: {
+  classMinAge?: number | null;
+  classIsSensitive?: boolean | null;
+  topicRow?: {
+    min_age?: number | null;
+    is_sensitive?: boolean | null;
+  } | null;
+}) {
+  return {
+    topicMinAge: Math.max(
+      Number(params.classMinAge ?? 0),
+      Number(params.topicRow?.min_age ?? 0)
+    ),
+    isSensitive:
+      Boolean(params.classIsSensitive) || Boolean(params.topicRow?.is_sensitive),
+  };
 }
 
 export async function matchJoinV2Post(req: Request) {
@@ -632,8 +674,8 @@ export async function matchJoinV2Post(req: Request) {
 
     const rawMinAge = normalizeAge(body.minAge, fallbackMinAge);
     const rawMaxAge = normalizeAge(body.maxAge, fallbackMaxAge);
-    const requestedMinAge = Math.min(rawMinAge, rawMaxAge);
-    const requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
+    let requestedMinAge = Math.min(rawMinAge, rawMaxAge);
+    let requestedMaxAge = Math.max(rawMinAge, rawMaxAge);
 
     logMatchJoinStart({
       requestId,
@@ -655,12 +697,29 @@ export async function matchJoinV2Post(req: Request) {
     const joinDisplayName = resolveJoinDisplayName(selfProfile);
     const selfAge = calcAgeFromBirthDate(selfProfile.birth_date);
 
-    if (!canRejoinTargetClass && !forcedClassId && selfAge === null) {
+    const ageMode: AgeMode = await getEffectiveAgeMode();
+    const selfAgeCheck = checkSelfAgeForJoin(selfAge, ageMode);
+    if (!selfAgeCheck.ok) {
       return NextResponse.json(
-        { ok: false, error: "profile_age_required" },
-        { status: 400 }
+        {
+          ok: false,
+          error: selfAgeCheck.error,
+          message:
+            selfAgeCheck.message ||
+            resolveMatchJoinUserMessage(selfAgeCheck.error),
+        },
+        { status: 403 }
       );
     }
+
+    const ageRanged = applyAgeModeToMatchRange(
+      ageMode,
+      requestedMinAge,
+      requestedMaxAge,
+      selfAge
+    );
+    requestedMinAge = ageRanged.minAge;
+    requestedMaxAge = ageRanged.maxAge;
 
     logMatchJoinPrefs({
       requestId,
@@ -756,6 +815,19 @@ export async function matchJoinV2Post(req: Request) {
       });
       if (genderBlocked) return genderBlocked;
 
+      const topicAgeMeta = resolveTopicAgeMeta({
+        classMinAge: existingClass.min_age,
+        classIsSensitive: existingClass.is_sensitive,
+        topicRow: topicGenderRes.row,
+      });
+      const topicAgeBlocked = checkTopicAgeAccess({
+        mode: ageMode,
+        selfAge,
+        isSensitive: topicAgeMeta.isSensitive,
+        topicMinAge: topicAgeMeta.topicMinAge,
+      });
+      if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
+
       const membershipCheck = await hasMembership(deviceId, forcedClassId);
       if (!membershipCheck.ok) return membershipCheck.response;
 
@@ -785,6 +857,17 @@ export async function matchJoinV2Post(req: Request) {
         profile: selfProfile,
       });
       if (genderBlocked) return genderBlocked;
+
+      const topicAgeMeta = resolveTopicAgeMeta({
+        topicRow: topicGenderRes.row,
+      });
+      const topicAgeBlocked = checkTopicAgeAccess({
+        mode: ageMode,
+        selfAge,
+        isSensitive: topicAgeMeta.isSensitive,
+        topicMinAge: topicAgeMeta.topicMinAge,
+      });
+      if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
 
       const topicRes = await getTopicDeadline({ worldKey, topicKey });
       if (!topicRes.ok) return topicRes.response;

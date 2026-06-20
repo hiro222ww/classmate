@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { emitClassMessageCreatedEvent } from "@/lib/notificationEvents";
+import { moderateUserText } from "@/lib/contentModeration";
 
 export async function POST(req: Request) {
   const { deviceId, classId, message } = await req.json();
@@ -15,6 +16,18 @@ export async function POST(req: Request) {
 
   const trimmed = String(message).trim();
   if (!trimmed) return NextResponse.json({ ok: true });
+
+  const moderation = await moderateUserText(trimmed);
+  if (!moderation.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: moderation.block ? "contact_exchange_blocked" : "contact_exchange_warning",
+        message: moderation.message,
+      },
+      { status: moderation.block ? 400 : 400 }
+    );
+  }
 
   const { error } = await sb.rpc("post_class_message", {
     p_device_id: deviceId,

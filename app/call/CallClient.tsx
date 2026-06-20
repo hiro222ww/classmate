@@ -21,6 +21,12 @@ import {
   resetMicSessionForRejoin,
 } from "./voice/useLocalMic";
 import { MicEntryGate } from "@/components/MicEntryGate";
+import {
+  CallSafetyAckGate,
+  CallSafetyNotice,
+  acknowledgeCallSafetyNotice,
+  hasAcknowledgedCallSafetyNotice,
+} from "@/components/CallSafetyNotice";
 import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { detectInAppBrowser } from "@/lib/inAppBrowser";
 import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
@@ -469,6 +475,7 @@ export default function CallClient() {
   const [showVoiceReconnectPrompt, setShowVoiceReconnectPrompt] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
   const [voiceEntryMode, setVoiceEntryMode] = useState<VoiceEntryMode>("checking");
+  const [showCallSafetyAck, setShowCallSafetyAck] = useState(false);
   const [gateBusy, setGateBusy] = useState(false);
   const [gateError, setGateError] = useState<{
     title: string;
@@ -506,6 +513,10 @@ export default function CallClient() {
     }, CALL_NOW_MS_TICK_MS);
 
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setShowCallSafetyAck(!hasAcknowledgedCallSafetyNotice());
   }, []);
 
   useLayoutEffect(() => {
@@ -2843,9 +2854,19 @@ export default function CallClient() {
         />
       ) : null}
 
+      {showCallSafetyAck ? (
+        <CallSafetyAckGate
+          onAcknowledge={() => {
+            acknowledgeCallSafetyNotice();
+            setShowCallSafetyAck(false);
+          }}
+        />
+      ) : null}
+
       {showMicEntryGate ? (
         <>
           <InAppBrowserNotice />
+          <CallSafetyNotice compact />
           <MicEntryGate
             busy={gateBusy || voiceEntryMode === "checking"}
             errorTitle={gateError?.title}
@@ -3058,7 +3079,7 @@ export default function CallClient() {
             fontWeight: 800,
           }}
         >
-          相手の参加を待っています。
+          他の参加者の参加を待っています。
         </div>
       )}
 

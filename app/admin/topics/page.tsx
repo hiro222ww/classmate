@@ -82,6 +82,8 @@ type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";
 const [recruitmentTtlMode, setRecruitmentTtlMode] =
   useState<RecruitmentTtlMode>("5");
 const [minorsEnabled, setMinorsEnabled] = useState(false);
+const [minorsRiskAck, setMinorsRiskAck] = useState(false);
+const [productionAgeLocked, setProductionAgeLocked] = useState(false);
 
 useEffect(() => {
   loadAll();
@@ -144,6 +146,7 @@ if (ttl.unlimited === true) {
 }
 
 setMinorsEnabled(settings.minors_enabled === true);
+setProductionAgeLocked(Boolean(sj.production_age_locked));
       setMsg(
   `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length} / settings:OK）`
 );
@@ -159,6 +162,12 @@ setMinorsEnabled(settings.minors_enabled === true);
   setBusy(true);
 
   try {
+    if (minorsEnabled && !minorsRiskAck) {
+      setMsg("未成年許可を有効にする前に、下の確認チェックリストにチェックを入れてください。");
+      setBusy(false);
+      return;
+    }
+
     const res = await fetch("/api/admin/settings", {
   method: "POST",
   credentials: "include",
@@ -694,7 +703,31 @@ setMinorsEnabled(settings.minors_enabled === true);
 
         <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
           18歳未満のプロフィール登録を許可します。本番初期運用ではOFF推奨。
+          {productionAgeLocked ? " 現在の環境では本番二重ロックにより保存できません。" : ""}
         </p>
+
+        {minorsEnabled ? (
+          <label
+            style={{
+              marginTop: 10,
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+              fontSize: 12,
+              color: "#b45309",
+              fontWeight: 800,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={minorsRiskAck}
+              onChange={(e) => setMinorsRiskAck(e.target.checked)}
+            />
+            <span>
+              未成年許可は検証環境専用であること、法務確認が必要であること、成人/未成年分離と通報強化が必要であることを理解しました。
+            </span>
+          </label>
+        ) : null}
 
         <div
           style={{
@@ -722,7 +755,10 @@ setMinorsEnabled(settings.minors_enabled === true);
             <input
               type="checkbox"
               checked={minorsEnabled}
-              onChange={(e) => setMinorsEnabled(e.target.checked)}
+              onChange={(e) => {
+                setMinorsEnabled(e.target.checked);
+                if (!e.target.checked) setMinorsRiskAck(false);
+              }}
             />
             18歳未満のプロフィール登録を許可する
           </label>

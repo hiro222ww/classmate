@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
+import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 
 /** @deprecated Legacy endpoint. Prefer `/api/class/match-join-v2`. Not used by the current app UI. */
 export const dynamic = "force-dynamic";
@@ -37,6 +38,9 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    const ageGuard = await enforceDeviceJoinAge(deviceId);
+    if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
 
     // 1) entitlement 取得
     const { data: ent, error: entErr } = await supabase

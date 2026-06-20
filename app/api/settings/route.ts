@@ -6,7 +6,13 @@ import {
   type RecruitmentSessionTtlSetting,
 } from "@/lib/recruitmentSettings";
 import { DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES } from "@/lib/recruitment";
-import { getMinorsEnabled, parseMinorsEnabledValue } from "@/lib/minorsSettings";
+import {
+  getEffectiveAgeMode,
+  isProductionAgeLocked,
+  parseAgeModeValue,
+  ageModeFromLegacyMinors,
+} from "@/lib/agePolicy";
+import { parseMinorsEnabledValue } from "@/lib/minorsSettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +29,7 @@ const DEFAULT_SETTINGS: {
   };
   recruitment_session_ttl_minutes: RecruitmentSessionTtlSetting;
   minors_enabled: boolean;
+  age_mode: string;
 } = {
   global_join_window: {
     enabled: false,
@@ -38,6 +45,7 @@ const DEFAULT_SETTINGS: {
     unlimited: false,
   },
   minors_enabled: false,
+  age_mode: "post_high_school_only",
 };
 
 export async function GET() {
@@ -50,6 +58,7 @@ export async function GET() {
         "billing_notice",
         "recruitment_session_ttl_minutes",
         "minors_enabled",
+        "age_mode",
       ]);
 
     if (error) throw error;
@@ -79,23 +88,31 @@ export async function GET() {
       if (row.key === "minors_enabled") {
         settings.minors_enabled = parseMinorsEnabledValue(row.value);
       }
+
+      if (row.key === "age_mode") {
+        settings.age_mode =
+          parseAgeModeValue(row.value) ??
+          ageModeFromLegacyMinors(settings.minors_enabled);
+      }
     }
 
     const ttlSetting = await getRecruitmentSessionTtlSetting();
-    const minorsEnabled = await getMinorsEnabled();
+    const effectiveAgeMode = await getEffectiveAgeMode();
 
     return NextResponse.json({
       ok: true,
       settings,
-      minors_enabled: minorsEnabled,
+      minors_enabled: isProductionAgeLocked() ? false : settings.minors_enabled,
+      age_mode: effectiveAgeMode,
+      production_age_locked: isProductionAgeLocked(),
       recruitment_session_ttl_minutes: ttlSetting.minutes,
       recruitment_session_ttl_unlimited: ttlSetting.unlimited,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[settings][GET]", e);
 
     return NextResponse.json(
-      { ok: false, error: e?.message ?? "server_error" },
+      { ok: false, error: e instanceof Error ? e.message : "server_error" },
       { status: 500 }
     );
   }
