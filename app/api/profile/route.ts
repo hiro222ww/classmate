@@ -8,6 +8,13 @@ import {
 } from "@/lib/agePolicy";
 import { moderateUserText } from "@/lib/contentModeration";
 import {
+  buildLegalConsentPayload,
+  buildLegalConsentStatus,
+  hasValidLegalConsent,
+  parseLegalAgreementFlag,
+  type LegalConsentFields,
+} from "@/lib/legalConsent";
+import {
   isUserProfileComplete,
   normalizeProfileAge,
 } from "@/lib/profileClient";
@@ -21,6 +28,10 @@ type ProfileRow = {
   hobbies: string | null;
   bio: string | null;
   show_age: boolean;
+  terms_agreed_at?: string | null;
+  privacy_agreed_at?: string | null;
+  guidelines_agreed_at?: string | null;
+  legal_consent_version?: string | null;
 };
 
 const MAX_OPTIONAL_TEXT_LENGTH = 500;
@@ -143,7 +154,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age"
+      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version"
     )
     .eq("device_id", device_id)
     .maybeSingle();
@@ -237,6 +248,7 @@ export async function GET(req: Request) {
   });
 
   const selfAge = calcAgeFromProfile(profile);
+  const legalConsent = buildLegalConsentStatus(data as LegalConsentFields);
 
   return NextResponse.json(
     {
@@ -246,6 +258,7 @@ export async function GET(req: Request) {
             ...profile,
             age: selfAge,
             profile_complete: profileComplete,
+            legal_consent: legalConsent,
           }
         : null,
     },
@@ -274,6 +287,10 @@ export async function POST(req: Request) {
 
   const guardian_consent =
     normalizeString(form.get("guardian_consent")) === "true";
+
+  const termsAgreed = parseLegalAgreementFlag(form.get("terms_agreed"));
+  const privacyAgreed = parseLegalAgreementFlag(form.get("privacy_agreed"));
+  const guidelinesAgreed = parseLegalAgreementFlag(form.get("guidelines_agreed"));
 
   const photo = form.get("photo");
 
@@ -392,7 +409,9 @@ export async function POST(req: Request) {
 
   const { data: existingProfile, error: existingError } = await supabaseAdmin
     .from("user_profiles")
-    .select("photo_path, show_age")
+    .select(
+      "photo_path, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version"
+    )
     .eq("device_id", device_id)
     .maybeSingle();
 
@@ -418,6 +437,28 @@ export async function POST(req: Request) {
         },
       }
     );
+  }
+
+  const existingConsent = existingProfile as LegalConsentFields | null;
+  const alreadyValid = hasValidLegalConsent(existingConsent);
+
+  if (!alreadyValid) {
+    if (!termsAgreed || !privacyAgreed || !guidelinesAgreed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "legal_consent_required",
+          message:
+            "利用規約、プライバシーポリシー、コミュニティガイドラインへの同意が必要です。",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
   }
 
   let photo_path: string | null = normalizePhotoPath(existingProfile?.photo_path);
@@ -469,6 +510,15 @@ export async function POST(req: Request) {
       ? normalizeShowAge(existingProfile?.show_age)
       : normalizeShowAge(show_age_input);
 
+  const consentFields: LegalConsentFields = alreadyValid
+    ? {
+        terms_agreed_at: existingConsent?.terms_agreed_at ?? null,
+        privacy_agreed_at: existingConsent?.privacy_agreed_at ?? null,
+        guidelines_agreed_at: existingConsent?.guidelines_agreed_at ?? null,
+        legal_consent_version: existingConsent?.legal_consent_version ?? null,
+      }
+    : buildLegalConsentPayload();
+
   const payload: ProfileRow = {
     device_id,
     display_name,
@@ -478,6 +528,7 @@ export async function POST(req: Request) {
     hobbies,
     bio,
     show_age,
+    ...consentFields,
   };
 
   const { error: upsertError } = await supabaseAdmin
@@ -512,7 +563,7 @@ export async function POST(req: Request) {
   const { data: confirmData, error: confirmError } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age"
+      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version"
     )
     .eq("device_id", device_id)
     .maybeSingle();
@@ -542,17 +593,24 @@ export async function POST(req: Request) {
   }
 
   const profile = toProfileResponse(confirmData);
+  const legalConsent = buildLegalConsentStatus(confirmData as LegalConsentFields);
 
   console.log("[profile][POST] confirm result", {
     device_id,
     display_name: profile?.display_name ?? null,
     photo_path: profile?.photo_path ?? null,
+    legal_consent_valid: legalConsent.valid,
   });
 
   return NextResponse.json(
     {
       ok: true,
-      profile,
+      profile: profile
+        ? {
+            ...profile,
+            legal_consent: legalConsent,
+          }
+        : null,
     },
     {
       headers: {

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
@@ -14,8 +13,18 @@ import {
   buildProfileEditPath,
   sanitizeReturnTo,
 } from "@/lib/profileNavigation";
+import {
+  LegalConsentCheckbox,
+  LegalDocumentLinks,
+} from "@/components/LegalDocumentLinks";
 
 type Gender = "male" | "female" | "";
+
+type LegalConsentInfo = {
+  valid?: boolean;
+  needs_reconsent?: boolean;
+  version?: string | null;
+};
 
 type Profile = {
   device_id: string;
@@ -26,6 +35,7 @@ type Profile = {
   hobbies?: string | null;
   bio?: string | null;
   show_age?: boolean | null;
+  legal_consent?: LegalConsentInfo | null;
 };
 
 type ProfileResponse = {
@@ -218,7 +228,8 @@ export default function ProfileClient() {
   const [bio, setBio] = useState("");
   const [showAge, setShowAge] = useState(true);
   const [guardianConsent, setGuardianConsent] = useState(false);
-  const [termsAgreed, setTermsAgreed] = useState(false);
+  const [legalAgreed, setLegalAgreed] = useState(false);
+  const [needsLegalConsent, setNeedsLegalConsent] = useState(true);
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPath, setPhotoPath] = useState<string | null>(null);
@@ -238,12 +249,14 @@ export default function ProfileClient() {
   const ageAllowed =
     isAdult || (minorsEnabled === true && isMinor && guardianConsent);
 
+  const legalConsentOk = !needsLegalConsent || legalAgreed;
+
   const canSubmit =
     displayName.trim().length > 0 &&
     isValidISODateString(birthDate) &&
     (gender === "male" || gender === "female") &&
     ageAllowed &&
-    termsAgreed &&
+    legalConsentOk &&
     !compressing &&
     !submitting;
 
@@ -266,7 +279,8 @@ export default function ProfileClient() {
       setShowAge(true);
       setHasExistingProfile(false);
       setGuardianConsent(false);
-      setTermsAgreed(false);
+      setLegalAgreed(false);
+      setNeedsLegalConsent(true);
       setPhotoFile(null);
       setPhotoPath(null);
       setPhotoInfo("");
@@ -299,9 +313,15 @@ export default function ProfileClient() {
         const json = (await profileRes.json().catch(() => null)) as ProfileResponse | null;
         const profile = json?.profile ?? null;
 
-        if (cancelled || !profile) return;
+        if (cancelled) return;
+
+        if (!profile) {
+          setNeedsLegalConsent(true);
+          return;
+        }
 
         setHasExistingProfile(isUserProfileComplete(profile));
+        setNeedsLegalConsent(profile.legal_consent?.needs_reconsent !== false);
         setDisplayName(profile.display_name ?? "");
         setBirthDate(
           isValidISODateString(profile.birth_date) ? profile.birth_date : ""
@@ -413,8 +433,10 @@ export default function ProfileClient() {
       return;
     }
 
-    if (!termsAgreed) {
-      setErrorMsg("利用規約への同意が必要です。");
+    if (!legalConsentOk) {
+      setErrorMsg(
+        "利用規約、プライバシーポリシー、コミュニティガイドラインへの同意が必要です。"
+      );
       return;
     }
 
@@ -434,7 +456,12 @@ export default function ProfileClient() {
       fd.append("hobbies", hobbies.trim());
       fd.append("bio", bio.trim());
       fd.append("show_age", showAge ? "true" : "false");
-      fd.append("terms_agreed", termsAgreed ? "true" : "false");
+      fd.append("terms_agreed", needsLegalConsent && legalAgreed ? "true" : "false");
+      fd.append("privacy_agreed", needsLegalConsent && legalAgreed ? "true" : "false");
+      fd.append(
+        "guidelines_agreed",
+        needsLegalConsent && legalAgreed ? "true" : "false"
+      );
       fd.append("guardian_consent", isMinor && guardianConsent ? "true" : "false");
 
       if (photoFile) {
@@ -468,6 +495,13 @@ export default function ProfileClient() {
           return;
         }
 
+        if (json?.error === "legal_consent_required") {
+          setErrorMsg(
+            "利用規約、プライバシーポリシー、コミュニティガイドラインへの同意が必要です。"
+          );
+          return;
+        }
+
         const serverMsg =
           json?.message ||
           json?.error ||
@@ -492,6 +526,8 @@ export default function ProfileClient() {
       setPhotoPath(nextPhotoPath);
       setPhotoFile(null);
       setPhotoInfo("");
+      setNeedsLegalConsent(false);
+      setLegalAgreed(false);
 
       writeStoredDisplayName(deviceId, displayName.trim());
 
@@ -794,29 +830,25 @@ export default function ProfileClient() {
           border: "1px solid #ddd",
           borderRadius: 10,
           background: "#fafafa",
+          display: "grid",
+          gap: 12,
         }}
       >
-        <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 8,
-            lineHeight: 1.6,
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={termsAgreed}
-            onChange={(e) => setTermsAgreed(e.target.checked)}
-            style={{ marginTop: 3 }}
-          />
-          <span>
-            <Link href="/terms" target="_blank" style={{ textDecoration: "underline" }}>
-              利用規約
-            </Link>
-            に同意します
-          </span>
-        </label>
+        {needsLegalConsent ? (
+          <>
+            {hasExistingProfile ? (
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#92400e" }}>
+                規約・ポリシーが更新されました。引き続きご利用いただくには、以下への同意が必要です。
+              </p>
+            ) : null}
+            <LegalConsentCheckbox checked={legalAgreed} onChange={setLegalAgreed} />
+          </>
+        ) : (
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#4b5563" }}>
+            規約・ポリシー
+          </p>
+        )}
+        <LegalDocumentLinks compact />
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

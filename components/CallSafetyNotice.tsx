@@ -24,6 +24,12 @@ export function CallSafetyNotice({ compact = false }: Props) {
       }}
     >
       Classmateはテーマ別のグループ音声交流サービスです。出会い目的、連絡先交換、対面での待ち合わせ、性的な発言は禁止されています。
+      {" "}
+      詳細は
+      <a href="/guidelines" style={{ color: "#92400e", fontWeight: 900 }}>
+        コミュニティガイドライン
+      </a>
+      をご確認ください。
     </div>
   );
 }
