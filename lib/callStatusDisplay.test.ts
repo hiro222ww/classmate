@@ -42,6 +42,14 @@ describe("call status display normalization", () => {
     }
   });
 
+  it("maps unstable internal labels to neutral reconnecting copy", () => {
+    expect(
+      simplifyUserFacingStatusText("接続が不安定です。入り直してください")
+    ).toBe("接続中…");
+    expect(simplifyUserFacingStatusText("音声が不安定です")).toBe("接続中…");
+    expect(simplifyUserFacingStatusText("接続に失敗")).toBe("接続中…");
+  });
+
   it("detects unstable labels including 接続が不安定です", () => {
     expect(isUnstableStatusLabel("音声が不安定です")).toBe(true);
     expect(isUnstableStatusLabel("接続が不安定です")).toBe(true);
@@ -182,12 +190,13 @@ describe("established audio display priority", () => {
     expect(
       resolveCallMemberUserDisplayText({
         text: "再接続中",
+        isMe: true,
         audioConfirmedStrict: true,
       })
     ).toBe("通話中");
   });
 
-  it("does not downgrade to 参加準備中 when audio is already strict confirmed", () => {
+  it("does not downgrade to offline when audio is already strict confirmed", () => {
     const status = resolveCallMemberStatus({
       ...baseRemoteStatusParams,
       isInCall: false,
@@ -203,5 +212,42 @@ describe("established audio display priority", () => {
     });
 
     expect(status.text).toBe("通話中");
+  });
+
+  it("maps public labels for other members", () => {
+    expect(
+      resolveCallMemberUserDisplayText({
+        text: "参加準備中",
+        isMe: false,
+        screen: "call",
+        isInCall: true,
+      })
+    ).toBe("オフライン");
+    expect(
+      resolveCallMemberUserDisplayText({
+        text: "通話中",
+        isMe: false,
+        screen: "call",
+        isInCall: true,
+        audioConfirmedStrict: true,
+      })
+    ).toBe("通話中");
+    expect(
+      resolveCallMemberUserDisplayText({
+        text: "待機中",
+        isMe: false,
+        screen: "room",
+        inSessionMember: true,
+      })
+    ).toBe("待機ルーム内");
+  });
+
+  it("keeps technical labels for self", () => {
+    expect(
+      resolveCallMemberUserDisplayText({
+        text: "マイク準備中",
+        isMe: true,
+      })
+    ).toBe("接続中…");
   });
 });

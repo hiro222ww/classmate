@@ -4,7 +4,7 @@ import HomeClient from "./HomeClient";
 
 export default function HomePage() {
   return (
-    <main style={{ padding: 24, maxWidth: 920, margin: "0 auto" }}>
+    <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto" }}>
       <header>
         <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>
           classmate

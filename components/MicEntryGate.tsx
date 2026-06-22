@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
 import { HelpTip } from "@/components/HelpTip";
-import { CallSafetyNotice } from "@/components/CallSafetyNotice";
 import { IN_APP_BROWSER_NOTICE_SHORT } from "@/lib/inAppBrowser";
 
 type MicEntryGateProps = {
@@ -38,19 +36,9 @@ export function MicEntryGate({
       <div>
         <div style={{ fontWeight: 900, fontSize: 16 }}>通話の準備</div>
         <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-          通話を始めるにはマイクの許可が必要です。
+          マイクを使って話すか、聞き専で参加できます。
         </p>
       </div>
-
-      <CallSafetyNotice compact />
-
-      <p style={{ margin: 0, fontSize: 12, color: "#6b7280", lineHeight: 1.6 }}>
-        詳しい禁止事項は
-        <Link href="/guidelines" style={{ color: "#111827", fontWeight: 800 }}>
-          コミュニティガイドライン
-        </Link>
-        をご確認ください。
-      </p>
 
       {errorTitle ? (
         <div

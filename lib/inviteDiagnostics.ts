@@ -165,19 +165,49 @@ export function isInviteJoinFailureMessage(message: string): boolean {
   );
 }
 
-export function formatInviteJoinApiError(errorCode: string): string {
+export function formatInviteJoinApiError(
+  errorCode: string,
+  message?: string | null
+): string {
   const code = String(errorCode ?? "").trim();
-  if (code === "class_slots_limit") {
+  if (message && String(message).trim()) {
+    return String(message).trim();
+  }
+  if (code === "class_full" || code === "class_slots_limit") {
     return "参加できるクラス数の上限に達しています";
   }
+  if (code === "needs_profile") {
+    return "参加するにはプロフィール登録が必要です";
+  }
+  if (code === "restore_login") {
+    return "この端末でプロフィールを復元するにはログインが必要です";
+  }
+  if (code === "reregister_device") {
+    return "端末の再登録が必要です。しばらくしてからもう一度お試しください";
+  }
+  if (code === "auth_required") {
+    return "認証の準備ができていません。ページを再読み込みしてください。";
+  }
   if (
+    code === "invalid_invite" ||
     code === "invite_expired" ||
+    code === "expired_invite" ||
     code === "session_closed" ||
     code === "session_not_joinable" ||
     code === "recruitment_closed" ||
     code === "match_deadline_passed"
   ) {
     return INVITE_LINK_EXPIRED_MESSAGE;
+  }
+  if (
+    code === "age_restricted" ||
+    code === "profile_age_required" ||
+    code === "guardian_consent_required"
+  ) {
+    return "年齢条件により、このクラスには参加できません";
+  }
+  if (code === "joined" || code === "already_member") {
+    return "";
   }
   return "招待されたクラスへの参加に失敗しました";
 }

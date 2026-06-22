@@ -12,6 +12,7 @@ import {
   logProfileExists,
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
+import { HelpTip } from "@/components/HelpTip";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import { withDev } from "@/lib/withDev";
 import { getClassStatusLabel, isSessionEligibleForNormalJoin } from "@/lib/recruitment";
@@ -341,6 +342,64 @@ function pushBrowserNotification(
   if (Notification.permission !== "granted") return;
 
   new Notification(title, { body });
+}
+
+const RETURN_CLASS_HELP_TEXT =
+  "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
+
+const JOIN_NEW_HELP_TEXT =
+  "初めて入る・別のクラスを探す場合はこちらです。「今すぐ入る」は自動でクラスを探します。「入る場所を選ぶ」ではテーマを選べます。";
+
+const DASH_CARD: React.CSSProperties = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 20,
+  padding: "20px 18px",
+  background: "#fff",
+  boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
+};
+
+const PRIMARY_BTN: React.CSSProperties = {
+  padding: "14px 16px",
+  borderRadius: 14,
+  border: "none",
+  background: "#111827",
+  color: "#fff",
+  fontWeight: 900,
+  fontSize: 15,
+  cursor: "pointer",
+  width: "100%",
+};
+
+const SECONDARY_BTN: React.CSSProperties = {
+  padding: "12px 16px",
+  borderRadius: 14,
+  border: "1px solid #e5e7eb",
+  background: "#fff",
+  color: "#111827",
+  fontWeight: 900,
+  fontSize: 14,
+  cursor: "pointer",
+  width: "100%",
+};
+
+function StatusPill({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        padding: "5px 10px",
+        borderRadius: 999,
+        background: "#f3f4f6",
+        color: "#4b5563",
+        fontWeight: 800,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+      }}
+    >
+      {children}
+    </span>
+  );
 }
 
 export default function HomeClient() {
@@ -1730,7 +1789,7 @@ return () => {
 
   function joinedClassEnterLabel(opening: boolean) {
     if (opening) return "入っています…";
-    return "今のクラスに入る";
+    return "今のクラスを見る";
   }
 
   async function toggleNotifications() {
@@ -2332,30 +2391,60 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   }
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
-      <p style={{ margin: 0 }}>
-        ようこそ、<b>{welcomeName}</b> さん
-      </p>
+    <div style={{ display: "grid", gap: 24 }}>
+      <div>
+        <p style={{ margin: 0, fontSize: 15, color: "#374151" }}>
+          ようこそ、<b>{welcomeName}</b> さん
+        </p>
+        {joinWindowText ? (
+          <div
+            style={{
+              marginTop: 12,
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            {joinWindowOpen ? (
+              <StatusPill>
+                <span
+                  aria-hidden
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 999,
+                    background: "#22c55e",
+                    display: "inline-block",
+                  }}
+                />
+                {joinWindowText}
+              </StatusPill>
+            ) : (
+              <StatusPill>受付時間外</StatusPill>
+            )}
+          </div>
+        ) : null}
+      </div>
 
       {error ? (
         <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>{error}</div>
       ) : null}
 
       {hasJoinedClasses ? (
-        <section
-          style={{
-            padding: "18px 16px",
-            borderRadius: 18,
-            border: "2px solid #111827",
-            background: "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
-            boxShadow: "0 12px 32px rgba(15, 23, 42, 0.08)",
-          }}
-        >
-          <div style={{ marginBottom: 12 }}>
+        <section style={DASH_CARD}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 16,
+            }}
+          >
             <h2
               style={{
                 margin: 0,
-                fontSize: 22,
+                fontSize: 18,
                 fontWeight: 900,
                 color: "#111827",
                 lineHeight: 1.3,
@@ -2363,38 +2452,11 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             >
               今のクラスに戻る
             </h2>
-            <p
-              style={{
-                margin: "8px 0 0",
-                fontSize: 13,
-                color: "#475569",
-                fontWeight: 700,
-                lineHeight: 1.6,
-              }}
-            >
-              {!joinWindowOpen
-                ? "現在は入校受付時間外ですが、所属中のクラスには入れます。"
-                : "所属中のクラスがあります。続きから話せます。"}
-            </p>
+            <HelpTip
+              label="今のクラスに戻るについて"
+              content={RETURN_CLASS_HELP_TEXT}
+            />
           </div>
-
-          {!joinWindowOpen ? (
-            <div
-              style={{
-                marginBottom: 14,
-                padding: "12px 14px",
-                borderRadius: 12,
-                border: "1px solid #bfdbfe",
-                background: "#eff6ff",
-                color: "#1e40af",
-                fontSize: 13,
-                fontWeight: 800,
-                lineHeight: 1.6,
-              }}
-            >
-              今のクラスにはいつでも戻れます。新規の入校は受付時間内にお試しください。
-            </div>
-          ) : null}
 
           <div style={{ display: "grid", gap: 14 }}>
             {visible.map((c) => {
@@ -2444,9 +2506,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     textAlign: "left",
                     padding: "16px",
                     borderRadius: 16,
-                    border: "1px solid #cbd5e1",
-                    background: "#fff",
-                    boxShadow: "0 4px 14px rgba(15, 23, 42, 0.06)",
+                    border: "1px solid #e5e7eb",
+                    background: "#fafafa",
                   }}
                 >
                   <div
@@ -2613,18 +2674,10 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     onClick={() => void openClass(c)}
                     disabled={opening}
                     style={{
-                      width: "100%",
+                      ...PRIMARY_BTN,
                       marginTop: 14,
-                      padding: "14px 16px",
-                      borderRadius: 12,
-                      border: "none",
-                      background: "#111827",
-                      color: "#fff",
-                      fontWeight: 900,
-                      fontSize: 15,
-                      cursor: opening ? "default" : "pointer",
                       opacity: opening ? 0.75 : 1,
-                      boxShadow: "0 4px 14px rgba(15, 23, 42, 0.18)",
+                      cursor: opening ? "default" : "pointer",
                     }}
                   >
                     {joinedClassEnterLabel(opening)}
@@ -2803,124 +2856,96 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         </section>
       ) : null}
 
-      <section
-        style={{
-          padding: "16px",
-          borderRadius: 16,
-          border: "1px solid #e5e7eb",
-          background: "#fafafa",
-        }}
-      >
-        <h2
+      <section style={DASH_CARD}>
+        <div
           style={{
-            margin: "0 0 8px",
-            fontSize: 16,
-            fontWeight: 900,
-            color: "#374151",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 16,
           }}
         >
-          新しく参加する
-        </h2>
-        <p
-          style={{
-            margin: "0 0 14px",
-            fontSize: 12,
-            color: "#6b7280",
-            fontWeight: 700,
-            lineHeight: 1.6,
-          }}
-        >
-          初めて入る・別のクラスを探す場合はこちらです。
-          {!joinWindowOpen ? " 現在は入校受付時間外のため、新規参加はできません。" : ""}
-        </p>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 18,
+              fontWeight: 900,
+              color: "#111827",
+            }}
+          >
+            新しく参加する
+          </h2>
+          <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
+        </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "grid", gap: 10 }}>
           <button
             type="button"
             onClick={quickJoinFreeAndOpen}
             disabled={quickBusy || !joinWindowOpen}
             style={{
-              padding: "12px 16px",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: !joinWindowOpen ? "#e5e5e5" : "#111",
-              color: !joinWindowOpen ? "#666" : "#fff",
-              fontWeight: 900,
-              cursor: quickBusy || !joinWindowOpen ? "default" : "pointer",
-              opacity: quickBusy || !joinWindowOpen ? 0.75 : 1,
+              ...PRIMARY_BTN,
+              opacity: quickBusy || !joinWindowOpen ? 0.55 : 1,
+              cursor: quickBusy || !joinWindowOpen ? "not-allowed" : "pointer",
             }}
           >
-            {quickBusy
-              ? "参加中…"
-              : !joinWindowOpen
-                ? "入校受付時間外"
-                : "今すぐ入る"}
+            {quickBusy ? "参加中…" : "今すぐ入る"}
           </button>
 
           <button
             type="button"
             onClick={() => router.push(withDev("/class/select"))}
-            style={{
-              padding: "12px 16px",
-              borderRadius: 12,
-              border: "1px solid #ddd",
-              background: "#fff",
-              color: "#111",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
+            style={SECONDARY_BTN}
           >
             入る場所を選ぶ
           </button>
         </div>
-
-        {joinWindowText ? (
-          <div
-            style={{
-              marginTop: 12,
-              fontSize: 12,
-              color: "#6b7280",
-              fontWeight: 700,
-            }}
-          >
-            {joinWindowOpen ? joinWindowText : `${joinWindowText}（時間外）`}
-          </div>
-        ) : null}
       </section>
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <section
+        style={{
+          ...DASH_CARD,
+          padding: "14px 16px",
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
         <button
           type="button"
           onClick={() => void toggleNotifications()}
           style={{
-            padding: "12px 16px",
+            padding: "8px 12px",
             borderRadius: 12,
-            border: "1px solid #ddd",
-            background: notificationsEnabled ? "#dcfce7" : "#fff",
-            color: "#111",
-            fontWeight: 900,
+            border: "1px solid #e5e7eb",
+            background: notificationsEnabled ? "#f0fdf4" : "#fff",
+            color: "#4b5563",
+            fontWeight: 800,
+            fontSize: 13,
             cursor: "pointer",
           }}
         >
-          {notificationsEnabled ? "Push通知OFF" : "Push通知を有効化"}
+          {notificationsEnabled ? "Push通知 OFF" : "Push通知"}
         </button>
 
         <button
           type="button"
           onClick={() => router.push(withDev(buildProfileEditPath("/")))}
           style={{
-            padding: "12px 16px",
+            padding: "8px 12px",
             borderRadius: 12,
-            border: "1px solid #ddd",
-            background: "#fff",
-            color: "#111",
-            fontWeight: 900,
+            border: profileComplete ? "1px solid #e5e7eb" : "1px solid #111827",
+            background: profileComplete ? "#fff" : "#111827",
+            color: profileComplete ? "#4b5563" : "#fff",
+            fontWeight: profileComplete ? 800 : 900,
+            fontSize: 13,
             cursor: "pointer",
           }}
         >
           {profileComplete ? "プロフィール編集" : "プロフィール登録"}
         </button>
-      </div>
+      </section>
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 

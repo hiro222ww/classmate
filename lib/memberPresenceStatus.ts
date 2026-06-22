@@ -223,7 +223,20 @@ export function resolveCallMemberUserDisplayText(params: {
   playbackActive?: boolean;
   audioActuallyPlaying?: boolean;
   recentPlaySuccess?: boolean;
+  isMe?: boolean;
+  screen?: string | null;
+  isInCall?: boolean;
+  inSessionMember?: boolean;
 }): string {
+  if (!params.isMe) {
+    return resolvePublicCallMemberLabel({
+      rawText: params.text,
+      screen: params.screen,
+      isInCall: params.isInCall,
+      inSessionMember: params.inSessionMember,
+    });
+  }
+
   const normalized = normalizeCallStatusDisplayText(params.text);
   const established =
     params.audioConfirmedStrict === true ||
@@ -235,6 +248,51 @@ export function resolveCallMemberUserDisplayText(params: {
     return "通話中";
   }
   return simplifyUserFacingStatusText(normalized);
+}
+
+const PUBLIC_OFFLINE_LABELS = new Set([
+  "参加準備中",
+  "接続確認中",
+  "接続待ち",
+  "不在",
+  "退出済み",
+  "退出しました",
+]);
+
+export function resolvePublicCallMemberLabel(params: {
+  rawText: string;
+  screen?: string | null;
+  isInCall?: boolean;
+  inSessionMember?: boolean;
+}): string {
+  const screen = String(params.screen ?? "").trim();
+  const normalized = normalizeCallStatusDisplayText(params.rawText);
+
+  if (
+    params.isInCall === true &&
+    screen === "call" &&
+    (normalized === "通話中" || normalized === "音声受信中")
+  ) {
+    return "通話中";
+  }
+
+  if (
+    screen === "room" &&
+    params.inSessionMember !== false &&
+    !PUBLIC_OFFLINE_LABELS.has(normalized)
+  ) {
+    return "待機ルーム内";
+  }
+
+  if (
+    normalized === "待機中" ||
+    normalized === "待機ルーム内" ||
+    normalized === "入室中"
+  ) {
+    return "待機ルーム内";
+  }
+
+  return "オフライン";
 }
 
 const STABLE_CONNECTED_LABELS = new Set(["通話中", "音声受信中"]);
@@ -286,13 +344,13 @@ export function simplifyUserFacingStatusText(text: string): string {
     return "退出しました";
   }
   if (value.includes("入り直してください")) {
-    return "接続が不安定です。入り直してください";
+    return "接続中…";
   }
   if (value === "音声が不安定です" || value === "接続が不安定です") {
-    return "接続が不安定です";
+    return "接続中…";
   }
   if (value === "接続に失敗") {
-    return "接続できませんでした。入り直してください";
+    return "接続中…";
   }
   return value;
 }
@@ -1621,11 +1679,11 @@ export function participationStatusLabel(
   if (internal) {
     if (internal === "in_voice") return "通話中";
     if (internal === "connecting_voice") {
-      return context === "room" ? "接続準備中" : "接続中";
+      return context === "room" ? "待機ルーム内" : "接続中";
     }
-    if (internal === "in_room") return "待機中";
+    if (internal === "in_room") return "待機ルーム内";
     if (internal === "in_session") {
-      return context === "room" ? "入室中" : "入室中";
+      return context === "room" ? "待機ルーム内" : "入室中";
     }
     if (internal === "member_only") return "所属中";
     return "オフライン";
@@ -1633,15 +1691,17 @@ export function participationStatusLabel(
   if (unified) {
     if (unified === "in_call") return "通話中";
     if (unified === "connecting") {
-      return context === "room" ? "接続準備中" : "接続中";
+      return context === "room" ? "待機ルーム内" : "接続中";
     }
-    if (unified === "in_room") return "待機中";
-    if (unified === "in_session") return context === "room" ? "入室中" : "入室中";
+    if (unified === "in_room") return "待機ルーム内";
+    if (unified === "in_session") {
+      return context === "room" ? "待機ルーム内" : "入室中";
+    }
     if (unified === "member_only") return "所属中";
     return "オフライン";
   }
   if (status === "in_call") return "通話中";
-  if (status === "waiting") return "待機中";
+  if (status === "waiting") return "待機ルーム内";
   return "オフライン";
 }
 
@@ -1930,7 +1990,7 @@ export function resolveCallMemberStatus(params: {
   if (params.isMe) {
     if (params.localExitedCall) {
       return {
-        text: "待機中",
+        text: "待機ルーム内",
         color: "#6b7280",
         chipBg: "#f3f4f6",
         chipText: "#6b7280",
@@ -1941,7 +2001,7 @@ export function resolveCallMemberStatus(params: {
 
     if (onCallScreen) {
       return {
-        text: params.isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+        text: params.isMuted ? "自分 / ミュート中" : "通話中",
         color: "#6b7280",
         chipBg: params.isMuted ? "#fef2f2" : "#eff6ff",
         chipText: params.isMuted ? "#991b1b" : "#1d4ed8",
@@ -1951,7 +2011,7 @@ export function resolveCallMemberStatus(params: {
     }
 
     return {
-      text: params.isMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+      text: params.isMuted ? "自分 / ミュート中" : "通話中",
       color: "#6b7280",
       chipBg: params.isMuted ? "#fef2f2" : "#eff6ff",
       chipText: params.isMuted ? "#991b1b" : "#1d4ed8",
@@ -1962,7 +2022,7 @@ export function resolveCallMemberStatus(params: {
 
   if (forceWaiting && !skipParticipationDowngrade) {
     return {
-      text: "待機中",
+      text: "待機ルーム内",
       color: "#6b7280",
       chipBg: "#f3f4f6",
       chipText: "#6b7280",

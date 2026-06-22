@@ -21,12 +21,6 @@ import {
   resetMicSessionForRejoin,
 } from "./voice/useLocalMic";
 import { MicEntryGate } from "@/components/MicEntryGate";
-import {
-  CallSafetyAckGate,
-  CallSafetyNotice,
-  acknowledgeCallSafetyNotice,
-  hasAcknowledgedCallSafetyNotice,
-} from "@/components/CallSafetyNotice";
 import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { detectInAppBrowser } from "@/lib/inAppBrowser";
 import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
@@ -359,7 +353,7 @@ export default function CallClient() {
     callReadySinceRef.current = null;
     callReadyStuckLoggedRef.current = false;
     setShowCallStuckReconnect(false);
-    setShowVoiceReconnectPrompt(false);
+    setVoiceJoinFatalError(false);
     setRemoteAudioHealth({});
     setVoiceEntryMode("checking");
     setGateBusy(false);
@@ -472,10 +466,9 @@ export default function CallClient() {
     logged: false,
   });
   const [showCallStuckReconnect, setShowCallStuckReconnect] = useState(false);
-  const [showVoiceReconnectPrompt, setShowVoiceReconnectPrompt] = useState(false);
+  const [voiceJoinFatalError, setVoiceJoinFatalError] = useState(false);
   const [micPermissionDenied, setMicPermissionDenied] = useState(false);
   const [voiceEntryMode, setVoiceEntryMode] = useState<VoiceEntryMode>("checking");
-  const [showCallSafetyAck, setShowCallSafetyAck] = useState(false);
   const [gateBusy, setGateBusy] = useState(false);
   const [gateError, setGateError] = useState<{
     title: string;
@@ -513,10 +506,6 @@ export default function CallClient() {
     }, CALL_NOW_MS_TICK_MS);
 
     return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    setShowCallSafetyAck(!hasAcknowledgedCallSafetyNotice());
   }, []);
 
   useLayoutEffect(() => {
@@ -813,7 +802,7 @@ export default function CallClient() {
     everConnectedPeersRef.current.clear();
     voiceConnectStartedAtRef.current = null;
     voicePlaybackPromptLoggedRef.current = false;
-    setShowVoiceReconnectPrompt(false);
+    setVoiceJoinFatalError(false);
     setShowCallStuckReconnect(false);
     callReadySinceRef.current = null;
     callReadyStuckLoggedRef.current = false;
@@ -1559,7 +1548,7 @@ export default function CallClient() {
       voiceProdLog(
         `[call-soft-reset] exhausted remote=${remoteId.slice(-4)} reason=${reason}`
       );
-      setShowVoiceReconnectPrompt(true);
+      setVoiceJoinFatalError(true);
     },
     []
   );
@@ -1678,7 +1667,7 @@ export default function CallClient() {
         !micReady &&
         (voiceEntryMode === "checking" || voiceEntryMode === "gate")
       ) {
-        const prepText = micPermissionDenied ? "マイク未許可" : "参加準備中";
+        const prepText = micPermissionDenied ? "マイク未許可" : "マイク準備中";
         const prepStatus = {
           text: prepText,
           color: "#92400e",
@@ -1744,7 +1733,7 @@ export default function CallClient() {
         }
 
         const waitingForMic = {
-          text: "接続待ち",
+          text: "オフライン",
           color: "#6b7280",
           chipBg: "#f3f4f6",
           chipText: "#6b7280",
@@ -1775,7 +1764,7 @@ export default function CallClient() {
 
       if (isMe && selfExplicitlyLeft) {
         const waiting = {
-          text: "待機中",
+          text: "待機ルーム内",
           color: "#6b7280",
           chipBg: "#f3f4f6",
           chipText: "#6b7280",
@@ -1806,7 +1795,7 @@ export default function CallClient() {
 
       if (isMe) {
         const selfStatus = {
-          text: userMuted ? "自分 / ミュート中" : "自分 / 発話可能",
+          text: userMuted ? "自分 / ミュート中" : "通話中",
           color: "#6b7280",
           chipBg: userMuted ? "#fef2f2" : "#eff6ff",
           chipText: userMuted ? "#991b1b" : "#1d4ed8",
@@ -2429,6 +2418,47 @@ export default function CallClient() {
     voiceLayerShouldRender &&
     (voiceEntryMode === "mic" || voiceEntryMode === "listen_only");
 
+  const voiceSelfReconnecting = useMemo(() => {
+    if (!voiceLayerActive || voiceJoinFatalError) return false;
+    const peerReconnecting = Object.values(peerDiagnostics).some(
+      (diag) =>
+        diag?.autoHardResetInProgress === true ||
+        diag?.voicePeerRepairInProgress === true
+    );
+    const peerConnecting = Object.values(peerStates).some(
+      (state) => state === "connecting"
+    );
+    return peerReconnecting || peerConnecting;
+  }, [peerDiagnostics, peerStates, voiceJoinFatalError, voiceLayerActive]);
+
+  useEffect(() => {
+    if (!voiceLayerActive || remoteMemberIds.length === 0) return;
+
+    const hasPlaybackEvidence = Object.values(remoteAudioHealth).some(
+      (health) =>
+        health.playSuccess === true ||
+        health.playbackActive === true ||
+        health.audioConfirmedStrict === true ||
+        health.audioActuallyPlaying === true
+    );
+    if (hasPlaybackEvidence) {
+      setVoiceJoinFatalError(false);
+      return;
+    }
+
+    const allRemotesGaveUp = remoteMemberIds.every((remoteId) => {
+      return peerDiagnostics[remoteId]?.autoHardResetGiveUp === true;
+    });
+    if (allRemotesGaveUp) {
+      setVoiceJoinFatalError(true);
+    }
+  }, [
+    peerDiagnostics,
+    remoteAudioHealth,
+    remoteMemberIds,
+    voiceLayerActive,
+  ]);
+
   const showMicEntryGate =
     voiceLayerShouldRender &&
     !micReady &&
@@ -2649,7 +2679,7 @@ export default function CallClient() {
       `${sessionId}|${classId}|${deviceId}`
     );
     setShowCallStuckReconnect(false);
-    setShowVoiceReconnectPrompt(false);
+    setVoiceJoinFatalError(false);
   }, [sessionId, classId, deviceId]);
 
   useEffect(() => {
@@ -2687,7 +2717,7 @@ export default function CallClient() {
       );
       if (hasPlaybackEvidence) {
         voicePlaybackPromptLoggedRef.current = false;
-        setShowVoiceReconnectPrompt(false);
+        setVoiceJoinFatalError(false);
         return;
       }
 
@@ -2711,7 +2741,6 @@ export default function CallClient() {
             `awaitingAnswer=${voice.anyAwaitingAnswer ? 1 : 0}`
         );
       }
-      setShowVoiceReconnectPrompt(true);
     }, 2000);
 
     return () => window.clearInterval(timer);
@@ -2733,7 +2762,7 @@ export default function CallClient() {
     callReadySinceRef.current = Date.now();
     callReadyStuckLoggedRef.current = false;
     setShowCallStuckReconnect(false);
-    setShowVoiceReconnectPrompt(false);
+    setVoiceJoinFatalError(false);
     for (const member of members) {
       const remoteId = String(member.device_id ?? "").trim();
       if (!remoteId || remoteId === deviceId) continue;
@@ -2741,11 +2770,6 @@ export default function CallClient() {
     }
     void fetchMembers("readiness_reconnect", { fast: true });
   }, [buildCallReadinessSnapshot, deviceId, fetchMembers, members]);
-
-  const handleVoiceReconnectPrompt = useCallback(() => {
-    debugConsoleLog("[call-soft-reset] manual-reconnect-requested");
-    handleCallStuckReconnect();
-  }, [handleCallStuckReconnect]);
 
   const voiceMembersRef = useRef<Member[]>([]);
   const voiceMembers = useMemo(() => {
@@ -2854,19 +2878,9 @@ export default function CallClient() {
         />
       ) : null}
 
-      {showCallSafetyAck ? (
-        <CallSafetyAckGate
-          onAcknowledge={() => {
-            acknowledgeCallSafetyNotice();
-            setShowCallSafetyAck(false);
-          }}
-        />
-      ) : null}
-
       {showMicEntryGate ? (
         <>
           <InAppBrowserNotice />
-          <CallSafetyNotice compact />
           <MicEntryGate
             busy={gateBusy || voiceEntryMode === "checking"}
             errorTitle={gateError?.title}
@@ -2896,19 +2910,7 @@ export default function CallClient() {
           <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
             参加人数 {filled}/{capacity}
           </div>
-          {callInfo ? (
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 13,
-                color: "#b45309",
-                fontWeight: 800,
-              }}
-            >
-              {callInfo}
-            </div>
-          ) : null}
-          {showCallStuckReconnect ? (
+          {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
             <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
                 接続処理が長時間続いています
@@ -2928,29 +2930,6 @@ export default function CallClient() {
                 }}
               >
                 再接続
-              </button>
-            </div>
-          ) : null}
-          {showVoiceReconnectPrompt ? (
-            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
-                接続が不安定です。入り直してください
-              </span>
-              <button
-                type="button"
-                onClick={() => handleVoiceReconnectPrompt()}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 10,
-                  border: "1px solid #f59e0b",
-                  background: "#fffbeb",
-                  color: "#b45309",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-              >
-                接続をやり直す
               </button>
             </div>
           ) : null}
@@ -3114,6 +3093,7 @@ export default function CallClient() {
               ? remoteAudioHealth[memberId] ?? null
               : null;
             const showManualAudioReconnect =
+              isVoiceLayerDebugEnabled() &&
               !!member &&
               !isMe &&
               resolveDisplayManualAudioReconnect({
@@ -3286,6 +3266,12 @@ export default function CallClient() {
                         ? "発話中"
                         : resolveCallMemberUserDisplayText({
                             text: status.text,
+                            isMe,
+                            screen: member?.screen ?? null,
+                            isInCall: member?.is_in_call === true,
+                            inSessionMember: memberId
+                              ? apiSessionMemberIdsRef.current.has(memberId)
+                              : false,
                             audioConfirmedStrict:
                               memberAudioHealth?.audioConfirmedStrict === true,
                             playbackActive:
@@ -3431,6 +3417,43 @@ export default function CallClient() {
             >
               もう一度試す
             </button>
+          </div>
+        ) : null}
+
+        {voiceJoinFatalError ? (
+          <div
+            style={{
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              background: "#f9fafb",
+              border: "1px solid #e5e7eb",
+              fontSize: 13,
+              color: "#4b5563",
+              lineHeight: 1.65,
+            }}
+          >
+            <div>音声接続に失敗しました。もう一度参加してください。</div>
+            <button
+              type="button"
+              onClick={() => handleCallStuckReconnect()}
+              style={{
+                marginTop: 8,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid #9ca3af",
+                background: "#fff",
+                color: "#374151",
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              音声を再接続
+            </button>
+          </div>
+        ) : voiceSelfReconnecting ? (
+          <div style={{ marginTop: 10, fontSize: 12, color: "#9ca3af" }}>
+            再接続中…
           </div>
         ) : null}
 

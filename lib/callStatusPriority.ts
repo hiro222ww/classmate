@@ -169,18 +169,10 @@ export function resolveParticipationPriorityStatus(
 
   switch (priority) {
     case "explicit_left":
-      return {
-        text: "退出済み",
-        color: "#6b7280",
-        chipBg: "#f3f4f6",
-        chipText: "#6b7280",
-        reason: priority,
-        source: "participation",
-      };
     case "absent_expired":
     case "presence_stale_expired":
       return {
-        text: "不在",
+        text: "オフライン",
         color: "#6b7280",
         chipBg: "#f3f4f6",
         chipText: "#6b7280",
@@ -189,17 +181,17 @@ export function resolveParticipationPriorityStatus(
       };
     case "absent_grace":
       return {
-        text: "接続確認中",
-        color: "#92400e",
-        chipBg: "#fffbeb",
-        chipText: "#b45309",
+        text: "オフライン",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
         reason: priority,
         source: "participation",
       };
     case "presence_stale_grace":
       if (screen === "room" || screen === "home" || screen === "offline") {
         return {
-          text: "待機中",
+          text: "待機ルーム内",
           color: "#6b7280",
           chipBg: "#f3f4f6",
           chipText: "#6b7280",
@@ -208,10 +200,10 @@ export function resolveParticipationPriorityStatus(
         };
       }
       return {
-        text: "参加準備中",
-        color: "#92400e",
-        chipBg: "#fffbeb",
-        chipText: "#b45309",
+        text: "オフライン",
+        color: "#6b7280",
+        chipBg: "#f3f4f6",
+        chipText: "#6b7280",
         reason: priority,
         source: "participation",
       };

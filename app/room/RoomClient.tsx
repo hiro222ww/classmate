@@ -85,6 +85,7 @@ import {
   storeInviteRouteState,
   type InviteJoinApiTrace,
 } from "@/lib/inviteDiagnostics";
+import { runInviteJoinWithAuth } from "@/lib/joinByInviteClient";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -555,7 +556,7 @@ function resolveRoomMemberDisplay(
   if (localExitedCall) {
     return {
       status: "waiting" as const,
-      label: "待機中",
+      label: "待機ルーム内",
       internal: "in_room" as const,
       used: "local_exited_call",
       reason: "localExitedCall",
@@ -767,6 +768,7 @@ export default function RoomClient() {
   const inviteJoinDoneKeyRef = useRef<string | null>(null);
   const inviteJoinGraceUntilRef = useRef(0);
   const inviteJoinTraceRef = useRef<InviteJoinApiTrace>(createEmptyInviteJoinApiTrace());
+  const inviteJoinAbortRef = useRef<AbortController | null>(null);
   const hasClassMembershipHintRef = useRef(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
   const [topicTitle, setTopicTitle] = useState("ルーム");
@@ -1389,6 +1391,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       sessionId,
       invite: true,
     });
+    console.info(
+      `[invite-join] invite page mounted class=${classId.slice(-6)} session=${sessionId.slice(-6)}`
+    );
 
     storeInviteRouteState({
       classId,
@@ -1822,10 +1827,28 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
     roomLog(
       `[session-members] self-rejoin start reason=${reason} context=room device=${deviceId.slice(-4)} ` +
-        `session=${sessionId.slice(-6)} class=${classId.slice(-6)}`
+        `session=${sessionId.slice(-6)} class=${classId.slice(-6)} invite=${invite ? 1 : 0}`
     );
 
     try {
+      if (invite) {
+        const inviteResult = await runInviteJoinWithAuth({
+          classId,
+          sessionId,
+          deviceId,
+        });
+        if (!inviteResult.ok) {
+          console.warn(
+            `[session-members] invite self-rejoin failed code=${inviteResult.data.code}`
+          );
+          return false;
+        }
+        joinedSessionKeyRef.current = `${sessionId}:${classId}:${deviceId}:${name}`;
+        hasClassMembershipHintRef.current = true;
+        inviteJoinDoneKeyRef.current = `${classId}:${sessionId}:${deviceId}:${openJoinedClass}`;
+        return true;
+      }
+
       const joinRes = await fetch(
         `/api/session/join?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`,
         {
@@ -1874,7 +1897,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       console.warn("[room] self-rejoin failed", e);
       return false;
     }
-  }, [classId, deviceId, displayName, openJoinedClass, sessionId, isBlockedClosedSession]);
+  }, [classId, deviceId, displayName, invite, openJoinedClass, sessionId, isBlockedClosedSession]);
 
   const fetchStatus = useCallback(
     async (opts?: {
@@ -2911,33 +2934,91 @@ const name = rawName === "You" ? "参加者" : rawName;
     if (invite) {
       logInviteRoute("join-start", { classId, sessionId, invite: true });
 
-      const inviteRes = await fetch("/api/class/join-by-invite", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-  classId,
-  sessionId, // ← 追加
-  deviceId,
-}),
-        cache: "no-store",
+      if (inviteJoinAbortRef.current) {
+        inviteJoinAbortRef.current.abort();
+      }
+      const abortController = new AbortController();
+      inviteJoinAbortRef.current = abortController;
+
+      const inviteResult = await runInviteJoinWithAuth({
+        classId,
+        sessionId,
+        deviceId,
+        signal: abortController.signal,
+        onAuthReady: () => {
+          logInviteJoinClient("step", {
+            classId,
+            sessionId,
+            deviceId,
+            step: "auth_ready",
+          });
+        },
+        onRequestStart: () => {
+          logInviteJoinClient("step", {
+            classId,
+            sessionId,
+            deviceId,
+            step: "join-by-invite",
+          });
+        },
       });
 
-      const inviteJson = await readJsonSafe(inviteRes);
+      if (abortController.signal.aborted) {
+        joinResultError = "aborted";
+        return;
+      }
 
-      const errCode = String(inviteJson?.error ?? `http_${inviteRes.status}`);
-      inviteJoinTraceRef.current.inviteJoinOk =
-        inviteRes.ok && inviteJson?.ok === true;
-      inviteJoinTraceRef.current.inviteJoinStatus = inviteRes.status;
-      inviteJoinTraceRef.current.inviteJoinError =
-        inviteRes.ok && inviteJson?.ok ? "" : errCode;
+      const responseCode = inviteResult.ok
+        ? inviteResult.data.code
+        : inviteResult.data.code;
+      const responseMessage = inviteResult.data.message;
 
-      if (!inviteRes.ok || !inviteJson?.ok) {
+      inviteJoinTraceRef.current.inviteJoinOk = inviteResult.ok;
+      inviteJoinTraceRef.current.inviteJoinStatus = inviteResult.ok ? 200 : 400;
+      inviteJoinTraceRef.current.inviteJoinError = inviteResult.ok
+        ? ""
+        : responseCode;
+
+      if (!inviteResult.ok) {
+        if (responseCode === "restore_login") {
+          logInviteRoute("join-failed", {
+            classId,
+            sessionId,
+            error: responseCode,
+            step: "restore_login",
+          });
+          router.push(withDev("/login"));
+          joinResultError = responseCode;
+          return;
+        }
+
+        if (responseCode === "needs_profile") {
+          logInviteRoute("join-failed", {
+            classId,
+            sessionId,
+            error: responseCode,
+            step: "needs_profile",
+          });
+          router.push(
+            withDev(
+              buildProfileEditPath(
+                buildCurrentPathReturnTo(pathname, searchParams.toString())
+              )
+            )
+          );
+          joinResultError = responseCode;
+          return;
+        }
+
         const recovered = await fetchViewerSessionMembership(joinTarget);
         inviteJoinTraceRef.current.membershipExists = recovered.inSession;
         inviteJoinTraceRef.current.sessionMemberExists = recovered.inSession;
-        if (recovered.inSession) {
+        if (
+          recovered.inSession &&
+          (responseCode === "already_member" || responseCode === "server_error")
+        ) {
           roomLog(
-            `[room-join] invite-recover reason=already_member error=${errCode} ` +
+            `[room-join] invite-recover reason=already_member error=${responseCode} ` +
               `session=${sessionId.slice(-6)}`
           );
           joinResultOk = true;
@@ -2958,31 +3039,31 @@ const name = rawName === "You" ? "参加者" : rawName;
           sessionId,
           deviceId,
           step: "join-by-invite",
-          error: errCode,
+          error: responseCode,
         });
         logInviteRoute("join-failed", {
           classId,
           sessionId,
-          error: errCode,
+          error: responseCode,
           step: "join-by-invite",
         });
 
-        if (inviteJson?.error === "class_slots_limit") {
-          throw new Error(formatInviteJoinApiError("class_slots_limit"));
-        }
-
-        const inviteUiMessage = formatInviteJoinApiError(errCode);
+        const inviteUiMessage = formatInviteJoinApiError(
+          responseCode,
+          responseMessage
+        );
         logInviteUiSnapshot("invite_api_failed", {
           err: inviteUiMessage,
         });
         throw new Error(inviteUiMessage);
       }
 
-      const resolvedSessionId = String(inviteJson?.sessionId ?? sessionId).trim();
+      const inviteData = inviteResult.data;
+      const resolvedSessionId = String(inviteData.sessionId ?? sessionId).trim();
       const requestedSessionId = String(
-        inviteJson?.requestedSessionId ?? sessionId
+        inviteData.requestedSessionId ?? sessionId
       ).trim();
-      const sessionFallback = inviteJson?.sessionFallback === true;
+      const sessionFallback = inviteData.sessionFallback === true;
 
       if (
         sessionFallback &&
@@ -2992,7 +3073,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         roomLog(
           `[invite-join] session-redirect from=${sessionId.slice(-6)} ` +
             `to=${resolvedSessionId.slice(-6)} requested=${requestedSessionId.slice(-6)} ` +
-            `reason=${String(inviteJson?.sessionFallbackReason ?? "-")}`
+            `reason=${String(inviteData.sessionFallbackReason ?? "-")}`
         );
         joinResultOk = true;
         joinResultStatus = "invite_session_redirect";
@@ -3012,60 +3093,36 @@ const name = rawName === "You" ? "参加者" : rawName;
       clearInviteRoomError("invite_api_success");
       setErr("");
 
-      logInviteJoinClient("success", { classId, sessionId, deviceId });
+      logInviteJoinClient("success", {
+        classId,
+        sessionId: resolvedSessionId,
+        deviceId,
+        step: inviteData.code,
+      });
       hasClassMembershipHintRef.current = true;
       inviteJoinGraceUntilRef.current = Date.now() + INVITE_JOIN_GRACE_MS;
       markJoinedClassesStale(classId);
-      markAutoCallOnce(sessionId, deviceId);
+      markAutoCallOnce(resolvedSessionId, deviceId);
       inviteJoinDoneKeyRef.current = joinKey;
       roomLog(
         "[room-join] invite-join-done fast_path=apply " +
-          `class=${classId.slice(-6)} session=${sessionId.slice(-6)}`
+          `class=${classId.slice(-6)} session=${resolvedSessionId.slice(-6)} ` +
+          `code=${inviteData.code}`
       );
 
       joinResultOk = true;
-      joinResultStatus = "invite_join";
+      joinResultStatus =
+        inviteData.code === "already_member"
+          ? "invite_already_member"
+          : "invite_join";
       await applyJoinSuccess({
         ok: true,
         sessionId: resolvedSessionId,
         classId,
         alreadyInSession: true,
-        memberCount: Number(inviteJson?.joinState?.ok ? 1 : 1),
-        fastPath: "invite_join",
+        memberCount: inviteData.memberCount,
+        fastPath: inviteData.code,
       });
-
-      void fetch(
-        `/api/session/join?sessionId=${encodeURIComponent(resolvedSessionId)}&classId=${encodeURIComponent(classId)}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            sessionId: resolvedSessionId,
-            classId: classId || undefined,
-            deviceId,
-            name,
-            capacity: 5,
-            invite: true,
-            openJoinedClass,
-          }),
-          cache: "no-store",
-        }
-      )
-        .then(async (bgRes) => {
-          inviteJoinTraceRef.current.sessionJoinOk = bgRes.ok;
-          inviteJoinTraceRef.current.sessionJoinStatus = bgRes.status;
-          if (bgRes.ok) {
-            roomLog(
-              `[room-join] invite session_join background ok session=${sessionId.slice(-6)}`
-            );
-            return;
-          }
-          const bgJson = await readJsonSafe(bgRes);
-          inviteJoinTraceRef.current.sessionJoinError = String(
-            bgJson?.error ?? `http_${bgRes.status}`
-          );
-        })
-        .catch(() => {});
 
       return;
     }

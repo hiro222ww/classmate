@@ -137,12 +137,12 @@ function Pill({ children }: { children: React.ReactNode }) {
   return (
     <span
       style={{
-        fontSize: 12,
-        padding: "4px 8px",
+        fontSize: 11,
+        padding: "5px 10px",
         borderRadius: 999,
-        background: "#f0f0f0",
-        color: "#111",
-        fontWeight: 900,
+        background: "#f3f4f6",
+        color: "#4b5563",
+        fontWeight: 800,
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
@@ -164,7 +164,48 @@ const AGE_FILTER_OFF_PREFS: MatchPrefs = {
 const AGE_FILTER_ON_DEFAULT: MatchPrefs = { min_age: 18, max_age: 25 };
 
 const AGE_PREF_HELP_TEXT =
-  "年齢絞り込みをONにすると、指定した年齢条件に合うクラスを探します。OFFの場合は年齢では絞り込みません。";
+  "OFFのときは年齢では絞り込みません。ONにすると、指定した年齢条件に合うクラスを探します。ONにするにはプロフィール登録が必要です。";
+
+const RETURN_CLASS_HELP_TEXT =
+  "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
+
+const JOIN_NEW_HELP_TEXT =
+  "初めて入る・別のクラスを探す場合はこちらです。「今すぐ入る」は自動でクラスを探します。「入る場所を選ぶ」ではテーマを選べます。";
+
+const ADMISSION_WINDOW_HELP_TEXT =
+  "新規入校は受付時間内のみ可能です。所属中のクラスへの再入室はいつでもできます。";
+
+const DASH_CARD: React.CSSProperties = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 20,
+  padding: "20px 18px",
+  background: "#fff",
+  boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
+};
+
+const PRIMARY_BTN: React.CSSProperties = {
+  padding: "14px 16px",
+  borderRadius: 14,
+  border: "none",
+  background: "#111827",
+  color: "#fff",
+  fontWeight: 900,
+  fontSize: 15,
+  cursor: "pointer",
+  width: "100%",
+};
+
+const SECONDARY_BTN: React.CSSProperties = {
+  padding: "12px 16px",
+  borderRadius: 14,
+  border: "1px solid #e5e7eb",
+  background: "#fff",
+  color: "#111827",
+  fontWeight: 900,
+  fontSize: 14,
+  cursor: "pointer",
+  width: "100%",
+};
 
 function clampAge(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -272,7 +313,22 @@ export default function SelectClient() {
     code: string;
     message: string;
   } | null>(null);
+  const [hasJoinedClasses, setHasJoinedClasses] = useState(false);
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
+
+  async function fetchJoinedClassPresence(id: string) {
+    try {
+      const r = await fetch(
+        `/api/class/mine?device_id=${encodeURIComponent(id)}`,
+        { cache: "no-store" }
+      );
+      const j = await r.json().catch(() => null);
+      const rows = Array.isArray(j?.classes) ? j.classes : [];
+      setHasJoinedClasses(rows.length > 0);
+    } catch {
+      setHasJoinedClasses(false);
+    }
+  }
 
   async function reloadCatalog() {
     try {
@@ -551,6 +607,8 @@ export default function SelectClient() {
 
         await fetchProfile(id);
         if (!alive) return;
+
+        void fetchJoinedClassPresence(id);
 
         await reloadJoinWindow();
         if (!alive) return;
@@ -1192,7 +1250,7 @@ export default function SelectClient() {
   const debugDisplayName = profile?.display_name ?? "-";
 
   return (
-    <main style={{ padding: 16, maxWidth: 980, margin: "0 auto", color: "#111" }}>
+    <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }}>
       <header
         style={{
           display: "flex",
@@ -1227,12 +1285,13 @@ export default function SelectClient() {
           <Link
             href={withDev(buildProfileEditPath("/class/select"))}
             style={{
-              padding: "8px 10px",
+              padding: "8px 12px",
               borderRadius: 12,
-              border: "1px solid #4ade80",
-              background: "#ecfdf5",
-              fontWeight: 900,
-              color: "#166534",
+              border: hasProfile ? "1px solid #e5e7eb" : "1px solid #111827",
+              background: hasProfile ? "#fff" : "#111827",
+              fontWeight: 800,
+              fontSize: 13,
+              color: hasProfile ? "#374151" : "#fff",
               textDecoration: "none",
             }}
           >
@@ -1313,123 +1372,67 @@ export default function SelectClient() {
         </section>
       )}
 
-      {hasProfile === false && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 12,
-            borderRadius: 12,
-            border: "1px solid #fde68a",
-            background: "#fffbeb",
-            color: "#92400e",
-            fontWeight: 800,
-            lineHeight: 1.6,
-          }}
-        >
-          クラスに参加するにはプロフィール登録が必要です。
-          <div style={{ marginTop: 10 }}>
-            <Link
-              href={withDev(buildProfileEditPath("/class/select"))}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                border: "1px solid #facc15",
-                background: "#fff",
-                color: "#92400e",
-                textDecoration: "none",
-                fontWeight: 900,
-              }}
-            >
-              プロフィール登録へ
-            </Link>
+      {hasProfile === false ? (
+        <section style={{ ...DASH_CARD, marginTop: 20, borderColor: "#fde68a" }}>
+          <div style={{ fontWeight: 900, fontSize: 15, color: "#92400e" }}>
+            プロフィール登録が必要です
           </div>
-        </div>
-      )}
-
-      {!joinWindowOpen ? (
-        <div
-          style={{
-            marginTop: 12,
-            padding: 12,
-            borderRadius: 12,
-            border: "1px solid #fde68a",
-            background: "#fffbeb",
-            color: "#92400e",
-            fontWeight: 800,
-            lineHeight: 1.6,
-          }}
-        >
-          <HelpTip
-            label="入校受付時間について"
-            content="テーマの確認や設定はできます。新規入校は受付時間内にお試しください。所属中のクラスへの再入室は「今のクラスに戻る」から可能です。"
+          <Link
+            href={withDev(buildProfileEditPath("/class/select"))}
+            style={{
+              ...PRIMARY_BTN,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginTop: 12,
+              textDecoration: "none",
+            }}
           >
-            <span>現在入校受付時間外です</span>
-          </HelpTip>
-          {joinWindowText ? (
-            <span style={{ marginLeft: 8, fontSize: 12 }}>
-              受付：{joinWindowText}
-            </span>
-          ) : null}
-        </div>
+            プロフィール登録
+          </Link>
+        </section>
       ) : null}
 
-      <section
-        style={{
-          marginTop: 12,
-          padding: "18px 16px",
-          borderRadius: 18,
-          border: !joinWindowOpen ? "2px solid #111827" : "1px solid #cbd5e1",
-          background: !joinWindowOpen
-            ? "linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)"
-            : "#fff",
-          boxShadow: !joinWindowOpen
-            ? "0 12px 32px rgba(15, 23, 42, 0.08)"
-            : "0 4px 14px rgba(15, 23, 42, 0.05)",
-        }}
-      >
-        <h2
-          style={{
-            margin: 0,
-            fontSize: 20,
-            fontWeight: 900,
-            color: "#111827",
-            lineHeight: 1.3,
-          }}
-        >
-          今のクラスに戻る
-        </h2>
-        <p style={{ margin: "8px 0 14px", fontSize: 13, color: "#475569", fontWeight: 700 }}>
-          所属中のクラスに戻る
-          <HelpTip
-            label="今のクラスに戻るについて"
-            content={
-              !joinWindowOpen
-                ? "入校受付時間外でも、すでに所属しているクラスには入れます。"
-                : "所属中のクラスがあれば、続きから話せます。"
-            }
-          />
-        </p>
-        <Link
-          href={withDev("/")}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 12,
-            border: "none",
-            background: "#111827",
-            color: "#fff",
-            textDecoration: "none",
-            fontWeight: 900,
-            fontSize: 15,
-            boxShadow: "0 4px 14px rgba(15, 23, 42, 0.18)",
-          }}
-        >
-          今所属しているクラスを見る
-        </Link>
-      </section>
+      {hasJoinedClasses ? (
+        <section style={{ ...DASH_CARD, marginTop: 20 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 16,
+            }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 18,
+                fontWeight: 900,
+                color: "#111827",
+                lineHeight: 1.3,
+              }}
+            >
+              今のクラスに戻る
+            </h2>
+            <HelpTip
+              label="今のクラスに戻るについて"
+              content={RETURN_CLASS_HELP_TEXT}
+            />
+          </div>
+          <Link
+            href={withDev("/")}
+            style={{
+              ...PRIMARY_BTN,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              textDecoration: "none",
+            }}
+          >
+            今のクラスを見る
+          </Link>
+        </section>
+      ) : null}
 
       {deviceIdInvalid ? (
         <EntryFailurePanel
@@ -1506,74 +1509,93 @@ export default function SelectClient() {
 
       <section
         style={{
-          marginTop: 12,
+          marginTop: 20,
           display: "flex",
-          gap: 10,
+          gap: 8,
           flexWrap: "wrap",
           alignItems: "center",
         }}
       >
         <Pill>クラス枠: {slots}</Pill>
-        {joinWindowText ? (
-          <Pill>
-            {joinWindowOpen ? joinWindowText : `${joinWindowText}（時間外）`}
-          </Pill>
-        ) : null}
-
         <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
-        {loading ? <Pill>読み込み中…</Pill> : null}
-        {!prefsLoaded ? <Pill>年齢設定を読み込み中…</Pill> : null}
+        {joinWindowOpen ? (
+          <Pill>
+            <span
+              aria-hidden
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: 999,
+                background: "#22c55e",
+                display: "inline-block",
+              }}
+            />
+            {joinWindowText || "入校受付中"}
+          </Pill>
+        ) : (
+          <HelpTip label="入校受付時間について" content={ADMISSION_WINDOW_HELP_TEXT}>
+            <Pill>受付時間外</Pill>
+          </HelpTip>
+        )}
         <button
+          type="button"
           onClick={() => void reloadCatalog()}
           disabled={loading}
+          aria-label="再読み込み"
+          title="再読み込み"
           style={{
-            padding: "8px 10px",
-            borderRadius: 12,
-            border: "1px solid #ccc",
+            marginLeft: "auto",
+            padding: "6px 10px",
+            borderRadius: 10,
+            border: "1px solid #e5e7eb",
             background: "#fff",
-            fontWeight: 900,
-            cursor: "pointer",
+            color: "#6b7280",
+            fontWeight: 800,
+            fontSize: 12,
+            cursor: loading ? "default" : "pointer",
+            opacity: loading ? 0.6 : 1,
           }}
         >
-          再読み込み
+          ↻
         </button>
       </section>
 
-      <section
+      <div
         style={{
-          marginTop: 12,
-          border: "1px solid #ddd",
-          borderRadius: 18,
-          padding: 16,
-          background: "#fff",
-          maxWidth: 480,
-          width: "100%",
+          marginTop: 16,
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: 16,
+          alignItems: "start",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
-          <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT}>
-            <strong>年齢絞り込み</strong>
-          </HelpTip>
-
+        <section style={DASH_CARD}>
           <div
             style={{
-              display: "inline-flex",
-              border: "1px solid #d1d5db",
-              borderRadius: 12,
-              overflow: "hidden",
-              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
             }}
-            role="group"
-            aria-label="年齢絞り込み"
           >
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <strong style={{ fontSize: 16, fontWeight: 900 }}>年齢絞り込み</strong>
+              <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />
+            </div>
+
+            <div
+              style={{
+                display: "inline-flex",
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                overflow: "hidden",
+                flexShrink: 0,
+                opacity: !prefsLoaded ? 0.55 : 1,
+              }}
+              role="group"
+              aria-label="年齢絞り込み"
+            >
             <button
               type="button"
               onClick={() => void handleAgeFilterToggle(false)}
@@ -1622,29 +1644,21 @@ export default function SelectClient() {
           </div>
         </div>
 
-        {!ageFilterEnabled ? (
-          <p style={{ margin: "12px 0 0", fontSize: 13, color: "#6b7280" }}>
-            年齢では絞り込みません
-          </p>
-        ) : hasProfile === false ? (
-          <p style={{ margin: "12px 0 0", fontSize: 13, color: "#92400e", lineHeight: 1.6 }}>
-            プロフィール登録後に年齢条件を保存できます。
-          </p>
-        ) : (
-          <div style={{ marginTop: 12 }}>
+        {ageFilterEnabled && hasProfile !== false ? (
+          <div style={{ marginTop: 16 }}>
             <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>
               {displayMinAge} 〜 {displayMaxAge} 歳
             </div>
 
             {!minorsEnabled && displayMinAge < 18 ? (
               <p style={{ margin: "0 0 10px", fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
-                高校生以下は利用できません。条件に合うクラスを探します。
+                高校生以下は利用できません。
               </p>
             ) : null}
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 12, color: "#6b7280" }}>最小</div>
+                <div style={{ fontSize: 12, color: "#9ca3af" }}>最小</div>
                 <input
                   type="range"
                   min={AGE_FILTER_SLIDER_MIN}
@@ -1666,7 +1680,7 @@ export default function SelectClient() {
               </div>
 
               <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 12, color: "#6b7280" }}>最大</div>
+                <div style={{ fontSize: 12, color: "#9ca3af" }}>最大</div>
                 <input
                   type="range"
                   min={AGE_FILTER_SLIDER_MIN}
@@ -1692,96 +1706,63 @@ export default function SelectClient() {
               onClick={() => void savePrefs(prefs)}
               disabled={savingPrefs || !deviceId || loading}
               style={{
+                ...SECONDARY_BTN,
                 marginTop: 12,
-                padding: "10px 12px",
-                borderRadius: 12,
-                fontWeight: 900,
-                width: "100%",
               }}
             >
               保存
             </button>
           </div>
-        )}
-      </section>
+        ) : null}
+        </section>
 
-      <section
-        style={{
-          marginTop: 14,
-          border: "1px solid #e5e7eb",
-          borderRadius: 18,
-          padding: 16,
-          background: "#fafafa",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <strong style={{ fontSize: 16 }}>新しく参加する</strong>
-            <div
-              style={{
-                marginTop: 4,
-                fontSize: 12,
-                color: "#6b7280",
-                fontWeight: 700,
-                lineHeight: 1.6,
-              }}
-            >
-              初めて入る・別のクラスを探す場合はこちらです。
-            </div>
-          </div>
-
-          <button
-            onClick={() => void enterQuickFreeTheme()}
-            disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded}
+        <section style={DASH_CARD}>
+          <div
             style={{
-              padding: "12px 14px",
-              borderRadius: 14,
-              border: "none",
-              background:
-                hasProfile === false || !joinWindowOpen ? "#d4d4d4" : "#111",
-              color: hasProfile === false || !joinWindowOpen ? "#666" : "#fff",
-              fontWeight: 900,
-              cursor:
-                busy || !deviceId || hasProfile === false || !joinWindowOpen
-                  ? "not-allowed"
-                  : "pointer",
-              whiteSpace: "nowrap",
-              opacity: busy || !deviceId ? 0.6 : 1,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 16,
+              flexWrap: "wrap",
             }}
           >
-            {hasProfile === false
-              ? "プロフィール登録が必要"
-              : !joinWindowOpen
-                ? "入校受付時間外"
-                : "今すぐ入る"}
-          </button>
-        </div>
+            <strong style={{ fontSize: 16, fontWeight: 900 }}>新しく参加する</strong>
+            <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
+          </div>
 
-        <button
-          onClick={() => setShowNarrow((v) => !v)}
-          style={{
-            marginTop: 12,
-            width: "100%",
-            padding: "10px 12px",
-            borderRadius: 14,
-            border: "1px solid #ccc",
-            background: showNarrow ? "#111" : "#f6f6f6",
-            color: showNarrow ? "#fff" : "#111",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          {showNarrow ? "閉じる" : "世界観/テーマを選ぶ"}
-        </button>
-      </section>
+          <div style={{ display: "grid", gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => void enterQuickFreeTheme()}
+              disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded}
+              style={{
+                ...PRIMARY_BTN,
+                opacity:
+                  busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded
+                    ? 0.55
+                    : 1,
+                cursor:
+                  busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded
+                    ? "not-allowed"
+                    : "pointer",
+              }}
+            >
+              {busy ? "参加中…" : "今すぐ入る"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowNarrow((v) => !v)}
+              style={{
+                ...SECONDARY_BTN,
+                background: showNarrow ? "#f3f4f6" : "#fff",
+              }}
+            >
+              {showNarrow ? "閉じる" : "入る場所を選ぶ"}
+            </button>
+          </div>
+        </section>
+      </div>
 
       {showNarrow && (
         <>

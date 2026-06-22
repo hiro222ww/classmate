@@ -110,35 +110,35 @@ describe("callStatusPriority", () => {
     ).toBe(true);
   });
 
-  it("maps removed participation to 退出済み label", () => {
+  it("maps removed participation to offline label", () => {
     const label = resolveParticipationPriorityStatus("explicit_left");
-    expect(label?.text).toBe("退出済み");
+    expect(label?.text).toBe("オフライン");
   });
 
-  it("maps grace participation to preparing labels", () => {
+  it("maps grace participation to room or offline labels", () => {
     expect(resolveParticipationPriorityStatus("absent_grace")?.text).toBe(
-      "接続確認中"
+      "オフライン"
     );
     expect(resolveParticipationPriorityStatus("presence_stale_grace")?.text).toBe(
-      "参加準備中"
+      "オフライン"
     );
     expect(
       resolveParticipationPriorityStatus("presence_stale_grace", {
         screen: "room",
       })?.text
-    ).toBe("待機中");
+    ).toBe("待機ルーム内");
     expect(mapParticipationToStatusChoice("absent_grace")).toBe("connecting");
     expect(mapParticipationToStatusChoice("presence_stale_grace")).toBe(
       "connecting"
     );
   });
 
-  it("maps expired participation to 不在 label", () => {
+  it("maps expired participation to offline label", () => {
     expect(resolveParticipationPriorityStatus("absent_expired")?.text).toBe(
-      "不在"
+      "オフライン"
     );
     expect(resolveParticipationPriorityStatus("presence_stale_expired")?.text).toBe(
-      "不在"
+      "オフライン"
     );
   });
 });
