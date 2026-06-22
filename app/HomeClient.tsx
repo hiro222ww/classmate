@@ -13,6 +13,13 @@ import {
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
 import { HelpTip } from "@/components/HelpTip";
+import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
+import {
+  DASH_CARD,
+  HOME_DASHBOARD_LAYOUT_CSS,
+  PRIMARY_BTN,
+  SECONDARY_BTN,
+} from "@/components/dashboard/dashboardStyles";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import { withDev } from "@/lib/withDev";
 import { getClassStatusLabel, isSessionEligibleForNormalJoin } from "@/lib/recruitment";
@@ -348,39 +355,7 @@ const RETURN_CLASS_HELP_TEXT =
   "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
 
 const JOIN_NEW_HELP_TEXT =
-  "初めて入る・別のクラスを探す場合はこちらです。「今すぐ入る」は自動でクラスを探します。「入る場所を選ぶ」ではテーマを選べます。";
-
-const DASH_CARD: React.CSSProperties = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 20,
-  padding: "20px 18px",
-  background: "#fff",
-  boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
-};
-
-const PRIMARY_BTN: React.CSSProperties = {
-  padding: "14px 16px",
-  borderRadius: 14,
-  border: "none",
-  background: "#111827",
-  color: "#fff",
-  fontWeight: 900,
-  fontSize: 15,
-  cursor: "pointer",
-  width: "100%",
-};
-
-const SECONDARY_BTN: React.CSSProperties = {
-  padding: "12px 16px",
-  borderRadius: 14,
-  border: "1px solid #e5e7eb",
-  background: "#fff",
-  color: "#111827",
-  fontWeight: 900,
-  fontSize: 14,
-  cursor: "pointer",
-  width: "100%",
-};
+  "別のクラスへ新規参加する導線です。すでに所属中のクラスに戻る場合は「今のクラスに戻る」を使ってください。";
 
 function StatusPill({ children }: { children: React.ReactNode }) {
   return (
@@ -1786,6 +1761,9 @@ return () => {
   const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
   const profileComplete = isUserProfileComplete(profile);
   const hasJoinedClasses = visible.length > 0;
+  const primaryReturnClass = visible[0] ?? null;
+  const openingPrimaryReturn =
+    !!primaryReturnClass && openingClassId === primaryReturnClass.id;
 
   function joinedClassEnterLabel(opening: boolean) {
     if (opening) return "入っています…";
@@ -2392,6 +2370,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
+      <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
+
       <div>
         <p style={{ margin: 0, fontSize: 15, color: "#374151" }}>
           ようこそ、<b>{welcomeName}</b> さん
@@ -2431,33 +2411,138 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>{error}</div>
       ) : null}
 
-      {hasJoinedClasses ? (
-        <section style={DASH_CARD}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginBottom: 16,
-            }}
-          >
-            <h2
+      <div
+        style={{
+          display: "grid",
+          gap: 16,
+          gridTemplateColumns: "1fr",
+        }}
+      >
+        {hasJoinedClasses && primaryReturnClass ? (
+          <section className="home-dash-return" style={DASH_CARD}>
+            <div
               style={{
-                margin: 0,
-                fontSize: 18,
-                fontWeight: 900,
-                color: "#111827",
-                lineHeight: 1.3,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 16,
               }}
             >
-              今のクラスに戻る
-            </h2>
-            <HelpTip
-              label="今のクラスに戻るについて"
-              content={RETURN_CLASS_HELP_TEXT}
-            />
-          </div>
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                  fontWeight: 900,
+                  color: "#111827",
+                  lineHeight: 1.3,
+                }}
+              >
+                今のクラスに戻る
+              </h2>
+              <HelpTip
+                label="今のクラスに戻るについて"
+                content={RETURN_CLASS_HELP_TEXT}
+              />
+            </div>
 
+            <button
+              type="button"
+              onClick={() => void openClass(primaryReturnClass)}
+              disabled={openingPrimaryReturn}
+              style={{
+                ...PRIMARY_BTN,
+                opacity: openingPrimaryReturn ? 0.75 : 1,
+                cursor: openingPrimaryReturn ? "default" : "pointer",
+              }}
+            >
+              {openingPrimaryReturn ? "入っています…" : "今のクラスを見る"}
+            </button>
+
+            {visible.length > 1 ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 12,
+                  color: "#9ca3af",
+                  fontWeight: 700,
+                }}
+              >
+                所属クラス {visible.length}件
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
+        <div className="home-dash-bottom">
+          <section className="home-dash-join" style={DASH_CARD}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 16,
+                flexWrap: "wrap",
+              }}
+            >
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                  fontWeight: 900,
+                  color: "#111827",
+                }}
+              >
+                新しく参加する
+              </h2>
+              <StatusPill>新規参加</StatusPill>
+              <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <button
+                type="button"
+                onClick={quickJoinFreeAndOpen}
+                disabled={quickBusy || !joinWindowOpen}
+                style={{
+                  ...PRIMARY_BTN,
+                  opacity: quickBusy || !joinWindowOpen ? 0.55 : 1,
+                  cursor: quickBusy || !joinWindowOpen ? "not-allowed" : "pointer",
+                }}
+              >
+                {quickBusy ? "参加中…" : "新しいクラスに今すぐ入る"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push(withDev("/class/select"))}
+                style={SECONDARY_BTN}
+              >
+                入る場所を選ぶ
+              </button>
+            </div>
+          </section>
+
+          <AgeFilterCard
+            className="home-dash-age"
+            deviceId={deviceId}
+            hasProfile={profileComplete}
+            disabled={loading}
+          />
+        </div>
+      </div>
+
+      {hasJoinedClasses ? (
+        <section style={{ display: "grid", gap: 14 }}>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: 15,
+              fontWeight: 900,
+              color: "#374151",
+            }}
+          >
+            所属クラス
+          </h3>
           <div style={{ display: "grid", gap: 14 }}>
             {visible.map((c) => {
               const leaving =
@@ -2855,52 +2940,6 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           </div>
         </section>
       ) : null}
-
-      <section style={DASH_CARD}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 16,
-          }}
-        >
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 18,
-              fontWeight: 900,
-              color: "#111827",
-            }}
-          >
-            新しく参加する
-          </h2>
-          <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
-        </div>
-
-        <div style={{ display: "grid", gap: 10 }}>
-          <button
-            type="button"
-            onClick={quickJoinFreeAndOpen}
-            disabled={quickBusy || !joinWindowOpen}
-            style={{
-              ...PRIMARY_BTN,
-              opacity: quickBusy || !joinWindowOpen ? 0.55 : 1,
-              cursor: quickBusy || !joinWindowOpen ? "not-allowed" : "pointer",
-            }}
-          >
-            {quickBusy ? "参加中…" : "今すぐ入る"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => router.push(withDev("/class/select"))}
-            style={SECONDARY_BTN}
-          >
-            入る場所を選ぶ
-          </button>
-        </div>
-      </section>
 
       <section
         style={{
