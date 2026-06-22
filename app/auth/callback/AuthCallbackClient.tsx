@@ -34,7 +34,15 @@ export default function AuthCallbackClient() {
 
       const result = await completeAuthCallback(deviceId, withDev(redirectTo));
       if (!cancelled && !result.ok) {
-        setError(result.message ?? result.error ?? "ログイン処理に失敗しました。");
+        const restoreHint =
+          result.action === "restore_login"
+            ? "この端末ではプロフィールを復元するため、メールログインが必要です。"
+            : null;
+        setError(
+          [restoreHint, result.message ?? result.error ?? "ログイン処理に失敗しました."]
+            .filter(Boolean)
+            .join(" ")
+        );
       }
     })();
 

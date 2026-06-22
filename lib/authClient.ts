@@ -6,6 +6,87 @@ import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
 import { buildAppUrl } from "@/lib/appOrigin";
 
+export type AuthSessionPostResult =
+  | { ok: true; status: Record<string, unknown> }
+  | {
+      ok: false;
+      error: string;
+      message?: string | null;
+      action?: string | null;
+      redirectTo?: string | null;
+    };
+
+async function postAuthSession(
+  deviceId: string,
+  accessToken: string,
+  options?: { reregisterDevice?: boolean }
+): Promise<AuthSessionPostResult> {
+  const deviceSecret = getOrCreateDeviceSecret();
+
+  const res = await fetch("/api/auth/session", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${accessToken}`,
+      "x-device-id": deviceId,
+      [DEVICE_SECRET_HEADER]: deviceSecret,
+    },
+    body: JSON.stringify({
+      deviceId,
+      deviceSecret,
+      reregisterDevice: options?.reregisterDevice === true,
+    }),
+    cache: "no-store",
+  });
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.ok) {
+    return {
+      ok: false as const,
+      error: json?.error ?? "session_bootstrap_failed",
+      message: json?.message ?? null,
+      action: json?.action ?? null,
+      redirectTo: json?.redirectTo ?? null,
+    };
+  }
+
+  cacheUserId(String(json.userId ?? ""));
+
+  return {
+    ok: true as const,
+    status: json,
+  };
+}
+
+function logClientAuthRestore(payload: Record<string, unknown>) {
+  const parts = Object.entries(payload)
+    .filter(([, value]) => value != null && value !== "")
+    .map(([key, value]) => `${key}=${String(value)}`);
+  console.info(`[auth-restore] ${parts.join(" ")}`);
+}
+
+function handleAuthSessionFailure(
+  deviceId: string,
+  result: Extract<AuthSessionPostResult, { ok: false }>
+) {
+  logClientAuthRestore({
+    phase: "client_bootstrap_denied",
+    deviceId,
+    error: result.error,
+    action: result.action ?? null,
+    redirectTo: result.redirectTo ?? null,
+  });
+
+  if (result.action === "restore_login" && typeof window !== "undefined") {
+    const path = window.location.pathname;
+    if (path !== "/login" && !path.startsWith("/auth/callback")) {
+      console.warn(
+        "[auth-restore] device_secret missing or mismatched — open /login to restore profile"
+      );
+    }
+  }
+}
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
@@ -106,34 +187,41 @@ export async function bootstrapAuthSession(deviceId: string) {
     return { ok: false as const, error: "anonymous_sign_in_failed" };
   }
 
-  const deviceSecret = getOrCreateDeviceSecret();
+  let result = await postAuthSession(deviceId, session.access_token);
 
-  const res = await fetch("/api/auth/session", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${session.access_token}`,
-      "x-device-id": deviceId,
-      [DEVICE_SECRET_HEADER]: deviceSecret,
-    },
-    body: JSON.stringify({ deviceId, deviceSecret }),
-    cache: "no-store",
-  });
-
-  const json = await res.json().catch(() => null);
-  if (!res.ok || !json?.ok) {
-    return {
-      ok: false as const,
-      error: json?.error ?? "session_bootstrap_failed",
-      message: json?.message ?? null,
-    };
+  if (
+    !result.ok &&
+    result.action === "reregister_device" &&
+    (result.error === "device_secret_required" ||
+      result.error === "device_secret_mismatch")
+  ) {
+    logClientAuthRestore({
+      phase: "client_reregister_device",
+      deviceId,
+      userId: session.user.id,
+    });
+    result = await postAuthSession(deviceId, session.access_token, {
+      reregisterDevice: true,
+    });
   }
 
-  cacheUserId(String(json.userId ?? session.user.id ?? ""));
+  if (!result.ok) {
+    handleAuthSessionFailure(deviceId, result);
+    return result;
+  }
+
+  logClientAuthRestore({
+    phase: "client_bootstrapped",
+    deviceId,
+    userId: String(result.status.userId ?? session.user.id ?? ""),
+    linked: result.status.hasLinkedEmail ?? null,
+    anonymous: result.status.isAnonymous ?? null,
+    reregisteredDevice: result.status.reregisteredDevice ?? null,
+  });
 
   return {
     ok: true as const,
-    status: json,
+    status: result.status,
   };
 }
 
@@ -146,29 +234,56 @@ export async function completeAuthCallback(deviceId: string, redirectTo: string)
     };
   }
 
-  const deviceSecret = getOrCreateDeviceSecret();
-  const res = await fetch("/api/auth/session", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${data.session.access_token}`,
-      "x-device-id": deviceId,
-      [DEVICE_SECRET_HEADER]: deviceSecret,
-    },
-    body: JSON.stringify({ deviceId, deviceSecret }),
-    cache: "no-store",
+  logClientAuthRestore({
+    phase: "callback_start",
+    deviceId,
+    userId: data.session.user.id,
+    email: data.session.user.email ?? null,
+    anonymous: data.session.user.is_anonymous ?? null,
+    redirectTo,
   });
 
-  const json = await res.json().catch(() => null);
-  if (!res.ok || !json?.ok) {
+  let result = await postAuthSession(deviceId, data.session.access_token);
+
+  if (
+    !result.ok &&
+    result.action === "reregister_device" &&
+    (result.error === "device_secret_required" ||
+      result.error === "device_secret_mismatch")
+  ) {
+    logClientAuthRestore({
+      phase: "callback_reregister_device",
+      deviceId,
+      userId: data.session.user.id,
+    });
+    result = await postAuthSession(deviceId, data.session.access_token, {
+      reregisterDevice: true,
+    });
+  }
+
+  if (!result.ok) {
+    handleAuthSessionFailure(deviceId, result);
     return {
       ok: false as const,
-      error: json?.error ?? "session_bootstrap_failed",
-      message: json?.message ?? null,
+      error: result.error,
+      message: result.message ?? null,
+      action: result.action ?? null,
+      redirectTo: result.redirectTo ?? "/login",
     };
   }
 
-  cacheUserId(String(json.userId ?? data.session.user.id ?? ""));
+  logClientAuthRestore({
+    phase: "callback_bootstrapped",
+    deviceId,
+    userId: String(result.status.userId ?? data.session.user.id ?? ""),
+    email: data.session.user.email ?? null,
+    linked: result.status.hasLinkedEmail ?? null,
+    anonymous: result.status.isAnonymous ?? null,
+    profileMigrated: result.status.profileMigrated ?? null,
+    redirectTo,
+  });
+
+  cacheUserId(String(result.status.userId ?? data.session.user.id ?? ""));
 
   if (typeof window !== "undefined") {
     window.location.replace(redirectTo);

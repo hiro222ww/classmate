@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isBillableClassName, isLegacyEntryClassName } from "@/lib/legacyClassNames";
+import type { ActorLookup } from "@/lib/actorIdentity";
+import { membershipFilterForActor } from "@/lib/actorIdentity";
+import { isValidUuid } from "@/lib/userIdentity";
 
 export type ActiveClassMembershipRow = {
   classId: string;
@@ -60,20 +63,38 @@ function tailId(id: string) {
 
 export async function fetchActiveClassMemberships(
   sb: SupabaseClient,
-  deviceId: string
+  deviceId: string,
+  userId?: string | null
 ): Promise<
   | { ok: true; rows: ActiveClassMembershipRow[] }
   | { ok: false; error: string }
 > {
-  const normalizedDeviceId = String(deviceId ?? "").trim();
-  if (!normalizedDeviceId) {
+  return fetchActiveClassMembershipsForActor(sb, { deviceId, userId: userId ?? null });
+}
+
+export async function fetchActiveClassMembershipsForActor(
+  sb: SupabaseClient,
+  actor: ActorLookup
+): Promise<
+  | { ok: true; rows: ActiveClassMembershipRow[] }
+  | { ok: false; error: string }
+> {
+  const filter = membershipFilterForActor(actor);
+  const normalizedDeviceId = String(actor.deviceId ?? "").trim();
+
+  if (!filter.value) {
     return { ok: false, error: "device_id_missing" };
   }
 
-  const { data, error } = await sb
-    .from("class_memberships")
-    .select("class_id, joined_at")
-    .eq("device_id", normalizedDeviceId);
+  let query = sb.from("class_memberships").select("class_id, joined_at");
+
+  if (filter.column === "user_id") {
+    query = query.eq("user_id", filter.value);
+  } else {
+    query = query.eq("device_id", filter.value);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return { ok: false, error: error.message };
@@ -224,12 +245,13 @@ export function logHomeClassSlotsSnapshot(
 
 export async function getActiveMembershipSnapshot(
   sb: SupabaseClient,
-  deviceId: string
+  deviceId: string,
+  userId?: string | null
 ): Promise<
   | { ok: true; snapshot: ActiveMembershipSnapshot }
   | { ok: false; error: string }
 > {
-  const fetched = await fetchActiveClassMemberships(sb, deviceId);
+  const fetched = await fetchActiveClassMemberships(sb, deviceId, userId);
   if (!fetched.ok) {
     return { ok: false, error: fetched.error };
   }
@@ -254,9 +276,10 @@ export async function getActiveMembershipSnapshot(
 /** @deprecated Use getActiveMembershipSnapshot — kept for existing imports. */
 export async function getBillableMembershipSnapshot(
   sb: SupabaseClient,
-  deviceId: string
+  deviceId: string,
+  userId?: string | null
 ) {
-  const res = await getActiveMembershipSnapshot(sb, deviceId);
+  const res = await getActiveMembershipSnapshot(sb, deviceId, userId);
   if (!res.ok) {
     return { ok: false as const, error: res.error };
   }

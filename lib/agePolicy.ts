@@ -222,7 +222,24 @@ export function checkTopicAgeAccess(params: {
   return { ok: true };
 }
 
-export async function getProfileAge(deviceId: string): Promise<number | null> {
+export async function getProfileAge(
+  deviceId: string,
+  userId?: string | null
+): Promise<number | null> {
+  const normalizedUserId = String(userId ?? "").trim();
+
+  if (normalizedUserId) {
+    const { data, error } = await supabaseAdmin
+      .from("user_profiles")
+      .select("birth_date")
+      .eq("user_id", normalizedUserId)
+      .maybeSingle();
+
+    if (!error && data) {
+      return getAgeFromBirthDate(String(data.birth_date ?? ""));
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
     .select("birth_date")

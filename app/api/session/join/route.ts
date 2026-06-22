@@ -23,6 +23,10 @@ import type { JoinStateSource } from "@/lib/ensureClassSessionMembership";
 import { tailJoinId } from "@/lib/joinStateInvariants";
 import { logRoomJoinPerf } from "@/lib/roomJoinPerf";
 import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
+import {
+  resolveApiActor,
+  hasClassMembershipForActor,
+} from "@/lib/actorIdentity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -198,16 +202,6 @@ export async function POST(req: Request) {
       body.openJoinedClass ?? url.searchParams.get("openJoinedClass")
     );
 
-    console.log("[session/join] request", {
-      rawSessionCandidate,
-      sessionId,
-      requestedClassId,
-      deviceId,
-      name,
-      invite,
-      openJoinedClass,
-    });
-
     if (!sessionId || !isUuid(sessionId)) {
       return NextResponse.json(
         { ok: false, error: "invalid_sessionId" },
@@ -233,7 +227,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const ageGuard = await enforceDeviceJoinAge(deviceId);
+    const actorResult = await resolveApiActor({ req, deviceId });
+    const userId = actorResult.ok ? actorResult.actor.userId : "";
+    const actor = { userId: userId || null, deviceId };
+
+    console.log("[session/join] request", {
+      rawSessionCandidate,
+      sessionId,
+      requestedClassId,
+      deviceId,
+      userId: userId || null,
+      name,
+      invite,
+      openJoinedClass,
+    });
+
+    const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
     if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
 
     const ensured = await ensureJoinableSession(sessionId);
@@ -309,30 +318,33 @@ export async function POST(req: Request) {
 
     if (session.classId) {
       const classLookupStartMs = Date.now();
-      const { data: classMembership, error: membershipErr } =
-        await supabaseAdmin
-          .from("class_memberships")
-          .select("class_id")
-          .eq("device_id", deviceId)
-          .eq("class_id", session.classId)
-          .maybeSingle();
-      classFetchMs += Date.now() - classLookupStartMs;
-
-      if (membershipErr) {
+      let hasMembership = false;
+      try {
+        hasMembership = await hasClassMembershipForActor(
+          supabaseAdmin,
+          actor,
+          session.classId
+        );
+      } catch (membershipErr: unknown) {
+        const detail =
+          membershipErr instanceof Error
+            ? membershipErr.message
+            : String(membershipErr);
         return NextResponse.json(
           {
             ok: false,
             error: "membership_lookup_failed",
-            detail: membershipErr.message,
+            detail,
           },
           { status: 500 }
         );
       }
+      classFetchMs += Date.now() - classLookupStartMs;
 
-      if (!classMembership && !invite) {
+      if (!hasMembership && !invite) {
         console.log(
           `[session-join] rejected reason=membership_left class=${tailJoinId(session.classId)} ` +
-            `device=${tailJoinId(deviceId)} session=${tailJoinId(sessionId)}`
+            `device=${tailJoinId(deviceId)} userId=${userId || "-"} session=${tailJoinId(sessionId)}`
         );
         return NextResponse.json(
           { ok: false, error: "membership_left" },
@@ -343,6 +355,7 @@ export async function POST(req: Request) {
 
     const rejoinEligibility = await loadRejoinEligibility({
       deviceId,
+      userId: userId || null,
       classId: session.classId,
       sessionId,
     });
@@ -499,45 +512,79 @@ export async function POST(req: Request) {
     }
 
     const profileStartMs = Date.now();
-    const { data: profile, error: profileErr } = await supabaseAdmin
-      .from("user_profiles")
-      .select("display_name")
-      .eq("device_id", deviceId)
-      .maybeSingle();
-    classFetchMs += Date.now() - profileStartMs;
+    let displayName = sanitizeDisplayName(
+      body.name ??
+        body.displayName ??
+        body.display_name ??
+        url.searchParams.get("name") ??
+        url.searchParams.get("displayName")
+    );
 
-    if (profileErr) {
-      console.log("[session/join profileErr]", profileErr);
-      return NextResponse.json(
-        { ok: false, error: "profile_lookup_failed" },
-        { status: 500 }
-      );
+    if (!displayName || displayName === "参加者") {
+      if (userId) {
+        const { data: profileByUser, error: profileByUserErr } =
+          await supabaseAdmin
+            .from("user_profiles")
+            .select("display_name")
+            .eq("user_id", userId)
+            .maybeSingle();
+        classFetchMs += Date.now() - profileStartMs;
+
+        if (profileByUserErr) {
+          console.log("[session/join profileByUserErr]", profileByUserErr);
+          return NextResponse.json(
+            { ok: false, error: "profile_lookup_failed" },
+            { status: 500 }
+          );
+        }
+
+        displayName =
+          String(profileByUser?.display_name ?? "").trim() || displayName;
+      }
+
+      if (!displayName || displayName === "参加者") {
+        const profileLookupStartMs = Date.now();
+        const { data: profile, error: profileErr } = await supabaseAdmin
+          .from("user_profiles")
+          .select("display_name")
+          .eq("device_id", deviceId)
+          .maybeSingle();
+        classFetchMs += Date.now() - profileLookupStartMs;
+
+        if (profileErr) {
+          console.log("[session/join profileErr]", profileErr);
+          return NextResponse.json(
+            { ok: false, error: "profile_lookup_failed" },
+            { status: 500 }
+          );
+        }
+
+        displayName =
+          String(profile?.display_name ?? "").trim() ||
+          sanitizeDisplayName(displayName) ||
+          "参加者";
+      }
+    } else {
+      classFetchMs += Date.now() - profileStartMs;
     }
 
-    const displayName =
-      String(profile?.display_name ?? "").trim() ||
-      sanitizeDisplayName(
-        body.name ??
-          body.displayName ??
-          body.display_name ??
-          url.searchParams.get("name") ??
-          url.searchParams.get("displayName")
-      );
-
-    console.log("[session/join displayName]", { deviceId, displayName });
+    console.log("[session/join displayName]", {
+      deviceId,
+      userId: userId || null,
+      displayName,
+    });
 
         // ✅ クラス所属上限チェック
     // すでにこのクラスに入っている場合はOK。
     // 新しく別クラスへ参加する場合だけ class_slots を確認する。
-    const { data: existingMembership, error: existingMembershipErr } =
-      await supabaseAdmin
-        .from("class_memberships")
-        .select("class_id")
-        .eq("class_id", classId)
-        .eq("device_id", deviceId)
-        .maybeSingle();
-
-    if (existingMembershipErr) {
+    let alreadyInClass = false;
+    try {
+      alreadyInClass = await hasClassMembershipForActor(
+        supabaseAdmin,
+        actor,
+        classId
+      );
+    } catch (existingMembershipErr: unknown) {
       console.log("[session/join existingMembershipErr]", existingMembershipErr);
       return NextResponse.json(
         { ok: false, error: "membership_check_failed" },
@@ -545,8 +592,12 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!existingMembership) {
-      const slotsRes = await getClassSlotsForDevice(supabaseAdmin, deviceId);
+    if (!alreadyInClass) {
+      const slotsRes = await getClassSlotsForDevice(
+        supabaseAdmin,
+        deviceId,
+        userId || null
+      );
       if (!slotsRes.ok) {
         return NextResponse.json(
           { ok: false, error: "entitlement_check_failed", detail: slotsRes.error },
@@ -558,7 +609,8 @@ export async function POST(req: Request) {
 
       const billableRes = await getBillableMembershipSnapshot(
         supabaseAdmin,
-        deviceId
+        deviceId,
+        userId || null
       );
       if (!billableRes.ok) {
         return NextResponse.json(
@@ -601,6 +653,7 @@ export async function POST(req: Request) {
       classId,
       sessionId,
       deviceId,
+      userId: userId || null,
       source: joinSource,
       displayName,
     });

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isValidDeviceUuid, tailDeviceId } from "./deviceIdValidation";
+import {
+  isValidDeviceUuid,
+  isLegacyStoredDeviceId,
+  isJoinAllowedDeviceId,
+  tailDeviceId,
+} from "./deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "./matchJoinUserMessage";
 
 describe("deviceIdValidation", () => {

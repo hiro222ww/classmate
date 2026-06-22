@@ -19,10 +19,11 @@ export type JoinAgeGuardResult =
     };
 
 export async function enforceDeviceJoinAge(
-  deviceId: string
+  deviceId: string,
+  userId?: string | null
 ): Promise<JoinAgeGuardResult> {
   const mode = await getEffectiveAgeMode();
-  const age = await getProfileAge(deviceId);
+  const age = await getProfileAge(deviceId, userId);
   const check = checkSelfAgeForJoin(age, mode);
 
   if (!check.ok) {

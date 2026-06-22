@@ -39,11 +39,29 @@ import {
   getEffectiveAgeMode,
   type AgeMode,
 } from "@/lib/agePolicy";
+import {
+  fetchBlockedDeviceIdsForActor,
+  getClassSlotsForActor,
+  membershipFilterForActor,
+  resolveApiActor,
+  type ActorLookup,
+} from "@/lib/actorIdentity";
+import { readMatchPrefsForActor } from "@/lib/matchPrefsStorage";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+function normalizeActor(actor: {
+  userId?: string | null;
+  deviceId: string;
+}): ActorLookup {
+  return {
+    userId: actor.userId ?? null,
+    deviceId: actor.deviceId,
+  };
+}
 
 function normalizeTopicKey(v: string | null | undefined) {
   const s = String(v ?? "").trim();
@@ -181,13 +199,14 @@ async function logSimilarRecruitingClasses(params: {
   );
 }
 
-async function getBlockedDeviceIds(deviceId: string) {
-  const { data, error } = await supabase
-    .from("user_blocks")
-    .select("blocked_device_id")
-    .eq("blocker_device_id", deviceId);
-
-  if (error) {
+async function getBlockedDeviceIds(actor: {
+  userId?: string | null;
+  deviceId: string;
+}) {
+  try {
+    const ids = await fetchBlockedDeviceIdsForActor(supabase, normalizeActor(actor));
+    return { ok: true as const, ids };
+  } catch (error) {
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -200,34 +219,60 @@ async function getBlockedDeviceIds(deviceId: string) {
       ),
     };
   }
-
-  return {
-    ok: true as const,
-    ids: (data ?? [])
-      .map((x) => String(x.blocked_device_id ?? "").trim())
-      .filter(Boolean),
-  };
 }
 
-async function getProfile(deviceId: string) {
-  const { data, error } = await supabase
-    .from("user_profiles")
-    .select("device_id,display_name,birth_date,gender")
-    .eq("device_id", deviceId)
-    .maybeSingle();
+async function getProfile(actor: { userId?: string | null; deviceId: string }) {
+  const userId = String(actor.userId ?? "").trim();
+  const deviceId = actor.deviceId;
 
-  if (error) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "profile_lookup_failed",
-          ...formatPostgresError(error),
-        },
-        { status: 500 }
-      ),
-    };
+  let data: ProfileRow | null = null;
+
+  if (userId) {
+    const byUser = await supabase
+      .from("user_profiles")
+      .select("device_id,display_name,birth_date,gender")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (byUser.error) {
+      return {
+        ok: false as const,
+        response: NextResponse.json(
+          {
+            ok: false,
+            error: "profile_lookup_failed",
+            ...formatPostgresError(byUser.error),
+          },
+          { status: 500 }
+        ),
+      };
+    }
+
+    data = (byUser.data as ProfileRow | null) ?? null;
+  }
+
+  if (!data) {
+    const byDevice = await supabase
+      .from("user_profiles")
+      .select("device_id,display_name,birth_date,gender")
+      .eq("device_id", deviceId)
+      .maybeSingle();
+
+    if (byDevice.error) {
+      return {
+        ok: false as const,
+        response: NextResponse.json(
+          {
+            ok: false,
+            error: "profile_lookup_failed",
+            ...formatPostgresError(byDevice.error),
+          },
+          { status: 500 }
+        ),
+      };
+    }
+
+    data = (byDevice.data as ProfileRow | null) ?? null;
   }
 
   if (!data) {
@@ -243,21 +288,17 @@ async function getProfile(deviceId: string) {
   return { ok: true as const, profile: data as ProfileRow };
 }
 
-async function getClassSlots(deviceId: string) {
-  const { data, error } = await supabase
-    .from("user_entitlements")
-    .select("class_slots")
-    .eq("device_id", deviceId)
-    .maybeSingle();
+async function getClassSlots(actor: { userId?: string | null; deviceId: string }) {
+  const slotsRes = await getClassSlotsForActor(supabase, normalizeActor(actor));
 
-  if (error) {
+  if (!slotsRes.ok) {
     return {
       ok: false as const,
       response: NextResponse.json(
         {
           ok: false,
           error: "entitlements_lookup_failed",
-          ...formatPostgresError(error),
+          detail: slotsRes.error,
         },
         { status: 500 }
       ),
@@ -266,15 +307,24 @@ async function getClassSlots(deviceId: string) {
 
   return {
     ok: true as const,
-    classSlots: Math.max(1, Number(data?.class_slots ?? 1)),
+    classSlots: slotsRes.classSlots,
   };
 }
 
-async function getAllMembershipIds(deviceId: string) {
-  const { data, error } = await supabase
-    .from("class_memberships")
-    .select("class_id")
-    .eq("device_id", deviceId);
+async function getAllMembershipIds(actor: {
+  userId?: string | null;
+  deviceId: string;
+}) {
+  const filter = membershipFilterForActor(normalizeActor(actor));
+  let query = supabase.from("class_memberships").select("class_id");
+
+  if (filter.column === "user_id") {
+    query = query.eq("user_id", filter.value);
+  } else {
+    query = query.eq("device_id", filter.value);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return {
@@ -300,14 +350,15 @@ async function getAllMembershipIds(deviceId: string) {
   };
 }
 
-async function getMatchPrefs(deviceId: string) {
-  const { data, error } = await supabase
-    .from("user_match_prefs")
-    .select("min_age,max_age")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  if (error) {
+async function getMatchPrefs(actor: { userId?: string | null; deviceId: string }) {
+  try {
+    const prefs = await readMatchPrefsForActor(supabase, normalizeActor(actor));
+    return {
+      ok: true as const,
+      minAge: Number(prefs?.min_age ?? 0),
+      maxAge: Number(prefs?.max_age ?? 120),
+    };
+  } catch (error) {
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -320,12 +371,6 @@ async function getMatchPrefs(deviceId: string) {
       ),
     };
   }
-
-  return {
-    ok: true as const,
-    minAge: Number(data?.min_age ?? 0),
-    maxAge: Number(data?.max_age ?? 120),
-  };
 }
 
 async function getForcedClassWithDeadline(classId: string) {
@@ -399,10 +444,14 @@ async function hasMembership(deviceId: string, classId: string) {
 
 async function userHasClassInTopic(params: {
   deviceId: string;
+  userId?: string | null;
   worldKey: string;
   topicKey: string | null;
 }) {
-  const membershipRes = await getAllMembershipIds(params.deviceId);
+  const membershipRes = await getAllMembershipIds({
+    deviceId: params.deviceId,
+    userId: params.userId ?? null,
+  });
   if (!membershipRes.ok) {
     return { ok: false as const, response: membershipRes.response };
   }
@@ -674,6 +723,10 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
+    const actorResult = await resolveApiActor({ req, deviceId });
+    const userId = actorResult.ok ? actorResult.actor.userId : "";
+    const actor = { userId: userId || null, deviceId };
+
     const admissionBlocked = await enforceAdmissionForNewJoin({
       deviceId,
       classId: forcedClassId,
@@ -693,16 +746,17 @@ export async function matchJoinV2Post(req: Request) {
     if (canRejoinTargetClass) {
       console.log("[class/match-join-v2] rejoin eligible", {
         deviceId,
+        userId: userId || null,
         classId: forcedClassId,
         openJoinedClass,
       });
     }
 
-    const blockedRes = await getBlockedDeviceIds(deviceId);
+    const blockedRes = await getBlockedDeviceIds(actor);
     if (!blockedRes.ok) return blockedRes.response;
     const blockedDeviceIds = blockedRes.ids;
 
-    const prefsRes = await getMatchPrefs(deviceId);
+    const prefsRes = await getMatchPrefs(actor);
     if (!prefsRes.ok) return prefsRes.response;
 
     const fallbackMinAge = normalizeAge(prefsRes.minAge, 0);
@@ -726,7 +780,7 @@ export async function matchJoinV2Post(req: Request) {
       },
     });
 
-    const profileRes = await getProfile(deviceId);
+    const profileRes = await getProfile(actor);
     if (!profileRes.ok) return profileRes.response;
 
     const selfProfile = profileRes.profile;
@@ -782,6 +836,7 @@ export async function matchJoinV2Post(req: Request) {
 
     const slotEval = await evaluateClassSlotsLimit(supabase, deviceId, {
       joiningClassId: forcedClassId || null,
+      userId: userId || null,
     });
     if (!slotEval.ok) {
       return NextResponse.json(
@@ -910,6 +965,7 @@ export async function matchJoinV2Post(req: Request) {
 
       const topicMemberRes = await userHasClassInTopic({
         deviceId,
+        userId: userId || null,
         worldKey,
         topicKey,
       });

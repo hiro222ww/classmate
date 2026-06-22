@@ -8,6 +8,9 @@ import {
 } from "@/lib/joinStateInvariants";
 import { resolveDisplayName } from "@/lib/resolveDisplayName";
 import { resolveUserIdForDevice } from "@/lib/userIdentityMigration";
+import {
+  membershipFilterForActor,
+} from "@/lib/actorIdentity";
 
 export type JoinStateSource = "invite" | "normal_join" | "rejoin" | "restore";
 
@@ -47,6 +50,7 @@ export type EnsureClassSessionMembershipInput = {
   classId: string;
   sessionId: string;
   deviceId: string;
+  userId?: string | null;
   source: JoinStateSource;
   displayName?: string;
   client?: SupabaseClient;
@@ -171,12 +175,22 @@ export async function ensureClassSessionMembership(
   });
   warnings.push(...preWarnings);
 
-  const { data: existingMembership } = await sb
+  const actor = {
+    deviceId: ids.deviceId,
+    userId: String(input.userId ?? "").trim() || null,
+  };
+  const membershipFilter = membershipFilterForActor(actor);
+
+  const existingMembershipQuery = sb
     .from("class_memberships")
     .select("class_id")
-    .eq("class_id", ids.classId)
-    .eq("device_id", ids.deviceId)
-    .maybeSingle();
+    .eq("class_id", ids.classId);
+
+  const { data: existingMembership } = await (
+    membershipFilter.column === "user_id"
+      ? existingMembershipQuery.eq("user_id", membershipFilter.value)
+      : existingMembershipQuery.eq("device_id", membershipFilter.value)
+  ).maybeSingle();
 
   const { data: existingSessionMember } = await sb
     .from("session_members")
@@ -206,7 +220,9 @@ export async function ensureClassSessionMembership(
   }
 
   const now = new Date().toISOString();
-  const userId = await resolveUserIdForDevice(ids.deviceId);
+  const userId =
+    String(input.userId ?? "").trim() ||
+    (await resolveUserIdForDevice(ids.deviceId));
   let membershipUpserted = false;
   let sessionMemberUpserted = false;
   let presenceUpserted = false;

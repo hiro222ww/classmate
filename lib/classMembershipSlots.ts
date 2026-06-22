@@ -9,6 +9,8 @@ import {
   type ActiveMembershipSnapshot,
   type HomeClassSlotContext,
 } from "@/lib/activeClassMemberships";
+import type { ActorLookup } from "@/lib/actorIdentity";
+import { getClassSlotsForActor } from "@/lib/actorIdentity";
 
 export type BillableMembershipSnapshot = {
   totalCount: number;
@@ -23,19 +25,30 @@ export type { ActiveMembershipSnapshot, HomeClassSlotContext };
 
 export async function getHomeClassSlotContext(
   sb: SupabaseClient,
-  deviceId: string
+  deviceId: string,
+  userId?: string | null
 ): Promise<
   | { ok: true; context: HomeClassSlotContext }
   | { ok: false; error: string }
 > {
-  const normalizedDeviceId = String(deviceId ?? "").trim();
+  return getHomeClassSlotContextForActor(sb, { deviceId, userId: userId ?? null });
+}
+
+export async function getHomeClassSlotContextForActor(
+  sb: SupabaseClient,
+  actor: ActorLookup
+): Promise<
+  | { ok: true; context: HomeClassSlotContext }
+  | { ok: false; error: string }
+> {
+  const normalizedDeviceId = String(actor.deviceId ?? "").trim();
   if (!normalizedDeviceId) {
     return { ok: false, error: "device_id_missing" };
   }
 
   const [membershipRes, slotsRes] = await Promise.all([
-    fetchActiveClassMemberships(sb, normalizedDeviceId),
-    getClassSlotsForDevice(sb, normalizedDeviceId),
+    fetchActiveClassMemberships(sb, normalizedDeviceId, actor.userId),
+    getClassSlotsForActor(sb, actor),
   ]);
 
   if (!membershipRes.ok) {
@@ -69,7 +82,7 @@ export async function getHomeClassSlotContext(
 export async function evaluateClassSlotsLimit(
   sb: SupabaseClient,
   deviceId: string,
-  params?: { joiningClassId?: string | null }
+  params?: { joiningClassId?: string | null; userId?: string | null }
 ): Promise<
   | { ok: false; error: string }
   | {
@@ -84,7 +97,7 @@ export async function evaluateClassSlotsLimit(
       reason: "class_slots_limit";
     }
 > {
-  const ctxRes = await getHomeClassSlotContext(sb, deviceId);
+  const ctxRes = await getHomeClassSlotContext(sb, deviceId, params?.userId);
   if (!ctxRes.ok) {
     return { ok: false, error: ctxRes.error };
   }
@@ -110,28 +123,11 @@ export async function evaluateClassSlotsLimit(
 
 export async function getClassSlotsForDevice(
   sb: SupabaseClient,
-  deviceId: string
+  deviceId: string,
+  userId?: string | null
 ): Promise<
   | { ok: true; classSlots: number }
   | { ok: false; error: string }
 > {
-  const normalizedDeviceId = String(deviceId ?? "").trim();
-  if (!normalizedDeviceId) {
-    return { ok: false, error: "device_id_missing" };
-  }
-
-  const { data, error } = await sb
-    .from("user_entitlements")
-    .select("class_slots")
-    .eq("device_id", normalizedDeviceId)
-    .maybeSingle();
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
-  return {
-    ok: true,
-    classSlots: Math.max(1, Number(data?.class_slots ?? 1)),
-  };
+  return getClassSlotsForActor(sb, { deviceId, userId: userId ?? null });
 }

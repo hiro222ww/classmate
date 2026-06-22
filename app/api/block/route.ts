@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveApiActor } from "@/lib/actorIdentity";
+import {
+  resolveUserIdForTargetDevice,
+} from "@/lib/actorIdentity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,17 +36,31 @@ export async function POST(req: Request) {
       );
     }
 
+    const actorResult = await resolveApiActor({
+      req,
+      deviceId: blocker_device_id,
+    });
+
+    const blocker_user_id =
+      actorResult.ok && actorResult.actor.userId
+        ? actorResult.actor.userId
+        : await resolveUserIdForTargetDevice(blocker_device_id);
+
+    const blocked_user_id = await resolveUserIdForTargetDevice(blocked_device_id);
+
+    const payload: Record<string, string> = {
+      blocker_device_id,
+      blocked_device_id,
+    };
+
+    if (blocker_user_id) payload.blocker_user_id = blocker_user_id;
+    if (blocked_user_id) payload.blocked_user_id = blocked_user_id;
+
     const { error } = await supabaseAdmin
       .from("user_blocks")
-      .upsert(
-        {
-          blocker_device_id,
-          blocked_device_id,
-        },
-        {
-          onConflict: "blocker_device_id,blocked_device_id",
-        }
-      );
+      .upsert(payload, {
+        onConflict: "blocker_device_id,blocked_device_id",
+      });
 
     if (error) {
       return NextResponse.json(
@@ -53,6 +71,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      blockerUserId: blocker_user_id,
+      blockedUserId: blocked_user_id,
     });
   } catch (e: any) {
     return NextResponse.json(

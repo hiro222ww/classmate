@@ -1,6 +1,8 @@
+import { resolvePrimaryDeviceForUser } from "@/lib/actorIdentity";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { stripe } from "@/lib/stripe";
 import { computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
+import { resolveStripeCustomerIdentityFromSources } from "@/lib/resolveStripeCustomerIdentity";
 import type Stripe from "stripe";
 
 export type BillingCustomerRecord = {
@@ -31,6 +33,22 @@ export async function getBillingCustomerByDeviceId(deviceId: string) {
     .from("user_billing_customers")
     .select("device_id,user_id,stripe_customer_id")
     .eq("device_id", normalized)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data as BillingCustomerRecord | null;
+}
+
+export async function getBillingCustomerByStripeCustomerId(
+  stripeCustomerId: string
+) {
+  const normalized = String(stripeCustomerId ?? "").trim();
+  if (!normalized) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("user_billing_customers")
+    .select("device_id,user_id,stripe_customer_id")
+    .eq("stripe_customer_id", normalized)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -132,22 +150,38 @@ export async function syncEntitlementsForStripeCustomer(customerId: string) {
     String(customer.metadata?.device_id ?? customer.metadata?.deviceId ?? "").trim() ||
     null;
 
-  let resolvedUserId = userId;
-  let resolvedDeviceId = deviceId;
+  const mapping = await getBillingCustomerByStripeCustomerId(customerId);
+  const identityResolved = resolveStripeCustomerIdentityFromSources({
+    metadataUserId: userId,
+    metadataDeviceId: deviceId,
+    mapping,
+  });
 
-  if (!resolvedUserId || !resolvedDeviceId) {
-    const mapping = await supabaseAdmin
-      .from("user_billing_customers")
-      .select("device_id,user_id")
-      .eq("stripe_customer_id", customerId)
-      .maybeSingle();
+  let resolvedUserId = identityResolved.userId;
+  let resolvedDeviceId = identityResolved.deviceId;
 
-    resolvedUserId = resolvedUserId || mapping?.data?.user_id || null;
-    resolvedDeviceId = resolvedDeviceId || mapping?.data?.device_id || null;
+  if (resolvedUserId && !resolvedDeviceId) {
+    resolvedDeviceId = await resolvePrimaryDeviceForUser(resolvedUserId);
   }
 
-  if (!resolvedUserId || !resolvedDeviceId) {
-    console.warn("[billing] unable to resolve identity for customer", customerId);
+  if (!resolvedUserId && resolvedDeviceId) {
+    const byDevice = await getBillingCustomerByDeviceId(resolvedDeviceId);
+    resolvedUserId = byDevice?.user_id ?? null;
+  }
+
+  if (!resolvedUserId) {
+    console.warn("[billing] unable to resolve user_id for customer", customerId);
+    return null;
+  }
+
+  if (!resolvedDeviceId) {
+    resolvedDeviceId = await resolvePrimaryDeviceForUser(resolvedUserId);
+  }
+
+  if (!resolvedDeviceId) {
+    console.warn("[billing] unable to resolve device_id for customer", customerId, {
+      userId: resolvedUserId,
+    });
     return null;
   }
 
@@ -158,11 +192,11 @@ export async function syncEntitlementsForStripeCustomer(customerId: string) {
     expand: ["data.items.data.price"],
   });
 
-  const resolved = computeEntitlementsFromSubscriptions(subs.data);
+  const entitlementResolved = computeEntitlementsFromSubscriptions(subs.data);
   await upsertEntitlementsFromResolved({
     userId: resolvedUserId,
     deviceId: resolvedDeviceId,
-    resolved,
+    resolved: entitlementResolved,
   });
   await upsertBillingCustomerRecord({
     userId: resolvedUserId,
@@ -170,8 +204,14 @@ export async function syncEntitlementsForStripeCustomer(customerId: string) {
     stripeCustomerId: customerId,
   });
 
-  return { userId: resolvedUserId, deviceId: resolvedDeviceId, resolved };
+  return {
+    userId: resolvedUserId,
+    deviceId: resolvedDeviceId,
+    resolved: entitlementResolved,
+  };
 }
+
+export { resolveStripeCustomerIdentityFromSources } from "@/lib/resolveStripeCustomerIdentity";
 
 export function buildStripeIdentityMetadata(params: {
   userId: string;

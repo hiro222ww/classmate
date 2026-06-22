@@ -4,6 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
 import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
+import { resolveApiActor, getClassSlotsForActor } from "@/lib/actorIdentity";
+import { lookupEntitlements } from "@/lib/userIdentityMigration";
 
 /** @deprecated Legacy endpoint. Prefer `/api/class/match-join-v2`. Not used by the current app UI. */
 export const dynamic = "force-dynamic";
@@ -39,30 +41,32 @@ export async function POST(req: Request) {
       );
     }
 
-    const ageGuard = await enforceDeviceJoinAge(deviceId);
+    const actorResult = await resolveApiActor({ req, deviceId });
+    const userId = actorResult.ok ? actorResult.actor.userId : "";
+    const actor = { userId: userId || null, deviceId };
+
+    const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
     if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
 
-    // 1) entitlement 取得
-    const { data: ent, error: entErr } = await supabase
-      .from("user_entitlements")
-      .select("class_slots")
-      .eq("device_id", deviceId)
-      .maybeSingle();
-
-    if (entErr) {
+    const slotsRes = await getClassSlotsForActor(supabase, actor);
+    if (!slotsRes.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "entitlements_lookup_failed",
-          detail: entErr.message,
+          detail: slotsRes.error,
         },
         { status: 500 }
       );
     }
 
-    const classSlots = Math.max(1, Number(ent?.class_slots ?? 1));
+    const classSlots = slotsRes.classSlots;
 
-    const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
+    const billableRes = await getBillableMembershipSnapshot(
+      supabase,
+      deviceId,
+      userId || null
+    );
     if (!billableRes.ok) {
       return NextResponse.json(
         {
@@ -206,13 +210,16 @@ export async function POST(req: Request) {
     }
 
     // 7) membership 追加
+    const membershipPayload: Record<string, string> = {
+      device_id: deviceId,
+      class_id: classId,
+    };
+    if (userId) membershipPayload.user_id = userId;
+
     const { data: inserted, error: insErr } = await supabase
       .from("class_memberships")
-      .insert({
-        device_id: deviceId,
-        class_id: classId,
-      })
-      .select("device_id,class_id");
+      .insert(membershipPayload)
+      .select("device_id,class_id,user_id");
 
     console.log("[class/quick-join] inserted =", inserted);
     console.log("[class/quick-join] insert error =", insErr);

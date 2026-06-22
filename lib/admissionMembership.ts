@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAdmissionStatus } from "@/lib/admissionWindow";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  hasClassMembershipForActor,
+  type ActorLookup,
+} from "@/lib/actorIdentity";
 
 export const ADMISSION_CLOSED_MESSAGE =
   "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。";
@@ -16,26 +20,20 @@ export function canRejoinFromEligibility(eligibility: RejoinEligibility) {
 
 export async function isExistingClassMember(
   deviceId: string,
-  classId: string
+  classId: string,
+  userId?: string | null
 ): Promise<boolean> {
   const normalizedDeviceId = String(deviceId ?? "").trim();
   const normalizedClassId = String(classId ?? "").trim();
-  if (!normalizedDeviceId || !normalizedClassId) return false;
+  if (!normalizedClassId) return false;
+  if (!normalizedDeviceId && !String(userId ?? "").trim()) return false;
 
   try {
-    const { data, error } = await supabaseAdmin
-      .from("class_memberships")
-      .select("class_id")
-      .eq("device_id", normalizedDeviceId)
-      .eq("class_id", normalizedClassId)
-      .maybeSingle();
-
-    if (error) {
-      console.warn("[admissionMembership] class lookup failed", error);
-      return false;
-    }
-
-    return Boolean(data);
+    return await hasClassMembershipForActor(
+      supabaseAdmin,
+      { deviceId: normalizedDeviceId, userId: userId ?? null },
+      normalizedClassId
+    );
   } catch (e) {
     console.warn("[admissionMembership] class lookup error", e);
     return false;
@@ -74,15 +72,28 @@ export async function loadRejoinEligibility(params: {
   deviceId: string;
   classId: string;
   sessionId?: string;
+  userId?: string | null;
 }): Promise<RejoinEligibility> {
   const [existingClassMember, existingSessionMember] = await Promise.all([
-    isExistingClassMember(params.deviceId, params.classId),
+    isExistingClassMember(params.deviceId, params.classId, params.userId),
     params.sessionId
       ? isExistingSessionMember(params.deviceId, params.sessionId)
       : Promise.resolve(false),
   ]);
 
   return { existingClassMember, existingSessionMember };
+}
+
+export async function loadRejoinEligibilityForActor(
+  actor: ActorLookup,
+  params: { classId: string; sessionId?: string }
+): Promise<RejoinEligibility> {
+  return loadRejoinEligibility({
+    deviceId: actor.deviceId,
+    userId: actor.userId,
+    classId: params.classId,
+    sessionId: params.sessionId,
+  });
 }
 
 /** 既存メンバー再入室は bypass。未所属の新規参加のみ受付時間を確認する。 */

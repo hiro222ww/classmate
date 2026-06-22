@@ -7,6 +7,10 @@ import { resolveInviteJoinSession } from "@/lib/inviteJoinSession";
 import { isDeadlinePassed } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
+import {
+  resolveApiActor,
+  getClassSlotsForActor,
+} from "@/lib/actorIdentity";
 
 export const dynamic = "force-dynamic";
 
@@ -15,41 +19,18 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-async function getClassSlots(deviceId: string) {
-  const { data, error } = await supabase
-    .from("user_entitlements")
-    .select("class_slots")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  if (error) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        {
-          ok: false,
-          error: "entitlements_lookup_failed",
-          detail: error.message,
-        },
-        { status: 500 }
-      ),
-    };
-  }
-
-  return {
-    ok: true as const,
-    classSlots: Math.max(1, Number(data?.class_slots ?? 1)),
-  };
-}
-
 async function ensureMembershipSlots(params: {
-  deviceId: string;
+  actor: { userId: string | null; deviceId: string };
   classId: string;
   classSlots: number;
 }) {
-  const { deviceId, classId, classSlots } = params;
+  const { actor, classId, classSlots } = params;
 
-  const billableRes = await getBillableMembershipSnapshot(supabase, deviceId);
+  const billableRes = await getBillableMembershipSnapshot(
+    supabase,
+    actor.deviceId,
+    actor.userId
+  );
   if (!billableRes.ok) {
     return {
       ok: false as const,
@@ -121,7 +102,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const ageGuard = await enforceDeviceJoinAge(deviceId);
+    const actorResult = await resolveApiActor({ req, deviceId });
+    const userId = actorResult.ok ? actorResult.actor.userId : "";
+    const actor = { userId: userId || null, deviceId };
+
+    const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
     if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
 
     const { data: klass, error: classError } = await supabase
@@ -144,11 +129,20 @@ export async function POST(req: Request) {
       );
     }
 
-    const slotsRes = await getClassSlots(deviceId);
-    if (!slotsRes.ok) return slotsRes.response;
+    const slotsRes = await getClassSlotsForActor(supabase, actor);
+    if (!slotsRes.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "entitlements_lookup_failed",
+          detail: slotsRes.error,
+        },
+        { status: 500 }
+      );
+    }
 
     const membershipRes = await ensureMembershipSlots({
-      deviceId,
+      actor,
       classId,
       classSlots: slotsRes.classSlots,
     });
@@ -203,6 +197,7 @@ export async function POST(req: Request) {
       classId,
       sessionId,
       deviceId,
+      userId: userId || null,
       source: "invite",
       client: supabase,
     });
@@ -219,19 +214,30 @@ export async function POST(req: Request) {
     console.log(
       `[invite-join] success class=${tailJoinId(classId)} session=${tailJoinId(sessionId)} ` +
         `requested=${tailJoinId(requestedSessionId)} device=${tailJoinId(deviceId)} ` +
+        `userId=${userId || "-"} ` +
         `fallback=${resolved.sessionFallback ? 1 : 0} reactivated=${resolved.sessionReactivated ? 1 : 0} ` +
         `reason=${resolved.reason} members=${resolved.memberCount} ` +
         `selfHealed=${joinState.selfHealed.join(",") || "none"}`
     );
 
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("display_name")
-      .eq("device_id", deviceId)
-      .maybeSingle();
+    let displayName = "参加者";
+    if (userId) {
+      const { data: profileByUser } = await supabase
+        .from("user_profiles")
+        .select("display_name")
+        .eq("user_id", userId)
+        .maybeSingle();
+      displayName = String(profileByUser?.display_name ?? "").trim() || displayName;
+    }
 
-    const displayName =
-      String(profile?.display_name ?? "").trim() || "参加者";
+    if (displayName === "参加者") {
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("display_name")
+        .eq("device_id", deviceId)
+        .maybeSingle();
+      displayName = String(profile?.display_name ?? "").trim() || displayName;
+    }
 
     return NextResponse.json({
       ok: true,
@@ -245,6 +251,7 @@ export async function POST(req: Request) {
       alreadyJoined: membershipRes.alreadyJoined,
       currentCount: membershipRes.currentCount,
       classSlots: slotsRes.classSlots,
+      userId: userId || null,
       displayName,
       photoPath: null,
       joinState,

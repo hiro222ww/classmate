@@ -1,36 +1,68 @@
 import { describe, expect, it } from "vitest";
 import {
   assertBillingAccountLinked,
-  BILLING_LINK_REQUIRED_MESSAGE,
+  billingLinkRequiredResponse,
   isAccountLinkedForBilling,
-} from "./billingAuthGate";
+} from "@/lib/billingAuthGate";
+import type { ResolvedRequestIdentity } from "@/lib/requestIdentity";
+
+function identity(
+  overrides: Partial<ResolvedRequestIdentity> = {}
+): ResolvedRequestIdentity {
+  return {
+    userId: "11111111-1111-4111-8111-111111111111",
+    deviceId: "22222222-2222-4222-8222-222222222222",
+    isAnonymous: false,
+    hasLinkedEmail: true,
+    email: "user@example.com",
+    accessToken: "token",
+    authError: null,
+    ...overrides,
+  };
+}
 
 describe("billingAuthGate", () => {
-  it("requires linked non-anonymous account for billing", () => {
+  it("treats linked non-anonymous users as billable", () => {
     expect(
-      isAccountLinkedForBilling({ isAnonymous: true, hasLinkedEmail: false })
-    ).toBe(false);
-    expect(
-      isAccountLinkedForBilling({ isAnonymous: false, hasLinkedEmail: true })
+      isAccountLinkedForBilling({
+        isAnonymous: false,
+        hasLinkedEmail: true,
+      })
     ).toBe(true);
   });
 
-  it("blocks checkout without linked account", () => {
-    const result = assertBillingAccountLinked({
-      userId: "11111111-1111-4111-8111-111111111111",
-      deviceId: "22222222-2222-4222-8222-222222222222",
-      isAnonymous: true,
-      hasLinkedEmail: false,
-      email: null,
-      accessToken: "token",
-      authError: null,
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBe("account_link_required");
-      expect(result.message).toBe(BILLING_LINK_REQUIRED_MESSAGE);
-      expect(result.redirectTo).toBe("/settings");
+  it("blocks anonymous users from billing", () => {
+    const gate = assertBillingAccountLinked(
+      identity({ isAnonymous: true, hasLinkedEmail: false, email: null })
+    );
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) {
+      expect(gate.error).toBe("account_link_required");
+      expect(gate.redirectTo).toBe("/settings");
     }
+  });
+
+  it("blocks users without linked email from billing", () => {
+    const gate = assertBillingAccountLinked(
+      identity({ hasLinkedEmail: false, email: null })
+    );
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) {
+      expect(gate.error).toBe("account_link_required");
+      expect(gate.message).toBe(billingLinkRequiredResponse().message);
+    }
+  });
+
+  it("requires auth user id for billing routes", () => {
+    const gate = assertBillingAccountLinked(identity({ userId: "" }));
+    expect(gate.ok).toBe(false);
+    if (!gate.ok) {
+      expect(gate.error).toBe("auth_required");
+      expect(gate.redirectTo).toBe("/login");
+    }
+  });
+
+  it("allows linked authenticated users", () => {
+    expect(assertBillingAccountLinked(identity()).ok).toBe(true);
   });
 });

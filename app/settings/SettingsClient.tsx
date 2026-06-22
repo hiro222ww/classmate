@@ -18,6 +18,13 @@ type AuthStatus = {
   isAnonymous: boolean;
   hasLinkedEmail: boolean;
   email: string | null;
+  entitlements: {
+    plan: string;
+    class_slots: number;
+    can_create_classes: boolean;
+    topic_plan: number;
+    theme_pass: boolean;
+  } | null;
 };
 
 export default function SettingsClient() {
@@ -63,6 +70,7 @@ export default function SettingsClient() {
         isAnonymous: Boolean(json.isAnonymous),
         hasLinkedEmail: Boolean(json.hasLinkedEmail),
         email: json.email ?? null,
+        entitlements: json.entitlements ?? null,
       });
     } catch (e: any) {
       setError(e?.message ?? "読み込みに失敗しました。");
@@ -219,15 +227,53 @@ export default function SettingsClient() {
           color: "#4b5563",
         }}
       >
-        <div style={{ fontWeight: 900, color: "#111827" }}>端末情報</div>
+        <div style={{ fontWeight: 900, color: "#111827" }}>端末・認証デバッグ</div>
+        <div>
+          ユーザーID（課金・プロフィール本体）:
+          <code style={{ marginLeft: 6, wordBreak: "break-all" }}>
+            {status?.userId ?? "-"}
+          </code>
+        </div>
         <div>
           端末ID（通話・presence用）:
-          <code style={{ marginLeft: 6 }}>{status?.deviceId ?? "-"}</code>
+          <code style={{ marginLeft: 6, wordBreak: "break-all" }}>
+            {status?.deviceId ?? "-"}
+          </code>
         </div>
         <div>
-          ユーザーID:
-          <code style={{ marginLeft: 6 }}>{status?.userId ?? "-"}</code>
+          匿名ユーザー:
+          <strong style={{ marginLeft: 6 }}>
+            {status ? (status.isAnonymous ? "はい" : "いいえ") : "-"}
+          </strong>
         </div>
+        <div>
+          メール連携:
+          <strong style={{ marginLeft: 6 }}>
+            {status
+              ? status.hasLinkedEmail
+                ? `済 (${status.email})`
+                : "未連携"
+              : "-"}
+          </strong>
+        </div>
+        <div>
+          プラン:
+          <code style={{ marginLeft: 6 }}>
+            {status?.entitlements?.plan ?? "free"}
+          </code>
+          {" · "}
+          クラス枠: {status?.entitlements?.class_slots ?? 1}
+          {" · "}
+          テーマ: {status?.entitlements?.topic_plan ?? 0}
+          {" · "}
+          作成: {status?.entitlements?.can_create_classes ? "可" : "不可"}
+          {" · "}
+          テーマパス: {status?.entitlements?.theme_pass ? "あり" : "なし"}
+        </div>
+        <p style={{ margin: 0, fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
+          LINE内ブラウザ → Safari/Chrome 復元確認: コンソールで{" "}
+          <code>[auth-restore]</code> ログの userId が一致するか確認してください。
+        </p>
         <button
           type="button"
           disabled={busy}

@@ -8,10 +8,12 @@ import { isValidUuid } from "@/lib/userIdentity";
 
 export class DeviceOwnershipError extends Error {
   code: string;
+  action?: string;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, action?: string) {
     super(message);
     this.code = code;
+    this.action = action;
   }
 }
 
@@ -33,9 +35,14 @@ export async function assertDeviceBootstrapAllowed(params: {
   userId: string;
   deviceId: string;
   bodySecret?: unknown;
+  hasLinkedEmail?: boolean;
+  allowSecretReregistration?: boolean;
 }) {
   const { userId, deviceId } = params;
   const deviceSecret = pickDeviceSecretFromRequest(params.req, params.bodySecret);
+  const canReregisterSecret =
+    params.allowSecretReregistration === true ||
+    params.hasLinkedEmail === true;
 
   const { data: deviceLink, error: deviceLinkError } = await supabaseAdmin
     .from("user_devices")
@@ -59,17 +66,34 @@ export async function assertDeviceBootstrapAllowed(params: {
 
   if (deviceLink?.device_secret_hash) {
     if (!isValidDeviceSecret(deviceSecret)) {
+      if (canReregisterSecret && deviceLink.user_id === userId) {
+        throw new DeviceOwnershipError(
+          "device_secret_required",
+          "端末の再登録が必要です。ページを再読み込みしてください。",
+          "reregister_device"
+        );
+      }
+
       throw new DeviceOwnershipError(
         "device_secret_required",
-        "端末の所有確認が必要です。"
+        "端末の所有確認が必要です。ログインしてプロフィールを復元してください。",
+        "restore_login"
       );
     }
 
     const providedHash = hashDeviceSecret(deviceSecret);
     if (providedHash !== deviceLink.device_secret_hash) {
+      if (canReregisterSecret && deviceLink.user_id === userId) {
+        return {
+          deviceSecretHash: providedHash,
+          reregisteredDevice: true,
+        };
+      }
+
       throw new DeviceOwnershipError(
         "device_secret_mismatch",
-        "端末の所有確認に失敗しました。"
+        "端末の所有確認に失敗しました。ログインしてプロフィールを復元してください。",
+        "restore_login"
       );
     }
   }
@@ -119,6 +143,7 @@ export async function assertDeviceBootstrapAllowed(params: {
     deviceSecretHash: shouldSetSecret
       ? hashDeviceSecret(deviceSecret)
       : deviceLink?.device_secret_hash ?? null,
+    reregisteredDevice: false,
   };
 }
 

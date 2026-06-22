@@ -7,12 +7,13 @@ import {
 } from "@/lib/agePolicy";
 import {
   defaultMatchPrefs,
-  ensureMatchPrefsRow,
-  readMatchPrefs,
-  userProfileDeviceExists,
+  ensureMatchPrefsForActor,
+  readMatchPrefsForActor,
+  userProfileActorExists,
 } from "@/lib/matchPrefsStorage";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
+import { resolveApiActor } from "@/lib/actorIdentity";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -50,21 +51,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
 
-  const deviceId = String(body.deviceId ?? "").trim();
-  const mode = String(body.mode ?? "").trim();
+  const actorResult = await resolveApiActor({
+    req,
+    deviceId: body.deviceId,
+  });
 
-  if (!deviceId) {
-    return NextResponse.json({ error: "deviceId required" }, { status: 400 });
+  if (!actorResult.ok) {
+    return NextResponse.json(
+      { error: actorResult.error, message: actorResult.message },
+      { status: actorResult.status }
+    );
   }
+
+  const actor = actorResult.actor;
+  const deviceId = actor.deviceId;
 
   const sb = supabaseServer();
 
   let profileExists: boolean;
   try {
-    profileExists = await userProfileDeviceExists(sb, deviceId);
+    profileExists = await userProfileActorExists(sb, actor);
   } catch (error) {
     const message = error instanceof Error ? error.message : "profile_lookup_failed";
     console.error("[match-prefs] profile lookup failed", {
+      userId: actor.userId || null,
       deviceTail: deviceId.slice(-4),
       message,
     });
@@ -74,25 +84,26 @@ export async function POST(req: Request) {
     );
   }
 
-  if (mode === "get") {
+  if (body.mode === "get") {
     if (!profileExists) {
       return NextResponse.json({
-        prefs: defaultMatchPrefs(deviceId),
+        prefs: defaultMatchPrefs(deviceId, actor.userId),
         profileRequired: true,
       });
     }
 
     try {
-      const existing = await readMatchPrefs(sb, deviceId);
+      const existing = await readMatchPrefsForActor(sb, actor);
       if (existing) {
         return NextResponse.json({ prefs: existing });
       }
 
-      const ensured = await ensureMatchPrefsRow(sb, deviceId);
+      const ensured = await ensureMatchPrefsForActor(sb, actor);
       return NextResponse.json({ prefs: ensured });
     } catch (error) {
       const message = error instanceof Error ? error.message : "match_prefs_get_failed";
       console.error("[match-prefs] get failed", {
+        userId: actor.userId || null,
         deviceTail: deviceId.slice(-4),
         message,
       });
@@ -108,7 +119,7 @@ export async function POST(req: Request) {
   }
 
   const ageMode = await getEffectiveAgeMode();
-  const selfAge = await getProfileAge(deviceId);
+  const selfAge = await getProfileAge(deviceId, actor.userId);
   const ageCheck = checkSelfAgeForJoin(selfAge, ageMode);
   if (!ageCheck.ok) {
     return NextResponse.json(
@@ -130,7 +141,7 @@ export async function POST(req: Request) {
   );
 
   try {
-    const saved = await ensureMatchPrefsRow(sb, deviceId, {
+    const saved = await ensureMatchPrefsForActor(sb, actor, {
       min_age: guarded.minAge,
       max_age: guarded.maxAge,
     });
@@ -139,11 +150,13 @@ export async function POST(req: Request) {
       ok: true,
       minAge: saved.min_age,
       maxAge: saved.max_age,
+      userId: actor.userId || null,
     });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "match_prefs_update_failed";
     console.error("[match-prefs] save failed", {
+      userId: actor.userId || null,
       deviceTail: deviceId.slice(-4),
       message,
     });
