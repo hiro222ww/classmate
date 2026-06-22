@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { stripe } from "@/lib/stripe";
 import { computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
+import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { lookupEntitlements } from "@/lib/userIdentityMigration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,11 +12,16 @@ function pickDeviceId(req: Request, body: { deviceId?: string }) {
   return req.headers.get("x-device-id") || body?.deviceId || "";
 }
 
-async function upsertBillingCustomer(deviceId: string, customerId: string) {
+async function upsertBillingCustomer(
+  deviceId: string,
+  customerId: string,
+  userId?: string | null
+) {
   const { error } = await supabaseAdmin.from("user_billing_customers").upsert(
     {
       device_id: deviceId,
       stripe_customer_id: customerId,
+      user_id: userId ?? null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "device_id" }
@@ -85,22 +92,19 @@ export async function POST(req: Request) {
       );
     }
 
-    const { data: currentEnt, error: currentErr } = await supabaseAdmin
-      .from("user_entitlements")
-      .select(
-        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override, manual_override_updated_at"
-      )
-      .eq("device_id", deviceId)
-      .maybeSingle();
+    const resolvedIdentity = await resolveRequestIdentity({ req, deviceId });
+    const userId = resolvedIdentity.ok ? resolvedIdentity.identity.userId : null;
 
-    if (currentErr) {
+    let currentEnt = null;
+    try {
+      currentEnt = await lookupEntitlements({ userId, deviceId });
+    } catch (lookupError: any) {
       return NextResponse.json(
-        { ok: false, error: "db_error", detail: currentErr.message },
+        { ok: false, error: "db_error", detail: lookupError.message },
         { status: 500 }
       );
     }
 
-    // 手動上書き中のユーザーだけ同期を止める
     if (currentEnt?.manual_override) {
       console.log("[billing/sync] skipped by manual override", {
         deviceId,
@@ -194,6 +198,7 @@ export async function POST(req: Request) {
       .upsert(
         {
           device_id: deviceId,
+          user_id: userId,
           plan,
           class_slots,
           can_create_classes,
@@ -205,7 +210,7 @@ export async function POST(req: Request) {
         { onConflict: "device_id" }
       )
       .select(
-        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override, manual_override_updated_at"
+        "device_id,user_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override, manual_override_updated_at"
       )
       .single();
 
@@ -216,7 +221,7 @@ export async function POST(req: Request) {
       );
     }
 
-    await upsertBillingCustomer(deviceId, customerId);
+    await upsertBillingCustomer(deviceId, customerId, userId);
 
     return NextResponse.json({
       ok: true,

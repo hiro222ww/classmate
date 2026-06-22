@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import AppLifecycleBoot from "@/components/AppLifecycleBoot";
+import AuthBoot from "@/components/AuthBoot";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
 
@@ -41,6 +42,7 @@ export default function RootLayout({
         }}
       >
         <AppLifecycleBoot />
+        <AuthBoot />
         {/* ▼ メインコンテンツ */}
         <div style={{ minHeight: "100vh" }}>{children}</div>
 

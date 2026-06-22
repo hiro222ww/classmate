@@ -7,6 +7,7 @@ import {
   tailJoinId,
 } from "@/lib/joinStateInvariants";
 import { resolveDisplayName } from "@/lib/resolveDisplayName";
+import { resolveUserIdForDevice } from "@/lib/userIdentityMigration";
 
 export type JoinStateSource = "invite" | "normal_join" | "rejoin" | "restore";
 
@@ -205,6 +206,7 @@ export async function ensureClassSessionMembership(
   }
 
   const now = new Date().toISOString();
+  const userId = await resolveUserIdForDevice(ids.deviceId);
   let membershipUpserted = false;
   let sessionMemberUpserted = false;
   let presenceUpserted = false;
@@ -214,6 +216,7 @@ export async function ensureClassSessionMembership(
       {
         class_id: ids.classId,
         device_id: ids.deviceId,
+        user_id: userId,
         joined_at: now,
       },
       { onConflict: "class_id,device_id" }
@@ -266,6 +269,7 @@ export async function ensureClassSessionMembership(
       {
         session_id: ids.sessionId,
         device_id: ids.deviceId,
+        user_id: userId,
         display_name: displayName,
         joined_at: now,
         is_in_call: false,

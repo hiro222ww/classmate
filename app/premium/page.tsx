@@ -17,6 +17,7 @@ import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 
 type Entitlements = {
   class_slots?: number;
@@ -138,7 +139,7 @@ export default function PremiumPage() {
 
     (async () => {
       try {
-        const r = await fetch("/api/user/entitlements", {
+        const r = await authenticatedFetch("/api/user/entitlements", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ deviceId }),

@@ -18,6 +18,8 @@ import {
   isUserProfileComplete,
   normalizeProfileAge,
 } from "@/lib/profileClient";
+import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { bootstrapUserIdentity } from "@/lib/userIdentityMigration";
 
 type ProfileRow = {
   device_id: string;
@@ -28,6 +30,7 @@ type ProfileRow = {
   hobbies: string | null;
   bio: string | null;
   show_age: boolean;
+  user_id?: string | null;
   terms_agreed_at?: string | null;
   privacy_agreed_at?: string | null;
   guidelines_agreed_at?: string | null;
@@ -154,7 +157,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version"
+      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
     )
     .eq("device_id", device_id)
     .maybeSingle();
@@ -322,6 +325,20 @@ export async function POST(req: Request) {
     );
   }
 
+  let linkedUserId: string | null = null;
+  const identity = await resolveRequestIdentity({ req, deviceId: device_id });
+  if (identity.ok && identity.identity.userId) {
+    linkedUserId = identity.identity.userId;
+    try {
+      await bootstrapUserIdentity({
+        userId: linkedUserId,
+        deviceId: device_id,
+      });
+    } catch (bootstrapError) {
+      console.warn("[profile][POST] identity bootstrap failed", bootstrapError);
+    }
+  }
+
   if (gender !== "male" && gender !== "female") {
     return NextResponse.json(
       {
@@ -410,7 +427,7 @@ export async function POST(req: Request) {
   const { data: existingProfile, error: existingError } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "photo_path, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version"
+      "photo_path, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
     )
     .eq("device_id", device_id)
     .maybeSingle();
@@ -521,6 +538,7 @@ export async function POST(req: Request) {
 
   const payload: ProfileRow = {
     device_id,
+    user_id: linkedUserId ?? existingProfile?.user_id ?? null,
     display_name,
     birth_date,
     gender,
@@ -563,7 +581,7 @@ export async function POST(req: Request) {
   const { data: confirmData, error: confirmError } = await supabaseAdmin
     .from("user_profiles")
     .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version"
+      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
     )
     .eq("device_id", device_id)
     .maybeSingle();

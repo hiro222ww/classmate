@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveRequestIdentity } from "@/lib/requestIdentity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,11 +38,34 @@ export async function POST(req: Request) {
       );
     }
 
+    const identity = await resolveRequestIdentity({
+      req,
+      deviceId: reporter_device_id,
+    });
+
+    let reporter_user_id: string | null = null;
+    let target_user_id: string | null = null;
+
+    if (identity.ok && identity.identity.userId) {
+      reporter_user_id = identity.identity.userId;
+    }
+
+    if (target_device_id) {
+      const { data: targetProfile } = await supabaseAdmin
+        .from("user_profiles")
+        .select("user_id")
+        .eq("device_id", target_device_id)
+        .maybeSingle();
+      target_user_id = targetProfile?.user_id ?? null;
+    }
+
     const { data, error } = await supabaseAdmin
       .from("user_reports")
       .insert({
         reporter_device_id,
         target_device_id,
+        reporter_user_id,
+        target_user_id,
         session_id,
         class_id,
         reason,

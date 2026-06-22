@@ -17,6 +17,8 @@ import {
   LegalConsentCheckbox,
   LegalDocumentLinks,
 } from "@/components/LegalDocumentLinks";
+import Link from "next/link";
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 
 type Gender = "male" | "female" | "";
 
@@ -287,7 +289,7 @@ export default function ProfileClient() {
 
       try {
         const [profileRes, settingsRes] = await Promise.all([
-          fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
+          authenticatedFetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
             method: "GET",
             cache: "no-store",
           }),
@@ -468,7 +470,7 @@ export default function ProfileClient() {
         fd.append("photo", photoFile);
       }
 
-      const res = await fetch("/api/profile", {
+      const res = await authenticatedFetch("/api/profile", {
         method: "POST",
         body: fd,
       });
@@ -849,6 +851,9 @@ export default function ProfileClient() {
           </p>
         )}
         <LegalDocumentLinks compact />
+        <p style={{ margin: "8px 0 0", fontSize: 13 }}>
+          <Link href={withDev("/settings")}>アカウント連携・設定</Link>
+        </p>
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
