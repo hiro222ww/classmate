@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { upsertUserDeviceLink } from "@/lib/deviceOwnership";
 import { isValidUuid } from "@/lib/userIdentity";
 
 export type IdentityBootstrapResult = {
@@ -16,56 +17,81 @@ async function linkSatelliteRows(userId: string, deviceId: string) {
 
   const { data: entitlements } = await supabaseAdmin
     .from("user_entitlements")
-    .select("device_id,user_id,plan,class_slots,can_create_classes,topic_plan,theme_pass,manual_override,manual_override_updated_at,updated_at")
+    .select(
+      "device_id,user_id,plan,class_slots,can_create_classes,topic_plan,theme_pass,manual_override,manual_override_updated_at,updated_at"
+    )
     .eq("device_id", deviceId)
     .maybeSingle();
 
-  if (entitlements) {
-    const { data: byUser } = await supabaseAdmin
-      .from("user_entitlements")
-      .select("device_id")
-      .eq("user_id", userId)
-      .maybeSingle();
+  const { data: entitlementsByUser } = await supabaseAdmin
+    .from("user_entitlements")
+    .select("device_id,user_id")
+    .eq("user_id", userId)
+    .maybeSingle();
 
-    if (!byUser) {
-      await supabaseAdmin.from("user_entitlements").upsert(
+  if (entitlementsByUser) {
+    if (!entitlementsByUser.user_id) {
+      await supabaseAdmin
+        .from("user_entitlements")
+        .update({ user_id: userId, updated_at: now })
+        .eq("device_id", entitlementsByUser.device_id);
+      entitlementsLinked = true;
+    }
+  } else if (entitlements) {
+    await supabaseAdmin.from("user_entitlements").upsert(
+      {
+        ...entitlements,
+        user_id: userId,
+        device_id: deviceId,
+        updated_at: now,
+      },
+      { onConflict: "device_id" }
+    );
+    entitlementsLinked = true;
+  }
+
+  const { data: billingByUser } = await supabaseAdmin
+    .from("user_billing_customers")
+    .select("device_id,user_id,stripe_customer_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const { data: billingByDevice } = await supabaseAdmin
+    .from("user_billing_customers")
+    .select("device_id,stripe_customer_id,user_id")
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (billingByUser) {
+    if (!billingByDevice) {
+      await supabaseAdmin.from("user_billing_customers").upsert(
         {
-          ...entitlements,
           user_id: userId,
           device_id: deviceId,
+          stripe_customer_id: billingByUser.stripe_customer_id,
           updated_at: now,
         },
         { onConflict: "device_id" }
       );
-      entitlementsLinked = true;
-    } else if (!entitlements.user_id) {
-      await supabaseAdmin
-        .from("user_entitlements")
-        .update({ user_id: userId, updated_at: now })
-        .eq("device_id", deviceId);
-      entitlementsLinked = true;
-    }
-  }
-
-  const { data: billing } = await supabaseAdmin
-    .from("user_billing_customers")
-    .select("device_id,stripe_customer_id,user_id,updated_at")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  if (billing) {
-    if (!billing.user_id) {
+      billingLinked = true;
+    } else if (!billingByDevice.user_id) {
       await supabaseAdmin
         .from("user_billing_customers")
         .update({ user_id: userId, updated_at: now })
         .eq("device_id", deviceId);
       billingLinked = true;
     }
+  } else if (billingByDevice && !billingByDevice.user_id) {
+    await supabaseAdmin
+      .from("user_billing_customers")
+      .update({ user_id: userId, updated_at: now })
+      .eq("device_id", deviceId);
+    billingLinked = true;
   }
 
   const { data: matchPrefs } = await supabaseAdmin
     .from("user_match_prefs")
-    .select("device_id,user_id,min_age,max_age,updated_at")
+    .select("device_id,user_id")
     .eq("device_id", deviceId)
     .maybeSingle();
 
@@ -95,6 +121,7 @@ async function linkSatelliteRows(userId: string, deviceId: string) {
 export async function bootstrapUserIdentity(params: {
   userId: string;
   deviceId: string;
+  deviceSecretHash?: string | null;
 }): Promise<IdentityBootstrapResult> {
   const userId = String(params.userId ?? "").trim();
   const deviceId = String(params.deviceId ?? "").trim();
@@ -103,17 +130,13 @@ export async function bootstrapUserIdentity(params: {
     throw new Error("invalid_identity");
   }
 
-  const now = new Date().toISOString();
   let profileMigrated = false;
 
-  await supabaseAdmin.from("user_devices").upsert(
-    {
-      device_id: deviceId,
-      user_id: userId,
-      updated_at: now,
-    },
-    { onConflict: "device_id" }
-  );
+  await upsertUserDeviceLink({
+    userId,
+    deviceId,
+    deviceSecretHash: params.deviceSecretHash ?? null,
+  });
 
   const { data: profileByDevice } = await supabaseAdmin
     .from("user_profiles")
@@ -146,15 +169,9 @@ export async function bootstrapUserIdentity(params: {
       { onConflict: "device_id" }
     );
     profileMigrated = true;
-  } else if (profileByDevice && profileByUser && profileByDevice.device_id !== profileByUser.device_id) {
-    // Prefer existing profile on this device; link user_id if the user profile row is empty shell only.
-    if (!profileByDevice.user_id) {
-      await supabaseAdmin
-        .from("user_profiles")
-        .update({ user_id: userId })
-        .eq("device_id", deviceId);
-      profileMigrated = true;
-    }
+  } else if (!profileByDevice && profileByUser) {
+    // 別端末ログイン: 既存 user_id プロフィールを維持し、この端末は user_devices のみ紐付け
+    profileMigrated = false;
   }
 
   const satellite = await linkSatelliteRows(userId, deviceId);
@@ -196,7 +213,9 @@ export async function lookupEntitlements(params: {
   if (userId && isValidUuid(userId)) {
     const { data, error } = await supabaseAdmin
       .from("user_entitlements")
-      .select("device_id,user_id,plan,class_slots,can_create_classes,topic_plan,theme_pass,manual_override,manual_override_updated_at,updated_at")
+      .select(
+        "device_id,user_id,plan,class_slots,can_create_classes,topic_plan,theme_pass,manual_override,manual_override_updated_at,updated_at"
+      )
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -207,7 +226,9 @@ export async function lookupEntitlements(params: {
   if (deviceId && isValidUuid(deviceId)) {
     const { data, error } = await supabaseAdmin
       .from("user_entitlements")
-      .select("device_id,user_id,plan,class_slots,can_create_classes,topic_plan,theme_pass,manual_override,manual_override_updated_at,updated_at")
+      .select(
+        "device_id,user_id,plan,class_slots,can_create_classes,topic_plan,theme_pass,manual_override,manual_override_updated_at,updated_at"
+      )
       .eq("device_id", deviceId)
       .maybeSingle();
 

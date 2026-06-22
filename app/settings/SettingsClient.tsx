@@ -253,11 +253,13 @@ export default function SettingsClient() {
         <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}>{error}</p>
       ) : null}
 
-      <p style={{ margin: 0, fontSize: 13 }}>
-        <Link href={withDev("/profile")}>プロフィール編集</Link>
-        {" · "}
-        <Link href={withDev("/premium")}>プラン</Link>
-      </p>
+        <p style={{ margin: "8px 0 0", fontSize: 13 }}>
+          <Link href={withDev("/login")}>別端末からログイン</Link>
+          {" · "}
+          <Link href={withDev("/profile")}>プロフィール編集</Link>
+          {" · "}
+          <Link href={withDev("/premium")}>プラン</Link>
+        </p>
     </main>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { topicSupportRankFromPlan } from "@/lib/billingCatalog";
 import {
@@ -18,6 +19,8 @@ import { HelpTip } from "@/components/HelpTip";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
+import { fetchAuthStatus } from "@/lib/authClient";
+import { BILLING_LINK_REQUIRED_MESSAGE } from "@/lib/billingAuthGate";
 
 type Entitlements = {
   class_slots?: number;
@@ -126,9 +129,11 @@ function PlanCard({
 }
 
 export default function PremiumPage() {
+  const router = useRouter();
   const [deviceId, setDeviceId] = useState("");
   const [ent, setEnt] = useState<Entitlements | null>(null);
   const [busyKey, setBusyKey] = useState("");
+  const [accountLinked, setAccountLinked] = useState<boolean | null>(null);
 
   useEffect(() => {
     setDeviceId(getDeviceId());
@@ -139,15 +144,18 @@ export default function PremiumPage() {
 
     (async () => {
       try {
-        const r = await authenticatedFetch("/api/user/entitlements", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ deviceId }),
-        });
+        const [entRes, authStatus] = await Promise.all([
+          authenticatedFetch("/api/user/entitlements", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ deviceId }),
+          }),
+          fetchAuthStatus(deviceId),
+        ]);
 
-        const j = await r.json().catch(() => null);
+        const j = await entRes.json().catch(() => null);
 
-        if (r.ok && j) {
+        if (entRes.ok && j) {
           setEnt({
             class_slots: Number(j?.class_slots ?? 1),
             topic_plan: Number(j?.topic_plan ?? 0),
@@ -155,8 +163,12 @@ export default function PremiumPage() {
             plan: String(j?.plan ?? ""),
           });
         }
+
+        setAccountLinked(
+          Boolean(authStatus?.hasLinkedEmail) && !Boolean(authStatus?.isAnonymous)
+        );
       } catch {
-        // silent
+        setAccountLinked(null);
       }
     })();
   }, [deviceId]);
@@ -168,6 +180,14 @@ export default function PremiumPage() {
   const canClick = useMemo(() => !!deviceId && !busyKey, [deviceId, busyKey]);
 
   async function openPortalUpdate(action: "update_theme" | "update_slots") {
+    if (!accountLinked) {
+      const ok = window.confirm(
+        `${BILLING_LINK_REQUIRED_MESSAGE}\n\n設定ページへ移動しますか？`
+      );
+      if (ok) router.push(withDev("/settings"));
+      return;
+    }
+
     try {
       setBusyKey(action);
 
@@ -176,7 +196,7 @@ export default function PremiumPage() {
           ? new URLSearchParams(window.location.search).get("dev") ?? ""
           : "";
 
-      const r = await fetch("/api/billing/create-portal-session", {
+      const r = await authenticatedFetch("/api/billing/create-portal-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ deviceId, dev, action }),
@@ -199,6 +219,14 @@ export default function PremiumPage() {
   }
 
   async function start(body: Record<string, unknown>) {
+    if (!accountLinked) {
+      const ok = window.confirm(
+        `${BILLING_LINK_REQUIRED_MESSAGE}\n\n設定ページへ移動しますか？`
+      );
+      if (ok) router.push(withDev("/settings"));
+      return;
+    }
+
     try {
       setBusyKey(JSON.stringify(body));
 
@@ -222,13 +250,19 @@ export default function PremiumPage() {
         return;
       }
 
-      const r = await fetch("/api/billing/create-checkout-session", {
+      const r = await authenticatedFetch("/api/billing/create-checkout-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ deviceId, ...body, dev }),
       });
 
       const j = await r.json().catch(() => null);
+
+      if (!r.ok && j?.error === "account_link_required") {
+        alert(j.message ?? BILLING_LINK_REQUIRED_MESSAGE);
+        router.push(withDev(j.redirectTo ?? "/settings"));
+        return;
+      }
 
       if (j?.url) {
         window.location.href = j.url;
@@ -263,6 +297,31 @@ export default function PremiumPage() {
         <h1 style={{ fontSize: 28, fontWeight: 900 }}>プラン</h1>
         <Link href={withDev("/billing")}>支払い管理</Link>
       </header>
+
+      {accountLinked === false ? (
+        <section
+          style={{
+            border: "1px solid #fde68a",
+            background: "#fffbeb",
+            color: "#92400e",
+            borderRadius: 16,
+            padding: 14,
+            fontSize: 13,
+            lineHeight: 1.65,
+            fontWeight: 700,
+          }}
+        >
+          {BILLING_LINK_REQUIRED_MESSAGE}
+          {" "}
+          <Link href={withDev("/settings")} style={{ color: "#111827", fontWeight: 900 }}>
+            アカウント連携
+          </Link>
+          {" · "}
+          <Link href={withDev("/login")} style={{ color: "#111827", fontWeight: 900 }}>
+            ログイン
+          </Link>
+        </section>
+      ) : null}
 
       <SoftCard>
         <div style={{ fontSize: 14, color: "#666" }}>現在のテーマプラン</div>

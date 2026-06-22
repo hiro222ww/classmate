@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
+import {
+  syncEntitlementsForStripeCustomer,
+  upsertBillingCustomerRecord,
+} from "@/lib/billingIdentity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,113 +16,6 @@ function mustEnv(name: string) {
 }
 
 const WEBHOOK_SECRET = () => mustEnv("STRIPE_WEBHOOK_SECRET");
-
-async function ensureCustomerMapping(deviceId: string, customerId: string) {
-  const { error } = await supabaseAdmin
-    .from("user_billing_customers")
-    .upsert(
-      {
-        device_id: deviceId,
-        stripe_customer_id: customerId,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "device_id" }
-    );
-
-  if (error) throw error;
-}
-
-async function resolveDeviceIdByCustomer(customerId: string): Promise<string> {
-  const customer = (await stripe.customers.retrieve(customerId)) as Stripe.Customer;
-
-  const deviceIdFromMeta =
-    (customer.metadata?.deviceId ?? "").toString() ||
-    (customer.metadata?.device_id ?? "").toString();
-
-  if (deviceIdFromMeta) return deviceIdFromMeta;
-
-  const { data, error } = await supabaseAdmin
-    .from("user_billing_customers")
-    .select("device_id")
-    .eq("stripe_customer_id", customerId)
-    .maybeSingle();
-
-  if (error) throw error;
-
-  return data?.device_id ?? "";
-}
-
-async function syncEntitlementsByCustomer(customerId: string) {
-  const deviceId = await resolveDeviceIdByCustomer(customerId);
-
-  if (!deviceId) {
-    console.warn("[webhook] deviceId not found for customer:", customerId);
-    return;
-  }
-
-  const subs = await stripe.subscriptions.list({
-    customer: customerId,
-    status: "all",
-    expand: ["data.items.data.price"],
-    limit: 100,
-  });
-
-  const resolved = computeEntitlementsFromSubscriptions(subs.data);
-  const {
-    class_slots,
-    topic_plan,
-    plan,
-    can_create_classes,
-    theme_pass,
-    unknownPriceIds,
-    categoryMismatches,
-  } = resolved;
-
-  if (unknownPriceIds.length > 0) {
-    console.warn("[webhook] ignored unknown priceIds during entitlement sync", {
-      customerId,
-      deviceId,
-      unknownPriceIds,
-    });
-  }
-
-  if (categoryMismatches.length > 0) {
-    console.warn("[webhook] category mismatches during entitlement sync", {
-      customerId,
-      deviceId,
-      categoryMismatches,
-    });
-  }
-
-  const { error: upErr } = await supabaseAdmin
-    .from("user_entitlements")
-    .upsert(
-      {
-        device_id: deviceId,
-        plan,
-        class_slots,
-        can_create_classes,
-        topic_plan,
-        theme_pass,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "device_id" }
-    );
-
-  if (upErr) throw upErr;
-
-  await ensureCustomerMapping(deviceId, customerId);
-
-  console.log("[webhook] synced entitlements", {
-    deviceId,
-    customerId,
-    plan,
-    class_slots,
-    topic_plan,
-    can_create_classes,
-    theme_pass,
-  });
-}
 
 export async function POST(req: Request) {
   try {
@@ -142,61 +37,41 @@ export async function POST(req: Request) {
     console.log("[webhook] event.type =", event.type);
 
     if (event.type === "checkout.session.completed") {
-      console.log("[webhook] checkout.session.completed");
-
       const session = event.data.object as Stripe.Checkout.Session;
-
       const customerId =
         typeof session.customer === "string"
           ? session.customer
           : session.customer?.id;
 
-      if (!customerId) {
-        return NextResponse.json({ ok: true });
-      }
-
-      const deviceId =
-        (session.metadata?.deviceId ?? "").toString() ||
-        (session.metadata?.device_id ?? "").toString();
-
-      if (deviceId) {
-        await ensureCustomerMapping(deviceId, customerId);
-      }
-
-      await syncEntitlementsByCustomer(customerId);
-      return NextResponse.json({ ok: true });
-    }
-
-    if (event.type === "invoice.paid") {
-      console.log("[webhook] invoice.paid");
-
-      const invoice = event.data.object as Stripe.Invoice;
-      const customerId =
-        typeof invoice.customer === "string"
-          ? invoice.customer
-          : invoice.customer?.id;
-
       if (customerId) {
-        await syncEntitlementsByCustomer(customerId);
+        const userId = String(session.metadata?.user_id ?? "").trim();
+        const deviceId = String(session.metadata?.device_id ?? "").trim();
+
+        if (userId && deviceId) {
+          await upsertBillingCustomerRecord({
+            userId,
+            deviceId,
+            stripeCustomerId: customerId,
+          });
+        }
+
+        await syncEntitlementsForStripeCustomer(customerId);
       }
 
       return NextResponse.json({ ok: true });
     }
 
     if (
+      event.type === "invoice.paid" ||
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      console.log("[webhook] subscription changed:", event.type);
-
-      const sub = event.data.object as Stripe.Subscription;
+      const obj = event.data.object as Stripe.Invoice | Stripe.Subscription;
       const customerId =
-        typeof sub.customer === "string"
-          ? sub.customer
-          : sub.customer?.id;
+        typeof obj.customer === "string" ? obj.customer : obj.customer?.id;
 
       if (customerId) {
-        await syncEntitlementsByCustomer(customerId);
+        await syncEntitlementsForStripeCustomer(customerId);
       }
 
       return NextResponse.json({ ok: true });

@@ -1,66 +1,68 @@
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
-import { createClient } from "@supabase/supabase-js";
+import type Stripe from "stripe";
+import { stripe } from "@/lib/stripe";
 import { computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
+import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { assertBillingAccountLinked } from "@/lib/billingAuthGate";
+import {
+  syncEntitlementsForStripeCustomer,
+  upsertBillingCustomerRecord,
+  upsertEntitlementsFromResolved,
+} from "@/lib/billingIdentity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { persistSession: false } }
-);
-
-function mustGetDeviceId(req: Request) {
-  const deviceId =
-    req.headers.get("x-device-id") || req.headers.get("X-Device-Id");
-  return deviceId || null;
-}
-
-async function upsertBillingCustomer(deviceId: string, customerId: string) {
-  const { error } = await supabaseAdmin.from("user_billing_customers").upsert(
-    {
-      device_id: deviceId,
-      stripe_customer_id: customerId,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "device_id" }
-  );
-
-  if (error) {
-    throw new Error(`billing_customer_upsert_failed:${error.message}`);
-  }
+function pickDeviceId(req: Request) {
+  return String(req.headers.get("x-device-id") ?? "").trim();
 }
 
 export async function POST(req: Request) {
   try {
-    const deviceId = mustGetDeviceId(req);
+    const deviceId = pickDeviceId(req);
 
     if (!deviceId) {
+      return NextResponse.json({ error: "missing_x_device_id" }, { status: 400 });
+    }
+
+    const identityResult = await resolveRequestIdentity({
+      req,
+      deviceId,
+      requireAuth: true,
+    });
+
+    if (!identityResult.ok) {
       return NextResponse.json(
-        { error: "missing_x_device_id" },
-        { status: 400 }
+        { error: identityResult.error, message: identityResult.message },
+        { status: identityResult.status }
       );
     }
+
+    const billingGate = assertBillingAccountLinked(identityResult.identity);
+    if (!billingGate.ok) {
+      return NextResponse.json(
+        {
+          error: billingGate.error,
+          message: billingGate.message,
+          redirectTo: billingGate.redirectTo,
+        },
+        { status: billingGate.status }
+      );
+    }
+
+    const { userId } = identityResult.identity;
 
     const body = await req.json().catch(() => ({}));
     const session_id = body?.session_id;
 
     if (!session_id || typeof session_id !== "string") {
-      return NextResponse.json(
-        { error: "missing_session_id" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "missing_session_id" }, { status: 400 });
     }
 
     const session = await stripe.checkout.sessions.retrieve(session_id, {
       expand: ["subscription", "subscription.items.data.price"],
     });
 
-    // ✅ 支払い完了チェック
     if (session.payment_status !== "paid") {
       return NextResponse.json(
         {
@@ -71,12 +73,24 @@ export async function POST(req: Request) {
       );
     }
 
-    // ✅ 他人のCheckout Sessionを使った反映防止
-    if (session.client_reference_id !== deviceId) {
+    const sessionUserId = String(session.metadata?.user_id ?? "").trim();
+    const sessionDeviceId = String(session.metadata?.device_id ?? "").trim();
+    const referenceUserId = String(session.client_reference_id ?? "").trim();
+
+    const userMatches =
+      referenceUserId === userId ||
+      sessionUserId === userId ||
+      referenceUserId === deviceId;
+
+    const deviceMatches =
+      !sessionDeviceId || sessionDeviceId === deviceId;
+
+    if (!userMatches || !deviceMatches) {
       return NextResponse.json(
         {
-          error: "device_mismatch",
-          session_client_reference_id: session.client_reference_id,
+          error: "checkout_identity_mismatch",
+          session_user_id: sessionUserId || referenceUserId || null,
+          session_device_id: sessionDeviceId || null,
         },
         { status: 403 }
       );
@@ -113,127 +127,47 @@ export async function POST(req: Request) {
       );
     }
 
-    await upsertBillingCustomer(deviceId, customerId);
-
-    const subs = await stripe.subscriptions.list({
-      customer: customerId,
-      status: "all",
-      limit: 100,
-      expand: ["data.items.data.price"],
+    await upsertBillingCustomerRecord({
+      userId,
+      deviceId,
+      stripeCustomerId: customerId,
     });
 
-    const activeSubs = subs.data.filter(
-      (s) => s.status === "active" || s.status === "trialing"
-    );
-
-    const priceIds = activeSubs.flatMap((sub) =>
-      sub.items.data
-        .map((item) => item.price?.id)
-        .filter((x): x is string => !!x)
-    );
-
-    const resolved = computeEntitlementsFromSubscriptions(activeSubs);
-    const {
-      plan,
-      class_slots,
-      topic_plan,
-      can_create_classes,
-      theme_pass,
-      unknownPriceIds,
-      categoryMismatches,
-    } = resolved;
-
-    const hasKnownPrice = topic_plan > 0 || class_slots > 1;
-
-    if (!hasKnownPrice) {
-      return NextResponse.json(
-        {
-          error: "price_mapping_not_found",
-          priceIds,
-          unknownPriceIds,
-          hint: "Checkoutで使われたpriceと .env.local の STRIPE_PRICE_* が同じ環境(test/live)か確認",
-        },
-        { status: 409 }
-      );
-    }
-
-    if (unknownPriceIds.length > 0) {
-      console.warn("[billing/finalize] ignored unknown priceIds", {
-        deviceId,
-        unknownPriceIds,
+    const synced = await syncEntitlementsForStripeCustomer(customerId);
+    if (!synced) {
+      const subs = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+        expand: ["data.items.data.price"],
       });
-    }
 
-    if (categoryMismatches.length > 0) {
-      console.warn("[billing/finalize] category mismatches", {
-        deviceId,
-        categoryMismatches,
-      });
-    }
-
-    console.log("[billing/finalize] deviceId =", deviceId);
-    console.log("[billing/finalize] session_id =", session_id);
-    console.log("[billing/finalize] customerId =", customerId);
-    console.log("[billing/finalize] sessionSubId =", sessionSub.id);
-    console.log(
-      "[billing/finalize] active subscriptions =",
-      activeSubs.map((s) => ({
-        id: s.id,
-        status: s.status,
-        priceIds: s.items.data
-          .map((item) => item.price?.id)
-          .filter((x): x is string => !!x),
-      }))
-    );
-    console.log("[billing/finalize] merged priceIds =", priceIds);
-    console.log("[billing/finalize] resolved =", {
-      plan,
-      class_slots,
-      topic_plan,
-      can_create_classes,
-      theme_pass,
-    });
-
-    const { data: ent, error: entErr } = await supabaseAdmin
-      .from("user_entitlements")
-      .upsert(
-        {
-          device_id: deviceId,
-          plan,
-          class_slots,
-          can_create_classes,
-          topic_plan,
-          theme_pass,
-          manual_override: false,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "device_id" }
-      )
-      .select(
-        "device_id, plan, class_slots, can_create_classes, topic_plan, theme_pass, updated_at, manual_override"
-      )
-      .maybeSingle();
-
-    if (entErr) {
-      return NextResponse.json(
-        {
-          error: "entitlements_upsert_failed",
-          detail: entErr.message,
-        },
-        { status: 500 }
+      const activeSubs = subs.data.filter(
+        (s) => s.status === "active" || s.status === "trialing"
       );
+
+      const resolved = computeEntitlementsFromSubscriptions(activeSubs);
+      const hasKnownPrice = resolved.topic_plan > 0 || resolved.class_slots > 1;
+
+      if (!hasKnownPrice) {
+        return NextResponse.json(
+          { error: "price_mapping_not_found" },
+          { status: 409 }
+        );
+      }
+
+      await upsertEntitlementsFromResolved({
+        userId,
+        deviceId,
+        resolved,
+      });
     }
 
     return NextResponse.json({
       ok: true,
+      userId,
       deviceId,
       customerId,
-      activeSubscriptions: activeSubs.map((s) => ({
-        id: s.id,
-        status: s.status,
-      })),
-      priceIds,
-      entitlements: ent,
     });
   } catch (e: any) {
     console.error("[billing/finalize] fatal", e);

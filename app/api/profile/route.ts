@@ -154,41 +154,64 @@ export async function GET(req: Request) {
     );
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("user_profiles")
-    .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
-    )
-    .eq("device_id", device_id)
-    .maybeSingle();
+  const isSelf = device_id === viewer_device_id;
+  let data: any = null;
 
-  if (error) {
-    console.log("[profile][GET] error", {
-      device_id,
-      message: error.message,
-      details: (error as any)?.details ?? null,
-      hint: (error as any)?.hint ?? null,
-      code: (error as any)?.code ?? null,
-    });
+  if (isSelf) {
+    const identity = await resolveRequestIdentity({ req, deviceId: device_id });
+    if (identity.ok && identity.identity.userId) {
+      const { data: byUser } = await supabaseAdmin
+        .from("user_profiles")
+        .select(
+          "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
+        )
+        .eq("user_id", identity.identity.userId)
+        .maybeSingle();
 
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "profile_get_failed",
-        message: error.message,
-      },
-      {
-        status: 500,
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        },
+      if (byUser) {
+        data = byUser;
       }
-    );
+    }
+  }
+
+  if (!data) {
+    const { data: byDevice, error } = await supabaseAdmin
+      .from("user_profiles")
+      .select(
+        "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
+      )
+      .eq("device_id", device_id)
+      .maybeSingle();
+
+    if (error) {
+      console.log("[profile][GET] error", {
+        device_id,
+        message: error.message,
+        details: (error as any)?.details ?? null,
+        hint: (error as any)?.hint ?? null,
+        code: (error as any)?.code ?? null,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "profile_get_failed",
+          message: error.message,
+        },
+        {
+          status: 500,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
+
+    data = byDevice;
   }
 
   const profile = toProfileResponse(data);
   const profileComplete = isUserProfileComplete(profile);
-  const isSelf = device_id === viewer_device_id;
 
   if (!isSelf) {
     const allowed = await canViewMemberProfile({

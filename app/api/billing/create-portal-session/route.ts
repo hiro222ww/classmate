@@ -1,7 +1,9 @@
-// app/api/billing/create-portal-session/route.ts
-
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import type Stripe from "stripe";
+import { stripe } from "@/lib/stripe";
+import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { assertBillingAccountLinked } from "@/lib/billingAuthGate";
+import { resolveBillingCustomer } from "@/lib/billingIdentity";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import {
   createBillingPortalSession,
@@ -32,47 +34,55 @@ function normalizePortalAction(body: Record<string, unknown>): PortalAction | nu
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Record<
-      string,
-      unknown
-    >;
-
-    const deviceId = String(body.deviceId ?? "").trim();
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const deviceId = String(body.deviceId ?? req.headers.get("x-device-id") ?? "").trim();
     const dev = String(body.dev ?? "").trim();
 
     if (!deviceId) {
+      return NextResponse.json({ error: "deviceId_required" }, { status: 400 });
+    }
+
+    const identityResult = await resolveRequestIdentity({
+      req,
+      deviceId,
+      requireAuth: true,
+    });
+
+    if (!identityResult.ok) {
       return NextResponse.json(
-        { error: "deviceId_required" },
-        { status: 400 }
+        {
+          error: identityResult.error,
+          message: identityResult.message,
+          redirectTo: "/login",
+        },
+        { status: identityResult.status }
+      );
+    }
+
+    const billingGate = assertBillingAccountLinked(identityResult.identity);
+    if (!billingGate.ok) {
+      return NextResponse.json(
+        {
+          error: billingGate.error,
+          message: billingGate.message,
+          redirectTo: billingGate.redirectTo,
+        },
+        { status: billingGate.status }
       );
     }
 
     const action = normalizePortalAction(body);
     if (!action) {
-      return NextResponse.json(
-        { error: "invalid_portal_action" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "invalid_portal_action" }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("user_billing_customers")
-      .select("stripe_customer_id")
-      .eq("device_id", deviceId)
-      .maybeSingle();
+    const customer = await resolveBillingCustomer({
+      userId: identityResult.identity.userId,
+      deviceId,
+    });
 
-    if (error) {
-      console.error("[billing] customer lookup failed", {
-        deviceTail: deviceId.slice(-4),
-      });
-      return NextResponse.json({ error: "db_error" }, { status: 500 });
-    }
-
-    if (!data?.stripe_customer_id) {
-      return NextResponse.json(
-        { error: "customer_not_found" },
-        { status: 404 }
-      );
+    if (!customer?.stripe_customer_id) {
+      return NextResponse.json({ error: "customer_not_found" }, { status: 404 });
     }
 
     const origin = resolveAppOrigin();
@@ -81,15 +91,13 @@ export async function POST(req: Request) {
       : `${origin}/billing`;
 
     const result = await createBillingPortalSession({
-      customerId: data.stripe_customer_id,
+      customerId: customer.stripe_customer_id,
       returnUrl,
       action,
     });
 
     if (!result.ok) {
-      const status = result.error.startsWith("subscription_not_found")
-        ? 404
-        : 500;
+      const status = result.error.startsWith("subscription_not_found") ? 404 : 500;
       return NextResponse.json({ error: result.error }, { status });
     }
 

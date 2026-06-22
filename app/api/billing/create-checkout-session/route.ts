@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSellableCheckoutBody, computeEntitlementsFromSubscriptions } from "@/lib/billingCatalog";
+import { assertSellableCheckoutBody } from "@/lib/billingCatalog";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import {
   findActiveSubscriptionItem,
   updateSubscriptionItemPrice,
 } from "@/lib/billingSubscriptions";
-import type Stripe from "stripe";
+import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { assertBillingAccountLinked } from "@/lib/billingAuthGate";
+import {
+  buildStripeIdentityMetadata,
+  resolveBillingCustomer,
+  syncEntitlementsForStripeCustomer,
+} from "@/lib/billingIdentity";
 
 type Body = {
   deviceId?: string;
@@ -23,42 +28,6 @@ function pickDeviceId(req: Request, body: Body) {
 
 function normalizeDev(v: unknown) {
   return String(v ?? "").trim();
-}
-
-async function getCustomerIdByDeviceId(deviceId: string) {
-  const { data } = await supabaseAdmin
-    .from("user_billing_customers")
-    .select("stripe_customer_id")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  return String(data?.stripe_customer_id ?? "").trim() || null;
-}
-
-async function syncEntitlementsForCustomer(customerId: string, deviceId: string) {
-  const subs = await stripe.subscriptions.list({
-    customer: customerId,
-    status: "all",
-    limit: 100,
-    expand: ["data.items.data.price"],
-  });
-
-  const resolved = computeEntitlementsFromSubscriptions(subs.data);
-
-  await supabaseAdmin.from("user_entitlements").upsert(
-    {
-      device_id: deviceId,
-      plan: resolved.plan,
-      class_slots: resolved.class_slots,
-      can_create_classes: resolved.can_create_classes,
-      topic_plan: resolved.topic_plan,
-      theme_pass: resolved.theme_pass,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "device_id" }
-  );
-
-  return resolved;
 }
 
 function buildSuccessUrl(origin: string, dev: string) {
@@ -90,6 +59,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "device_id_missing" }, { status: 400 });
     }
 
+    const identityResult = await resolveRequestIdentity({
+      req,
+      deviceId,
+      requireAuth: true,
+    });
+
+    if (!identityResult.ok) {
+      return NextResponse.json(
+        {
+          error: identityResult.error,
+          message: identityResult.message,
+          redirectTo: identityResult.status === 401 ? "/login" : "/settings",
+        },
+        { status: identityResult.status }
+      );
+    }
+
+    const billingGate = assertBillingAccountLinked(identityResult.identity);
+    if (!billingGate.ok) {
+      return NextResponse.json(
+        {
+          error: billingGate.error,
+          message: billingGate.message,
+          redirectTo: billingGate.redirectTo,
+        },
+        { status: billingGate.status }
+      );
+    }
+
+    const { userId } = identityResult.identity;
+
     let checkout;
     try {
       checkout = assertSellableCheckoutBody(rawBody);
@@ -99,26 +99,23 @@ export async function POST(req: Request) {
     }
 
     const origin = resolveAppOrigin();
-
     const success_url = buildSuccessUrl(origin, dev);
     const cancel_url = buildCancelUrl(origin, dev);
 
-    const metadata: Stripe.MetadataParam =
-      checkout.category === "slots"
-        ? {
-            deviceId,
-            dev,
-            kind: "slots",
-            slotsTotal: String(checkout.targetRank),
-          }
-        : {
-            deviceId,
-            dev,
-            kind: "topic_plan",
-            amount: String(checkout.targetRank),
-          };
+    const identityMetadata = buildStripeIdentityMetadata({
+      userId,
+      deviceId,
+      extra: {
+        dev,
+        kind: checkout.category === "slots" ? "slots" : "topic_plan",
+        ...(checkout.category === "slots"
+          ? { slotsTotal: String(checkout.targetRank) }
+          : { amount: String(checkout.targetRank) }),
+      },
+    });
 
-    const customerId = await getCustomerIdByDeviceId(deviceId);
+    const customer = await resolveBillingCustomer({ userId, deviceId });
+    const customerId = customer?.stripe_customer_id ?? null;
 
     if (customerId) {
       const existing = await findActiveSubscriptionItem({
@@ -138,13 +135,12 @@ export async function POST(req: Request) {
           return NextResponse.json({ error: updateRes.error }, { status: 400 });
         }
 
-        const resolved = await syncEntitlementsForCustomer(customerId, deviceId);
+        await syncEntitlementsForStripeCustomer(customerId);
 
         return NextResponse.json({
           ok: true,
           updated: true,
           subscriptionId: updateRes.subscription.id,
-          entitlements: resolved,
         });
       }
     }
@@ -154,9 +150,9 @@ export async function POST(req: Request) {
       line_items: [{ price: checkout.priceId, quantity: 1 }],
       success_url,
       cancel_url,
-      client_reference_id: deviceId,
-      metadata,
-      subscription_data: { metadata },
+      client_reference_id: userId,
+      metadata: identityMetadata,
+      subscription_data: { metadata: identityMetadata },
       ...(customerId ? { customer: customerId } : {}),
     });
 

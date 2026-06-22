@@ -5,6 +5,10 @@ import {
 } from "@/lib/userIdentity";
 import { verifySupabaseAccessToken } from "@/lib/requestIdentity";
 import { bootstrapUserIdentity } from "@/lib/userIdentityMigration";
+import {
+  assertDeviceBootstrapAllowed,
+  DeviceOwnershipError,
+} from "@/lib/deviceOwnership";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,7 +44,31 @@ export async function POST(req: Request) {
     }
 
     const userId = verified.user.id;
-    const bootstrap = await bootstrapUserIdentity({ userId, deviceId });
+
+    let deviceSecretHash: string | null = null;
+    try {
+      const ownership = await assertDeviceBootstrapAllowed({
+        req,
+        userId,
+        deviceId,
+        bodySecret: body?.deviceSecret,
+      });
+      deviceSecretHash = ownership.deviceSecretHash;
+    } catch (error) {
+      if (error instanceof DeviceOwnershipError) {
+        return NextResponse.json(
+          { ok: false, error: error.code, message: error.message },
+          { status: 403 }
+        );
+      }
+      throw error;
+    }
+
+    const bootstrap = await bootstrapUserIdentity({
+      userId,
+      deviceId,
+      deviceSecretHash,
+    });
 
     return NextResponse.json({
       ok: true,
