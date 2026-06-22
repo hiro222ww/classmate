@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { requireAdmin } from "@/lib/adminAuth";
 import { normalizeGenderRestriction } from "@/lib/genderRestriction";
 import { adminActorFromRequest, writeAdminAuditLog } from "@/lib/adminAuditLog";
+import { TOPIC_PUBLIC_SELECT } from "@/lib/topicManagement";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,7 +29,13 @@ type TopicRow = {
   monthly_price: number;
   gender_restriction?: string | null;
   is_archived?: boolean;
+  is_active?: boolean;
+  is_paid?: boolean;
+  display_order?: number;
+  accepting_new_users?: boolean;
+  badge_label?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
 function bad(status: number, error: string, extra?: Record<string, any>) {
@@ -81,6 +88,22 @@ function normalizeTopicInput(t: any) {
     t?.gender_restriction
   );
 
+  const is_active =
+    t?.is_active === undefined ? true : Boolean(t?.is_active);
+  const is_paid =
+    t?.is_paid === undefined
+      ? toNum(t?.monthly_price, 0) > 0
+      : Boolean(t?.is_paid);
+  const display_order = toNum(t?.display_order, 0);
+  const accepting_new_users =
+    t?.accepting_new_users === undefined
+      ? true
+      : Boolean(t?.accepting_new_users);
+  const badge_label =
+    typeof t?.badge_label === "string" && t.badge_label.trim()
+      ? t.badge_label.trim()
+      : null;
+
   return {
     topic_key,
     title,
@@ -89,6 +112,11 @@ function normalizeTopicInput(t: any) {
     min_age,
     monthly_price,
     gender_restriction,
+    is_active,
+    is_paid,
+    display_order,
+    accepting_new_users,
+    badge_label,
   };
 }
 
@@ -176,21 +204,9 @@ export async function POST(req: Request) {
 
       let q = supabase
         .from("topics")
-        .select(
-          `
-          topic_key,
-          title,
-          description,
-          is_sensitive,
-          min_age,
-          monthly_price,
-          gender_restriction,
-          is_archived,
-          created_at
-        `
-        )
+        .select(TOPIC_PUBLIC_SELECT)
         .order("is_archived", { ascending: true })
-        .order("monthly_price", { ascending: true })
+        .order("display_order", { ascending: true })
         .order("created_at", { ascending: true });
 
       if (!showArchived) {
@@ -219,6 +235,11 @@ export async function POST(req: Request) {
         min_age,
         monthly_price,
         gender_restriction,
+        is_active,
+        is_paid,
+        display_order,
+        accepting_new_users,
+        badge_label,
       } = normalizeTopicInput(t);
 
       if (!topic_key) {
@@ -238,25 +259,19 @@ export async function POST(req: Request) {
         monthly_price,
         gender_restriction,
         is_archived: false,
+        is_active,
+        is_paid,
+        display_order,
+        accepting_new_users,
+        badge_label,
+        updated_at: new Date().toISOString(),
       };
 
       const { data: insTopic, error: insErr } =
         await supabase
           .from("topics")
           .insert(row)
-          .select(
-            `
-            topic_key,
-            title,
-            description,
-            is_sensitive,
-            min_age,
-            monthly_price,
-            gender_restriction,
-            is_archived,
-            created_at
-          `
-          )
+          .select(TOPIC_PUBLIC_SELECT)
           .maybeSingle();
 
       if (insErr) {
@@ -341,6 +356,31 @@ export async function POST(req: Request) {
         );
       }
 
+      if (typeof patch.is_active === "boolean") {
+        updatePatch.is_active = patch.is_active;
+      }
+
+      if (typeof patch.is_paid === "boolean") {
+        updatePatch.is_paid = patch.is_paid;
+      }
+
+      if (typeof patch.display_order === "number") {
+        updatePatch.display_order = patch.display_order;
+      }
+
+      if (typeof patch.accepting_new_users === "boolean") {
+        updatePatch.accepting_new_users = patch.accepting_new_users;
+      }
+
+      if (patch.badge_label === null) {
+        updatePatch.badge_label = null;
+      } else if (typeof patch.badge_label === "string") {
+        const trimmed = patch.badge_label.trim();
+        updatePatch.badge_label = trimmed || null;
+      }
+
+      updatePatch.updated_at = new Date().toISOString();
+
       if (
         typeof patch.is_sensitive === "boolean" ||
         typeof patch.min_age === "number"
@@ -391,7 +431,13 @@ export async function POST(req: Request) {
       const { error } =
         await supabase
           .from("topics")
-          .update({ is_archived })
+          .update({
+            is_archived,
+            ...(is_archived
+              ? { is_active: false }
+              : { is_active: true }),
+            updated_at: new Date().toISOString(),
+          })
           .eq("topic_key", topic_key);
 
       if (error) {

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  TOPIC_PUBLIC_SELECT,
+  compareTopicsByDisplayOrder,
+} from "@/lib/topicManagement";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,8 +31,15 @@ type TopicRow = {
   is_sensitive: boolean;
   min_age: number;
   monthly_price: number;
+  gender_restriction?: string | null;
   is_archived?: boolean;
+  is_active?: boolean;
+  is_paid?: boolean;
+  display_order?: number;
+  accepting_new_users?: boolean;
+  badge_label?: string | null;
   created_at?: string;
+  updated_at?: string;
 };
 
 /* ========= utils ========= */
@@ -72,29 +83,40 @@ function normalizeTopicInput(t: any) {
    🟢 フロント用（これが今回の本命）
 ========================================================= */
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     if (!SUPABASE_URL || !SERVICE_ROLE) {
       return bad(500, "env_not_set");
     }
 
+    const { searchParams } = new URL(req.url);
+    const purpose = String(searchParams.get("for") ?? "").trim();
+
     const supabase = getSupabase();
 
-    const { data, error } = await supabase
+    let q = supabase
       .from("topics")
-      .select(
-        "topic_key,title,description,is_sensitive,min_age,monthly_price,is_archived,created_at"
-      )
-      .eq("is_archived", false)
-      .order("monthly_price", { ascending: true })
+      .select(TOPIC_PUBLIC_SELECT)
+      .eq("is_archived", false);
+
+    if (purpose === "billing") {
+      q = q.eq("is_active", true);
+    }
+
+    const { data, error } = await q
+      .order("display_order", { ascending: true })
       .order("created_at", { ascending: true });
 
     if (error) {
       return bad(500, error.message, { where: "topics_get" });
     }
 
+    const topics = [...((data ?? []) as TopicRow[])].sort(
+      compareTopicsByDisplayOrder
+    );
+
     return ok({
-      topics: (data ?? []) as TopicRow[],
+      topics,
     });
   } catch (e: any) {
     return bad(500, e?.message ?? "topics_failed", { where: "catch" });

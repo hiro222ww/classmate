@@ -25,8 +25,10 @@ export default function PrivacyPage() {
         <li>マッチング・参加条件（年齢範囲設定等）</li>
         <li>通話・参加に関する技術情報（接続状態、セッションID、接続ログ等）</li>
         <li>チャット・掲示板投稿、黒板描画、通報内容</li>
-        <li>Push通知トークン、User-Agent</li>
-        <li>決済に関する情報（Stripe 上の顧客ID、プラン情報。カード番号は Stripe が保持）</li>
+        <li>通知配信に必要なトークン、User-Agent</li>
+        <li>
+          決済に関する情報（外部決済サービス上の顧客ID、プラン情報等。クレジットカード番号等は当方では直接保持しません）
+        </li>
         <li>アクセスログ、IPアドレス等（ホスティング基盤上で生成される情報）</li>
       </ul>
 
@@ -42,15 +44,17 @@ export default function PrivacyPage() {
 
       <SectionTitle>3. 第三者提供・委託</SectionTitle>
       <p style={{ marginBottom: 16 }}>
-        当方は、サービス提供に必要な範囲で以下の外部サービスを利用します。
+        当方は、サービス提供、データ管理、通知配信、音声通話接続、障害対応および安全確保のため、クラウド基盤、データ管理基盤、ホスティング基盤、通知配信サービス、音声通話の接続を補助する通信基盤、障害対応・安全確保のための運用基盤等の外部サービスを利用することがあります。
       </p>
-      <ul style={{ marginBottom: 16, paddingLeft: 24 }}>
-        <li>Supabase（データベース、ストレージ、Realtime）</li>
-        <li>Vercel（ホスティング）</li>
-        <li>Stripe（決済）</li>
-        <li>Web Push 配信基盤</li>
-        <li>STUN/TURN サーバー（音声通話接続）</li>
-      </ul>
+      <p style={{ marginBottom: 16 }}>
+        また、決済処理にはStripe等の外部決済サービスを利用します。当方は、クレジットカード番号等の決済情報を直接保持しません。
+      </p>
+      <p style={{ marginBottom: 16 }}>
+        これらの外部サービスには、サービス提供に必要な範囲で、プロフィール情報、利用状況、決済に必要な情報、通知配信に必要な情報、通話接続に必要な技術情報等が取り扱われる場合があります。
+      </p>
+      <p style={{ marginBottom: 16 }}>
+        当方は、外部サービスの利用にあたり、利用目的の範囲内で必要最小限の情報を取り扱うよう努めます。
+      </p>
 
       <SectionTitle>4. 保存期間</SectionTitle>
       <p style={{ marginBottom: 16 }}>

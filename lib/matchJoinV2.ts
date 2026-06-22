@@ -118,6 +118,9 @@ type TopicDeadlineRow = {
 type TopicGenderRestrictionRow = {
   topic_key?: string | null;
   gender_restriction?: string | null;
+  accepting_new_users?: boolean | null;
+  is_active?: boolean | null;
+  is_archived?: boolean | null;
   is_sensitive?: boolean | null;
   min_age?: number | null;
 };
@@ -493,7 +496,7 @@ async function getTopicGenderRestriction(topicKey: string | null) {
 
   const { data, error } = await supabase
     .from("topics")
-    .select("topic_key,gender_restriction,is_sensitive,min_age")
+    .select("topic_key,gender_restriction,accepting_new_users,is_active,is_archived,is_sensitive,min_age")
     .eq("topic_key", topicKey)
     .limit(1)
     .maybeSingle();
@@ -522,6 +525,39 @@ function checkGenderRestriction(params: {
   topic: TopicGenderRestrictionRow | null;
   profile: ProfileRow;
 }) {
+  if (params.topic?.is_archived) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "topic_not_available",
+        message: "このテーマは現在利用できません",
+      },
+      { status: 403 }
+    );
+  }
+
+  if (params.topic?.is_active === false) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "topic_not_active",
+        message: "このテーマは現在利用できません",
+      },
+      { status: 403 }
+    );
+  }
+
+  if (params.topic?.accepting_new_users === false) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "topic_recruitment_closed",
+        message: "このテーマは現在新規受付を停止しています",
+      },
+      { status: 403 }
+    );
+  }
+
   if (
     genderRestrictionBlocksJoin({
       genderRestriction: params.topic?.gender_restriction,

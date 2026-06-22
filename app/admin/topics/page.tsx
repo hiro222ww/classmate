@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 import { useEffect, useMemo, useState } from "react";
 import { tierName } from "@/lib/planTiers";
+import { genderRestrictionAdminLabel } from "@/lib/topicManagement";
 
 type WorldRow = {
   world_key: string;
@@ -23,17 +24,17 @@ type TopicRow = {
   monthly_price: number;
   gender_restriction?: string | null;
   is_archived: boolean;
+  is_active?: boolean;
+  is_paid?: boolean;
+  display_order?: number;
+  accepting_new_users?: boolean;
+  badge_label?: string | null;
   created_at?: string;
+  updated_at?: string;
   default_world_key?: string | null;
 };
 
 const PRICES = [0, 400, 800, 1200] as const;
-
-function genderRestrictionLabel(v: string | null | undefined) {
-  if (v === "male") return "男性のみ";
-  if (v === "female") return "女性のみ";
-  return "制限なし";
-}
 
 async function readJsonOrThrow(r: Response) {
   const raw = await r.text();
@@ -62,6 +63,11 @@ export default function AdminTopicsPage() {
   const [newMinAge, setNewMinAge] = useState(0);
   const [newWorldKey, setNewWorldKey] = useState<string>("");
   const [newGenderRestriction, setNewGenderRestriction] = useState<string>("");
+  const [newIsActive, setNewIsActive] = useState(true);
+  const [newIsPaid, setNewIsPaid] = useState(true);
+  const [newDisplayOrder, setNewDisplayOrder] = useState(0);
+  const [newAcceptingNewUsers, setNewAcceptingNewUsers] = useState(true);
+  const [newBadgeLabel, setNewBadgeLabel] = useState("");
 
   const [wKey, setWKey] = useState("");
   const [wTitle, setWTitle] = useState("");
@@ -222,6 +228,11 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
             is_sensitive: Boolean(newSensitive),
             min_age: Number(newMinAge),
             gender_restriction: newGenderRestriction || null,
+            is_active: newIsActive,
+            is_paid: newIsPaid,
+            display_order: Number(newDisplayOrder),
+            accepting_new_users: newAcceptingNewUsers,
+            badge_label: newBadgeLabel.trim() || null,
           },
           default_world_key: newWorldKey ? newWorldKey : null,
         }),
@@ -236,6 +247,11 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
       setNewMinAge(0);
       setNewWorldKey("");
       setNewGenderRestriction("");
+      setNewIsActive(true);
+      setNewIsPaid(true);
+      setNewDisplayOrder(0);
+      setNewAcceptingNewUsers(true);
+      setNewBadgeLabel("");
 
       setMsg("追加OK");
       await loadAll();
@@ -263,6 +279,11 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
             is_sensitive: Boolean(t.is_sensitive),
             min_age: Number(t.min_age ?? 0),
             gender_restriction: t.gender_restriction ?? null,
+            is_active: t.is_active !== false,
+            is_paid: Boolean(t.is_paid),
+            display_order: Number(t.display_order ?? 0),
+            accepting_new_users: t.accepting_new_users !== false,
+            badge_label: t.badge_label ?? null,
             default_world_key: t.default_world_key ?? null,
           },
         }),
@@ -511,7 +532,7 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
       </h1>
 
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-        世界観（worlds）は編集可能。テーマ（topics）には世界観・性別制限・価格を設定可能。
+        世界観（worlds）は編集可能。テーマ（topics）には公開状態・受付状態・性別制限・表示順・価格を設定できます。
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
@@ -1090,6 +1111,77 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
           </label>
 
           <label style={{ fontSize: 12, color: "#666" }}>
+            表示順
+            <input
+              type="number"
+              value={newDisplayOrder}
+              onChange={(e) => setNewDisplayOrder(Number(e.target.value))}
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            />
+          </label>
+
+          <label style={{ fontSize: 12, color: "#666" }}>
+            バッジ文言（任意）
+            <input
+              value={newBadgeLabel}
+              onChange={(e) => setNewBadgeLabel(e.target.value)}
+              placeholder="例: 準備中"
+              style={{ ...input, width: "100%", marginTop: 6 }}
+            />
+          </label>
+
+          <label
+            style={{
+              fontSize: 12,
+              color: "#666",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={newIsActive}
+              onChange={(e) => setNewIsActive(e.target.checked)}
+            />
+            公開（課金ページ等に表示）
+          </label>
+
+          <label
+            style={{
+              fontSize: 12,
+              color: "#666",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={newIsPaid}
+              onChange={(e) => setNewIsPaid(e.target.checked)}
+            />
+            課金対象テーマ
+          </label>
+
+          <label
+            style={{
+              fontSize: 12,
+              color: "#666",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={newAcceptingNewUsers}
+              onChange={(e) => setNewAcceptingNewUsers(e.target.checked)}
+            />
+            新規受付 ON
+          </label>
+
+          <label style={{ fontSize: 12, color: "#666" }}>
             世界観（割当）
             <select
               value={newWorldKey}
@@ -1124,11 +1216,15 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
           表示中のテーマ
         </h2>
 
+        <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.5 }}>
+          公開（is_active）= 課金ページ等への表示。新規受付 OFF でも一覧表示は可能です。非表示にする = アーカイブ（完全非公開）。
+        </div>
+
         <div style={{ marginTop: 12, overflowX: "auto" }}>
           <table
             style={{
               width: "100%",
-              minWidth: 1250,
+              minWidth: 1650,
               borderCollapse: "collapse",
               fontSize: 12,
             }}
@@ -1140,6 +1236,11 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>世界観</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>月額</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>性別制限</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>表示順</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>公開</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>課金</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>新規受付</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>バッジ</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>18+</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>min_age</th>
                 <th style={{ textAlign: "left", padding: "8px 6px" }}>説明</th>
@@ -1248,8 +1349,90 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
                     </select>
 
                     <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
-                      現在: {genderRestrictionLabel(t.gender_restriction)}
+                      現在: {genderRestrictionAdminLabel(t.gender_restriction)}
                     </div>
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      type="number"
+                      value={Number(t.display_order ?? 0)}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, display_order: Number(e.target.value) }
+                              : x
+                          )
+                        )
+                      }
+                      style={{ ...input, padding: "6px 8px", width: 70 }}
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      type="checkbox"
+                      checked={t.is_active !== false}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, is_active: e.target.checked }
+                              : x
+                          )
+                        )
+                      }
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(t.is_paid)}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, is_paid: e.target.checked }
+                              : x
+                          )
+                        )
+                      }
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      type="checkbox"
+                      checked={t.accepting_new_users !== false}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, accepting_new_users: e.target.checked }
+                              : x
+                          )
+                        )
+                      }
+                    />
+                  </td>
+
+                  <td style={{ padding: "8px 6px" }}>
+                    <input
+                      value={t.badge_label ?? ""}
+                      onChange={(e) =>
+                        setTopics((prev) =>
+                          prev.map((x) =>
+                            x.topic_key === t.topic_key
+                              ? { ...x, badge_label: e.target.value }
+                              : x
+                          )
+                        )
+                      }
+                      placeholder="任意"
+                      style={{ ...input, padding: "6px 8px", width: 120 }}
+                    />
                   </td>
 
                   <td style={{ padding: "8px 6px" }}>
@@ -1338,7 +1521,7 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
 
               {visibleTopics.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: 10, color: "#666" }}>
+                  <td colSpan={14} style={{ padding: 10, color: "#666" }}>
                     表示中のテーマがありません
                   </td>
                 </tr>
@@ -1481,7 +1664,7 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
                     </select>
 
                     <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
-                      現在: {genderRestrictionLabel(t.gender_restriction)}
+                      現在: {genderRestrictionAdminLabel(t.gender_restriction)}
                     </div>
                   </td>
 

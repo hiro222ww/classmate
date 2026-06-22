@@ -16,6 +16,7 @@ import {
 import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
+import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
 
 type Entitlements = {
   class_slots?: number;
@@ -282,6 +283,8 @@ export default function PremiumPage() {
           {formatClassSlotPlanLine(currentSlots)}
         </div>
       </SoftCard>
+
+      <ThemePlanTopicsSection />
 
       <SoftCard>
         <HelpTip label="テーマプランについて" content={TOPIC_PLAN_BETA_INTRO}>
