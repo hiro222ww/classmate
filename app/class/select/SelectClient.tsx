@@ -31,6 +31,8 @@ import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
 import { DashboardStatusBar } from "@/components/dashboard/DashboardStatusBar";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
+import { ReturnClassCard } from "@/components/dashboard/ReturnClassCard";
+import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
   AGE_FILTER_OFF_PREFS,
   isAgeFilterOff,
@@ -42,6 +44,7 @@ import {
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
+import { openJoinedClassRoom } from "@/lib/openJoinedClassClient";
 
 type World = {
   world_key: string;
@@ -144,8 +147,6 @@ async function readJsonOrThrow(r: Response, label: string) {
   return j;
 }
 
-const RETURN_CLASS_HELP_TEXT =
-  "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -199,6 +200,12 @@ export default function SelectClient() {
   };
 
   const [deviceId, setDeviceId] = useState("");
+  const {
+    loading: currentClassLoading,
+    current: currentClass,
+    hasMembership: hasJoinedClasses,
+    refresh: refreshCurrentClass,
+  } = useCurrentClass(deviceId);
 
   const [worlds, setWorlds] = useState<World[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -228,22 +235,8 @@ export default function SelectClient() {
     code: string;
     message: string;
   } | null>(null);
-  const [hasJoinedClasses, setHasJoinedClasses] = useState(false);
+  const [openingReturnClass, setOpeningReturnClass] = useState(false);
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
-
-  async function fetchJoinedClassPresence(id: string) {
-    try {
-      const r = await fetch(
-        `/api/class/mine?device_id=${encodeURIComponent(id)}`,
-        { cache: "no-store" }
-      );
-      const j = await r.json().catch(() => null);
-      const rows = Array.isArray(j?.classes) ? j.classes : [];
-      setHasJoinedClasses(rows.length > 0);
-    } catch {
-      setHasJoinedClasses(false);
-    }
-  }
 
   async function reloadCatalog() {
     try {
@@ -520,7 +513,7 @@ export default function SelectClient() {
         await fetchProfile(id);
         if (!alive) return;
 
-        void fetchJoinedClassPresence(id);
+        void refreshCurrentClass();
 
         await reloadJoinWindow();
         if (!alive) return;
@@ -926,6 +919,46 @@ export default function SelectClient() {
     await joinMatchedBoard(freeBoard);
   }
 
+  async function openReturnClass() {
+    if (!currentClass || openingReturnClass) return;
+
+    const id = String(deviceId || getDeviceId() || "").trim();
+    if (!id) {
+      alert("device_id_missing");
+      return;
+    }
+
+    setOpeningReturnClass(true);
+    try {
+      const result = await openJoinedClassRoom({
+        deviceId: id,
+        current: currentClass,
+        devQuery,
+      });
+
+      if (!result.ok) {
+        alert(result.message ?? result.error);
+        return;
+      }
+
+      pushRecentClass(
+        {
+          id: result.classId,
+          title: currentClass.topicTitle ?? currentClass.name,
+          url: result.roomUrl,
+        },
+        20
+      );
+
+      window.location.href = result.roomUrl;
+    } catch (e: unknown) {
+      console.error(e);
+      alert(e instanceof Error ? e.message : "open_class_failed");
+    } finally {
+      setOpeningReturnClass(false);
+    }
+  }
+
   function BoardCard({ b }: { b: EntryBoard }) {
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
@@ -1238,45 +1271,13 @@ export default function SelectClient() {
       ) : null}
 
       <div style={{ marginTop: 20, display: "grid", gap: 16, gridTemplateColumns: "1fr" }}>
-        {hasJoinedClasses ? (
-          <section style={DASH_CARD} className="home-dash-return">
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 12,
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 18,
-                  fontWeight: 900,
-                  color: "#111827",
-                  lineHeight: 1.3,
-                }}
-              >
-                今のクラスに戻る
-              </h2>
-              <HelpTip
-                label="今のクラスに戻るについて"
-                content={RETURN_CLASS_HELP_TEXT}
-              />
-            </div>
-            <Link
-              href={withDev("/")}
-              style={{
-                ...PRIMARY_BTN,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                textDecoration: "none",
-              }}
-            >
-              今のクラスを見る
-            </Link>
-          </section>
+        {hasJoinedClasses || currentClassLoading ? (
+          <ReturnClassCard
+            className="home-dash-return"
+            loading={currentClassLoading}
+            opening={openingReturnClass}
+            onOpen={() => void openReturnClass()}
+          />
         ) : null}
 
         <DashboardStatusBar
@@ -1285,7 +1286,10 @@ export default function SelectClient() {
           joinWindowOpen={joinWindowOpen}
           joinWindowText={joinWindowText}
           loading={loading}
-          onReload={() => void reloadCatalog()}
+          onReload={() => {
+            void reloadCatalog();
+            void refreshCurrentClass();
+          }}
         />
 
         <div className="home-dash-bottom">

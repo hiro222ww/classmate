@@ -15,6 +15,8 @@ import { DevPanel } from "@/components/DevPanel";
 import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
+import { ReturnClassCard } from "@/components/dashboard/ReturnClassCard";
+import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
   DASH_CARD,
   HOME_DASHBOARD_LAYOUT_CSS,
@@ -52,6 +54,8 @@ import {
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
+import { openJoinedClassRoom } from "@/lib/openJoinedClassClient";
 import { markAutoCallOnce } from "@/lib/autoCallOnce";
 import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import {
@@ -351,9 +355,6 @@ function pushBrowserNotification(
   new Notification(title, { body });
 }
 
-const RETURN_CLASS_HELP_TEXT =
-  "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
-
 function StatusPill({ children }: { children: React.ReactNode }) {
   return (
     <span
@@ -395,6 +396,11 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
+  const {
+    loading: currentClassLoading,
+    current: currentClass,
+    refresh: refreshCurrentClass,
+  } = useCurrentClass(deviceId);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [classes, setClasses] = useState<MineClass[]>([]);
@@ -481,7 +487,10 @@ export default function HomeClient() {
         }
         const classesRes = await fetch(
           `/api/class/mine?${mineQs.toString()}`,
-          { cache: "no-store" }
+          {
+            cache: "no-store",
+            headers: await buildDeviceAuthHeaders(id),
+          }
         );
         const classesJson = await readJsonSafe(classesRes);
         const fetchMs = Date.now() - fetchStartMs;
@@ -926,6 +935,7 @@ export default function HomeClient() {
 
   useEffect(() => {
     function runRefresh(reason: "focus" | "visibility") {
+      void refreshCurrentClass();
       const pending = peekJoinedClassesRefresh();
       if (pending.pending) {
         const consumed = consumeJoinedClassesRefresh();
@@ -950,6 +960,7 @@ export default function HomeClient() {
 
     const onPageShow = (event: PageTransitionEvent) => {
       if (event.persisted) {
+        void refreshCurrentClass();
         const pending = consumeJoinedClassesRefresh();
         void fetchJoinedClasses(
           pending.pending ? "invite_success" : "focus",
@@ -967,7 +978,7 @@ export default function HomeClient() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("pageshow", onPageShow);
     };
-  }, [fetchJoinedClasses]);
+  }, [fetchJoinedClasses, refreshCurrentClass]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -1757,14 +1768,53 @@ return () => {
 
   const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
   const profileComplete = isUserProfileComplete(profile);
-  const hasJoinedClasses = visible.length > 0;
+  const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
   const primaryReturnClass = visible[0] ?? null;
   const openingPrimaryReturn =
-    !!primaryReturnClass && openingClassId === primaryReturnClass.id;
+    (!!primaryReturnClass && openingClassId === primaryReturnClass.id) ||
+    (Boolean(currentClass) && openingClassId === currentClass?.classId);
+
+  const showReturnCard =
+    currentClassLoading || Boolean(currentClass) || Boolean(primaryReturnClass);
 
   function joinedClassEnterLabel(opening: boolean) {
     if (opening) return "入っています…";
     return "今のクラスを見る";
+  }
+
+  async function openReturnClass() {
+    if (primaryReturnClass) {
+      await openClass(primaryReturnClass);
+      return;
+    }
+
+    if (!currentClass) return;
+
+    const currentDeviceId = String(getDeviceId() ?? deviceId ?? "").trim();
+    if (!currentDeviceId) {
+      alert("device_id_missing");
+      return;
+    }
+
+    setOpeningClassId(currentClass.classId);
+    try {
+      const result = await openJoinedClassRoom({
+        deviceId: currentDeviceId,
+        current: currentClass,
+      });
+
+      if (!result.ok) {
+        alert(result.message ?? result.error);
+        return;
+      }
+
+      router.push(buildRoomUrl(result.classId, result.sessionId, { openJoinedClass: true }));
+    } catch (e: unknown) {
+      console.error(e);
+      alert(e instanceof Error ? e.message : "open_class_failed");
+    } finally {
+      setOpeningClassId(null);
+    }
   }
 
   async function toggleNotifications() {
@@ -2361,7 +2411,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     }
   }
 
-  if (loading) {
+  if (loading && !showReturnCard && classes.length === 0) {
     return <p style={{ margin: 0 }}>読み込み中...</p>;
   }
 
@@ -2415,59 +2465,13 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           gridTemplateColumns: "1fr",
         }}
       >
-        {hasJoinedClasses && primaryReturnClass ? (
-          <section className="home-dash-return" style={DASH_CARD}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 16,
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 18,
-                  fontWeight: 900,
-                  color: "#111827",
-                  lineHeight: 1.3,
-                }}
-              >
-                今のクラスに戻る
-              </h2>
-              <HelpTip
-                label="今のクラスに戻るについて"
-                content={RETURN_CLASS_HELP_TEXT}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => void openClass(primaryReturnClass)}
-              disabled={openingPrimaryReturn}
-              style={{
-                ...PRIMARY_BTN,
-                opacity: openingPrimaryReturn ? 0.75 : 1,
-                cursor: openingPrimaryReturn ? "default" : "pointer",
-              }}
-            >
-              {openingPrimaryReturn ? "入っています…" : "今のクラスを見る"}
-            </button>
-
-            {visible.length > 1 ? (
-              <div
-                style={{
-                  marginTop: 10,
-                  fontSize: 12,
-                  color: "#9ca3af",
-                  fontWeight: 700,
-                }}
-              >
-                所属クラス {visible.length}件
-              </div>
-            ) : null}
-          </section>
+        {showReturnCard ? (
+          <ReturnClassCard
+            className="home-dash-return"
+            loading={currentClassLoading && !primaryReturnClass && !currentClass}
+            opening={openingPrimaryReturn}
+            onOpen={() => void openReturnClass()}
+          />
         ) : null}
 
         <div className="home-dash-bottom">

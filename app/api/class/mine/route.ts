@@ -5,7 +5,8 @@ import {
   buildHomeClassVisibilityDebug,
   resolveHomeVisibleBillableClassIds,
 } from "@/lib/activeClassMemberships";
-import { getHomeClassSlotContext } from "@/lib/classMembershipSlots";
+import { getHomeClassSlotContextForActor } from "@/lib/classMembershipSlots";
+import { resolveApiActor } from "@/lib/actorIdentity";
 import {
   getClassStatusLabel,
   isDeadlinePassed,
@@ -66,6 +67,7 @@ export async function GET(req: Request) {
 
     const deviceId =
       url.searchParams.get("deviceId") ||
+      url.searchParams.get("device_id") ||
       req.headers.get("x-device-id") ||
       "";
 
@@ -80,10 +82,25 @@ export async function GET(req: Request) {
       );
     }
 
+    const actorResult = await resolveApiActor({
+      req,
+      deviceId: normalizedDeviceId,
+    });
+
+    if (!actorResult.ok) {
+      return NextResponse.json(
+        { ok: false, error: actorResult.error, message: actorResult.message },
+        { status: actorResult.status }
+      );
+    }
+
     const membershipsStartMs = Date.now();
-    const slotCtxRes = await getHomeClassSlotContext(
+    const slotCtxRes = await getHomeClassSlotContextForActor(
       supabaseAdmin,
-      normalizedDeviceId
+      {
+        deviceId: normalizedDeviceId,
+        userId: actorResult.actor.userId || null,
+      }
     );
     membershipsMs = Date.now() - membershipsStartMs;
 
