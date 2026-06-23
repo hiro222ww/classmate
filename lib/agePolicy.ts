@@ -5,6 +5,9 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getAgeFromBirthDate } from "@/lib/age";
 import { parseMinorsEnabledValue } from "@/lib/minorsSettings";
+import { clearMinorsEnabledCache } from "@/lib/minorsSettings";
+
+export { getMinorsEnabled } from "@/lib/minorsSettings";
 import {
   ageModeFromLegacyMinors,
   parseAgeModeValue,
@@ -19,13 +22,10 @@ let cachedAgePolicy: { mode: AgeMode; at: number } | null = null;
 
 export function clearAgePolicyCache() {
   cachedAgePolicy = null;
+  clearMinorsEnabledCache();
 }
 
 export async function getEffectiveAgeMode(): Promise<AgeMode> {
-  if (isProductionAgeLocked()) {
-    return "post_high_school_only";
-  }
-
   if (cachedAgePolicy && Date.now() - cachedAgePolicy.at < CACHE_MS) {
     return cachedAgePolicy.mode;
   }
@@ -56,8 +56,13 @@ export async function getEffectiveAgeMode(): Promise<AgeMode> {
     const resolved =
       mode ?? ageModeFromLegacyMinors(minorsEnabled) ?? "post_high_school_only";
 
-    cachedAgePolicy = { mode: resolved, at: Date.now() };
-    return resolved;
+    const effectiveMode =
+      minorsEnabled && resolved === "post_high_school_only"
+        ? "minor_separated_test"
+        : resolved;
+
+    cachedAgePolicy = { mode: effectiveMode, at: Date.now() };
+    return effectiveMode;
   } catch {
     cachedAgePolicy = { mode: "post_high_school_only", at: Date.now() };
     return "post_high_school_only";

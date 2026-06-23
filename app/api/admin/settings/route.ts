@@ -102,10 +102,6 @@ async function readSettings(): Promise<AppSettings> {
   }
 
   settings.age_mode = await getEffectiveAgeMode();
-  if (isProductionAgeLocked()) {
-    settings.minors_enabled = false;
-    settings.age_mode = "post_high_school_only";
-  }
 
   return settings;
 }

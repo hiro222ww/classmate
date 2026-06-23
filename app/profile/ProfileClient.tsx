@@ -12,6 +12,8 @@ import {
 import {
   adultOnlyUserMessage,
   guardianConsentRequiredMessage,
+  resolveMinorsEnabledFromSettings,
+  ADULT_AGE_THRESHOLD,
 } from "@/lib/agePolicyRules";
 import {
   buildProfileEditPath,
@@ -248,12 +250,8 @@ export default function ProfileClient() {
   const [hasExistingProfile, setHasExistingProfile] = useState(false);
 
   const age = useMemo(() => calcAge(birthDate), [birthDate]);
-  const isMinor = age !== null && age < 18;
-  const isAdult = age !== null && age >= 18;
+  const isMinor = age !== null && age < ADULT_AGE_THRESHOLD;
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-
-  const ageAllowed =
-    isAdult || (minorsEnabled === true && isMinor && guardianConsent);
 
   const legalConsentOk = !needsLegalConsent || legalAgreed;
 
@@ -261,7 +259,6 @@ export default function ProfileClient() {
     displayName.trim().length > 0 &&
     isValidISODateString(birthDate) &&
     (gender === "male" || gender === "female") &&
-    ageAllowed &&
     legalConsentOk &&
     !compressing &&
     !submitting;
@@ -308,10 +305,7 @@ export default function ProfileClient() {
             settings?: { minors_enabled?: boolean };
           } | null;
 
-          setMinorsEnabled(
-            settingsJson?.minors_enabled === true ||
-              settingsJson?.settings?.minors_enabled === true
-          );
+          setMinorsEnabled(resolveMinorsEnabledFromSettings(settingsJson));
         }
 
         if (!profileRes.ok) return;
@@ -422,16 +416,6 @@ export default function ProfileClient() {
 
     if (!isValidISODateString(birthDate)) {
       setErrorMsg("生年月日を正しく入力してください。");
-      return;
-    }
-
-    if (isMinor && minorsEnabled !== true) {
-      setErrorMsg(adultOnlyUserMessage());
-      return;
-    }
-
-    if (isMinor && minorsEnabled && !guardianConsent) {
-      setErrorMsg(guardianConsentRequiredMessage());
       return;
     }
 

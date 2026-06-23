@@ -17,6 +17,7 @@ import {
 import { resolveRequestIdentity } from "@/lib/requestIdentity";
 import { bootstrapUserIdentity } from "@/lib/userIdentityMigration";
 import { enforceProfileSaveAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
+import { getEffectiveAgeMode, getMinorsEnabled } from "@/lib/agePolicy";
 import {
   USER_PROFILE_BASE_SELECT,
   USER_PROFILE_LEGAL_CONSENT_SELECT,
@@ -464,13 +465,42 @@ export async function POST(req: Request) {
     );
   }
 
+  const [minorsEnabled, ageMode] = await Promise.all([
+    getMinorsEnabled(),
+    getEffectiveAgeMode(),
+  ]);
+
+  console.log("[profile][POST] age-policy check", {
+    birthDate: birth_date,
+    calculatedAge: age,
+    minorsEnabled,
+    ageMode,
+    guardian_consent,
+  });
+
   const ageGuard = await enforceProfileSaveAge({
     age,
     guardianConsent: guardian_consent,
   });
   if (!ageGuard.ok) {
+    console.log("[profile][POST] age-policy rejected", {
+      birthDate: birth_date,
+      calculatedAge: age,
+      minorsEnabled,
+      ageMode,
+      error: ageGuard.error,
+      rejectedReason: ageGuard.message,
+      mode: ageGuard.mode,
+    });
     return joinAgeGuardResponse(ageGuard);
   }
+
+  console.log("[profile][POST] age-policy allowed", {
+    birthDate: birth_date,
+    calculatedAge: age,
+    minorsEnabled,
+    ageMode,
+  });
 
   for (const field of [
     { name: "display_name", value: display_name },

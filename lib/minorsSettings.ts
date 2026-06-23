@@ -1,21 +1,12 @@
+import { parseMinorsEnabledValue } from "@/lib/agePolicyRules";
+
+export { parseMinorsEnabledValue } from "@/lib/agePolicyRules";
+
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const CACHE_MS = 60_000;
 
 let cachedMinorsEnabled: { value: boolean; at: number } | null = null;
-
-/** 明示的 true の場合のみ ON。それ以外は OFF。 */
-export function parseMinorsEnabledValue(value: unknown): boolean {
-  if (value === true) return true;
-
-  if (typeof value === "object" && value !== null) {
-    const obj = value as Record<string, unknown>;
-    if (obj.enabled === true) return true;
-    if (obj.minors_enabled === true) return true;
-  }
-
-  return false;
-}
 
 export function clearMinorsEnabledCache() {
   cachedMinorsEnabled = null;
@@ -35,6 +26,7 @@ export async function getMinorsEnabled(): Promise<boolean> {
       .maybeSingle();
 
     if (error) {
+      console.warn("[minors-settings] read failed", error.message);
       cachedMinorsEnabled = { value: false, at: Date.now() };
       return false;
     }
@@ -42,7 +34,8 @@ export async function getMinorsEnabled(): Promise<boolean> {
     const value = parseMinorsEnabledValue(data?.value ?? null);
     cachedMinorsEnabled = { value, at: Date.now() };
     return value;
-  } catch {
+  } catch (e) {
+    console.warn("[minors-settings] read error", e);
     cachedMinorsEnabled = { value: false, at: Date.now() };
     return false;
   }

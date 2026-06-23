@@ -6,12 +6,14 @@ import {
   getAgeFilterBounds,
   canPersistMinorsOrAgeModeChange,
   isProductionAgeLocked,
+  parseMinorsEnabledValue,
+  resolveMinorsEnabledFromSettings,
 } from "@/lib/agePolicyRules";
 import { buildLegalConsentPayload } from "@/lib/legalConsent";
 import { scanContactRisk } from "@/lib/contentModeration";
 
 describe("agePolicy production lock", () => {
-  it("locks production when ALLOW_MINORS_EXPERIMENT is unset", () => {
+  it("locks production admin persist when ALLOW_MINORS_EXPERIMENT is unset", () => {
     const prevNode = process.env.NODE_ENV;
     const prevAllow = process.env.ALLOW_MINORS_EXPERIMENT;
     process.env.NODE_ENV = "production";
@@ -71,6 +73,23 @@ describe("agePolicy production lock", () => {
       defaultMin: 18,
       defaultMax: 25,
     });
+  });
+
+  it("parses minors_enabled from string and nested values", () => {
+    expect(parseMinorsEnabledValue(true)).toBe(true);
+    expect(parseMinorsEnabledValue(false)).toBe(false);
+    expect(parseMinorsEnabledValue(null)).toBe(false);
+    expect(parseMinorsEnabledValue(undefined)).toBe(false);
+    expect(parseMinorsEnabledValue("true")).toBe(true);
+    expect(parseMinorsEnabledValue("false")).toBe(false);
+    expect(parseMinorsEnabledValue('"true"')).toBe(true);
+    expect(resolveMinorsEnabledFromSettings({ minors_enabled: "true" })).toBe(
+      true
+    );
+    expect(
+      resolveMinorsEnabledFromSettings({ settings: { minors_enabled: true } })
+    ).toBe(true);
+    expect(resolveMinorsEnabledFromSettings(null)).toBe(false);
   });
 
   it("allows teen slider bounds when minors enabled and user is minor", () => {

@@ -102,7 +102,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       settings,
-      minors_enabled: isProductionAgeLocked() ? false : settings.minors_enabled,
+      minors_enabled: settings.minors_enabled,
       age_mode: effectiveAgeMode,
       production_age_locked: isProductionAgeLocked(),
       recruitment_session_ttl_minutes: ttlSetting.minutes,

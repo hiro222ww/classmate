@@ -18,7 +18,7 @@ export function isMinorsExperimentAllowedEnv(): boolean {
   return process.env.ALLOW_MINORS_EXPERIMENT === "true";
 }
 
-/** 本番では DB 設定に関わらず post_high_school_only を強制 */
+/** 本番での管理画面からの未成年設定変更をブロック（読み取りは DB を尊重） */
 export function isProductionAgeLocked(): boolean {
   return (
     process.env.NODE_ENV === "production" && !isMinorsExperimentAllowedEnv()
@@ -41,8 +41,37 @@ export function parseAgeModeValue(value: unknown): AgeMode | null {
   return null;
 }
 
-export function ageModeFromLegacyMinors(minorsEnabled: boolean): AgeMode {
-  return minorsEnabled ? "minor_separated_test" : "post_high_school_only";
+export function parseMinorsEnabledValue(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "") {
+      return false;
+    }
+    try {
+      return parseMinorsEnabledValue(JSON.parse(value));
+    } catch {
+      return false;
+    }
+  }
+
+  if (typeof value === "number") {
+    return value === 1;
+  }
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (obj.enabled === true) return true;
+    if (obj.minors_enabled === true) return true;
+    if ("value" in obj) {
+      return parseMinorsEnabledValue(obj.value);
+    }
+  }
+
+  return false;
 }
 
 export function resolveMinorsEnabledFromSettings(
@@ -50,12 +79,18 @@ export function resolveMinorsEnabledFromSettings(
 ): boolean {
   if (!settingsJson || typeof settingsJson !== "object") return false;
   const row = settingsJson as Record<string, unknown>;
-  if (row.minors_enabled === true) return true;
+  if (parseMinorsEnabledValue(row.minors_enabled)) return true;
   const nested = row.settings;
   if (nested && typeof nested === "object") {
-    return (nested as Record<string, unknown>).minors_enabled === true;
+    return parseMinorsEnabledValue(
+      (nested as Record<string, unknown>).minors_enabled
+    );
   }
   return false;
+}
+
+export function ageModeFromLegacyMinors(minorsEnabled: boolean): AgeMode {
+  return minorsEnabled ? "minor_separated_test" : "post_high_school_only";
 }
 
 export function resolveAgeModeFromSettings(settingsJson: unknown): AgeMode {
