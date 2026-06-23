@@ -19,10 +19,17 @@ export function useCurrentClass(deviceId: string) {
     }
 
     setLoading(true);
-    const result = await fetchCurrentClass(id);
-    setLoading(false);
-    setError(result.ok ? null : result.error ?? "current_class_failed");
-    setCurrent(result.current);
+    try {
+      const result = await fetchCurrentClass(id);
+      setError(result.ok ? null : result.error ?? "current_class_failed");
+      setCurrent(result.current ?? null);
+    } catch (e) {
+      console.warn("[current-class] fetch failed", e);
+      setError("current_class_failed");
+      setCurrent(null);
+    } finally {
+      setLoading(false);
+    }
   }, [deviceId]);
 
   useEffect(() => {

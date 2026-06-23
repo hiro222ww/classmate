@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HelpTip } from "@/components/HelpTip";
 import {
   adultOnlyUserMessage,
+  resolveAgeModeFromSettings,
   type AgeMode,
-} from "@/lib/agePolicy";
+} from "@/lib/agePolicyRules";
 import { logMatchPrefsGet } from "@/lib/entryFlowLog";
 import {
   AGE_FILTER_OFF_MAX,
@@ -20,6 +21,7 @@ import {
   resolveAgeFilterSliderBounds,
   type MatchPrefs,
 } from "@/components/dashboard/ageFilterConstants";
+import { normalizePrefsAge } from "@/lib/agePolicyRules";
 import { CHIP, DASH_CARD } from "@/components/dashboard/dashboardStyles";
 
 type AgeFilterCardProps = {
@@ -186,21 +188,10 @@ export function AgeFilterCard({
         if (settingsRes.ok) {
           const settingsJson = await settingsRes.json().catch(() => null);
           if (alive) {
-            const mode = String(settingsJson?.age_mode ?? "").trim();
-            if (
-              mode === "post_high_school_only" ||
-              mode === "minor_separated_test" ||
-              mode === "open_16_plus"
-            ) {
-              setAgeMode(mode);
-            } else {
-              setAgeMode(
-                settingsJson?.minors_enabled === true
-                  ? "minor_separated_test"
-                  : "post_high_school_only"
-              );
-            }
+            setAgeMode(resolveAgeModeFromSettings(settingsJson));
           }
+        } else if (alive) {
+          setAgeMode("post_high_school_only");
         }
 
         if (hasProfile !== false && deviceId) {
@@ -241,8 +232,8 @@ export function AgeFilterCard({
 
         if (pr.ok && pj?.prefs) {
           const nextPrefs = normalizeMatchPrefs({
-            min_age: Number(pj.prefs.min_age ?? AGE_FILTER_OFF_MIN),
-            max_age: Number(pj.prefs.max_age ?? AGE_FILTER_OFF_MAX),
+            min_age: normalizePrefsAge(pj.prefs.min_age, AGE_FILTER_OFF_MIN),
+            max_age: normalizePrefsAge(pj.prefs.max_age, AGE_FILTER_OFF_MAX),
           });
           if (!isAgeFilterOff(nextPrefs)) {
             lastOnPrefsRef.current = nextPrefs;

@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import ProfileClient from "./ProfileClient";
+import { ClientErrorBoundary } from "@/components/ClientErrorBoundary";
 
 export default function ProfilePage() {
   return (
@@ -8,9 +9,11 @@ export default function ProfilePage() {
         プロフィール
       </h1>
 
-      <Suspense fallback={<p>読み込み中...</p>}>
-        <ProfileClient />
-      </Suspense>
+      <ClientErrorBoundary label="profile">
+        <Suspense fallback={<p>読み込み中...</p>}>
+          <ProfileClient />
+        </Suspense>
+      </ClientErrorBoundary>
     </main>
   );
 }

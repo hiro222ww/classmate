@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import {
   checkProfileRegistrationAge,
   checkSelfAgeForJoin,
-  getEffectiveAgeMode,
-  getProfileAge,
   type AgePolicyErrorCode,
   type AgeMode,
+} from "@/lib/agePolicyRules";
+import {
+  getEffectiveAgeMode,
+  getProfileAge,
 } from "@/lib/agePolicy";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 

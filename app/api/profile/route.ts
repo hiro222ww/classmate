@@ -18,12 +18,84 @@ import { resolveRequestIdentity } from "@/lib/requestIdentity";
 import { bootstrapUserIdentity } from "@/lib/userIdentityMigration";
 import { enforceProfileSaveAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 import {
+  USER_PROFILE_BASE_SELECT,
   USER_PROFILE_LEGAL_CONSENT_SELECT,
   USER_PROFILE_LEGAL_SELECT,
+  isMissingProfileColumnError,
   type UserProfileRow,
 } from "@/lib/userProfileRow";
 
 type ProfileRow = UserProfileRow;
+
+async function fetchProfileRowByFilter(filter: {
+  column: "device_id" | "user_id";
+  value: string;
+}): Promise<{ data: Partial<ProfileRow> | null; error: string | null }> {
+  const query = supabaseAdmin
+    .from("user_profiles")
+    .select(USER_PROFILE_LEGAL_SELECT)
+    .eq(filter.column, filter.value);
+
+  const { data, error } = await query.maybeSingle();
+
+  if (!error) {
+    return { data: (data as Partial<ProfileRow> | null) ?? null, error: null };
+  }
+
+  if (!isMissingProfileColumnError(error.message)) {
+    return { data: null, error: error.message };
+  }
+
+  console.warn("[profile] legal columns missing; falling back to base select", {
+    column: filter.column,
+    message: error.message,
+  });
+
+  const fallback = await supabaseAdmin
+    .from("user_profiles")
+    .select(USER_PROFILE_BASE_SELECT)
+    .eq(filter.column, filter.value)
+    .maybeSingle();
+
+  if (fallback.error) {
+    return { data: null, error: fallback.error.message };
+  }
+
+  return {
+    data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+    error: null,
+  };
+}
+
+async function fetchExistingProfileConsent(deviceId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("user_profiles")
+    .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (!error) {
+    return {
+      data: (data as Partial<ProfileRow> | null) ?? null,
+      error: null as string | null,
+    };
+  }
+
+  if (!isMissingProfileColumnError(error.message)) {
+    return { data: null, error: error.message };
+  }
+
+  const fallback = await supabaseAdmin
+    .from("user_profiles")
+    .select("photo_path, show_age, user_id")
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  return {
+    data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+    error: fallback.error?.message ?? null,
+  };
+}
 
 const MAX_OPTIONAL_TEXT_LENGTH = 500;
 
@@ -148,39 +220,54 @@ export async function GET(req: Request) {
   if (isSelf) {
     const identity = await resolveRequestIdentity({ req, deviceId: device_id });
     if (identity.ok && identity.identity.userId) {
-      const { data: byUser } = await supabaseAdmin
-        .from("user_profiles")
-        .select(USER_PROFILE_LEGAL_SELECT)
-        .eq("user_id", identity.identity.userId)
-        .maybeSingle();
+      const byUser = await fetchProfileRowByFilter({
+        column: "user_id",
+        value: identity.identity.userId,
+      });
 
-      if (byUser) {
-        data = byUser;
+      if (byUser.error) {
+        console.log("[profile][GET] user lookup error", {
+          device_id,
+          message: byUser.error,
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "profile_get_failed",
+            message: byUser.error,
+          },
+          {
+            status: 500,
+            headers: {
+              "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            },
+          }
+        );
+      }
+
+      if (byUser.data) {
+        data = byUser.data;
       }
     }
   }
 
   if (!data) {
-    const { data: byDevice, error } = await supabaseAdmin
-      .from("user_profiles")
-      .select(USER_PROFILE_LEGAL_SELECT)
-      .eq("device_id", device_id)
-      .maybeSingle();
+    const byDevice = await fetchProfileRowByFilter({
+      column: "device_id",
+      value: device_id,
+    });
 
-    if (error) {
+    if (byDevice.error) {
       console.log("[profile][GET] error", {
         device_id,
-        message: error.message,
-        details: (error as any)?.details ?? null,
-        hint: (error as any)?.hint ?? null,
-        code: (error as any)?.code ?? null,
+        message: byDevice.error,
       });
 
       return NextResponse.json(
         {
           ok: false,
           error: "profile_get_failed",
-          message: error.message,
+          message: byDevice.error,
         },
         {
           status: 500,
@@ -191,7 +278,7 @@ export async function GET(req: Request) {
       );
     }
 
-    data = byDevice;
+    data = byDevice.data;
   }
 
   const profile = toProfileResponse(data);
@@ -404,26 +491,21 @@ export async function POST(req: Request) {
     }
   }
 
-  const { data: existingProfile, error: existingError } = await supabaseAdmin
-    .from("user_profiles")
-    .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
-    .eq("device_id", device_id)
-    .maybeSingle();
+  const existingProfileRes = await fetchExistingProfileConsent(device_id);
+  const existingProfile = existingProfileRes.data;
+  const existingError = existingProfileRes.error;
 
   if (existingError) {
     console.log("[profile][POST] existing profile read error", {
       device_id,
-      message: existingError.message,
-      details: (existingError as any)?.details ?? null,
-      hint: (existingError as any)?.hint ?? null,
-      code: (existingError as any)?.code ?? null,
+      message: existingError,
     });
 
     return NextResponse.json(
       {
         ok: false,
         error: "profile_existing_read_failed",
-        message: existingError.message,
+        message: existingError,
       },
       {
         status: 500,
@@ -535,7 +617,46 @@ export async function POST(req: Request) {
     .from("user_profiles")
     .upsert(payload, { onConflict: "device_id" });
 
-  if (upsertError) {
+  if (upsertError && isMissingProfileColumnError(upsertError.message)) {
+    console.warn("[profile][POST] legal columns missing; upserting base fields only", {
+      device_id,
+      message: upsertError.message,
+    });
+
+    const {
+      terms_agreed_at: _t,
+      privacy_agreed_at: _p,
+      guidelines_agreed_at: _g,
+      legal_consent_version: _l,
+      terms_version: _v,
+      ...basePayload
+    } = payload;
+
+    const { error: baseUpsertError } = await supabaseAdmin
+      .from("user_profiles")
+      .upsert(basePayload, { onConflict: "device_id" });
+
+    if (baseUpsertError) {
+      console.log("[profile][POST] base upsert ng", {
+        device_id,
+        message: baseUpsertError.message,
+      });
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "profile_upsert_failed",
+          message: baseUpsertError.message,
+        },
+        {
+          status: 500,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
+  } else if (upsertError) {
     console.log("[profile][POST] upsert ng", {
       device_id,
       payload,
@@ -560,26 +681,24 @@ export async function POST(req: Request) {
     );
   }
 
-  const { data: confirmData, error: confirmError } = await supabaseAdmin
-    .from("user_profiles")
-    .select(USER_PROFILE_LEGAL_SELECT)
-    .eq("device_id", device_id)
-    .maybeSingle();
+  const confirmResult = await fetchProfileRowByFilter({
+    column: "device_id",
+    value: device_id,
+  });
+  const confirmData = confirmResult.data;
+  const confirmError = confirmResult.error;
 
   if (confirmError) {
     console.log("[profile][POST] confirm read error", {
       device_id,
-      message: confirmError.message,
-      details: (confirmError as any)?.details ?? null,
-      hint: (confirmError as any)?.hint ?? null,
-      code: (confirmError as any)?.code ?? null,
+      message: confirmError,
     });
 
     return NextResponse.json(
       {
         ok: false,
         error: "profile_confirm_read_failed",
-        message: confirmError.message,
+        message: confirmError,
       },
       {
         status: 500,

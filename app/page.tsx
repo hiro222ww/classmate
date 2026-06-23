@@ -1,6 +1,7 @@
 // app/page.tsx
 import { Suspense } from "react";
 import HomeClient from "./HomeClient";
+import { ClientErrorBoundary } from "@/components/ClientErrorBoundary";
 
 export default function HomePage() {
   return (
@@ -12,9 +13,11 @@ export default function HomePage() {
       </header>
 
       <section style={{ marginTop: 18 }}>
-        <Suspense fallback={<p>読み込み中...</p>}>
-          <HomeClient />
-        </Suspense>
+        <ClientErrorBoundary label="home">
+          <Suspense fallback={<p>読み込み中...</p>}>
+            <HomeClient />
+          </Suspense>
+        </ClientErrorBoundary>
       </section>
     </main>
   );

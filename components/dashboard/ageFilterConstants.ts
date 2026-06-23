@@ -1,5 +1,8 @@
-import type { AgeMode } from "@/lib/agePolicy";
-import { getAgeFilterBounds, getDefaultMatchPrefsForMode } from "@/lib/agePolicy";
+import type { AgeMode } from "@/lib/agePolicyRules";
+import {
+  getAgeFilterBounds,
+  getDefaultMatchPrefsForMode,
+} from "@/lib/agePolicyRules";
 
 export type MatchPrefs = {
   min_age: number;

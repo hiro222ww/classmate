@@ -12,7 +12,7 @@ import {
 import {
   adultOnlyUserMessage,
   guardianConsentRequiredMessage,
-} from "@/lib/agePolicy";
+} from "@/lib/agePolicyRules";
 import {
   buildProfileEditPath,
   sanitizeReturnTo,
@@ -327,7 +327,7 @@ export default function ProfileClient() {
         }
 
         setHasExistingProfile(isUserProfileComplete(profile));
-        setNeedsLegalConsent(profile.legal_consent?.needs_reconsent !== false);
+        setNeedsLegalConsent(profile.legal_consent?.valid !== true);
         setDisplayName(profile.display_name ?? "");
         setBirthDate(
           isValidISODateString(profile.birth_date) ? profile.birth_date : ""
@@ -349,6 +349,9 @@ export default function ProfileClient() {
         });
       } catch (e) {
         console.error("[profile] load failed", e);
+        if (!cancelled) {
+          setErrorMsg("プロフィールの読み込みに失敗しました。時間をおいて再度お試しください。");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

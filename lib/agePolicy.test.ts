@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   applyAgeModeToMatchRange,
-  canPersistMinorsOrAgeModeChange,
   checkProfileRegistrationAge,
   checkSelfAgeForJoin,
   getAgeFilterBounds,
+  canPersistMinorsOrAgeModeChange,
   isProductionAgeLocked,
-} from "@/lib/agePolicy";
+} from "@/lib/agePolicyRules";
 import { buildLegalConsentPayload } from "@/lib/legalConsent";
 import { scanContactRisk } from "@/lib/contentModeration";
 

@@ -1743,7 +1743,7 @@ return () => {
   const visible = useMemo(() => {
     const byId = new Map<string, MineClass>();
 
-    for (const c of classes) {
+    for (const c of classes ?? []) {
       const id = String(c.id ?? "").trim();
       if (!id) continue;
       if (leavingClassIdsRef.current.has(id)) continue;
