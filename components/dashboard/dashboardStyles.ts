@@ -2,15 +2,15 @@ import type { CSSProperties } from "react";
 
 export const DASH_CARD: CSSProperties = {
   border: "1px solid #e5e7eb",
-  borderRadius: 20,
-  padding: "20px 18px",
+  borderRadius: 16,
+  padding: "14px 16px",
   background: "#fff",
-  boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
+  boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
 };
 
 export const PRIMARY_BTN: CSSProperties = {
-  padding: "14px 16px",
-  borderRadius: 14,
+  padding: "13px 16px",
+  borderRadius: 12,
   border: "none",
   background: "#111827",
   color: "#fff",
@@ -21,15 +21,27 @@ export const PRIMARY_BTN: CSSProperties = {
 };
 
 export const SECONDARY_BTN: CSSProperties = {
-  padding: "12px 16px",
-  borderRadius: 14,
+  padding: "11px 16px",
+  borderRadius: 12,
   border: "1px solid #e5e7eb",
   background: "#fff",
-  color: "#111827",
-  fontWeight: 900,
+  color: "#374151",
+  fontWeight: 800,
   fontSize: 14,
   cursor: "pointer",
   width: "100%",
+};
+
+export const CHIP: CSSProperties = {
+  fontSize: 11,
+  padding: "5px 10px",
+  borderRadius: 999,
+  background: "#f3f4f6",
+  color: "#4b5563",
+  fontWeight: 800,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
 };
 
 export const HOME_DASHBOARD_LAYOUT_CSS = `
@@ -38,7 +50,7 @@ export const HOME_DASHBOARD_LAYOUT_CSS = `
 }
 .home-dash-bottom {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   grid-template-columns: 1fr;
 }
 .home-dash-join {

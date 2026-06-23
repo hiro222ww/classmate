@@ -22,13 +22,26 @@ import {
   logMatchJoinClientFailed,
   logMatchJoinClientStart,
   logMatchJoinClientSuccess,
-  logMatchPrefsGet,
   logProfileExists,
 } from "@/lib/entryFlowLog";
 import { isJoinAllowedDeviceId, isLegacyStoredDeviceId } from "@/lib/deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { HelpTip } from "@/components/HelpTip";
+import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
+import { DashboardStatusBar } from "@/components/dashboard/DashboardStatusBar";
+import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
+import {
+  AGE_FILTER_OFF_PREFS,
+  isAgeFilterOff,
+  matchPrefsForSubmit,
+  type MatchPrefs,
+} from "@/components/dashboard/ageFilterConstants";
+import {
+  DASH_CARD,
+  HOME_DASHBOARD_LAYOUT_CSS,
+  PRIMARY_BTN,
+} from "@/components/dashboard/dashboardStyles";
 
 type World = {
   world_key: string;
@@ -61,8 +74,6 @@ type ClassRow = {
   is_user_created: boolean;
   created_at?: string;
 };
-
-type MatchPrefs = { min_age: number; max_age: number };
 
 type Entitlements = {
   plan: string;
@@ -133,101 +144,8 @@ async function readJsonOrThrow(r: Response, label: string) {
   return j;
 }
 
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontSize: 11,
-        padding: "5px 10px",
-        borderRadius: 999,
-        background: "#f3f4f6",
-        color: "#4b5563",
-        fontWeight: 800,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-const AGE_FILTER_OFF_MIN = 0;
-const AGE_FILTER_OFF_MAX = 130;
-const AGE_FILTER_SLIDER_MIN = 0;
-const AGE_FILTER_SLIDER_MAX = 130;
-const AGE_FILTER_OFF_PREFS: MatchPrefs = {
-  min_age: AGE_FILTER_OFF_MIN,
-  max_age: AGE_FILTER_OFF_MAX,
-};
-const AGE_FILTER_ON_DEFAULT: MatchPrefs = { min_age: 18, max_age: 25 };
-
-const AGE_PREF_HELP_TEXT =
-  "OFFのときは年齢では絞り込みません。ONにすると、指定した年齢条件に合うクラスを探します。ONにするにはプロフィール登録が必要です。";
-
 const RETURN_CLASS_HELP_TEXT =
   "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
-
-const JOIN_NEW_HELP_TEXT =
-  "初めて入る・別のクラスを探す場合はこちらです。「今すぐ入る」は自動でクラスを探します。「入る場所を選ぶ」ではテーマを選べます。";
-
-const ADMISSION_WINDOW_HELP_TEXT =
-  "新規入校は受付時間内のみ可能です。所属中のクラスへの再入室はいつでもできます。";
-
-const DASH_CARD: React.CSSProperties = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 20,
-  padding: "20px 18px",
-  background: "#fff",
-  boxShadow: "0 1px 3px rgba(15, 23, 42, 0.06)",
-};
-
-const PRIMARY_BTN: React.CSSProperties = {
-  padding: "14px 16px",
-  borderRadius: 14,
-  border: "none",
-  background: "#111827",
-  color: "#fff",
-  fontWeight: 900,
-  fontSize: 15,
-  cursor: "pointer",
-  width: "100%",
-};
-
-const SECONDARY_BTN: React.CSSProperties = {
-  padding: "12px 16px",
-  borderRadius: 14,
-  border: "1px solid #e5e7eb",
-  background: "#fff",
-  color: "#111827",
-  fontWeight: 900,
-  fontSize: 14,
-  cursor: "pointer",
-  width: "100%",
-};
-
-function clampAge(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-function isAgeFilterOff(prefs: MatchPrefs) {
-  return (
-    prefs.min_age === AGE_FILTER_OFF_MIN && prefs.max_age === AGE_FILTER_OFF_MAX
-  );
-}
-
-function normalizeMatchPrefs(prefs: MatchPrefs): MatchPrefs {
-  return {
-    min_age: Math.min(prefs.min_age, prefs.max_age),
-    max_age: Math.max(prefs.min_age, prefs.max_age),
-  };
-}
-
-function matchPrefsForSubmit(prefs: MatchPrefs): MatchPrefs {
-  if (isAgeFilterOff(prefs)) return AGE_FILTER_OFF_PREFS;
-  return normalizeMatchPrefs(prefs);
-}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -288,8 +206,6 @@ export default function SelectClient() {
 
   const [prefs, setPrefs] = useState<MatchPrefs>(AGE_FILTER_OFF_PREFS);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
-  const [savingPrefs, setSavingPrefs] = useState(false);
-  const lastOnPrefsRef = useRef<MatchPrefs>(AGE_FILTER_ON_DEFAULT);
 
   const [wFilter, setWFilter] = useState<string>("all");
   const [tFilter, setTFilter] = useState<string>("all");
@@ -300,7 +216,6 @@ export default function SelectClient() {
 
   const [showNarrow, setShowNarrow] = useState(false);
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
-  const [minorsEnabled, setMinorsEnabled] = useState(false);
 
   const [joinWindowOpen, setJoinWindowOpen] = useState(true);
   const [joinWindowText, setJoinWindowText] = useState("");
@@ -588,10 +503,7 @@ export default function SelectClient() {
       try {
         const settingsRes = await fetch("/api/settings", { cache: "no-store" });
         if (settingsRes.ok) {
-          const settingsJson = await settingsRes.json().catch(() => null);
-          if (alive) {
-            setMinorsEnabled(settingsJson?.minors_enabled === true);
-          }
+          await settingsRes.json().catch(() => null);
         }
 
         const sp = new URLSearchParams(window.location.search);
@@ -675,67 +587,6 @@ export default function SelectClient() {
           console.log("[class/select] syncResult =", syncResult);
         }
 
-        const pr = await fetch("/api/user/match-prefs", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ deviceId: id, mode: "get" }),
-          cache: "no-store",
-        });
-
-        try {
-          const raw = await pr.text();
-          let pj: any = null;
-
-          try {
-            pj = raw ? JSON.parse(raw) : null;
-          } catch {
-            pj = null;
-          }
-
-          if (pr.ok && pj?.prefs) {
-            if (!alive) return;
-
-            const nextPrefs = normalizeMatchPrefs({
-              min_age: Number(pj.prefs.min_age ?? AGE_FILTER_OFF_MIN),
-              max_age: Number(pj.prefs.max_age ?? AGE_FILTER_OFF_MAX),
-            });
-
-            console.log("[class/select] match-prefs loaded", {
-              deviceId: id,
-              nextPrefs,
-              profileRequired: pj.profileRequired === true,
-            });
-
-            if (!isAgeFilterOff(nextPrefs)) {
-              lastOnPrefsRef.current = nextPrefs;
-            }
-            setPrefs(nextPrefs);
-            logMatchPrefsGet(
-              id,
-              pj.profileRequired === true ? "profile_required" : "saved"
-            );
-          } else if (pr.status === 409 && pj?.error === "profile_required") {
-            console.log("[class/select] match-prefs deferred until profile", {
-              deviceId: id,
-            });
-            logMatchPrefsGet(id, "profile_required");
-          } else {
-            console.warn("[class/select] match-prefs get skipped", {
-              status: pr.status,
-              body: pj,
-              raw,
-              deviceId: id,
-            });
-            logMatchPrefsGet(id, "failed");
-          }
-        } catch (e) {
-          console.warn("[class/select] match-prefs get failed (non-fatal)", e);
-        } finally {
-          if (alive) {
-            setPrefsLoaded(true);
-          }
-        }
-
         void reloadCatalog();
         void reloadJoinWindow();
       } catch (e: any) {
@@ -756,90 +607,6 @@ export default function SelectClient() {
       alive = false;
     };
   }, [dev]);
-
-  async function savePrefs(next: MatchPrefs) {
-    if (!deviceId) return;
-
-    if (hasProfile === false) {
-      return;
-    }
-
-    const payload = matchPrefsForSubmit(next);
-    setSavingPrefs(true);
-    try {
-      const r = await fetch("/api/user/match-prefs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId,
-          minAge: payload.min_age,
-          maxAge: payload.max_age,
-        }),
-        cache: "no-store",
-      });
-
-      const raw = await r.text();
-      let j: {
-        error?: string;
-        message?: string;
-        minAge?: number;
-        maxAge?: number;
-      } | null = null;
-
-      try {
-        j = raw ? JSON.parse(raw) : null;
-      } catch {
-        j = null;
-      }
-
-      if (!r.ok) {
-        if (j?.error === "profile_required") {
-          alert(
-            j.message ?? "プロフィール登録後に年齢条件を保存できます。"
-          );
-          goProfileIfNeeded("profile_required");
-          return;
-        }
-
-        throw new Error(j?.error ?? j?.message ?? `match_prefs_save:${r.status}`);
-      }
-
-      const savedPrefs = {
-        min_age: Number(j?.minAge ?? payload.min_age),
-        max_age: Number(j?.maxAge ?? payload.max_age),
-      };
-
-      console.log("[class/select] match-prefs saved", {
-        deviceId,
-        savedPrefs,
-      });
-
-      setPrefs(savedPrefs);
-      setPrefsLoaded(true);
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "failed");
-    } finally {
-      setSavingPrefs(false);
-    }
-  }
-
-  async function handleAgeFilterToggle(enabled: boolean) {
-    let next: MatchPrefs;
-    if (enabled) {
-      next = lastOnPrefsRef.current;
-    } else {
-      if (!isAgeFilterOff(prefs)) {
-        lastOnPrefsRef.current = normalizeMatchPrefs(prefs);
-      }
-      next = AGE_FILTER_OFF_PREFS;
-    }
-    setPrefs(next);
-    await savePrefs(next);
-  }
-
-  const ageFilterEnabled = !isAgeFilterOff(prefs);
-  const displayMinAge = Math.min(prefs.min_age, prefs.max_age);
-  const displayMaxAge = Math.max(prefs.min_age, prefs.max_age);
 
   const slots = ent?.class_slots ?? 1;
   const topicPlan = ent?.topic_plan ?? (ent?.theme_pass ? 1200 : 0);
@@ -1251,6 +1018,7 @@ export default function SelectClient() {
 
   return (
     <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }}>
+      <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
       <header
         style={{
           display: "flex",
@@ -1367,7 +1135,10 @@ export default function SelectClient() {
           <div>display_name: {debugDisplayName}</div>
           <div>prefsLoaded: {String(prefsLoaded)}</div>
           <div>
-            prefs: {ageFilterEnabled ? `${displayMinAge}〜${displayMaxAge}` : "OFF(0-130)"}
+            prefs:{" "}
+            {isAgeFilterOff(prefs)
+              ? "OFF"
+              : `${Math.min(prefs.min_age, prefs.max_age)}〜${Math.max(prefs.min_age, prefs.max_age)}`}
           </div>
         </section>
       )}
@@ -1389,47 +1160,6 @@ export default function SelectClient() {
             }}
           >
             プロフィール登録
-          </Link>
-        </section>
-      ) : null}
-
-      {hasJoinedClasses ? (
-        <section style={{ ...DASH_CARD, marginTop: 20 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginBottom: 16,
-            }}
-          >
-            <h2
-              style={{
-                margin: 0,
-                fontSize: 18,
-                fontWeight: 900,
-                color: "#111827",
-                lineHeight: 1.3,
-              }}
-            >
-              今のクラスに戻る
-            </h2>
-            <HelpTip
-              label="今のクラスに戻るについて"
-              content={RETURN_CLASS_HELP_TEXT}
-            />
-          </div>
-          <Link
-            href={withDev("/")}
-            style={{
-              ...PRIMARY_BTN,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              textDecoration: "none",
-            }}
-          >
-            今のクラスを見る
           </Link>
         </section>
       ) : null}
@@ -1507,261 +1237,81 @@ export default function SelectClient() {
         </div>
       ) : null}
 
-      <section
-        style={{
-          marginTop: 20,
-          display: "flex",
-          gap: 8,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <Pill>クラス枠: {slots}</Pill>
-        <Pill>テーマプラン: {tierName(topicPlan)}（¥{topicPlan}/月）</Pill>
-        {joinWindowOpen ? (
-          <Pill>
-            <span
-              aria-hidden
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: 999,
-                background: "#22c55e",
-                display: "inline-block",
-              }}
-            />
-            {joinWindowText || "入校受付中"}
-          </Pill>
-        ) : (
-          <HelpTip label="入校受付時間について" content={ADMISSION_WINDOW_HELP_TEXT}>
-            <Pill>受付時間外</Pill>
-          </HelpTip>
-        )}
-        <button
-          type="button"
-          onClick={() => void reloadCatalog()}
-          disabled={loading}
-          aria-label="再読み込み"
-          title="再読み込み"
-          style={{
-            marginLeft: "auto",
-            padding: "6px 10px",
-            borderRadius: 10,
-            border: "1px solid #e5e7eb",
-            background: "#fff",
-            color: "#6b7280",
-            fontWeight: 800,
-            fontSize: 12,
-            cursor: loading ? "default" : "pointer",
-            opacity: loading ? 0.6 : 1,
-          }}
-        >
-          ↻
-        </button>
-      </section>
-
-      <div
-        style={{
-          marginTop: 16,
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 16,
-          alignItems: "start",
-        }}
-      >
-        <section style={DASH_CARD}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <strong style={{ fontSize: 16, fontWeight: 900 }}>年齢絞り込み</strong>
-              <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />
-            </div>
-
+      <div style={{ marginTop: 20, display: "grid", gap: 16, gridTemplateColumns: "1fr" }}>
+        {hasJoinedClasses ? (
+          <section style={DASH_CARD} className="home-dash-return">
             <div
               style={{
-                display: "inline-flex",
-                border: "1px solid #e5e7eb",
-                borderRadius: 12,
-                overflow: "hidden",
-                flexShrink: 0,
-                opacity: !prefsLoaded ? 0.55 : 1,
-              }}
-              role="group"
-              aria-label="年齢絞り込み"
-            >
-            <button
-              type="button"
-              onClick={() => void handleAgeFilterToggle(false)}
-              disabled={
-                savingPrefs ||
-                !deviceId ||
-                loading ||
-                !prefsLoaded ||
-                hasProfile === false
-              }
-              style={{
-                padding: "8px 14px",
-                border: "none",
-                background: !ageFilterEnabled ? "#111827" : "#fff",
-                color: !ageFilterEnabled ? "#fff" : "#374151",
-                fontWeight: 900,
-                fontSize: 13,
-                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 12,
               }}
             >
-              OFF
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleAgeFilterToggle(true)}
-              disabled={
-                savingPrefs ||
-                !deviceId ||
-                loading ||
-                !prefsLoaded ||
-                hasProfile === false
-              }
-              style={{
-                padding: "8px 14px",
-                border: "none",
-                borderLeft: "1px solid #d1d5db",
-                background: ageFilterEnabled ? "#111827" : "#fff",
-                color: ageFilterEnabled ? "#fff" : "#374151",
-                fontWeight: 900,
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              ON
-            </button>
-          </div>
-        </div>
-
-        {ageFilterEnabled && hasProfile !== false ? (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>
-              {displayMinAge} 〜 {displayMaxAge} 歳
+              <h2
+                style={{
+                  margin: 0,
+                  fontSize: 18,
+                  fontWeight: 900,
+                  color: "#111827",
+                  lineHeight: 1.3,
+                }}
+              >
+                今のクラスに戻る
+              </h2>
+              <HelpTip
+                label="今のクラスに戻るについて"
+                content={RETURN_CLASS_HELP_TEXT}
+              />
             </div>
-
-            {!minorsEnabled && displayMinAge < 18 ? (
-              <p style={{ margin: "0 0 10px", fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
-                高校生以下は利用できません。
-              </p>
-            ) : null}
-
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 12, color: "#9ca3af" }}>最小</div>
-                <input
-                  type="range"
-                  min={AGE_FILTER_SLIDER_MIN}
-                  max={AGE_FILTER_SLIDER_MAX}
-                  value={displayMinAge}
-                  onChange={(e) => {
-                    const v = clampAge(
-                      Number(e.target.value),
-                      AGE_FILTER_SLIDER_MIN,
-                      AGE_FILTER_SLIDER_MAX
-                    );
-                    setPrefs((p) => ({
-                      min_age: v,
-                      max_age: Math.max(v, p.max_age),
-                    }));
-                  }}
-                  style={{ width: "100%" }}
-                />
-              </div>
-
-              <div style={{ display: "grid", gap: 6 }}>
-                <div style={{ fontSize: 12, color: "#9ca3af" }}>最大</div>
-                <input
-                  type="range"
-                  min={AGE_FILTER_SLIDER_MIN}
-                  max={AGE_FILTER_SLIDER_MAX}
-                  value={displayMaxAge}
-                  onChange={(e) => {
-                    const v = clampAge(
-                      Number(e.target.value),
-                      AGE_FILTER_SLIDER_MIN,
-                      AGE_FILTER_SLIDER_MAX
-                    );
-                    setPrefs((p) => ({
-                      min_age: Math.min(p.min_age, v),
-                      max_age: v,
-                    }));
-                  }}
-                  style={{ width: "100%" }}
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={() => void savePrefs(prefs)}
-              disabled={savingPrefs || !deviceId || loading}
-              style={{
-                ...SECONDARY_BTN,
-                marginTop: 12,
-              }}
-            >
-              保存
-            </button>
-          </div>
-        ) : null}
-        </section>
-
-        <section style={DASH_CARD}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginBottom: 16,
-              flexWrap: "wrap",
-            }}
-          >
-            <strong style={{ fontSize: 16, fontWeight: 900 }}>新しく参加する</strong>
-            <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
-          </div>
-
-          <div style={{ display: "grid", gap: 10 }}>
-            <button
-              type="button"
-              onClick={() => void enterQuickFreeTheme()}
-              disabled={busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded}
+            <Link
+              href={withDev("/")}
               style={{
                 ...PRIMARY_BTN,
-                opacity:
-                  busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded
-                    ? 0.55
-                    : 1,
-                cursor:
-                  busy || !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded
-                    ? "not-allowed"
-                    : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textDecoration: "none",
               }}
             >
-              {busy ? "参加中…" : "今すぐ入る"}
-            </button>
+              今のクラスを見る
+            </Link>
+          </section>
+        ) : null}
 
-            <button
-              type="button"
-              onClick={() => setShowNarrow((v) => !v)}
-              style={{
-                ...SECONDARY_BTN,
-                background: showNarrow ? "#f3f4f6" : "#fff",
-              }}
-            >
-              {showNarrow ? "閉じる" : "入る場所を選ぶ"}
-            </button>
-          </div>
-        </section>
+        <DashboardStatusBar
+          slots={slots}
+          planLabel={tierName(topicPlan)}
+          joinWindowOpen={joinWindowOpen}
+          joinWindowText={joinWindowText}
+          loading={loading}
+          onReload={() => void reloadCatalog()}
+        />
+
+        <div className="home-dash-bottom">
+          <JoinNewCard
+            className="home-dash-join"
+            quickJoinBusy={busy}
+            quickJoinDisabled={
+              !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded
+            }
+            pickPlaceLabel={showNarrow ? "閉じる" : "入る場所を選ぶ"}
+            onQuickJoin={() => void enterQuickFreeTheme()}
+            onPickPlace={() => setShowNarrow((v) => !v)}
+          />
+
+          <AgeFilterCard
+            className="home-dash-age"
+            deviceId={deviceId}
+            hasProfile={hasProfile}
+            disabled={loading}
+            onPrefsChange={setPrefs}
+            onPrefsLoadedChange={setPrefsLoaded}
+            onProfileRequired={() => {
+              goProfileIfNeeded("profile_required");
+            }}
+          />
+        </div>
       </div>
 
       {showNarrow && (

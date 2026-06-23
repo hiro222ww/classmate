@@ -14,11 +14,11 @@ import {
 import { DevPanel } from "@/components/DevPanel";
 import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
+import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import {
   DASH_CARD,
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
-  SECONDARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import { withDev } from "@/lib/withDev";
@@ -353,9 +353,6 @@ function pushBrowserNotification(
 
 const RETURN_CLASS_HELP_TEXT =
   "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
-
-const JOIN_NEW_HELP_TEXT =
-  "別のクラスへ新規参加する導線です。すでに所属中のクラスに戻る場合は「今のクラスに戻る」を使ってください。";
 
 function StatusPill({ children }: { children: React.ReactNode }) {
   return (
@@ -2474,53 +2471,13 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         ) : null}
 
         <div className="home-dash-bottom">
-          <section className="home-dash-join" style={DASH_CARD}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 16,
-                flexWrap: "wrap",
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  fontSize: 18,
-                  fontWeight: 900,
-                  color: "#111827",
-                }}
-              >
-                新しく参加する
-              </h2>
-              <StatusPill>新規参加</StatusPill>
-              <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
-            </div>
-
-            <div style={{ display: "grid", gap: 10 }}>
-              <button
-                type="button"
-                onClick={quickJoinFreeAndOpen}
-                disabled={quickBusy || !joinWindowOpen}
-                style={{
-                  ...PRIMARY_BTN,
-                  opacity: quickBusy || !joinWindowOpen ? 0.55 : 1,
-                  cursor: quickBusy || !joinWindowOpen ? "not-allowed" : "pointer",
-                }}
-              >
-                {quickBusy ? "参加中…" : "新しいクラスに今すぐ入る"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => router.push(withDev("/class/select"))}
-                style={SECONDARY_BTN}
-              >
-                入る場所を選ぶ
-              </button>
-            </div>
-          </section>
+          <JoinNewCard
+            className="home-dash-join"
+            quickJoinBusy={quickBusy}
+            quickJoinDisabled={!joinWindowOpen}
+            onQuickJoin={quickJoinFreeAndOpen}
+            onPickPlace={() => router.push(withDev("/class/select"))}
+          />
 
           <AgeFilterCard
             className="home-dash-age"

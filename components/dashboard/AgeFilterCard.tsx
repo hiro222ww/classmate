@@ -17,13 +17,16 @@ import {
   normalizeMatchPrefs,
   type MatchPrefs,
 } from "@/components/dashboard/ageFilterConstants";
-import { DASH_CARD, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
+import { CHIP, DASH_CARD } from "@/components/dashboard/dashboardStyles";
 
 type AgeFilterCardProps = {
   deviceId: string;
   hasProfile: boolean | null;
   disabled?: boolean;
   className?: string;
+  onPrefsChange?: (prefs: MatchPrefs) => void;
+  onPrefsLoadedChange?: (loaded: boolean) => void;
+  onProfileRequired?: () => void;
 };
 
 export function AgeFilterCard({
@@ -31,20 +34,35 @@ export function AgeFilterCard({
   hasProfile,
   disabled = false,
   className,
+  onPrefsChange,
+  onPrefsLoadedChange,
+  onProfileRequired,
 }: AgeFilterCardProps) {
   const [prefs, setPrefs] = useState<MatchPrefs>(AGE_FILTER_OFF_PREFS);
+  const [draftPrefs, setDraftPrefs] = useState<MatchPrefs>(AGE_FILTER_OFF_PREFS);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [minorsEnabled, setMinorsEnabled] = useState(false);
   const lastOnPrefsRef = useRef<MatchPrefs>(AGE_FILTER_ON_DEFAULT);
 
   const ageFilterEnabled = !isAgeFilterOff(prefs);
   const displayMinAge = Math.min(prefs.min_age, prefs.max_age);
   const displayMaxAge = Math.max(prefs.min_age, prefs.max_age);
+  const draftMinAge = Math.min(draftPrefs.min_age, draftPrefs.max_age);
+  const draftMaxAge = Math.max(draftPrefs.min_age, draftPrefs.max_age);
+
+  const applyPrefs = useCallback(
+    (next: MatchPrefs) => {
+      setPrefs(next);
+      onPrefsChange?.(next);
+    },
+    [onPrefsChange]
+  );
 
   const savePrefs = useCallback(
     async (next: MatchPrefs) => {
-      if (!deviceId || hasProfile === false) return;
+      if (!deviceId || hasProfile === false) return false;
 
       const payload = matchPrefsForSubmit(next);
       setSavingPrefs(true);
@@ -76,10 +94,8 @@ export function AgeFilterCard({
 
         if (!r.ok) {
           if (j?.error === "profile_required") {
-            alert(
-              j.message ?? "プロフィール登録後に年齢条件を保存できます。"
-            );
-            return;
+            onProfileRequired?.();
+            return false;
           }
           throw new Error(j?.error ?? j?.message ?? `match_prefs_save:${r.status}`);
         }
@@ -91,14 +107,16 @@ export function AgeFilterCard({
         if (!isAgeFilterOff(saved)) {
           lastOnPrefsRef.current = saved;
         }
-        setPrefs(saved);
+        applyPrefs(saved);
+        return true;
       } catch (e: unknown) {
         alert(e instanceof Error ? e.message : "failed");
+        return false;
       } finally {
         setSavingPrefs(false);
       }
     },
-    [deviceId, hasProfile]
+    [applyPrefs, deviceId, hasProfile, onProfileRequired]
   );
 
   const handleAgeFilterToggle = useCallback(
@@ -111,12 +129,25 @@ export function AgeFilterCard({
           lastOnPrefsRef.current = normalizeMatchPrefs(prefs);
         }
         next = AGE_FILTER_OFF_PREFS;
+        setEditing(false);
       }
-      setPrefs(next);
+      applyPrefs(next);
       await savePrefs(next);
     },
-    [prefs, savePrefs]
+    [applyPrefs, prefs, savePrefs]
   );
+
+  const openEditor = useCallback(() => {
+    setDraftPrefs(prefs);
+    setEditing(true);
+  }, [prefs]);
+
+  const finishEditing = useCallback(async () => {
+    const ok = await savePrefs(draftPrefs);
+    if (ok) {
+      setEditing(false);
+    }
+  }, [draftPrefs, savePrefs]);
 
   useEffect(() => {
     let alive = true;
@@ -124,13 +155,15 @@ export function AgeFilterCard({
     void (async () => {
       if (!deviceId) {
         if (alive) {
-          setPrefs(AGE_FILTER_OFF_PREFS);
+          applyPrefs(AGE_FILTER_OFF_PREFS);
           setPrefsLoaded(true);
+          onPrefsLoadedChange?.(true);
         }
         return;
       }
 
       setPrefsLoaded(false);
+      onPrefsLoadedChange?.(false);
 
       try {
         const settingsRes = await fetch("/api/settings", { cache: "no-store" });
@@ -171,7 +204,7 @@ export function AgeFilterCard({
           if (!isAgeFilterOff(nextPrefs)) {
             lastOnPrefsRef.current = nextPrefs;
           }
-          setPrefs(nextPrefs);
+          applyPrefs(nextPrefs);
           logMatchPrefsGet(
             deviceId,
             pj.profileRequired === true ? "profile_required" : "saved"
@@ -186,6 +219,7 @@ export function AgeFilterCard({
       } finally {
         if (alive) {
           setPrefsLoaded(true);
+          onPrefsLoadedChange?.(true);
         }
       }
     })();
@@ -193,7 +227,7 @@ export function AgeFilterCard({
     return () => {
       alive = false;
     };
-  }, [deviceId]);
+  }, [applyPrefs, deviceId, onPrefsLoadedChange]);
 
   const controlsDisabled =
     disabled ||
@@ -210,11 +244,12 @@ export function AgeFilterCard({
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
-          flexWrap: "wrap",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <strong style={{ fontSize: 16, fontWeight: 900 }}>年齢絞り込み</strong>
+          <strong style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}>
+            年齢絞り込み
+          </strong>
           <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />
         </div>
 
@@ -222,7 +257,7 @@ export function AgeFilterCard({
           style={{
             display: "inline-flex",
             border: "1px solid #e5e7eb",
-            borderRadius: 12,
+            borderRadius: 10,
             overflow: "hidden",
             flexShrink: 0,
             opacity: !prefsLoaded ? 0.55 : 1,
@@ -235,12 +270,12 @@ export function AgeFilterCard({
             onClick={() => void handleAgeFilterToggle(false)}
             disabled={controlsDisabled}
             style={{
-              padding: "8px 14px",
+              padding: "7px 12px",
               border: "none",
               background: !ageFilterEnabled ? "#111827" : "#fff",
               color: !ageFilterEnabled ? "#fff" : "#374151",
               fontWeight: 900,
-              fontSize: 13,
+              fontSize: 12,
               cursor: controlsDisabled ? "default" : "pointer",
             }}
           >
@@ -251,13 +286,13 @@ export function AgeFilterCard({
             onClick={() => void handleAgeFilterToggle(true)}
             disabled={controlsDisabled}
             style={{
-              padding: "8px 14px",
+              padding: "7px 12px",
               border: "none",
               borderLeft: "1px solid #e5e7eb",
               background: ageFilterEnabled ? "#111827" : "#fff",
               color: ageFilterEnabled ? "#fff" : "#374151",
               fontWeight: 900,
-              fontSize: 13,
+              fontSize: 12,
               cursor: controlsDisabled ? "default" : "pointer",
             }}
           >
@@ -266,82 +301,127 @@ export function AgeFilterCard({
         </div>
       </div>
 
-      {ageFilterEnabled && hasProfile !== false ? (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8, fontSize: 15 }}>
-            {displayMinAge} 〜 {displayMaxAge} 歳
+      {ageFilterEnabled && hasProfile !== false && !editing ? (
+        <div
+          style={{
+            marginTop: 10,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={CHIP}>
+            {displayMinAge}〜{displayMaxAge}歳
+          </span>
+          <button
+            type="button"
+            onClick={openEditor}
+            disabled={controlsDisabled}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 999,
+              border: "1px solid #e5e7eb",
+              background: "#fff",
+              color: "#6b7280",
+              fontWeight: 800,
+              fontSize: 12,
+              cursor: controlsDisabled ? "default" : "pointer",
+            }}
+          >
+            編集
+          </button>
+        </div>
+      ) : null}
+
+      {ageFilterEnabled && hasProfile !== false && editing ? (
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#374151" }}>
+            {draftMinAge}〜{draftMaxAge}歳
           </div>
 
-          {!minorsEnabled && displayMinAge < 18 ? (
-            <p
-              style={{
-                margin: "0 0 10px",
-                fontSize: 12,
-                color: "#92400e",
-                lineHeight: 1.6,
-              }}
-            >
+          {!minorsEnabled && draftMinAge < 18 ? (
+            <p style={{ margin: 0, fontSize: 12, color: "#92400e" }}>
               高校生以下は利用できません。
             </p>
           ) : null}
 
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>最小</div>
-              <input
-                type="range"
-                min={AGE_FILTER_SLIDER_MIN}
-                max={AGE_FILTER_SLIDER_MAX}
-                value={displayMinAge}
-                onChange={(e) => {
-                  const v = clampAge(
-                    Number(e.target.value),
-                    AGE_FILTER_SLIDER_MIN,
-                    AGE_FILTER_SLIDER_MAX
-                  );
-                  setPrefs((p) => ({
-                    min_age: v,
-                    max_age: Math.max(v, p.max_age),
-                  }));
-                }}
-                style={{ width: "100%" }}
-              />
-            </div>
-
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>最大</div>
-              <input
-                type="range"
-                min={AGE_FILTER_SLIDER_MIN}
-                max={AGE_FILTER_SLIDER_MAX}
-                value={displayMaxAge}
-                onChange={(e) => {
-                  const v = clampAge(
-                    Number(e.target.value),
-                    AGE_FILTER_SLIDER_MIN,
-                    AGE_FILTER_SLIDER_MAX
-                  );
-                  setPrefs((p) => ({
-                    min_age: Math.min(p.min_age, v),
-                    max_age: v,
-                  }));
-                }}
-                style={{ width: "100%" }}
-              />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void savePrefs(prefs)}
-            disabled={savingPrefs || !deviceId || disabled}
-            style={{
-              ...SECONDARY_BTN,
-              marginTop: 12,
+          <input
+            type="range"
+            aria-label="最小年齢"
+            min={AGE_FILTER_SLIDER_MIN}
+            max={AGE_FILTER_SLIDER_MAX}
+            value={draftMinAge}
+            onChange={(e) => {
+              const v = clampAge(
+                Number(e.target.value),
+                AGE_FILTER_SLIDER_MIN,
+                AGE_FILTER_SLIDER_MAX
+              );
+              setDraftPrefs((p) => ({
+                min_age: v,
+                max_age: Math.max(v, p.max_age),
+              }));
             }}
-          >
-            保存
-          </button>
+            style={{ width: "100%" }}
+          />
+          <input
+            type="range"
+            aria-label="最大年齢"
+            min={AGE_FILTER_SLIDER_MIN}
+            max={AGE_FILTER_SLIDER_MAX}
+            value={draftMaxAge}
+            onChange={(e) => {
+              const v = clampAge(
+                Number(e.target.value),
+                AGE_FILTER_SLIDER_MIN,
+                AGE_FILTER_SLIDER_MAX
+              );
+              setDraftPrefs((p) => ({
+                min_age: Math.min(p.min_age, v),
+                max_age: v,
+              }));
+            }}
+            style={{ width: "100%" }}
+          />
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => void finishEditing()}
+              disabled={savingPrefs}
+              style={{
+                flex: 1,
+                padding: "9px 12px",
+                borderRadius: 10,
+                border: "none",
+                background: "#111827",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: 13,
+                cursor: savingPrefs ? "default" : "pointer",
+                opacity: savingPrefs ? 0.7 : 1,
+              }}
+            >
+              完了
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              disabled={savingPrefs}
+              style={{
+                padding: "9px 12px",
+                borderRadius: 10,
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                color: "#6b7280",
+                fontWeight: 800,
+                fontSize: 13,
+                cursor: savingPrefs ? "default" : "pointer",
+              }}
+            >
+              キャンセル
+            </button>
+          </div>
         </div>
       ) : null}
     </section>
