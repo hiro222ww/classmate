@@ -2,10 +2,6 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "../../../lib/supabaseAdmin";
 import { getAgeFromBirthDate } from "@/lib/age";
 import { canViewMemberProfile } from "@/lib/memberProfileAccess";
-import {
-  adultOnlyUserMessage,
-  isMinorsRegistrationAllowed,
-} from "@/lib/agePolicy";
 import { moderateUserText } from "@/lib/contentModeration";
 import {
   buildLegalConsentPayload,
@@ -20,22 +16,14 @@ import {
 } from "@/lib/profileClient";
 import { resolveRequestIdentity } from "@/lib/requestIdentity";
 import { bootstrapUserIdentity } from "@/lib/userIdentityMigration";
+import { enforceProfileSaveAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
+import {
+  USER_PROFILE_LEGAL_CONSENT_SELECT,
+  USER_PROFILE_LEGAL_SELECT,
+  type UserProfileRow,
+} from "@/lib/userProfileRow";
 
-type ProfileRow = {
-  device_id: string;
-  display_name: string | null;
-  birth_date: string | null;
-  gender: string | null;
-  photo_path: string | null;
-  hobbies: string | null;
-  bio: string | null;
-  show_age: boolean;
-  user_id?: string | null;
-  terms_agreed_at?: string | null;
-  privacy_agreed_at?: string | null;
-  guidelines_agreed_at?: string | null;
-  legal_consent_version?: string | null;
-};
+type ProfileRow = UserProfileRow;
 
 const MAX_OPTIONAL_TEXT_LENGTH = 500;
 
@@ -162,9 +150,7 @@ export async function GET(req: Request) {
     if (identity.ok && identity.identity.userId) {
       const { data: byUser } = await supabaseAdmin
         .from("user_profiles")
-        .select(
-          "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
-        )
+        .select(USER_PROFILE_LEGAL_SELECT)
         .eq("user_id", identity.identity.userId)
         .maybeSingle();
 
@@ -177,9 +163,7 @@ export async function GET(req: Request) {
   if (!data) {
     const { data: byDevice, error } = await supabaseAdmin
       .from("user_profiles")
-      .select(
-        "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
-      )
+      .select(USER_PROFILE_LEGAL_SELECT)
       .eq("device_id", device_id)
       .maybeSingle();
 
@@ -393,39 +377,12 @@ export async function POST(req: Request) {
     );
   }
 
-  if (age < 18) {
-    const minorsAllowed = await isMinorsRegistrationAllowed();
-
-    if (!minorsAllowed) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "minors_disabled",
-          message: adultOnlyUserMessage(),
-        },
-        {
-          status: 403,
-          headers: {
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-          },
-        }
-      );
-    }
-
-    if (!guardian_consent) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "guardian_consent_required",
-        },
-        {
-          status: 403,
-          headers: {
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-          },
-        }
-      );
-    }
+  const ageGuard = await enforceProfileSaveAge({
+    age,
+    guardianConsent: guardian_consent,
+  });
+  if (!ageGuard.ok) {
+    return joinAgeGuardResponse(ageGuard);
   }
 
   for (const field of [
@@ -449,9 +406,7 @@ export async function POST(req: Request) {
 
   const { data: existingProfile, error: existingError } = await supabaseAdmin
     .from("user_profiles")
-    .select(
-      "photo_path, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
-    )
+    .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
     .eq("device_id", device_id)
     .maybeSingle();
 
@@ -556,6 +511,10 @@ export async function POST(req: Request) {
         privacy_agreed_at: existingConsent?.privacy_agreed_at ?? null,
         guidelines_agreed_at: existingConsent?.guidelines_agreed_at ?? null,
         legal_consent_version: existingConsent?.legal_consent_version ?? null,
+        terms_version:
+          existingConsent?.terms_version ??
+          existingConsent?.legal_consent_version ??
+          null,
       }
     : buildLegalConsentPayload();
 
@@ -603,9 +562,7 @@ export async function POST(req: Request) {
 
   const { data: confirmData, error: confirmError } = await supabaseAdmin
     .from("user_profiles")
-    .select(
-      "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, terms_agreed_at, privacy_agreed_at, guidelines_agreed_at, legal_consent_version, user_id"
-    )
+    .select(USER_PROFILE_LEGAL_SELECT)
     .eq("device_id", device_id)
     .maybeSingle();
 

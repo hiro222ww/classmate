@@ -103,7 +103,94 @@ export async function isMinorsRegistrationAllowed(): Promise<boolean> {
 }
 
 export function adultOnlyUserMessage() {
-  return "Classmateは大学生・専門学生・社会人向けのサービスです。高校生以下はご利用いただけません。";
+  return "現在このサービスは18歳以上のみ利用できます。";
+}
+
+export function guardianConsentRequiredMessage() {
+  return "18歳未満の方は保護者の同意が必要です。";
+}
+
+export type AgeFilterBounds = {
+  sliderMin: number;
+  sliderMax: number;
+  defaultMin: number;
+  defaultMax: number;
+};
+
+/** UI/API shared bounds for match-prefs age sliders. */
+export function getAgeFilterBounds(
+  mode: AgeMode,
+  selfAge: number | null
+): AgeFilterBounds {
+  const sliderMax = 130;
+
+  if (mode === "post_high_school_only") {
+    return {
+      sliderMin: ADULT_AGE_THRESHOLD,
+      sliderMax,
+      defaultMin: ADULT_AGE_THRESHOLD,
+      defaultMax: 25,
+    };
+  }
+
+  if (mode === "open_16_plus") {
+    return {
+      sliderMin: 16,
+      sliderMax,
+      defaultMin: 16,
+      defaultMax: 25,
+    };
+  }
+
+  // minor_separated_test
+  if (selfAge !== null && selfAge < ADULT_AGE_THRESHOLD) {
+    return {
+      sliderMin: 13,
+      sliderMax: ADULT_AGE_THRESHOLD - 1,
+      defaultMin: 15,
+      defaultMax: ADULT_AGE_THRESHOLD - 1,
+    };
+  }
+
+  return {
+    sliderMin: ADULT_AGE_THRESHOLD,
+    sliderMax,
+    defaultMin: ADULT_AGE_THRESHOLD,
+    defaultMax: 25,
+  };
+}
+
+export function getDefaultMatchPrefsForMode(
+  mode: AgeMode,
+  selfAge: number | null
+): { min_age: number; max_age: number } {
+  const bounds = getAgeFilterBounds(mode, selfAge);
+  return { min_age: bounds.defaultMin, max_age: bounds.defaultMax };
+}
+
+export function checkProfileRegistrationAge(params: {
+  age: number;
+  mode: AgeMode;
+  guardianConsent?: boolean;
+}): AgePolicyResult {
+  const joinCheck = checkSelfAgeForJoin(params.age, params.mode);
+  if (!joinCheck.ok) {
+    return joinCheck;
+  }
+
+  if (
+    params.age < ADULT_AGE_THRESHOLD &&
+    params.mode !== "post_high_school_only" &&
+    !params.guardianConsent
+  ) {
+    return {
+      ok: false,
+      error: "guardian_consent_required",
+      message: guardianConsentRequiredMessage(),
+    };
+  }
+
+  return { ok: true };
 }
 
 export type AgePolicyErrorCode =

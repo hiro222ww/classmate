@@ -1,20 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HelpTip } from "@/components/HelpTip";
+import {
+  adultOnlyUserMessage,
+  type AgeMode,
+} from "@/lib/agePolicy";
 import { logMatchPrefsGet } from "@/lib/entryFlowLog";
 import {
   AGE_FILTER_OFF_MAX,
   AGE_FILTER_OFF_MIN,
   AGE_FILTER_OFF_PREFS,
-  AGE_FILTER_ON_DEFAULT,
-  AGE_FILTER_SLIDER_MAX,
-  AGE_FILTER_SLIDER_MIN,
   AGE_PREF_HELP_TEXT,
   clampAge,
   isAgeFilterOff,
   matchPrefsForSubmit,
   normalizeMatchPrefs,
+  resolveAgeFilterOnDefault,
+  resolveAgeFilterSliderBounds,
   type MatchPrefs,
 } from "@/components/dashboard/ageFilterConstants";
 import { CHIP, DASH_CARD } from "@/components/dashboard/dashboardStyles";
@@ -43,8 +46,21 @@ export function AgeFilterCard({
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [minorsEnabled, setMinorsEnabled] = useState(false);
-  const lastOnPrefsRef = useRef<MatchPrefs>(AGE_FILTER_ON_DEFAULT);
+  const [ageMode, setAgeMode] = useState<AgeMode>("post_high_school_only");
+  const [selfAge, setSelfAge] = useState<number | null>(null);
+  const sliderBounds = useMemo(
+    () => resolveAgeFilterSliderBounds(ageMode, selfAge),
+    [ageMode, selfAge]
+  );
+  const defaultOnPrefs = useMemo(
+    () => resolveAgeFilterOnDefault(ageMode, selfAge),
+    [ageMode, selfAge]
+  );
+  const lastOnPrefsRef = useRef<MatchPrefs>(defaultOnPrefs);
+
+  useEffect(() => {
+    lastOnPrefsRef.current = defaultOnPrefs;
+  }, [defaultOnPrefs]);
 
   const ageFilterEnabled = !isAgeFilterOff(prefs);
   const displayMinAge = Math.min(prefs.min_age, prefs.max_age);
@@ -170,7 +186,34 @@ export function AgeFilterCard({
         if (settingsRes.ok) {
           const settingsJson = await settingsRes.json().catch(() => null);
           if (alive) {
-            setMinorsEnabled(settingsJson?.minors_enabled === true);
+            const mode = String(settingsJson?.age_mode ?? "").trim();
+            if (
+              mode === "post_high_school_only" ||
+              mode === "minor_separated_test" ||
+              mode === "open_16_plus"
+            ) {
+              setAgeMode(mode);
+            } else {
+              setAgeMode(
+                settingsJson?.minors_enabled === true
+                  ? "minor_separated_test"
+                  : "post_high_school_only"
+              );
+            }
+          }
+        }
+
+        if (hasProfile !== false && deviceId) {
+          const profileRes = await fetch(
+            `/api/profile?device_id=${encodeURIComponent(deviceId)}`,
+            { cache: "no-store" }
+          );
+          if (profileRes.ok) {
+            const profileJson = await profileRes.json().catch(() => null);
+            const age = Number(profileJson?.profile?.age);
+            if (alive && Number.isFinite(age)) {
+              setSelfAge(age);
+            }
           }
         }
 
@@ -227,7 +270,7 @@ export function AgeFilterCard({
     return () => {
       alive = false;
     };
-  }, [applyPrefs, deviceId, onPrefsLoadedChange]);
+  }, [applyPrefs, deviceId, hasProfile, onPrefsLoadedChange]);
 
   const controlsDisabled =
     disabled ||
@@ -339,23 +382,23 @@ export function AgeFilterCard({
             {draftMinAge}〜{draftMaxAge}歳
           </div>
 
-          {!minorsEnabled && draftMinAge < 18 ? (
+          {ageMode === "post_high_school_only" && draftMinAge < 18 ? (
             <p style={{ margin: 0, fontSize: 12, color: "#92400e" }}>
-              高校生以下は利用できません。
+              {adultOnlyUserMessage()}
             </p>
           ) : null}
 
           <input
             type="range"
             aria-label="最小年齢"
-            min={AGE_FILTER_SLIDER_MIN}
-            max={AGE_FILTER_SLIDER_MAX}
+            min={sliderBounds.sliderMin}
+            max={sliderBounds.sliderMax}
             value={draftMinAge}
             onChange={(e) => {
               const v = clampAge(
                 Number(e.target.value),
-                AGE_FILTER_SLIDER_MIN,
-                AGE_FILTER_SLIDER_MAX
+                sliderBounds.sliderMin,
+                sliderBounds.sliderMax
               );
               setDraftPrefs((p) => ({
                 min_age: v,
@@ -367,14 +410,14 @@ export function AgeFilterCard({
           <input
             type="range"
             aria-label="最大年齢"
-            min={AGE_FILTER_SLIDER_MIN}
-            max={AGE_FILTER_SLIDER_MAX}
+            min={sliderBounds.sliderMin}
+            max={sliderBounds.sliderMax}
             value={draftMaxAge}
             onChange={(e) => {
               const v = clampAge(
                 Number(e.target.value),
-                AGE_FILTER_SLIDER_MIN,
-                AGE_FILTER_SLIDER_MAX
+                sliderBounds.sliderMin,
+                sliderBounds.sliderMax
               );
               setDraftPrefs((p) => ({
                 min_age: Math.min(p.min_age, v),

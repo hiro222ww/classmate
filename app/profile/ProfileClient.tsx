@@ -10,6 +10,10 @@ import {
   isValidProfileGender,
 } from "@/lib/profileClient";
 import {
+  adultOnlyUserMessage,
+  guardianConsentRequiredMessage,
+} from "@/lib/agePolicy";
+import {
   buildProfileEditPath,
   sanitizeReturnTo,
 } from "@/lib/profileNavigation";
@@ -419,14 +423,12 @@ export default function ProfileClient() {
     }
 
     if (isMinor && minorsEnabled !== true) {
-      setErrorMsg(
-        "現在、18歳未満の方の登録は受け付けていません。今後の運用状況に応じて受付を開始する可能性があります。"
-      );
+      setErrorMsg(adultOnlyUserMessage());
       return;
     }
 
     if (isMinor && minorsEnabled && !guardianConsent) {
-      setErrorMsg("保護者の同意が必要です。");
+      setErrorMsg(guardianConsentRequiredMessage());
       return;
     }
 
@@ -485,15 +487,16 @@ export default function ProfileClient() {
       }
 
       if (!res.ok) {
-        if (json?.error === "minors_disabled") {
-          setErrorMsg(
-            "現在、18歳未満の方の登録は受け付けていません。今後の運用状況に応じて受付を開始する可能性があります。"
-          );
+        if (
+          json?.error === "minors_disabled" ||
+          json?.error === "adult_only"
+        ) {
+          setErrorMsg(json?.message || adultOnlyUserMessage());
           return;
         }
 
         if (json?.error === "guardian_consent_required") {
-          setErrorMsg("保護者の同意が必要です。");
+          setErrorMsg(json?.message || guardianConsentRequiredMessage());
           return;
         }
 
@@ -591,10 +594,10 @@ export default function ProfileClient() {
 
       <p style={{ margin: 0, opacity: 0.7, fontSize: 13, lineHeight: 1.6 }}>
         {minorsEnabled !== true ? (
-          "Classmateは大学生・専門学生・社会人向けです。高校生以下はご利用いただけません。"
+          adultOnlyUserMessage()
         ) : (
           <>
-            18歳未満の方は保護者の同意が必要です。
+            {guardianConsentRequiredMessage()}
             <br />
             保護者の同意を得たうえでご利用ください。
           </>
@@ -644,7 +647,7 @@ export default function ProfileClient() {
             }}
           >
             <div style={{ fontWeight: 800, color: "#842029" }}>
-              現在、18歳未満の方の登録は受け付けていません。
+              {adultOnlyUserMessage()}
             </div>
             <p style={{ margin: 0, color: "#842029", fontSize: 13, lineHeight: 1.6 }}>
               今後の運用状況に応じて受付を開始する可能性があります。

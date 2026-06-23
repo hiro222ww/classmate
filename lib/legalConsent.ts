@@ -5,6 +5,7 @@ export type LegalConsentFields = {
   privacy_agreed_at?: string | null;
   guidelines_agreed_at?: string | null;
   legal_consent_version?: string | null;
+  terms_version?: string | null;
 };
 
 export type LegalConsentStatus = {
@@ -51,6 +52,7 @@ export function buildLegalConsentPayload(now = new Date().toISOString()) {
     privacy_agreed_at: now,
     guidelines_agreed_at: now,
     legal_consent_version: CURRENT_LEGAL_CONSENT_VERSION,
+    terms_version: CURRENT_LEGAL_CONSENT_VERSION,
   };
 }
 

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyAgeModeToMatchRange,
   canPersistMinorsOrAgeModeChange,
+  checkProfileRegistrationAge,
   checkSelfAgeForJoin,
+  getAgeFilterBounds,
   isProductionAgeLocked,
 } from "@/lib/agePolicy";
+import { buildLegalConsentPayload } from "@/lib/legalConsent";
 import { scanContactRisk } from "@/lib/contentModeration";
 
 describe("agePolicy production lock", () => {
@@ -29,10 +32,62 @@ describe("agePolicy production lock", () => {
     expect(checkSelfAgeForJoin(18, "post_high_school_only").ok).toBe(true);
   });
 
+  it("allows 17-year-old profile when minor_separated_test with guardian consent", () => {
+    expect(
+      checkProfileRegistrationAge({
+        age: 17,
+        mode: "minor_separated_test",
+        guardianConsent: true,
+      }).ok
+    ).toBe(true);
+    expect(
+      checkProfileRegistrationAge({
+        age: 17,
+        mode: "minor_separated_test",
+        guardianConsent: false,
+      }).ok
+    ).toBe(false);
+  });
+
+  it("rejects under-18 profile when minors disabled", () => {
+    expect(
+      checkProfileRegistrationAge({
+        age: 17,
+        mode: "post_high_school_only",
+      }).ok
+    ).toBe(false);
+  });
+
   it("forces adult match range in post_high_school_only", () => {
     expect(
       applyAgeModeToMatchRange("post_high_school_only", 0, 25, 20)
     ).toEqual({ minAge: 18, maxAge: 25 });
+  });
+
+  it("uses 18+ slider bounds when minors disabled", () => {
+    expect(getAgeFilterBounds("post_high_school_only", 20)).toEqual({
+      sliderMin: 18,
+      sliderMax: 130,
+      defaultMin: 18,
+      defaultMax: 25,
+    });
+  });
+
+  it("allows teen slider bounds when minors enabled and user is minor", () => {
+    expect(getAgeFilterBounds("minor_separated_test", 16)).toEqual({
+      sliderMin: 13,
+      sliderMax: 17,
+      defaultMin: 15,
+      defaultMax: 17,
+    });
+  });
+});
+
+describe("legalConsent", () => {
+  it("buildLegalConsentPayload sets terms_agreed_at", () => {
+    const payload = buildLegalConsentPayload("2026-06-22T00:00:00.000Z");
+    expect(payload.terms_agreed_at).toBe("2026-06-22T00:00:00.000Z");
+    expect(payload.terms_version).toBeTruthy();
   });
 });
 

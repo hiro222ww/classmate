@@ -27,7 +27,7 @@ export function resolveMatchJoinUserMessage(
       return "このテーマは参加条件により利用できません。";
     case "adult_only":
     case "minors_disabled":
-      return "Classmateは大学生・専門学生・社会人向けのサービスです。高校生以下はご利用いただけません。";
+      return "現在このサービスは18歳以上のみ利用できます。";
     case "sensitive_topic_adult_only":
     case "topic_min_age":
       return "このテーマは利用条件により参加できません。";

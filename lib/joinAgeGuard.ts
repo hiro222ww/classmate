@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  checkProfileRegistrationAge,
   checkSelfAgeForJoin,
   getEffectiveAgeMode,
   getProfileAge,
@@ -18,6 +19,20 @@ export type JoinAgeGuardResult =
       mode: AgeMode;
     };
 
+function toDeniedResult(
+  check: Extract<ReturnType<typeof checkSelfAgeForJoin>, { ok: false }>,
+  age: number | null,
+  mode: AgeMode
+): Extract<JoinAgeGuardResult, { ok: false }> {
+  return {
+    ok: false,
+    error: check.error,
+    message: check.message,
+    age,
+    mode,
+  };
+}
+
 export async function enforceDeviceJoinAge(
   deviceId: string,
   userId?: string | null
@@ -27,16 +42,28 @@ export async function enforceDeviceJoinAge(
   const check = checkSelfAgeForJoin(age, mode);
 
   if (!check.ok) {
-    return {
-      ok: false,
-      error: check.error,
-      message: check.message,
-      age,
-      mode,
-    };
+    return toDeniedResult(check, age, mode);
   }
 
   return { ok: true, age, mode };
+}
+
+export async function enforceProfileSaveAge(params: {
+  age: number;
+  guardianConsent?: boolean;
+}): Promise<JoinAgeGuardResult> {
+  const mode = await getEffectiveAgeMode();
+  const check = checkProfileRegistrationAge({
+    age: params.age,
+    mode,
+    guardianConsent: params.guardianConsent,
+  });
+
+  if (!check.ok) {
+    return toDeniedResult(check, params.age, mode);
+  }
+
+  return { ok: true, age: params.age, mode };
 }
 
 export function joinAgeGuardResponse(result: Extract<JoinAgeGuardResult, { ok: false }>) {

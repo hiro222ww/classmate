@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import {
   applyAgeModeToMatchRange,
+  getAgeFilterBounds,
   getEffectiveAgeMode,
   getProfileAge,
   checkSelfAgeForJoin,
+  type AgeMode,
 } from "@/lib/agePolicy";
 import {
   defaultMatchPrefs,
@@ -19,9 +21,15 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function normalizeAgeRange(minAge: unknown, maxAge: unknown) {
-  const minA = clamp(Number(minAge ?? 0), 0, 130);
-  const maxA = clamp(Number(maxAge ?? 130), 0, 130);
+function normalizeAgeRange(
+  minAge: unknown,
+  maxAge: unknown,
+  mode: AgeMode,
+  selfAge: number | null
+) {
+  const bounds = getAgeFilterBounds(mode, selfAge);
+  const minA = clamp(Number(minAge ?? bounds.defaultMin), bounds.sliderMin, bounds.sliderMax);
+  const maxA = clamp(Number(maxAge ?? bounds.defaultMax), bounds.sliderMin, bounds.sliderMax);
   let fixedMin = Math.min(minA, maxA);
   let fixedMax = Math.max(minA, maxA);
   return { fixedMin, fixedMax };
@@ -132,7 +140,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const normalized = normalizeAgeRange(body.minAge, body.maxAge);
+  const normalized = normalizeAgeRange(body.minAge, body.maxAge, ageMode, selfAge);
   const guarded = applyAgeModeToMatchRange(
     ageMode,
     normalized.fixedMin,
