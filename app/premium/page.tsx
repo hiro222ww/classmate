@@ -10,13 +10,10 @@ import {
   formatClassSlotPrice,
   formatTopicPlanLine,
   topicSupportPlanName,
-  TOPIC_PLAN_BETA_DESCRIPTION,
-  TOPIC_PLAN_BETA_INTRO,
-  TOPIC_PLAN_SAME_ACCESS_NOTE,
 } from "@/lib/planTiers";
 import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
-import { BillingSupportSection } from "@/components/BillingSupportSection";
+import { BillingNoticeTip } from "@/components/BillingNoticeTip";
 import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { fetchAuthStatus } from "@/lib/authClient";
@@ -31,6 +28,9 @@ type Entitlements = {
 
 const TOPIC_PLANS = [400, 800, 1200] as const;
 const SLOT_PLANS = [3, 5] as const;
+
+const TOPIC_PLAN_HELP =
+  "テーマプランは任意の月額支援です。金額が高いプランに追加機能があるわけではありません。";
 
 function SoftCard({ children }: { children: React.ReactNode }) {
   return (
@@ -50,7 +50,6 @@ function SoftCard({ children }: { children: React.ReactNode }) {
 function PlanCard({
   name,
   priceLine,
-  description,
   active,
   disabled,
   busy,
@@ -59,7 +58,6 @@ function PlanCard({
 }: {
   name: string;
   priceLine: string;
-  description?: string;
   active?: boolean;
   disabled?: boolean;
   busy?: boolean;
@@ -79,18 +77,6 @@ function PlanCard({
       <div>
         <div style={{ fontWeight: 900, fontSize: 16 }}>{name}</div>
         <div style={{ fontWeight: 900, marginTop: 4 }}>{priceLine}</div>
-        {description ? (
-          <div
-            style={{
-              marginTop: 8,
-              fontSize: 13,
-              color: "#6b7280",
-              lineHeight: 1.6,
-            }}
-          >
-            {description}
-          </div>
-        ) : null}
       </div>
 
       {active ? (
@@ -293,9 +279,24 @@ export default function PremiumPage() {
         gap: 16,
       }}
     >
-      <header style={{ display: "flex", justifyContent: "space-between" }}>
-        <h1 style={{ fontSize: 28, fontWeight: 900 }}>プラン</h1>
-        <Link href={withDev("/billing")}>支払い管理</Link>
+      <header
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 900, margin: 0 }}>プラン</h1>
+          <div style={{ marginTop: 8 }}>
+            <BillingNoticeTip label="ベータ期間中のご利用について" />
+          </div>
+        </div>
+        <Link href={withDev("/billing")} style={{ fontWeight: 900 }}>
+          支払い管理
+        </Link>
       </header>
 
       {accountLinked === false ? (
@@ -311,14 +312,12 @@ export default function PremiumPage() {
             fontWeight: 700,
           }}
         >
-          {BILLING_LINK_REQUIRED_MESSAGE}
-          {" "}
-          <Link href={withDev("/settings")} style={{ color: "#111827", fontWeight: 900 }}>
-            アカウント連携
-          </Link>
-          {" · "}
-          <Link href={withDev("/login")} style={{ color: "#111827", fontWeight: 900 }}>
-            ログイン
+          {BILLING_LINK_REQUIRED_MESSAGE}{" "}
+          <Link
+            href={withDev("/settings")}
+            style={{ color: "#111827", fontWeight: 900 }}
+          >
+            設定でメール連携
           </Link>
         </section>
       ) : null}
@@ -330,11 +329,6 @@ export default function PremiumPage() {
             ? formatTopicPlanLine(currentTopicSupport || 400)
             : "無料"}
         </div>
-        {hasThemePass ? (
-          <div style={{ marginTop: 8 }}>
-            <HelpTip label="テーマプランの補足" content={TOPIC_PLAN_SAME_ACCESS_NOTE} />
-          </div>
-        ) : null}
 
         <div style={{ fontSize: 14, color: "#666", marginTop: 16 }}>
           現在のクラス枠
@@ -347,16 +341,9 @@ export default function PremiumPage() {
       <ThemePlanTopicsSection />
 
       <SoftCard>
-        <HelpTip label="テーマプランについて" content={TOPIC_PLAN_BETA_INTRO}>
+        <HelpTip label="テーマプランについて" content={TOPIC_PLAN_HELP}>
           <div style={{ fontWeight: 900 }}>テーマプラン（任意の支援額）</div>
         </HelpTip>
-        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280" }}>
-          支援額はお好みで選べます
-          <HelpTip
-            label="支援額の補足"
-            content={`${TOPIC_PLAN_SAME_ACCESS_NOTE} 金額が高いプランに追加機能があるわけではありません。`}
-          />
-        </p>
 
         <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
           {TOPIC_PLANS.map((p) => {
@@ -367,7 +354,6 @@ export default function PremiumPage() {
                 key={p}
                 name={topicSupportPlanName(p)}
                 priceLine={`¥${p}/月`}
-                description={TOPIC_PLAN_BETA_DESCRIPTION[p]}
                 active={isCurrentSupport}
                 disabled={!canClick || isCurrentSupport}
                 busy={busyKey.includes(String(p))}
@@ -407,27 +393,6 @@ export default function PremiumPage() {
           ))}
         </div>
       </SoftCard>
-
-      <SoftCard>
-        <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#374151" }}>
-          プラン変更・解約は「支払い管理」から行えます。
-        </p>
-        <Link
-          href={withDev("/billing")}
-          style={{
-            display: "inline-block",
-            marginTop: 12,
-            color: "#111",
-            fontWeight: 900,
-            textDecoration: "underline",
-            textUnderlineOffset: 3,
-          }}
-        >
-          支払い管理へ
-        </Link>
-      </SoftCard>
-
-      <BillingSupportSection />
     </main>
   );
 }

@@ -7,7 +7,6 @@ import {
   THEME_PLAN_TOPICS_CHANGE_NOTE,
   THEME_PLAN_TOPICS_HEADING,
   THEME_PLAN_TOPICS_INTRO,
-  THEME_PLAN_TOPICS_SAME_ACCESS,
   topicBillingBadgeLabel,
   type TopicPublicRow,
 } from "@/lib/topicManagement";
@@ -107,9 +106,6 @@ export function ThemePlanTopicsSection() {
         <div style={{ fontWeight: 900, fontSize: 16 }}>{THEME_PLAN_TOPICS_HEADING}</div>
         <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
           {THEME_PLAN_TOPICS_INTRO}
-        </p>
-        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-          {THEME_PLAN_TOPICS_SAME_ACCESS}
         </p>
         <p style={{ margin: "8px 0 0", fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
           {THEME_PLAN_TOPICS_CHANGE_NOTE}

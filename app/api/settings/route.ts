@@ -13,6 +13,10 @@ import {
   ageModeFromLegacyMinors,
 } from "@/lib/agePolicy";
 import { parseMinorsEnabledValue } from "@/lib/minorsSettings";
+import {
+  DEFAULT_BILLING_NOTICE_TEXT,
+  normalizeBillingNotice,
+} from "@/lib/billingNoticeDefaults";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +42,7 @@ const DEFAULT_SETTINGS: {
   },
   billing_notice: {
     enabled: true,
-    text: "",
+    text: DEFAULT_BILLING_NOTICE_TEXT,
   },
   recruitment_session_ttl_minutes: {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
@@ -74,10 +78,10 @@ export async function GET() {
       }
 
       if (row.key === "billing_notice") {
-        settings.billing_notice = {
+        settings.billing_notice = normalizeBillingNotice({
           ...settings.billing_notice,
           ...(row.value ?? {}),
-        };
+        });
       }
 
       if (row.key === "recruitment_session_ttl_minutes") {

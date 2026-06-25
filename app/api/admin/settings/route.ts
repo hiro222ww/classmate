@@ -11,6 +11,10 @@ import {
   type AgeMode,
 } from "@/lib/agePolicy";
 import { parseMinorsEnabledValue } from "@/lib/minorsSettings";
+import {
+  DEFAULT_BILLING_NOTICE_TEXT,
+  normalizeBillingNotice,
+} from "@/lib/billingNoticeDefaults";
 import { adminActorFromRequest, writeAdminAuditLog } from "@/lib/adminAuditLog";
 import {
   parseRecruitmentSessionTtlValue,
@@ -43,8 +47,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     end: "21:30",
   },
   billing_notice: {
-    enabled: false,
-    text: "",
+    enabled: true,
+    text: DEFAULT_BILLING_NOTICE_TEXT,
   },
   recruitment_session_ttl_minutes: {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
@@ -81,10 +85,10 @@ async function readSettings(): Promise<AppSettings> {
       };
     }
     if (row.key === "billing_notice") {
-      settings.billing_notice = {
+      settings.billing_notice = normalizeBillingNotice({
         ...settings.billing_notice,
         ...(row.value ?? {}),
-      };
+      });
     }
     if (row.key === "recruitment_session_ttl_minutes") {
       settings.recruitment_session_ttl_minutes = parseRecruitmentSessionTtlValue(

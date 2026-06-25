@@ -9,8 +9,10 @@ import {
   linkEmailAddress,
   supabaseAuthClient,
 } from "@/lib/authClient";
-import { anonymousUserNotice } from "@/lib/userIdentity";
 import { withDev } from "@/lib/withDev";
+import { isDevFeatureEnabled } from "@/lib/devMode";
+import { anonymousUserNotice } from "@/lib/userIdentity";
+import { AccountLinkHelpTip } from "@/components/AccountAuthHelp";
 
 type AuthStatus = {
   userId: string;
@@ -171,9 +173,10 @@ export default function SettingsClient() {
       >
         <div style={{ fontWeight: 900, fontSize: 16 }}>アカウント連携</div>
         <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-          メールアドレスを連携すると、Safari / Chrome / 別端末でも同じプロフィール・プラン・参加履歴を復元しやすくなります。
-          初回利用時にログインは不要で、ゲスト利用のまま始められます。
+          この端末のプロフィール・プラン・参加履歴に、メールアドレスを登録します。
+          初回利用時にログインは不要です。
         </p>
+        <AccountLinkHelpTip />
 
         {status?.hasLinkedEmail ? (
           <p style={{ margin: 0, fontSize: 13, color: "#166534", fontWeight: 800 }}>
@@ -216,6 +219,7 @@ export default function SettingsClient() {
         )}
       </section>
 
+      {isDevFeatureEnabled() ? (
       <section
         style={{
           border: "1px solid #e5e7eb",
@@ -227,7 +231,7 @@ export default function SettingsClient() {
           color: "#4b5563",
         }}
       >
-        <div style={{ fontWeight: 900, color: "#111827" }}>端末・認証デバッグ</div>
+        <div style={{ fontWeight: 900, color: "#111827" }}>開発者向け</div>
         <div>
           ユーザーID（課金・プロフィール本体）:
           <code style={{ marginLeft: 6, wordBreak: "break-all" }}>
@@ -291,6 +295,7 @@ export default function SettingsClient() {
           この端末の認証セッションを終了
         </button>
       </section>
+      ) : null}
 
       {message ? (
         <p style={{ margin: 0, color: "#166534", fontWeight: 700 }}>{message}</p>
@@ -300,7 +305,7 @@ export default function SettingsClient() {
       ) : null}
 
         <p style={{ margin: "8px 0 0", fontSize: 13 }}>
-          <Link href={withDev("/login")}>別端末からログイン</Link>
+          <Link href={withDev("/login")}>別端末から戻る（ログイン）</Link>
           {" · "}
           <Link href={withDev("/profile")}>プロフィール編集</Link>
           {" · "}

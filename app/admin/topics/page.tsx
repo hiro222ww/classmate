@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { tierName } from "@/lib/planTiers";
 import { genderRestrictionAdminLabel } from "@/lib/topicManagement";
+import { DEFAULT_BILLING_NOTICE_TEXT } from "@/lib/billingNoticeDefaults";
 
 type WorldRow = {
   world_key: string;
@@ -81,7 +82,7 @@ const [globalJoinEnd, setGlobalJoinEnd] = useState("21:30");
 
 const [billingNoticeEnabled, setBillingNoticeEnabled] = useState(true);
 const [billingNoticeText, setBillingNoticeText] = useState(
-  "※ ベータ期間中はテーマプランの内容を整理中です。現在はベーシック（¥400/月）で対象テーマを利用できます。"
+  DEFAULT_BILLING_NOTICE_TEXT
 );
 
 type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";
@@ -138,7 +139,9 @@ setGlobalJoinStart(String(settings.global_join_window?.start ?? "21:00"));
 setGlobalJoinEnd(String(settings.global_join_window?.end ?? "21:30"));
 
 setBillingNoticeEnabled(Boolean(settings.billing_notice?.enabled));
-setBillingNoticeText(String(settings.billing_notice?.text ?? ""));
+setBillingNoticeText(
+  String(settings.billing_notice?.text ?? DEFAULT_BILLING_NOTICE_TEXT)
+);
 
 const ttl = settings.recruitment_session_ttl_minutes ?? {};
 if (ttl.unlimited === true) {
@@ -690,6 +693,61 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
             }}
           >
             募集締切設定を保存
+          </button>
+        </div>
+      </section>
+
+      <section style={{ ...card, marginTop: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+          課金ページの注意文
+        </h2>
+        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
+          プラン画面・支払い管理画面の「?」ヘルプに表示されます。ベータ期間中の案内などをここで編集できます。
+        </p>
+
+        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          <label
+            style={{
+              fontSize: 13,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={billingNoticeEnabled}
+              onChange={(e) => setBillingNoticeEnabled(e.target.checked)}
+            />
+            課金ページに表示する
+          </label>
+
+          <label style={{ fontSize: 12, color: "#666" }}>
+            表示文言
+            <textarea
+              value={billingNoticeText}
+              onChange={(e) => setBillingNoticeText(e.target.value)}
+              rows={5}
+              style={{
+                ...input,
+                width: "100%",
+                marginTop: 6,
+                resize: "vertical",
+                lineHeight: 1.6,
+              }}
+            />
+          </label>
+
+          <button
+            onClick={saveSettings}
+            disabled={busy}
+            style={{
+              ...btn,
+              width: "fit-content",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            課金注意文を保存
           </button>
         </div>
       </section>

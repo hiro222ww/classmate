@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { signInWithMagicLink } from "@/lib/authClient";
 import { withDev } from "@/lib/withDev";
+import { LoginHelpTip } from "@/components/AccountAuthHelp";
 
 function sanitizeRedirect(value: string | null) {
   const raw = String(value ?? "").trim();
@@ -54,10 +55,15 @@ export default function LoginClient() {
       }}
     >
       <header>
-        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>ログイン</h1>
+        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>
+          別端末から戻る
+        </h1>
         <p style={{ margin: "8px 0 0", color: "#6b7280", lineHeight: 1.65 }}>
-          連携済みのメールアドレスで、Safari / Chrome / 別端末から同じアカウントに戻れます。
+          すでにメール連携済みのアカウントに、Safari / Chrome / 別端末から戻るときに使います。
         </p>
+        <div style={{ marginTop: 8 }}>
+          <LoginHelpTip />
+        </div>
       </header>
 
       <form
@@ -71,7 +77,7 @@ export default function LoginClient() {
         }}
       >
         <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
-          メールアドレス
+          連携済みのメールアドレス
           <input
             type="email"
             value={email}
@@ -100,12 +106,19 @@ export default function LoginClient() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "送信中…" : "マジックリンクを送る"}
+          {busy ? "送信中…" : "ログインリンクを送る"}
         </button>
       </form>
 
       {message ? (
-        <p style={{ margin: 0, color: "#166534", fontWeight: 700, lineHeight: 1.65 }}>
+        <p
+          style={{
+            margin: 0,
+            color: "#166534",
+            fontWeight: 700,
+            lineHeight: 1.65,
+          }}
+        >
           {message}
         </p>
       ) : null}
@@ -113,11 +126,27 @@ export default function LoginClient() {
         <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}>{error}</p>
       ) : null}
 
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65 }}>
-        初めての方はログイン不要で利用できます。
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 16,
+          padding: 14,
+          fontSize: 13,
+          lineHeight: 1.65,
+          color: "#4b5563",
+        }}
+      >
+        <div style={{ fontWeight: 900, color: "#111827", marginBottom: 6 }}>
+          初めての方
+        </div>
+        ログインは不要です。そのまま利用を始められます。
         <br />
-        <Link href={withDev("/settings")}>アカウント連携は設定ページ</Link>
-        {" · "}
+        課金前にメールを登録したい場合は{" "}
+        <Link href={withDev("/settings")}>設定ページ</Link>{" "}
+        で連携してください。
+      </section>
+
+      <p style={{ margin: 0, fontSize: 13 }}>
         <Link href={withDev("/home")}>ホームへ戻る</Link>
       </p>
     </main>

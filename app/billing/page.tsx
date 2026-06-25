@@ -1,10 +1,15 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
+import { BillingNoticeTip } from "@/components/BillingNoticeTip";
 import { getDeviceId } from "@/lib/device";
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
+import { fetchAuthStatus } from "@/lib/authClient";
+import { BILLING_LINK_REQUIRED_MESSAGE } from "@/lib/billingAuthGate";
+import { withDev } from "@/lib/withDev";
 
 type PortalAction =
   | "update_theme"
@@ -12,54 +17,61 @@ type PortalAction =
   | "cancel_theme"
   | "cancel_slots";
 
-function portalConfigHint(action: PortalAction) {
-  switch (action) {
-    case "update_theme":
-    case "cancel_theme":
-      return "STRIPE_PORTAL_CONFIG_THEME";
-    case "update_slots":
-    case "cancel_slots":
-      return "STRIPE_PORTAL_CONFIG_SLOTS";
-  }
-}
-
 function BillingPageInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const dev = (searchParams.get("dev") ?? "").trim();
   const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
 
   const [loadingKey, setLoadingKey] = useState("");
-  const [msg, setMsg] = useState("");
+  const [accountLinked, setAccountLinked] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const deviceId = getDeviceId();
+    if (!deviceId) return;
+
+    void fetchAuthStatus(deviceId).then((status) => {
+      setAccountLinked(
+        Boolean(status?.hasLinkedEmail) && !Boolean(status?.isAnonymous)
+      );
+    });
+  }, []);
 
   async function openBillingPortal(action: PortalAction) {
+    if (accountLinked === false) {
+      const ok = window.confirm(
+        `${BILLING_LINK_REQUIRED_MESSAGE}\n\n設定ページへ移動しますか？`
+      );
+      if (ok) router.push(withDev("/settings"));
+      return;
+    }
+
     try {
       setLoadingKey(action);
-      setMsg("");
 
       const deviceId = getDeviceId();
 
-      const r = await fetch("/api/billing/create-portal-session", {
+      const r = await authenticatedFetch("/api/billing/create-portal-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ deviceId, dev, action }),
         cache: "no-store",
       });
 
-      const text = await r.text();
-      let j: { error?: string; url?: string } | null = null;
-
-      try {
-        j = text ? JSON.parse(text) : null;
-      } catch {
-        j = null;
-      }
+      const j = await r.json().catch(() => null);
 
       if (!r.ok) {
-        const errMsg = j?.error ?? `billing_portal_failed:${r.status}`;
+        const errMsg = String(j?.error ?? `billing_portal_failed:${r.status}`);
 
         if (errMsg === "customer_not_found") {
           alert("まだ契約がありません。プランを選択してください。");
           window.location.href = `/premium${devQuery}`;
+          return;
+        }
+
+        if (errMsg === "auth_required" || errMsg === "account_link_required") {
+          alert(j?.message ?? BILLING_LINK_REQUIRED_MESSAGE);
+          router.push(withDev("/settings"));
           return;
         }
 
@@ -73,13 +85,12 @@ function BillingPageInner() {
           errMsg.startsWith("portal_configuration_invalid")
         ) {
           alert(
-            `お支払い管理の設定が未完了です。管理者に ${portalConfigHint(action)} の設定を確認してください。`
+            "お支払い管理の準備ができていません。しばらくしてから再度お試しください。"
           );
           return;
         }
 
-        setMsg(String(errMsg));
-        alert(String(errMsg));
+        alert(j?.message ?? errMsg);
         return;
       }
 
@@ -88,13 +99,10 @@ function BillingPageInner() {
         return;
       }
 
-      setMsg("billing portal url missing");
-      alert("billing portal url missing");
+      alert("お支払い管理ページを開けませんでした。");
     } catch (e: unknown) {
-      const m = e instanceof Error ? e.message : "billing_portal_failed";
       console.error(e);
-      setMsg(m);
-      alert(m);
+      alert(e instanceof Error ? e.message : "通信エラーが発生しました");
     } finally {
       setLoadingKey("");
     }
@@ -104,7 +112,6 @@ function BillingPageInner() {
 
   function renderPlanSection(params: {
     title: string;
-    description: string;
     updateAction: "update_theme" | "update_slots";
     cancelAction: "cancel_theme" | "cancel_slots";
     updateLabel: string;
@@ -121,19 +128,7 @@ function BillingPageInner() {
           gap: 12,
         }}
       >
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 900 }}>{params.title}</div>
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 13,
-              color: "#666",
-              lineHeight: 1.7,
-            }}
-          >
-            {params.description}
-          </p>
-        </div>
+        <div style={{ fontSize: 18, fontWeight: 900 }}>{params.title}</div>
 
         <button
           type="button"
@@ -201,10 +196,7 @@ function BillingPageInner() {
         }}
       >
         <div>
-          <div style={{ fontSize: 13, color: "#666", fontWeight: 800 }}>
-            classmate
-          </div>
-          <h1 style={{ margin: "6px 0 0", fontSize: 28, fontWeight: 900 }}>
+          <h1 style={{ margin: "0", fontSize: 28, fontWeight: 900 }}>
             お支払い管理
           </h1>
           <p
@@ -215,9 +207,11 @@ function BillingPageInner() {
               lineHeight: 1.6,
             }}
           >
-            クラス枠とテーマプランは、下のボタンから Stripe Portal
-            で変更・解約できます。
+            プランの変更・解約は Stripe の画面で行います。
           </p>
+          <div style={{ marginTop: 8 }}>
+            <BillingNoticeTip label="ベータ期間中のご利用について" />
+          </div>
         </div>
 
         <Link
@@ -236,9 +230,31 @@ function BillingPageInner() {
         </Link>
       </header>
 
+      {accountLinked === false ? (
+        <section
+          style={{
+            border: "1px solid #fde68a",
+            background: "#fffbeb",
+            color: "#92400e",
+            borderRadius: 16,
+            padding: 14,
+            fontSize: 13,
+            lineHeight: 1.65,
+            fontWeight: 700,
+          }}
+        >
+          {BILLING_LINK_REQUIRED_MESSAGE}{" "}
+          <Link
+            href={withDev("/settings")}
+            style={{ color: "#111827", fontWeight: 900 }}
+          >
+            設定でメール連携
+          </Link>
+        </section>
+      ) : null}
+
       {renderPlanSection({
-        title: "クラススロット",
-        description: "変更・解約は Stripe Portal から行います。",
+        title: "クラス枠",
         updateAction: "update_slots",
         cancelAction: "cancel_slots",
         updateLabel: "クラス枠を変更",
@@ -247,42 +263,13 @@ function BillingPageInner() {
 
       {renderPlanSection({
         title: "テーマプラン",
-        description: "変更・解約は Stripe Portal から行います。",
         updateAction: "update_theme",
         cancelAction: "cancel_theme",
         updateLabel: "支援額を変更",
         cancelLabel: "テーマプランを解約",
       })}
 
-      <BillingSupportSection />
-
-      <div
-        style={{
-          fontSize: 12,
-          color: "#9ca3af",
-          lineHeight: 1.6,
-          padding: "0 4px",
-        }}
-      >
-        ※ 解約は選択した契約のみが対象です。
-      </div>
-
-      {msg ? (
-        <div
-          style={{
-            border: "1px solid #fecaca",
-            background: "#fef2f2",
-            color: "#991b1b",
-            borderRadius: 14,
-            padding: 12,
-            fontSize: 13,
-            fontWeight: 800,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {msg}
-        </div>
-      ) : null}
+      <BillingSupportSection showPortalLogin={false} showBetaNotice={false} />
 
       <Link
         href={`/premium${devQuery}`}
@@ -301,9 +288,7 @@ function BillingPageInner() {
 
 export default function BillingPage() {
   return (
-    <Suspense
-      fallback={<main style={{ padding: 24 }}>読み込み中...</main>}
-    >
+    <Suspense fallback={<main style={{ padding: 24 }}>読み込み中...</main>}>
       <BillingPageInner />
     </Suspense>
   );
