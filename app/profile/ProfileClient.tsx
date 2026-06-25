@@ -842,7 +842,7 @@ export default function ProfileClient() {
         )}
         <LegalDocumentLinks compact />
         <p style={{ margin: "8px 0 0", fontSize: 13 }}>
-          <Link href={withDev("/settings")}>アカウント連携・設定</Link>
+          <Link href={withDev("/settings")}>アカウント設定</Link>
         </p>
       </div>
 

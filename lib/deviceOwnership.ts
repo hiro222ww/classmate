@@ -76,7 +76,7 @@ export async function assertDeviceBootstrapAllowed(params: {
 
       throw new DeviceOwnershipError(
         "device_secret_required",
-        "端末の所有確認が必要です。ログインしてプロフィールを復元してください。",
+        "ログインしてアカウントを復元してください。",
         "restore_login"
       );
     }
@@ -92,7 +92,7 @@ export async function assertDeviceBootstrapAllowed(params: {
 
       throw new DeviceOwnershipError(
         "device_secret_mismatch",
-        "端末の所有確認に失敗しました。ログインしてプロフィールを復元してください。",
+        "ログインしてアカウントを復元してください。",
         "restore_login"
       );
     }
@@ -131,7 +131,8 @@ export async function assertDeviceBootstrapAllowed(params: {
   ) {
     throw new DeviceOwnershipError(
       "profile_device_conflict",
-      "別端末のプロフィールが既に存在します。ログインして復元してください。"
+      "別のアカウントにプロフィールがあります。ログイン後にプロフィールを再登録してください。",
+      "needs_profile"
     );
   }
 

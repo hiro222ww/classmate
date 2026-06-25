@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
 import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { buildLoginUrl } from "@/lib/authAccount";
 import { assertBillingAccountLinked } from "@/lib/billingAuthGate";
 import { resolveBillingCustomer } from "@/lib/billingIdentity";
 import { resolveAppOrigin } from "@/lib/appOrigin";
@@ -53,13 +54,16 @@ export async function POST(req: Request) {
         {
           error: identityResult.error,
           message: identityResult.message,
-          redirectTo: "/login",
+          redirectTo: buildLoginUrl("/billing"),
         },
         { status: identityResult.status }
       );
     }
 
-    const billingGate = assertBillingAccountLinked(identityResult.identity);
+    const billingGate = assertBillingAccountLinked(
+      identityResult.identity,
+      "/billing"
+    );
     if (!billingGate.ok) {
       return NextResponse.json(
         {

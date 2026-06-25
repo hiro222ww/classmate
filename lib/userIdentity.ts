@@ -52,8 +52,5 @@ export function hasLinkedEmailFromAuthUser(user: {
 
 export function anonymousUserNotice(isAnonymous: boolean, hasLinkedEmail: boolean) {
   if (!isAnonymous && hasLinkedEmail) return null;
-  if (isAnonymous) {
-    return "ゲスト利用中です。別端末やブラウザでも同じアカウントを使うには、アカウント連携を行ってください。";
-  }
-  return "メール連携が未完了です。確認メールをご確認ください。";
+  return "ログインまたは新規登録すると、プロフィール・プラン・参加履歴を端末をまたいで利用できます。";
 }

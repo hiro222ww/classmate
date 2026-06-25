@@ -38,7 +38,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const billingGate = assertBillingAccountLinked(identityResult.identity);
+    const billingGate = assertBillingAccountLinked(
+      identityResult.identity,
+      "/premium"
+    );
     if (!billingGate.ok) {
       return NextResponse.json(
         {

@@ -7,6 +7,7 @@ import {
   updateSubscriptionItemPrice,
 } from "@/lib/billingSubscriptions";
 import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { buildLoginUrl } from "@/lib/authAccount";
 import { assertBillingAccountLinked } from "@/lib/billingAuthGate";
 import {
   buildStripeIdentityMetadata,
@@ -70,13 +71,16 @@ export async function POST(req: Request) {
         {
           error: identityResult.error,
           message: identityResult.message,
-          redirectTo: identityResult.status === 401 ? "/login" : "/settings",
+          redirectTo: buildLoginUrl("/premium"),
         },
         { status: identityResult.status }
       );
     }
 
-    const billingGate = assertBillingAccountLinked(identityResult.identity);
+    const billingGate = assertBillingAccountLinked(
+      identityResult.identity,
+      "/premium"
+    );
     if (!billingGate.ok) {
       return NextResponse.json(
         {

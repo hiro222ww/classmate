@@ -3,22 +3,17 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { signInWithMagicLink } from "@/lib/authClient";
+import { sendAccountMagicLink } from "@/lib/authClient";
+import { sanitizeReturnTo } from "@/lib/authAccount";
 import { withDev } from "@/lib/withDev";
-import { LoginHelpTip } from "@/components/AccountAuthHelp";
-
-function sanitizeRedirect(value: string | null) {
-  const raw = String(value ?? "").trim();
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/home";
-  return raw;
-}
 
 export default function LoginClient() {
   const searchParams = useSearchParams();
-  const redirectTo = useMemo(
-    () => sanitizeRedirect(searchParams.get("redirect")),
-    [searchParams]
-  );
+  const returnTo = useMemo(() => {
+    const raw =
+      searchParams.get("returnTo") ?? searchParams.get("redirect") ?? "/home";
+    return sanitizeReturnTo(raw);
+  }, [searchParams]);
 
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,7 +26,7 @@ export default function LoginClient() {
     setMessage("");
     setError("");
 
-    const result = await signInWithMagicLink(email, redirectTo);
+    const result = await sendAccountMagicLink(email, returnTo);
     if (!result.ok) {
       setError(result.error);
       setBusy(false);
@@ -39,7 +34,9 @@ export default function LoginClient() {
     }
 
     setMessage(
-      "ログイン用のリンクをメールで送信しました。メール内のリンクを開くと、この端末で同じアカウントに戻れます。"
+      result.mode === "upgrade"
+        ? "確認メールを送信しました。メール内のリンクを開くと、アカウント登録が完了します。"
+        : "ログイン用のリンクをメールで送信しました。メール内のリンクを開いてください。"
     );
     setBusy(false);
   }
@@ -56,14 +53,11 @@ export default function LoginClient() {
     >
       <header>
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>
-          別端末から戻る
+          ログイン / 新規登録
         </h1>
         <p style={{ margin: "8px 0 0", color: "#6b7280", lineHeight: 1.65 }}>
-          すでにメール連携済みのアカウントに、Safari / Chrome / 別端末から戻るときに使います。
+          メールアドレスを入力してください。アカウントがなければ作成され、あればログインできます。
         </p>
-        <div style={{ marginTop: 8 }}>
-          <LoginHelpTip />
-        </div>
       </header>
 
       <form
@@ -77,13 +71,14 @@ export default function LoginClient() {
         }}
       >
         <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
-          連携済みのメールアドレス
+          メールアドレス
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
             required
+            autoComplete="email"
             style={{
               padding: "10px 12px",
               borderRadius: 12,
@@ -106,7 +101,7 @@ export default function LoginClient() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "送信中…" : "ログインリンクを送る"}
+          {busy ? "送信中…" : "メールで続ける"}
         </button>
       </form>
 
@@ -126,28 +121,12 @@ export default function LoginClient() {
         <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}>{error}</p>
       ) : null}
 
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 16,
-          padding: 14,
-          fontSize: 13,
-          lineHeight: 1.65,
-          color: "#4b5563",
-        }}
-      >
-        <div style={{ fontWeight: 900, color: "#111827", marginBottom: 6 }}>
-          初めての方
-        </div>
-        ログインは不要です。そのまま利用を始められます。
+      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#6b7280" }}>
+        ログイン後、元の画面に戻ります。
         <br />
-        課金前にメールを登録したい場合は{" "}
-        <Link href={withDev("/settings")}>設定ページ</Link>{" "}
-        で連携してください。
-      </section>
-
-      <p style={{ margin: 0, fontSize: 13 }}>
         <Link href={withDev("/home")}>ホームへ戻る</Link>
+        {" · "}
+        <Link href={withDev("/settings")}>アカウント設定</Link>
       </p>
     </main>
   );

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertBillingAccountLinked,
-  billingLinkRequiredResponse,
+  billingLoginRequiredResponse,
   isAccountLinkedForBilling,
 } from "@/lib/billingAuthGate";
 import type { ResolvedRequestIdentity } from "@/lib/requestIdentity";
@@ -33,32 +33,34 @@ describe("billingAuthGate", () => {
 
   it("blocks anonymous users from billing", () => {
     const gate = assertBillingAccountLinked(
-      identity({ isAnonymous: true, hasLinkedEmail: false, email: null })
+      identity({ isAnonymous: true, hasLinkedEmail: false, email: null }),
+      "/premium"
     );
     expect(gate.ok).toBe(false);
     if (!gate.ok) {
-      expect(gate.error).toBe("account_link_required");
-      expect(gate.redirectTo).toBe("/settings");
+      expect(gate.error).toBe("auth_required");
+      expect(gate.redirectTo).toBe("/login?returnTo=%2Fpremium");
     }
   });
 
   it("blocks users without linked email from billing", () => {
     const gate = assertBillingAccountLinked(
-      identity({ hasLinkedEmail: false, email: null })
+      identity({ hasLinkedEmail: false, email: null }),
+      "/premium"
     );
     expect(gate.ok).toBe(false);
     if (!gate.ok) {
-      expect(gate.error).toBe("account_link_required");
-      expect(gate.message).toBe(billingLinkRequiredResponse().message);
+      expect(gate.error).toBe("auth_required");
+      expect(gate.message).toBe(billingLoginRequiredResponse("/premium").message);
     }
   });
 
   it("requires auth user id for billing routes", () => {
-    const gate = assertBillingAccountLinked(identity({ userId: "" }));
+    const gate = assertBillingAccountLinked(identity({ userId: "" }), "/premium");
     expect(gate.ok).toBe(false);
     if (!gate.ok) {
       expect(gate.error).toBe("auth_required");
-      expect(gate.redirectTo).toBe("/login");
+      expect(gate.redirectTo).toBe("/login?returnTo=%2Fpremium");
     }
   });
 

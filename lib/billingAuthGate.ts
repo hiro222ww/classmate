@@ -1,7 +1,8 @@
 import type { ResolvedRequestIdentity } from "@/lib/requestIdentity";
+import { buildLoginUrl, LOGIN_REQUIRED_MESSAGE } from "@/lib/authAccount";
 
-export const BILLING_LINK_REQUIRED_MESSAGE =
-  "購入内容を安全に保存するため、アカウント連携が必要です";
+/** @deprecated use LOGIN_REQUIRED_MESSAGE */
+export const BILLING_LINK_REQUIRED_MESSAGE = LOGIN_REQUIRED_MESSAGE;
 
 export function isAccountLinkedForBilling(identity: {
   isAnonymous: boolean;
@@ -10,17 +11,18 @@ export function isAccountLinkedForBilling(identity: {
   return !identity.isAnonymous && identity.hasLinkedEmail;
 }
 
-export function billingLinkRequiredResponse() {
+export function billingLoginRequiredResponse(returnTo = "/premium") {
   return {
     ok: false as const,
-    error: "account_link_required" as const,
-    message: BILLING_LINK_REQUIRED_MESSAGE,
-    redirectTo: "/settings" as const,
+    error: "auth_required" as const,
+    message: LOGIN_REQUIRED_MESSAGE,
+    redirectTo: buildLoginUrl(returnTo),
   };
 }
 
 export function assertBillingAccountLinked(
-  identity: ResolvedRequestIdentity
+  identity: ResolvedRequestIdentity,
+  returnTo = "/premium"
 ):
   | { ok: true }
   | {
@@ -30,21 +32,11 @@ export function assertBillingAccountLinked(
       message: string;
       redirectTo: string;
     } {
-  if (!identity.userId) {
+  if (!identity.userId || !isAccountLinkedForBilling(identity)) {
+    const required = billingLoginRequiredResponse(returnTo);
     return {
       ok: false,
-      status: 401,
-      error: "auth_required",
-      message: "認証が必要です。",
-      redirectTo: "/login",
-    };
-  }
-
-  if (!isAccountLinkedForBilling(identity)) {
-    const required = billingLinkRequiredResponse();
-    return {
-      ok: false,
-      status: 403,
+      status: identity.userId ? 403 : 401,
       error: required.error,
       message: required.message,
       redirectTo: required.redirectTo,

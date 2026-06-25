@@ -29,6 +29,7 @@ import {
   type JoinByInviteResult,
   type JoinByInviteSuccess,
 } from "@/lib/joinByInviteTypes";
+import { buildLoginUrl } from "@/lib/authAccount";
 import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 
 function isUuid(value: string) {
@@ -216,7 +217,16 @@ export async function executeJoinByInvite(
         classId,
         sessionId: requestedSessionId,
         detail: actorResult.error,
-        redirectTo: code === "restore_login" ? "/login" : undefined,
+        redirectTo:
+          code === "restore_login"
+            ? buildLoginUrl(
+                buildInviteRoomRedirect({
+                  classId,
+                  sessionId: requestedSessionId,
+                  invite: true,
+                })
+              )
+            : undefined,
         action: code === "restore_login" ? "restore_login" : null,
       }),
     };
@@ -268,7 +278,16 @@ export async function executeJoinByInvite(
               sessionId: requestedSessionId,
               detail: error.code,
               action: error.action ?? null,
-              redirectTo: code === "restore_login" ? "/login" : undefined,
+              redirectTo:
+          code === "restore_login"
+            ? buildLoginUrl(
+                buildInviteRoomRedirect({
+                  classId,
+                  sessionId: requestedSessionId,
+                  invite: true,
+                })
+              )
+            : undefined,
             }),
           };
         }

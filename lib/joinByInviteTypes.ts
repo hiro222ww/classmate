@@ -80,7 +80,7 @@ export function joinByInviteUserMessage(code: JoinByInviteCode): string {
     case "needs_profile":
       return "参加するにはプロフィール登録が必要です";
     case "restore_login":
-      return "この端末でプロフィールを復元するにはログインが必要です";
+      return "ログインが必要です";
     case "reregister_device":
       return "端末の再登録が必要です。しばらくしてからもう一度お試しください";
     case "auth_required":

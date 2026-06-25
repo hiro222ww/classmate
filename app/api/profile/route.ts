@@ -68,7 +68,31 @@ async function fetchProfileRowByFilter(filter: {
   };
 }
 
-async function fetchExistingProfileConsent(deviceId: string) {
+async function fetchExistingProfileConsent(
+  deviceId: string,
+  userId?: string | null
+) {
+  const normalizedUserId = String(userId ?? "").trim();
+
+  if (normalizedUserId) {
+    const { data, error } = await supabaseAdmin
+      .from("user_profiles")
+      .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
+      .eq("user_id", normalizedUserId)
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        data: (data as Partial<ProfileRow> | null) ?? null,
+        error: null as string | null,
+      };
+    }
+
+    if (error && !isMissingProfileColumnError(error.message)) {
+      return { data: null, error: error.message };
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
     .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
@@ -521,7 +545,10 @@ export async function POST(req: Request) {
     }
   }
 
-  const existingProfileRes = await fetchExistingProfileConsent(device_id);
+  const existingProfileRes = await fetchExistingProfileConsent(
+    device_id,
+    linkedUserId
+  );
   const existingProfile = existingProfileRes.data;
   const existingError = existingProfileRes.error;
 

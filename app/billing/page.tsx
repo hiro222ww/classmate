@@ -1,15 +1,17 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { BillingNoticeTip } from "@/components/BillingNoticeTip";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
-import { fetchAuthStatus } from "@/lib/authClient";
-import { BILLING_LINK_REQUIRED_MESSAGE } from "@/lib/billingAuthGate";
+import { buildLoginUrl } from "@/lib/authAccount";
 import { withDev } from "@/lib/withDev";
+import { useRequireAccount } from "@/components/useRequireAccount";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 type PortalAction =
   | "update_theme"
@@ -22,30 +24,11 @@ function BillingPageInner() {
   const searchParams = useSearchParams();
   const dev = (searchParams.get("dev") ?? "").trim();
   const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
+  const { ready, loggedIn } = useRequireAccount("/billing");
 
   const [loadingKey, setLoadingKey] = useState("");
-  const [accountLinked, setAccountLinked] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const deviceId = getDeviceId();
-    if (!deviceId) return;
-
-    void fetchAuthStatus(deviceId).then((status) => {
-      setAccountLinked(
-        Boolean(status?.hasLinkedEmail) && !Boolean(status?.isAnonymous)
-      );
-    });
-  }, []);
 
   async function openBillingPortal(action: PortalAction) {
-    if (accountLinked === false) {
-      const ok = window.confirm(
-        `${BILLING_LINK_REQUIRED_MESSAGE}\n\n設定ページへ移動しますか？`
-      );
-      if (ok) router.push(withDev("/settings"));
-      return;
-    }
-
     try {
       setLoadingKey(action);
 
@@ -63,15 +46,14 @@ function BillingPageInner() {
       if (!r.ok) {
         const errMsg = String(j?.error ?? `billing_portal_failed:${r.status}`);
 
-        if (errMsg === "customer_not_found") {
-          alert("まだ契約がありません。プランを選択してください。");
-          window.location.href = `/premium${devQuery}`;
+        if (errMsg === "auth_required" || j?.redirectTo) {
+          router.push(withDev(j?.redirectTo ?? buildLoginUrl("/billing")));
           return;
         }
 
-        if (errMsg === "auth_required" || errMsg === "account_link_required") {
-          alert(j?.message ?? BILLING_LINK_REQUIRED_MESSAGE);
-          router.push(withDev("/settings"));
+        if (errMsg === "customer_not_found") {
+          alert("まだ契約がありません。プランを選択してください。");
+          window.location.href = `/premium${devQuery}`;
           return;
         }
 
@@ -175,6 +157,10 @@ function BillingPageInner() {
     );
   }
 
+  if (!ready || !loggedIn) {
+    return <main style={{ padding: 24 }}>読み込み中…</main>;
+  }
+
   return (
     <main
       style={{
@@ -229,29 +215,6 @@ function BillingPageInner() {
           戻る
         </Link>
       </header>
-
-      {accountLinked === false ? (
-        <section
-          style={{
-            border: "1px solid #fde68a",
-            background: "#fffbeb",
-            color: "#92400e",
-            borderRadius: 16,
-            padding: 14,
-            fontSize: 13,
-            lineHeight: 1.65,
-            fontWeight: 700,
-          }}
-        >
-          {BILLING_LINK_REQUIRED_MESSAGE}{" "}
-          <Link
-            href={withDev("/settings")}
-            style={{ color: "#111827", fontWeight: 900 }}
-          >
-            設定でメール連携
-          </Link>
-        </section>
-      ) : null}
 
       {renderPlanSection({
         title: "クラス枠",

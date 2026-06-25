@@ -5,6 +5,7 @@ import { USER_ID_CACHE_KEY } from "@/lib/userIdentity";
 import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
 import { buildAppUrl } from "@/lib/appOrigin";
+import { sanitizeReturnTo, buildLoginUrl } from "@/lib/authAccount";
 
 export type AuthSessionPostResult =
   | { ok: true; status: Record<string, unknown> }
@@ -80,9 +81,7 @@ function handleAuthSessionFailure(
   if (result.action === "restore_login" && typeof window !== "undefined") {
     const path = window.location.pathname;
     if (path !== "/login" && !path.startsWith("/auth/callback")) {
-      console.warn(
-        "[auth-restore] device_secret missing or mismatched — open /login to restore profile"
-      );
+      console.warn("[auth] login required to restore account on this device");
     }
   }
 }
@@ -263,12 +262,17 @@ export async function completeAuthCallback(deviceId: string, redirectTo: string)
 
   if (!result.ok) {
     handleAuthSessionFailure(deviceId, result);
+    const needsProfile =
+      result.error === "profile_device_conflict" ||
+      result.error === "profile_user_mismatch";
     return {
       ok: false as const,
       error: result.error,
       message: result.message ?? null,
       action: result.action ?? null,
-      redirectTo: result.redirectTo ?? "/login",
+      redirectTo: needsProfile
+        ? `/profile?returnTo=${encodeURIComponent(sanitizeReturnTo(redirectTo))}`
+        : result.redirectTo ?? buildLoginUrl(redirectTo),
     };
   }
 
@@ -292,15 +296,38 @@ export async function completeAuthCallback(deviceId: string, redirectTo: string)
   return { ok: true as const };
 }
 
-export async function signInWithMagicLink(email: string, redirectTo?: string) {
+export async function signInWithMagicLink(email: string, returnTo?: string) {
+  return sendAccountMagicLink(email, returnTo);
+}
+
+/** 新規登録・ログイン共通のマジックリンク送信 */
+export async function sendAccountMagicLink(email: string, returnTo?: string) {
   const normalized = String(email ?? "").trim().toLowerCase();
   if (!normalized) {
     return { ok: false as const, error: "email_required" };
   }
 
+  const returnPath = sanitizeReturnTo(returnTo ?? "/home");
   const callback = buildAppUrl(
-    `/auth/callback?redirect=${encodeURIComponent(redirectTo || "/home")}`
+    `/auth/callback?returnTo=${encodeURIComponent(returnPath)}`
   );
+
+  const session = (await supabaseAuthClient.auth.getSession()).data.session;
+  const isAnonymous = session?.user?.is_anonymous === true;
+
+  if (isAnonymous && session?.access_token) {
+    const { error: upgradeError } = await supabaseAuthClient.auth.updateUser({
+      email: normalized,
+    });
+
+    if (!upgradeError) {
+      return { ok: true as const, mode: "upgrade" as const };
+    }
+
+    console.info("[auth] anonymous upgrade failed; falling back to OTP", {
+      message: upgradeError.message,
+    });
+  }
 
   const { error } = await supabaseAuthClient.auth.signInWithOtp({
     email: normalized,
@@ -313,46 +340,43 @@ export async function signInWithMagicLink(email: string, redirectTo?: string) {
     return { ok: false as const, error: error.message };
   }
 
-  return { ok: true as const };
+  return { ok: true as const, mode: "otp" as const };
 }
 
-export async function linkEmailAddress(email: string) {
-  const normalized = String(email ?? "").trim();
-  if (!normalized) {
-    return { ok: false as const, error: "email_required" };
+export async function signOutAccount() {
+  await supabaseAuthClient.auth.signOut();
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(USER_ID_CACHE_KEY);
   }
-
-  const callback = buildAppUrl("/auth/callback?redirect=/settings");
-
-  const { data, error } = await supabaseAuthClient.auth.updateUser({
-    email: normalized,
-  });
-
-  if (error) {
-    return { ok: false as const, error: error.message };
-  }
-
-  return {
-    ok: true as const,
-    user: data.user,
-    redirectHint: callback,
-  };
 }
 
 export async function fetchAuthStatus(deviceId: string) {
-  const token = await getAuthAccessToken();
-  if (!token) return null;
+  try {
+    const token = await getAuthAccessToken();
+    if (!token) return null;
 
-  const res = await fetch("/api/auth/session", {
-    method: "GET",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "x-device-id": deviceId,
-    },
-    cache: "no-store",
-  });
+    const res = await fetch("/api/auth/session", {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-device-id": deviceId,
+      },
+      cache: "no-store",
+    });
 
-  const json = await res.json().catch(() => null);
-  if (!res.ok || !json?.ok) return null;
-  return json;
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.ok) return null;
+
+    return {
+      ok: true,
+      userId: String(json.userId ?? ""),
+      deviceId: String(json.deviceId ?? deviceId),
+      isAnonymous: Boolean(json.isAnonymous),
+      hasLinkedEmail: Boolean(json.hasLinkedEmail),
+      email: json.email ?? null,
+      entitlements: json.entitlements ?? null,
+    };
+  } catch {
+    return null;
+  }
 }

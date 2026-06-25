@@ -11,6 +11,7 @@ import {
 } from "@/lib/deviceOwnership";
 import { logAuthRestore } from "@/lib/authRestoreLog";
 import { lookupEntitlements } from "@/lib/userIdentityMigration";
+import { buildLoginUrl } from "@/lib/authAccount";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -81,9 +82,10 @@ export async function POST(req: Request) {
             action: error.action ?? null,
             redirectTo:
               error.action === "restore_login"
-                ? "/login"
-                : error.action === "reregister_device"
-                  ? null
+                ? buildLoginUrl("/home")
+                : error.action === "needs_profile" ||
+                    error.code === "profile_device_conflict"
+                  ? "/profile"
                   : null,
           },
           { status: 403 }
