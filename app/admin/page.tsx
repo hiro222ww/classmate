@@ -19,10 +19,20 @@ const cards = [
     href: "/admin/reports",
   },
   {
-  title: "世界観 / テーマ / 全体設定",
-  desc: "テーマ、入校時間、課金注意文の管理",
-  href: "/admin/topics",
-},
+    title: "世界観 / テーマ",
+    desc: "世界観・テーマの公開状態・価格・表示順",
+    href: "/admin/topics",
+  },
+  {
+    title: "運用設定",
+    desc: "入校受付時間・募集締切・未成年登録",
+    href: "/admin/settings",
+  },
+  {
+    title: "課金・プラン文言",
+    desc: "プラン画面・支払い管理のヘルプ文・案内文",
+    href: "/admin/copy",
+  },
 ];
 
 export default function AdminHomePage() {
@@ -99,8 +109,7 @@ export default function AdminHomePage() {
         <section
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(240px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
             gap: 14,
           }}
         >
@@ -108,17 +117,14 @@ export default function AdminHomePage() {
             <button
               key={c.href}
               type="button"
-              onClick={() =>
-                (window.location.href = c.href)
-              }
+              onClick={() => (window.location.href = c.href)}
               style={{
                 textAlign: "left",
                 padding: 18,
                 borderRadius: 18,
                 border: "1px solid #e5e7eb",
                 background: "#fff",
-                boxShadow:
-                  "0 8px 24px rgba(15,23,42,0.06)",
+                boxShadow: "0 8px 24px rgba(15,23,42,0.06)",
                 cursor: "pointer",
                 transition: "0.15s ease",
               }}

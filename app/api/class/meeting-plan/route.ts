@@ -13,6 +13,7 @@ import {
   toMeetingPlanPublic,
 } from "@/lib/meetingPlan";
 import { emitMeetingPlanEvent } from "@/lib/notificationEvents";
+import { dispatchNotificationWebPush } from "@/lib/webPushServer";
 
 export const dynamic = "force-dynamic";
 
@@ -179,7 +180,7 @@ export async function POST(req: Request) {
       message: systemMessage,
     });
 
-    await emitMeetingPlanEvent({
+    const eventRes = await emitMeetingPlanEvent({
       classId,
       actorDeviceId: deviceId,
       meetingPlanId: inserted.id,
@@ -187,6 +188,10 @@ export async function POST(req: Request) {
       scheduledAt: scheduledAtIso,
       isUpdate,
     });
+
+    if (eventRes.ok && eventRes.id) {
+      await dispatchNotificationWebPush(eventRes.id);
+    }
 
     return NextResponse.json({
       ok: true,

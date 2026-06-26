@@ -34,6 +34,7 @@ type TopicRow = {
   display_order?: number;
   accepting_new_users?: boolean;
   badge_label?: string | null;
+  default_world_key?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -173,6 +174,159 @@ async function ensureDefaultBoard(
   }
 }
 
+async function attachDefaultWorldKeys(
+  supabase: ReturnType<typeof getSupabase>,
+  topics: TopicRow[]
+) {
+  const topicKeys = topics
+    .map((topic) => String(topic.topic_key ?? "").trim())
+    .filter(Boolean);
+
+  if (topicKeys.length === 0) return topics;
+
+  const { data: classRows, error } = await supabase
+    .from("classes")
+    .select("topic_key,world_key,created_at")
+    .in("topic_key", topicKeys)
+    .eq("is_user_created", false)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const worldByTopic = new Map<string, string | null>();
+  for (const row of classRows ?? []) {
+    const topicKey = String(row.topic_key ?? "").trim();
+    if (!topicKey || worldByTopic.has(topicKey)) continue;
+    const worldKey = String(row.world_key ?? "").trim();
+    worldByTopic.set(topicKey, worldKey || null);
+  }
+
+  return topics.map((topic) => ({
+    ...topic,
+    default_world_key: worldByTopic.get(topic.topic_key) ?? null,
+  }));
+}
+
+async function syncTopicDefaultWorldKey(
+  supabase: ReturnType<typeof getSupabase>,
+  params: {
+    topic_key: string;
+    world_key: string | null;
+    topic?: {
+      title: string;
+      description: string;
+      is_sensitive: boolean;
+      min_age: number;
+    };
+  }
+) {
+  const topic_key = String(params.topic_key ?? "").trim();
+  if (!topic_key) return;
+
+  const world_key = String(params.world_key ?? "").trim() || null;
+
+  const { data: existing, error: lookupErr } = await supabase
+    .from("classes")
+    .select("id")
+    .eq("topic_key", topic_key)
+    .eq("is_user_created", false);
+
+  if (lookupErr) {
+    throw new Error(lookupErr.message);
+  }
+
+  if (existing && existing.length > 0) {
+    const { error } = await supabase
+      .from("classes")
+      .update({ world_key })
+      .eq("topic_key", topic_key)
+      .eq("is_user_created", false);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    return;
+  }
+
+  if (params.topic && world_key) {
+    await ensureDefaultBoard(
+      supabase,
+      {
+        topic_key,
+        title: params.topic.title,
+        description: params.topic.description,
+        is_sensitive: params.topic.is_sensitive,
+        min_age: params.topic.min_age,
+      },
+      { world_key }
+    );
+  }
+}
+
+function buildTopicUpdatePatch(patch: Partial<TopicRow>) {
+  const updatePatch: Record<string, unknown> = {};
+
+  if (typeof patch.title === "string") {
+    updatePatch.title = patch.title;
+  }
+
+  if (typeof patch.description === "string") {
+    updatePatch.description = patch.description;
+  }
+
+  if (typeof patch.is_sensitive === "boolean") {
+    updatePatch.is_sensitive = patch.is_sensitive;
+  }
+
+  if (typeof patch.min_age === "number") {
+    updatePatch.min_age = patch.min_age;
+  }
+
+  if (typeof patch.monthly_price === "number") {
+    updatePatch.monthly_price = patch.monthly_price;
+  }
+
+  if (
+    patch.gender_restriction === null ||
+    patch.gender_restriction === "none" ||
+    patch.gender_restriction === "male" ||
+    patch.gender_restriction === "female"
+  ) {
+    updatePatch.gender_restriction = normalizeGenderRestriction(
+      patch.gender_restriction
+    );
+  }
+
+  if (typeof patch.is_active === "boolean") {
+    updatePatch.is_active = patch.is_active;
+  }
+
+  if (typeof patch.is_paid === "boolean") {
+    updatePatch.is_paid = patch.is_paid;
+  }
+
+  if (typeof patch.display_order === "number") {
+    updatePatch.display_order = patch.display_order;
+  }
+
+  if (typeof patch.accepting_new_users === "boolean") {
+    updatePatch.accepting_new_users = patch.accepting_new_users;
+  }
+
+  if (patch.badge_label === null) {
+    updatePatch.badge_label = null;
+  } else if (typeof patch.badge_label === "string") {
+    const trimmed = patch.badge_label.trim();
+    updatePatch.badge_label = trimmed || null;
+  }
+
+  updatePatch.updated_at = new Date().toISOString();
+
+  return updatePatch;
+}
+
 export async function POST(req: Request) {
   try {
     const denied = requireAdmin(req);
@@ -219,8 +373,13 @@ export async function POST(req: Request) {
         return bad(500, error.message);
       }
 
+      const topicsWithWorld = await attachDefaultWorldKeys(
+        supabase,
+        (data ?? []) as TopicRow[]
+      );
+
       return ok({
-        topics: (data ?? []) as TopicRow[],
+        topics: topicsWithWorld,
       });
     }
 
@@ -307,116 +466,115 @@ export async function POST(req: Request) {
       });
     }
 
-    if (mode === "update") {
-      const topic_key = String(body?.topic_key ?? "").trim();
+    if (mode === "update" || mode === "bulk_update") {
+      const updates =
+        mode === "bulk_update"
+          ? (Array.isArray(body?.topics) ? body.topics : [])
+          : [
+              {
+                topic_key: body?.topic_key,
+                patch: body?.patch ?? {},
+              },
+            ];
 
-      const patch =
-        (body?.patch ?? {}) as Partial<TopicRow>;
-
-      if (!topic_key) {
-        return bad(400, "topic_key is required");
+      if (updates.length === 0) {
+        return bad(400, "topics is required");
       }
 
-      const { data: beforeTopic } = await supabase
-        .from("topics")
-        .select("topic_key,is_sensitive,min_age")
-        .eq("topic_key", topic_key)
-        .maybeSingle();
+      let savedCount = 0;
 
-      const updatePatch: any = {};
+      for (const entry of updates) {
+        const topic_key = String(entry?.topic_key ?? "").trim();
+        const patch = (entry?.patch ?? {}) as Partial<TopicRow>;
 
-      if (typeof patch.title === "string") {
-        updatePatch.title = patch.title;
-      }
+        if (!topic_key) {
+          return bad(400, "topic_key is required");
+        }
 
-      if (typeof patch.description === "string") {
-        updatePatch.description = patch.description;
-      }
-
-      if (typeof patch.is_sensitive === "boolean") {
-        updatePatch.is_sensitive = patch.is_sensitive;
-      }
-
-      if (typeof patch.min_age === "number") {
-        updatePatch.min_age = patch.min_age;
-      }
-
-      if (typeof patch.monthly_price === "number") {
-        updatePatch.monthly_price = patch.monthly_price;
-      }
-
-      if (
-        patch.gender_restriction === null ||
-        patch.gender_restriction === "none" ||
-        patch.gender_restriction === "male" ||
-        patch.gender_restriction === "female"
-      ) {
-        updatePatch.gender_restriction = normalizeGenderRestriction(
-          patch.gender_restriction
-        );
-      }
-
-      if (typeof patch.is_active === "boolean") {
-        updatePatch.is_active = patch.is_active;
-      }
-
-      if (typeof patch.is_paid === "boolean") {
-        updatePatch.is_paid = patch.is_paid;
-      }
-
-      if (typeof patch.display_order === "number") {
-        updatePatch.display_order = patch.display_order;
-      }
-
-      if (typeof patch.accepting_new_users === "boolean") {
-        updatePatch.accepting_new_users = patch.accepting_new_users;
-      }
-
-      if (patch.badge_label === null) {
-        updatePatch.badge_label = null;
-      } else if (typeof patch.badge_label === "string") {
-        const trimmed = patch.badge_label.trim();
-        updatePatch.badge_label = trimmed || null;
-      }
-
-      updatePatch.updated_at = new Date().toISOString();
-
-      if (
-        typeof patch.is_sensitive === "boolean" ||
-        typeof patch.min_age === "number"
-      ) {
-        await writeAdminAuditLog({
-          actor: adminActorFromRequest(req),
-          action: "topic.age_or_sensitive",
-          target: topic_key,
-          before: {
-            is_sensitive: beforeTopic?.is_sensitive ?? null,
-            min_age: beforeTopic?.min_age ?? null,
-          },
-          after: {
-            is_sensitive:
-              typeof patch.is_sensitive === "boolean"
-                ? patch.is_sensitive
-                : beforeTopic?.is_sensitive ?? null,
-            min_age:
-              typeof patch.min_age === "number"
-                ? patch.min_age
-                : beforeTopic?.min_age ?? null,
-          },
-        });
-      }
-
-      const { error } =
-        await supabase
+        const { data: beforeTopic } = await supabase
           .from("topics")
-          .update(updatePatch)
-          .eq("topic_key", topic_key);
+          .select(
+            "topic_key,title,description,is_sensitive,min_age,is_archived,is_active"
+          )
+          .eq("topic_key", topic_key)
+          .maybeSingle();
 
-      if (error) {
-        return bad(500, error.message);
+        if (!beforeTopic) {
+          return bad(404, `topic not found: ${topic_key}`);
+        }
+
+        const updatePatch = buildTopicUpdatePatch(patch);
+
+        if (
+          typeof patch.is_sensitive === "boolean" ||
+          typeof patch.min_age === "number"
+        ) {
+          await writeAdminAuditLog({
+            actor: adminActorFromRequest(req),
+            action: "topic.age_or_sensitive",
+            target: topic_key,
+            before: {
+              is_sensitive: beforeTopic?.is_sensitive ?? null,
+              min_age: beforeTopic?.min_age ?? null,
+            },
+            after: {
+              is_sensitive:
+                typeof patch.is_sensitive === "boolean"
+                  ? patch.is_sensitive
+                  : beforeTopic?.is_sensitive ?? null,
+              min_age:
+                typeof patch.min_age === "number"
+                  ? patch.min_age
+                  : beforeTopic?.min_age ?? null,
+            },
+          });
+        }
+
+        if (Object.keys(updatePatch).length > 0) {
+          const { error } = await supabase
+            .from("topics")
+            .update(updatePatch)
+            .eq("topic_key", topic_key);
+
+          if (error) {
+            return bad(500, error.message);
+          }
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, "default_world_key")) {
+          const world_key =
+            patch.default_world_key === null
+              ? null
+              : String(patch.default_world_key ?? "").trim() || null;
+
+          await syncTopicDefaultWorldKey(supabase, {
+            topic_key,
+            world_key,
+            topic: {
+              title:
+                typeof patch.title === "string"
+                  ? patch.title
+                  : String(beforeTopic.title ?? ""),
+              description:
+                typeof patch.description === "string"
+                  ? patch.description
+                  : String(beforeTopic.description ?? ""),
+              is_sensitive:
+                typeof patch.is_sensitive === "boolean"
+                  ? patch.is_sensitive
+                  : Boolean(beforeTopic.is_sensitive),
+              min_age:
+                typeof patch.min_age === "number"
+                  ? patch.min_age
+                  : Number(beforeTopic.min_age ?? 0),
+            },
+          });
+        }
+
+        savedCount += 1;
       }
 
-      return ok();
+      return ok({ savedCount });
     }
 
     if (mode === "archive" || mode === "unarchive") {

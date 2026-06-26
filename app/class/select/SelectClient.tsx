@@ -44,6 +44,8 @@ import {
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
+import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 
 type World = {
   world_key: string;
@@ -199,6 +201,8 @@ export default function SelectClient() {
   };
 
   const [deviceId, setDeviceId] = useState("");
+  const { enabled: notificationsEnabled, toggle: toggleNotifications } =
+    useWebPushNotifications(deviceId, "select");
   const { refresh: refreshCurrentClass } = useCurrentClass(deviceId);
 
   const [worlds, setWorlds] = useState<World[]>([]);
@@ -1037,101 +1041,15 @@ export default function SelectClient() {
   return (
     <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }}>
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
-        <div>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 900,
-              color: "#111",
-              letterSpacing: 0.5,
-            }}
-          >
-            classmate
-          </h1>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap",
-            justifyContent: "flex-end",
-          }}
-        >
-          <Link
-            href={withDev(buildProfileEditPath("/class/select"))}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 12,
-              border: hasProfile ? "1px solid #e5e7eb" : "1px solid #111827",
-              background: hasProfile ? "#fff" : "#111827",
-              fontWeight: 800,
-              fontSize: 13,
-              color: hasProfile ? "#374151" : "#fff",
-              textDecoration: "none",
-            }}
-          >
-            {hasProfile ? "プロフィール編集" : "プロフィール登録"}
-          </Link>
-
-          <Link
-            href={withDev("/premium")}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            プランを見る
-          </Link>
-
-          <Link
-            href={withDev("/billing")}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
-              fontWeight: 900,
-              color: "#111",
-              textDecoration: "none",
-            }}
-          >
-            お支払い・解約
-          </Link>
-
-          {isDevFeatureEnabled() && (
-            <Link
-              href={withDev("/dev/console")}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 12,
-                border: "1px solid #f59e0b",
-                background: "#fffbeb",
-                fontWeight: 900,
-                color: "#92400e",
-                textDecoration: "none",
-              }}
-            >
-              🧪 開発コンソール
-            </Link>
-          )}
-        </div>
-      </header>
+      <DashboardPageHeader>
+        <DashboardHeaderNav
+          returnPath="/class/select"
+          hasProfile={hasProfile === true}
+          withDev={withDev}
+          notificationsEnabled={notificationsEnabled}
+          onToggleNotifications={toggleNotifications}
+        />
+      </DashboardPageHeader>
 
       {isDevFeatureEnabled() && (
         <section

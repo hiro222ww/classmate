@@ -30,6 +30,36 @@ export async function buildDeviceAuthHeaders(
   return headers;
 }
 
+export async function fetchSelfProfile(deviceId: string) {
+  const id = String(deviceId ?? "").trim();
+  if (!id) {
+    return { ok: false as const, profile: null };
+  }
+
+  try {
+    const res = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
+      cache: "no-store",
+      headers: await buildDeviceAuthHeaders(id),
+    });
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok || !json?.ok) {
+      return { ok: false as const, profile: null };
+    }
+
+    const profile =
+      json?.profile && typeof json.profile === "object"
+        ? json.profile
+        : json?.device_id
+          ? json
+          : null;
+
+    return { ok: true as const, profile };
+  } catch {
+    return { ok: false as const, profile: null };
+  }
+}
+
 export async function fetchCurrentClass(
   deviceId: string
 ): Promise<CurrentClassFetchResult> {

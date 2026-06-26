@@ -1611,7 +1611,7 @@ export default function CallClient() {
     (member?: Member) => {
       if (!member) {
         return {
-          text: "待機中",
+          text: "待機ルーム内",
           color: "#9ca3af",
           chipBg: "#f3f4f6",
           chipText: "#6b7280",
@@ -1700,66 +1700,35 @@ export default function CallClient() {
         return prepStatus;
       }
 
-      if (!micReady) {
-        if (isMe) {
-          const micStatus = {
-            text: callInfo || "マイク準備中",
-            color: "#92400e",
-            chipBg: "#fffbeb",
-            chipText: "#b45309",
-            reason: callInfo ? "mic_permission_required" : "mic_not_ready",
-            source: "localMic",
-          };
-          const prevText = prevCallStatusRef.current[memberId];
-          if (prevText !== micStatus.text) {
-            logParticipationStatusDecision({
-              context: "call",
-              deviceId: memberId,
-              label: micStatus.text,
-              status: "waiting",
-              used: micStatus.source,
-              reason: micStatus.reason,
-              sources: {
-                is_in_call: member.is_in_call ?? null,
-                screen: member.screen ?? "room",
-                peerState: peerStates[memberId] ?? "idle",
-                micReady: false,
-                isMe: true,
-              },
-            });
-            prevCallStatusRef.current[memberId] = micStatus.text;
-          }
-          return micStatus;
-        }
-
-        const waitingForMic = {
-          text: "オフライン",
-          color: "#6b7280",
-          chipBg: "#f3f4f6",
-          chipText: "#6b7280",
-          reason: "local_mic_not_ready",
+      if (!micReady && isMe) {
+        const micStatus = {
+          text: callInfo || "マイク準備中",
+          color: "#92400e",
+          chipBg: "#fffbeb",
+          chipText: "#b45309",
+          reason: callInfo ? "mic_permission_required" : "mic_not_ready",
           source: "localMic",
         };
         const prevText = prevCallStatusRef.current[memberId];
-        if (prevText !== waitingForMic.text) {
+        if (prevText !== micStatus.text) {
           logParticipationStatusDecision({
             context: "call",
             deviceId: memberId,
-            label: waitingForMic.text,
-            status: isInCall ? "in_call" : "waiting",
-            used: waitingForMic.source,
-            reason: waitingForMic.reason,
+            label: micStatus.text,
+            status: "waiting",
+            used: micStatus.source,
+            reason: micStatus.reason,
             sources: {
               is_in_call: member.is_in_call ?? null,
-              screen: member.screen ?? null,
+              screen: member.screen ?? "room",
               peerState: peerStates[memberId] ?? "idle",
               micReady: false,
-              isMe: false,
+              isMe: true,
             },
           });
-          prevCallStatusRef.current[memberId] = waitingForMic.text;
+          prevCallStatusRef.current[memberId] = micStatus.text;
         }
-        return waitingForMic;
+        return micStatus;
       }
 
       if (isMe && selfExplicitlyLeft) {

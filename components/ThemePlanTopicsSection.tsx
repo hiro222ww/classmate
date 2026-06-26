@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { HelpTip } from "@/components/HelpTip";
+import { useBillingCopy } from "@/hooks/useBillingCopy";
 import {
   compareTopicsByDisplayOrder,
   isTopicVisibleOnBillingPage,
-  THEME_PLAN_TOPICS_CHANGE_NOTE,
-  THEME_PLAN_TOPICS_HEADING,
-  THEME_PLAN_TOPICS_INTRO,
   topicBillingBadgeLabel,
   type TopicPublicRow,
 } from "@/lib/topicManagement";
@@ -59,6 +57,8 @@ function TopicCard({ topic }: { topic: TopicPublicRow }) {
 }
 
 export function ThemePlanTopicsSection() {
+  const { copy } = useBillingCopy();
+  const themeTopics = copy.themeTopics;
   const [topics, setTopics] = useState<TopicPublicRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -112,17 +112,15 @@ export function ThemePlanTopicsSection() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ fontWeight: 900, fontSize: 16 }}>
-            {THEME_PLAN_TOPICS_HEADING}
-          </div>
+          <div style={{ fontWeight: 900, fontSize: 16 }}>{themeTopics.heading}</div>
           <HelpTip
-            label="テーマプランのテーマについて"
+            label={themeTopics.helpLabel}
             content={
               <>
-                {THEME_PLAN_TOPICS_INTRO}
+                {themeTopics.intro}
                 <br />
                 <br />
-                {THEME_PLAN_TOPICS_CHANGE_NOTE}
+                {themeTopics.changeNote}
               </>
             }
           />
@@ -133,7 +131,7 @@ export function ThemePlanTopicsSection() {
         <p style={{ margin: 0, fontSize: 13, color: "#9ca3af" }}>読み込み中…</p>
       ) : topics.length === 0 ? (
         <p style={{ margin: 0, fontSize: 13, color: "#9ca3af" }}>
-          現在公開中のテーマはありません。
+          {themeTopics.emptyMessage}
         </p>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>

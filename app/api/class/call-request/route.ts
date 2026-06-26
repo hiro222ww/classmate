@@ -13,7 +13,7 @@ import {
   toCallRequestPublic,
 } from "@/lib/callRequest";
 import { emitCallRequestCreatedEvent } from "@/lib/notificationEvents";
-import { dispatchCallRequestWebPush } from "@/lib/webPushServer";
+import { dispatchNotificationWebPush } from "@/lib/webPushServer";
 import { resolveDisplayName } from "@/lib/resolveDisplayName";
 
 export const dynamic = "force-dynamic";
@@ -195,7 +195,7 @@ export async function POST(req: Request) {
     });
 
     if (eventRes.ok && eventRes.id) {
-      await dispatchCallRequestWebPush(eventRes.id);
+      await dispatchNotificationWebPush(eventRes.id);
     }
 
     return NextResponse.json({

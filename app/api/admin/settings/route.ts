@@ -15,6 +15,11 @@ import {
   DEFAULT_BILLING_NOTICE_TEXT,
   normalizeBillingNotice,
 } from "@/lib/billingNoticeDefaults";
+import {
+  billingNoticeFromCopy,
+  normalizeBillingCopy,
+  type BillingCopySettings,
+} from "@/lib/billingCopySettings";
 import { adminActorFromRequest, writeAdminAuditLog } from "@/lib/adminAuditLog";
 import {
   parseRecruitmentSessionTtlValue,
@@ -35,6 +40,7 @@ type AppSettings = {
     enabled: boolean;
     text: string;
   };
+  billing_copy: BillingCopySettings;
   recruitment_session_ttl_minutes: RecruitmentSessionTtlSetting;
   minors_enabled: boolean;
   age_mode: AgeMode;
@@ -50,6 +56,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     enabled: true,
     text: DEFAULT_BILLING_NOTICE_TEXT,
   },
+  billing_copy: normalizeBillingCopy(null),
   recruitment_session_ttl_minutes: {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
     unlimited: false,
@@ -65,6 +72,7 @@ async function readRawSettings() {
     .in("key", [
       "global_join_window",
       "billing_notice",
+      "billing_copy",
       "recruitment_session_ttl_minutes",
       "minors_enabled",
       "age_mode",
@@ -90,6 +98,12 @@ async function readSettings(): Promise<AppSettings> {
         ...(row.value ?? {}),
       });
     }
+    if (row.key === "billing_copy") {
+      settings.billing_copy = normalizeBillingCopy(
+        row.value,
+        settings.billing_notice
+      );
+    }
     if (row.key === "recruitment_session_ttl_minutes") {
       settings.recruitment_session_ttl_minutes = parseRecruitmentSessionTtlValue(
         row.value
@@ -106,6 +120,12 @@ async function readSettings(): Promise<AppSettings> {
   }
 
   settings.age_mode = await getEffectiveAgeMode();
+
+  settings.billing_copy = normalizeBillingCopy(
+    settings.billing_copy,
+    settings.billing_notice
+  );
+  settings.billing_notice = billingNoticeFromCopy(settings.billing_copy);
 
   return settings;
 }
@@ -144,9 +164,13 @@ export async function POST(req: Request) {
     const beforeRows = await readRawSettings();
     const beforeSettings = await readSettings();
 
-    const globalJoinWindow = body.global_join_window ?? {};
-    const billingNotice = body.billing_notice ?? {};
-    const requestedMinorsEnabled = Boolean(body.minors_enabled);
+    const globalJoinWindow = body.global_join_window;
+    const billingNotice = body.billing_notice;
+    const billingCopyInput = body.billing_copy;
+    const requestedMinorsEnabled =
+      body.minors_enabled !== undefined
+        ? Boolean(body.minors_enabled)
+        : beforeSettings.minors_enabled;
     const requestedAgeMode =
       parseAgeModeValue(body.age_mode) ??
       ageModeFromLegacyMinors(requestedMinorsEnabled);
@@ -162,16 +186,33 @@ export async function POST(req: Request) {
       );
     }
 
+    const nextBillingCopy =
+      billingCopyInput != null
+        ? normalizeBillingCopy(billingCopyInput, beforeSettings.billing_notice)
+        : billingNotice != null
+          ? normalizeBillingCopy(
+              {
+                notice: {
+                  enabled: Boolean(billingNotice.enabled),
+                  text: String(billingNotice.text ?? ""),
+                  label: beforeSettings.billing_copy.notice.label,
+                },
+              },
+              beforeSettings.billing_notice
+            )
+          : beforeSettings.billing_copy;
+
     const nextSettings: AppSettings = {
-      global_join_window: {
-        enabled: Boolean(globalJoinWindow.enabled),
-        start: String(globalJoinWindow.start ?? "21:00").trim(),
-        end: String(globalJoinWindow.end ?? "21:30").trim(),
-      },
-      billing_notice: {
-        enabled: Boolean(billingNotice.enabled),
-        text: String(billingNotice.text ?? "").trim(),
-      },
+      global_join_window:
+        globalJoinWindow != null
+          ? {
+              enabled: Boolean(globalJoinWindow.enabled),
+              start: String(globalJoinWindow.start ?? "21:00").trim(),
+              end: String(globalJoinWindow.end ?? "21:30").trim(),
+            }
+          : beforeSettings.global_join_window,
+      billing_copy: nextBillingCopy,
+      billing_notice: billingNoticeFromCopy(nextBillingCopy),
       recruitment_session_ttl_minutes:
         body.recruitment_session_ttl_minutes != null
           ? parseRecruitmentSessionTtlValue(body.recruitment_session_ttl_minutes)
@@ -189,6 +230,11 @@ export async function POST(req: Request) {
       {
         key: "billing_notice",
         value: nextSettings.billing_notice,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        key: "billing_copy",
+        value: nextSettings.billing_copy,
         updated_at: new Date().toISOString(),
       },
       {

@@ -17,6 +17,11 @@ import {
   DEFAULT_BILLING_NOTICE_TEXT,
   normalizeBillingNotice,
 } from "@/lib/billingNoticeDefaults";
+import {
+  billingNoticeFromCopy,
+  normalizeBillingCopy,
+  type BillingCopySettings,
+} from "@/lib/billingCopySettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +36,7 @@ const DEFAULT_SETTINGS: {
     enabled: boolean;
     text: string;
   };
+  billing_copy: BillingCopySettings;
   recruitment_session_ttl_minutes: RecruitmentSessionTtlSetting;
   minors_enabled: boolean;
   age_mode: string;
@@ -44,6 +50,7 @@ const DEFAULT_SETTINGS: {
     enabled: true,
     text: DEFAULT_BILLING_NOTICE_TEXT,
   },
+  billing_copy: normalizeBillingCopy(null),
   recruitment_session_ttl_minutes: {
     minutes: DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES,
     unlimited: false,
@@ -60,6 +67,7 @@ export async function GET() {
       .in("key", [
         "global_join_window",
         "billing_notice",
+        "billing_copy",
         "recruitment_session_ttl_minutes",
         "minors_enabled",
         "age_mode",
@@ -84,6 +92,13 @@ export async function GET() {
         });
       }
 
+      if (row.key === "billing_copy") {
+        settings.billing_copy = normalizeBillingCopy(
+          row.value,
+          settings.billing_notice
+        );
+      }
+
       if (row.key === "recruitment_session_ttl_minutes") {
         settings.recruitment_session_ttl_minutes =
           parseRecruitmentSessionTtlValue(row.value);
@@ -102,6 +117,12 @@ export async function GET() {
 
     const ttlSetting = await getRecruitmentSessionTtlSetting();
     const effectiveAgeMode = await getEffectiveAgeMode();
+
+    settings.billing_copy = normalizeBillingCopy(
+      settings.billing_copy,
+      settings.billing_notice
+    );
+    settings.billing_notice = billingNoticeFromCopy(settings.billing_copy);
 
     return NextResponse.json({
       ok: true,

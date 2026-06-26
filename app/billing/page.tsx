@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { BillingNoticeTip } from "@/components/BillingNoticeTip";
 import { HelpTip } from "@/components/HelpTip";
+import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { buildLoginUrl } from "@/lib/authAccount";
@@ -26,6 +27,7 @@ function BillingPageInner() {
   const dev = (searchParams.get("dev") ?? "").trim();
   const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
   const { ready, loggedIn } = useRequireAccount("/billing");
+  const { copy } = useBillingCopy();
 
   const [loadingKey, setLoadingKey] = useState("");
 
@@ -195,12 +197,12 @@ function BillingPageInner() {
               お支払い管理
             </h1>
             <HelpTip
-              label="お支払い管理について"
-              content="プランの変更・解約は Stripe の画面で行います。"
+              label={copy.billingPage.titleHelpLabel}
+              content={copy.billingPage.titleHelp}
             />
           </div>
           <div style={{ marginTop: 8 }}>
-            <BillingNoticeTip label="ベータ期間中のご利用について" />
+            <BillingNoticeTip />
           </div>
         </div>
 

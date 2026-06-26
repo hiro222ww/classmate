@@ -1,17 +1,8 @@
 "use client";
 
 import { HelpTip } from "@/components/HelpTip";
-import {
-  BILLING_BETA_NOTICE,
-  BILLING_CONTACT_HELP,
-  BILLING_CONTACT_INFO_ITEMS,
-  BILLING_PORTAL_LOGIN_LINK_LABEL,
-  BILLING_PORTAL_LOGIN_TOOLTIP,
-  BILLING_PORTAL_SECTION_TITLE,
-  BILLING_SUPPORT_EMAIL,
-  BILLING_TROUBLES_SUMMARY,
-  getStripePortalLoginUrl,
-} from "@/lib/billingSupportCopy";
+import { useBillingCopy } from "@/hooks/useBillingCopy";
+import { getStripePortalLoginUrl } from "@/lib/billingSupportCopy";
 
 const cardStyle: React.CSSProperties = {
   border: "1px solid #e5e7eb",
@@ -62,6 +53,8 @@ export function BillingSupportSection({
   showTroubles = true,
   showBetaNotice = true,
 }: BillingSupportSectionProps) {
+  const { copy } = useBillingCopy();
+  const support = copy.support;
   const portalLoginUrl = getStripePortalLoginUrl();
 
   return (
@@ -80,12 +73,12 @@ export function BillingSupportSection({
             }}
           >
             <span style={{ fontWeight: 900, fontSize: 15 }}>
-              {BILLING_PORTAL_SECTION_TITLE}
+              {support.sectionTitle}
             </span>
             <HelpTip
-              label="Stripe課金管理について"
+              label={support.portalTooltipLabel}
               maxWidth={320}
-              content={BILLING_PORTAL_LOGIN_TOOLTIP}
+              content={support.portalTooltip}
             />
           </div>
 
@@ -96,13 +89,13 @@ export function BillingSupportSection({
               rel="noopener noreferrer"
               style={linkButtonStyle}
             >
-              {BILLING_PORTAL_LOGIN_LINK_LABEL}
+              {support.portalLoginLabel}
             </a>
           ) : (
             <HelpTip
-              label="Stripe課金管理について"
+              label={support.portalTooltipLabel}
               maxWidth={320}
-              content={`Stripe の課金管理リンクは準備中です。${BILLING_TROUBLES_SUMMARY}をご確認ください。`}
+              content={support.portalUnavailableSuffix}
             />
           )}
         </div>
@@ -111,9 +104,9 @@ export function BillingSupportSection({
       {showBetaNotice ? (
         <div style={{ padding: "0 4px" }}>
           <HelpTip
-            label="β期間中のご利用について"
+            label={support.betaNoticeLabel}
             maxWidth={320}
-            content={BILLING_BETA_NOTICE}
+            content={support.betaNotice}
           />
         </div>
       ) : null}
@@ -129,7 +122,7 @@ export function BillingSupportSection({
               listStylePosition: "outside",
             }}
           >
-            {BILLING_TROUBLES_SUMMARY}
+            {support.troublesSummary}
           </summary>
 
           <div
@@ -139,7 +132,7 @@ export function BillingSupportSection({
               gap: 10,
             }}
           >
-            <p style={mutedTextStyle}>{BILLING_PORTAL_LOGIN_TOOLTIP}</p>
+            <p style={mutedTextStyle}>{support.portalTooltip}</p>
 
             {portalLoginUrl ? (
               <a
@@ -154,11 +147,11 @@ export function BillingSupportSection({
                   fontSize: 13,
                 }}
               >
-                {BILLING_PORTAL_LOGIN_LINK_LABEL}
+                {support.portalLoginLabel}
               </a>
             ) : null}
 
-            <p style={mutedTextStyle}>{BILLING_CONTACT_HELP}</p>
+            <p style={mutedTextStyle}>{support.contactHelp}</p>
 
             <ul
               style={{
@@ -169,15 +162,15 @@ export function BillingSupportSection({
                 lineHeight: 1.6,
               }}
             >
-              {BILLING_CONTACT_INFO_ITEMS.map((item) => (
+              {support.contactInfoItems.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
 
             <p style={{ ...mutedTextStyle, fontSize: 12 }}>
-              お問い合わせ:{" "}
+              {support.contactEmailPrefix}{" "}
               <a
-                href={`mailto:${BILLING_SUPPORT_EMAIL}`}
+                href={`mailto:${support.supportEmail}`}
                 style={{
                   color: "#374151",
                   fontWeight: 800,
@@ -185,7 +178,7 @@ export function BillingSupportSection({
                   textUnderlineOffset: 2,
                 }}
               >
-                {BILLING_SUPPORT_EMAIL}
+                {support.supportEmail}
               </a>
             </p>
           </div>

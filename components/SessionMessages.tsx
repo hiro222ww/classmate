@@ -499,6 +499,7 @@ export default function SessionMessages({
       <div style={{ position: "relative" }}>
         <div
           ref={boxRef}
+          className="classmate-session-messages-list"
           style={{
             display: "grid",
             gap: 10,
@@ -506,6 +507,8 @@ export default function SessionMessages({
             overflowY: "auto",
             paddingRight: 4,
             marginBottom: 12,
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
         >
           {messages.length === 0 ? (

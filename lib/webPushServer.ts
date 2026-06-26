@@ -11,12 +11,14 @@ import {
 } from "@/lib/pushSubscriptions";
 import { buildAppUrl } from "@/lib/appOrigin";
 import { normalizeMeetingDeviceId } from "@/lib/meetingPlan";
+import { isWebPushEnabledEventType } from "@/lib/webPushConstraints";
 
 type WebPushPayload = {
   title: string;
   body: string;
   url: string;
   classId: string;
+  tag: string;
 };
 
 function getVapidConfig() {
@@ -52,7 +54,7 @@ async function markNotificationPushSkipped(eventId: string, reason: string) {
     .eq("id", eventId);
 }
 
-function buildCallRequestPushPayload(
+function buildNotificationPushPayload(
   event: NotificationEventRow,
   classId: string
 ): WebPushPayload {
@@ -70,10 +72,38 @@ function buildCallRequestPushPayload(
     body,
     classId,
     url: buildPushOpenUrl(classId),
+    tag: `${event.event_type}:${classId}`,
   };
 }
 
-export async function dispatchCallRequestWebPush(eventId: string) {
+async function loadTargetSubscriptions(classId: string, actorDeviceId: string) {
+  const { data: memberships, error: membershipErr } = await supabaseAdmin
+    .from("class_memberships")
+    .select("device_id")
+    .eq("class_id", classId);
+
+  if (membershipErr) {
+    return {
+      ok: false as const,
+      error: "membership_lookup_failed" as const,
+      subscriptions: [] as Awaited<ReturnType<typeof loadPushSubscriptionsForDevices>>,
+    };
+  }
+
+  const targetDeviceIds = (memberships ?? [])
+    .map((m) => normalizeMeetingDeviceId((m as { device_id?: string }).device_id))
+    .filter((id) => id && id !== actorDeviceId);
+
+  const subscriptions = (
+    await loadPushSubscriptionsForDevices(targetDeviceIds)
+  ).filter(
+    (sub) => normalizeMeetingDeviceId(sub.device_id) !== actorDeviceId
+  );
+
+  return { ok: true as const, subscriptions };
+}
+
+export async function dispatchNotificationWebPush(eventId: string) {
   const normalizedEventId = String(eventId ?? "").trim();
   if (!normalizedEventId) {
     return { ok: false as const, error: "event_id_missing" };
@@ -102,13 +132,22 @@ export async function dispatchCallRequestWebPush(eventId: string) {
 
   const row = event as NotificationEventRow;
 
-  if (row.event_type !== NOTIFICATION_EVENT_TYPES.CALL_REQUEST_CREATED) {
+  if (!isWebPushEnabledEventType(row.event_type)) {
     await markNotificationPushSkipped(normalizedEventId, "push_event_type_skipped");
     return { ok: false as const, error: "push_event_type_skipped" };
   }
 
   if (row.push_sent_at) {
     return { ok: true as const, skipped: true, reason: "already_sent" };
+  }
+
+  if (
+    row.event_type === NOTIFICATION_EVENT_TYPES.CALL_REQUEST_CREATED &&
+    row.expires_at &&
+    Date.parse(row.expires_at) <= Date.now()
+  ) {
+    await markNotificationPushSkipped(normalizedEventId, "event_expired");
+    return { ok: true as const, skipped: true, reason: "event_expired" };
   }
 
   const classId = String(row.class_id ?? "").trim();
@@ -118,35 +157,25 @@ export async function dispatchCallRequestWebPush(eventId: string) {
     return { ok: false as const, error: "invalid_event" };
   }
 
-  const { data: memberships, error: membershipErr } = await supabaseAdmin
-    .from("class_memberships")
-    .select("device_id")
-    .eq("class_id", classId);
-
-  if (membershipErr) {
-    await markNotificationPushSkipped(normalizedEventId, "membership_lookup_failed");
-    return { ok: false as const, error: "membership_lookup_failed" };
+  const targetRes = await loadTargetSubscriptions(classId, actorDeviceId);
+  if (!targetRes.ok) {
+    await markNotificationPushSkipped(
+      normalizedEventId,
+      targetRes.error
+    );
+    return { ok: false as const, error: targetRes.error };
   }
 
-  const targetDeviceIds = (memberships ?? [])
-    .map((m) => normalizeMeetingDeviceId((m as { device_id?: string }).device_id))
-    .filter((id) => id && id !== actorDeviceId);
-
-  const subscriptions = (
-    await loadPushSubscriptionsForDevices(targetDeviceIds)
-  ).filter(
-    (sub) => normalizeMeetingDeviceId(sub.device_id) !== actorDeviceId
-  );
-  if (subscriptions.length === 0) {
+  if (targetRes.subscriptions.length === 0) {
     await markNotificationPushSkipped(normalizedEventId, "no_subscribers");
     return { ok: true as const, skipped: true, reason: "no_subscribers" };
   }
 
-  const pushPayload = buildCallRequestPushPayload(row, classId);
+  const pushPayload = buildNotificationPushPayload(row, classId);
   let sentCount = 0;
   let failedCount = 0;
 
-  for (const sub of subscriptions) {
+  for (const sub of targetRes.subscriptions) {
     try {
       await webpush.sendNotification(
         {
@@ -184,4 +213,9 @@ export async function dispatchCallRequestWebPush(eventId: string) {
 
   await markNotificationPushSkipped(normalizedEventId, "send_failed");
   return { ok: false as const, error: "send_failed", failedCount };
+}
+
+/** @deprecated Use dispatchNotificationWebPush */
+export async function dispatchCallRequestWebPush(eventId: string) {
+  return dispatchNotificationWebPush(eventId);
 }

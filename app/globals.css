@@ -197,3 +197,18 @@ code{
   border-radius: 16px;
   color: var(--text);
 }
+
+html.classmate-board-drawing,
+html.classmate-board-drawing body {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+html.classmate-board-drawing .classmate-session-messages-list {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+body.classmate-board-fullscreen {
+  overflow: hidden;
+}

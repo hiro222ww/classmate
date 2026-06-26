@@ -45,8 +45,11 @@ export function formatInAppToastMessage(input: {
     case NOTIFICATION_EVENT_TYPES.MEETING_PLAN_CREATED:
     case NOTIFICATION_EVENT_TYPES.MEETING_PLAN_UPDATED:
       return "次の集合時間が設定されました";
-    case NOTIFICATION_EVENT_TYPES.CLASS_MESSAGE_CREATED:
+    case NOTIFICATION_EVENT_TYPES.CLASS_MESSAGE_CREATED: {
+      const preview = String(payload.preview ?? "").trim();
+      if (preview) return `新しいメッセージ: ${preview}`;
       return "新しいメッセージがあります";
+    }
     default:
       return String(input.message ?? "").trim() || "新しいお知らせがあります";
   }

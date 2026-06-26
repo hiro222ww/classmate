@@ -115,25 +115,50 @@ const mode = String(body?.mode ?? "").trim();
     }
 
     // ========= update =========
-    if (mode === "update") {
-      const world_key = String(body?.world_key ?? "").trim();
-      const patch = (body?.patch ?? {}) as Partial<WorldRow>;
-      if (!world_key) return bad(400, "world_key is required", { where: "worlds_update_key" });
+    if (mode === "update" || mode === "bulk_update") {
+      const updates =
+        mode === "bulk_update"
+          ? (Array.isArray(body?.worlds) ? body.worlds : [])
+          : [
+              {
+                world_key: body?.world_key,
+                patch: body?.patch ?? {},
+              },
+            ];
 
-      const updatePatch: any = {};
-      if (typeof patch.title === "string") updatePatch.title = patch.title;
-      if (typeof patch.description === "string") updatePatch.description = patch.description;
-      if (typeof patch.is_sensitive === "boolean") updatePatch.is_sensitive = patch.is_sensitive;
-      if (typeof patch.min_age === "number") updatePatch.min_age = patch.min_age;
+      if (updates.length === 0) {
+        return bad(400, "worlds is required", { where: "worlds_update_empty" });
+      }
 
-      const { error } = await supabase
-        .from("worlds")
-        .update(updatePatch)
-        .eq("world_key", world_key);
+      let savedCount = 0;
 
-      if (error) return bad(500, error.message, { where: "worlds_update" });
+      for (const entry of updates) {
+        const world_key = String(entry?.world_key ?? "").trim();
+        const patch = (entry?.patch ?? {}) as Partial<WorldRow>;
+        if (!world_key) {
+          return bad(400, "world_key is required", { where: "worlds_update_key" });
+        }
 
-      return NextResponse.json({ ok: true });
+        const updatePatch: Partial<WorldRow> = {};
+        if (typeof patch.title === "string") updatePatch.title = patch.title;
+        if (typeof patch.description === "string") {
+          updatePatch.description = patch.description;
+        }
+        if (typeof patch.is_sensitive === "boolean") {
+          updatePatch.is_sensitive = patch.is_sensitive;
+        }
+        if (typeof patch.min_age === "number") updatePatch.min_age = patch.min_age;
+
+        const { error } = await supabase
+          .from("worlds")
+          .update(updatePatch)
+          .eq("world_key", world_key);
+
+        if (error) return bad(500, error.message, { where: "worlds_update" });
+        savedCount += 1;
+      }
+
+      return NextResponse.json({ ok: true, savedCount });
     }
 
     // ========= delete =========

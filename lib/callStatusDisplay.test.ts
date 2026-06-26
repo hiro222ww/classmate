@@ -234,6 +234,25 @@ describe("established audio display priority", () => {
     ).toBe("通話中");
     expect(
       resolveCallMemberUserDisplayText({
+        text: "通話中",
+        isMe: false,
+        screen: "room",
+        isInCall: false,
+        inSessionMember: true,
+        audioConfirmedStrict: true,
+      })
+    ).toBe("通話中");
+    expect(
+      resolveCallMemberUserDisplayText({
+        text: "接続中",
+        isMe: false,
+        screen: "room",
+        isInCall: false,
+        inSessionMember: true,
+      })
+    ).toBe("接続中…");
+    expect(
+      resolveCallMemberUserDisplayText({
         text: "待機中",
         isMe: false,
         screen: "room",

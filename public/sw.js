@@ -1,4 +1,4 @@
-/* Classmate Web Push Service Worker (call_request_created only) */
+/* Classmate Web Push Service Worker */
 
 self.addEventListener("push", (event) => {
   let payload = {
@@ -6,6 +6,7 @@ self.addEventListener("push", (event) => {
     body: "新しいお知らせがあります",
     url: "/",
     classId: "",
+    tag: "classmate",
   };
 
   try {
@@ -16,10 +17,14 @@ self.addEventListener("push", (event) => {
     // keep defaults
   }
 
+  const tag =
+    String(payload.tag ?? "").trim() ||
+    (payload.classId ? `classmate:${payload.classId}` : "classmate");
+
   event.waitUntil(
     self.registration.showNotification(payload.title || "Classmate", {
       body: payload.body || "新しいお知らせがあります",
-      tag: payload.classId ? `call-request:${payload.classId}` : "classmate",
+      tag,
       renotify: true,
       data: {
         url: payload.url || "/",

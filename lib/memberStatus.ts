@@ -306,20 +306,17 @@ export function resolveInternalMemberStatus(
 export function getMemberStatusLabel(
   internal: InternalMemberStatus,
   context: MemberStatusContext,
-  opts?: { isMe?: boolean }
+  _opts?: { isMe?: boolean }
 ): string {
-  const isMe = opts?.isMe === true;
-
   if (internal === "in_voice") return "通話中";
   if (internal === "connecting_voice") {
     return context === "call" ? "接続処理中" : "接続中";
   }
   if (internal === "in_room") {
-    if (isMe && context === "room") return "入室中";
-    return "待機中";
+    return "待機ルーム内";
   }
   if (internal === "in_session") {
-    if (context === "room") return "入室中";
+    if (context === "room") return "待機ルーム内";
     if (context === "call") return "接続準備中";
     return "入室中";
   }

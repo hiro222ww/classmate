@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { emitClassMessageCreatedEvent } from "@/lib/notificationEvents";
 import { moderateUserText } from "@/lib/contentModeration";
+import { dispatchNotificationWebPush } from "@/lib/webPushServer";
 
 export async function POST(req: Request) {
   const { deviceId, classId, message } = await req.json();
@@ -37,11 +38,15 @@ export async function POST(req: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await emitClassMessageCreatedEvent({
+  const eventRes = await emitClassMessageCreatedEvent({
     classId: String(classId),
     actorDeviceId: String(deviceId),
     message: trimmed,
   });
+
+  if (eventRes.ok && eventRes.id) {
+    await dispatchNotificationWebPush(eventRes.id);
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -42,6 +42,7 @@ import {
 import {
   fetchBlockedDeviceIdsForActor,
   getClassSlotsForActor,
+  hasClassMembershipForActor,
   membershipFilterForActor,
   resolveApiActor,
   type ActorLookup,
@@ -414,15 +415,20 @@ async function getForcedClassWithDeadline(classId: string) {
   };
 }
 
-async function hasMembership(deviceId: string, classId: string) {
-  const { data, error } = await supabase
-    .from("class_memberships")
-    .select("class_id")
-    .eq("device_id", deviceId)
-    .eq("class_id", classId)
-    .maybeSingle();
+async function hasMembership(actor: ActorLookup, classId: string) {
+  const normalizedClassId = String(classId ?? "").trim();
+  if (!normalizedClassId) {
+    return { ok: true as const, isMember: false };
+  }
 
-  if (error) {
+  try {
+    const isMember = await hasClassMembershipForActor(
+      supabase,
+      actor,
+      normalizedClassId
+    );
+    return { ok: true as const, isMember };
+  } catch (error) {
     return {
       ok: false as const,
       response: NextResponse.json(
@@ -435,11 +441,6 @@ async function hasMembership(deviceId: string, classId: string) {
       ),
     };
   }
-
-  return {
-    ok: true as const,
-    isMember: Boolean(data),
-  };
 }
 
 async function userHasClassInTopic(params: {
@@ -743,6 +744,7 @@ export async function matchJoinV2Post(req: Request) {
           deviceId,
           classId: forcedClassId,
           sessionId: forcedSessionId || undefined,
+          userId: userId || null,
         })
       : { existingClassMember: false, existingSessionMember: false };
     const canRejoinTargetClass = canRejoinFromEligibility(rejoinEligibility);
@@ -899,7 +901,7 @@ export async function matchJoinV2Post(req: Request) {
       const existingClass = forcedRes.row;
       forcedClassDeadline = existingClass.match_deadline_at ?? null;
 
-      const membershipCheck = await hasMembership(deviceId, forcedClassId);
+      const membershipCheck = await hasMembership(actor, forcedClassId);
       if (!membershipCheck.ok) return membershipCheck.response;
 
       const topicGenderRes = await getTopicGenderRestriction(

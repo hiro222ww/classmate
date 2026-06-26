@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isWebPushEnabledEventType } from "@/lib/webPushConstraints";
 
 /**
  * Durable notification event log for future Push / in-app badge delivery.
@@ -66,10 +67,9 @@ export async function recordNotificationEvent(
     return { ok: false, error: "invalid_notification_event_input" };
   }
 
-  const pushSkippedReason =
-    input.eventType === NOTIFICATION_EVENT_TYPES.CALL_REQUEST_CREATED
-      ? null
-      : "push_not_implemented";
+  const pushSkippedReason = isWebPushEnabledEventType(input.eventType)
+    ? null
+    : "push_not_implemented";
 
   const { data, error } = await supabaseAdmin
     .from("notification_events")

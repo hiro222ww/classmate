@@ -234,6 +234,10 @@ export function resolveCallMemberUserDisplayText(params: {
       screen: params.screen,
       isInCall: params.isInCall,
       inSessionMember: params.inSessionMember,
+      audioConfirmedStrict: params.audioConfirmedStrict,
+      playbackActive: params.playbackActive,
+      audioActuallyPlaying: params.audioActuallyPlaying,
+      recentPlaySuccess: params.recentPlaySuccess,
     });
   }
 
@@ -259,14 +263,52 @@ const PUBLIC_OFFLINE_LABELS = new Set([
   "退出しました",
 ]);
 
+const PUBLIC_CONNECTING_LABELS = new Set([
+  "接続中",
+  "接続処理中",
+  "再接続中",
+  "音声確認中",
+]);
+
 export function resolvePublicCallMemberLabel(params: {
   rawText: string;
   screen?: string | null;
   isInCall?: boolean;
   inSessionMember?: boolean;
+  audioConfirmedStrict?: boolean;
+  playbackActive?: boolean;
+  audioActuallyPlaying?: boolean;
+  recentPlaySuccess?: boolean;
 }): string {
   const screen = String(params.screen ?? "").trim();
   const normalized = normalizeCallStatusDisplayText(params.rawText);
+
+  const voiceEstablished = hasEstablishedAudioDisplayEvidence({
+    health: {
+      audioConfirmedStrict: params.audioConfirmedStrict,
+      playSuccess: params.recentPlaySuccess,
+      audioActuallyPlaying: params.audioActuallyPlaying,
+    },
+    recentConfirmed: params.audioConfirmedStrict === true,
+    audioActuallyPlaying: params.audioActuallyPlaying,
+    playbackActive: params.playbackActive,
+    recentPlaySuccess: params.recentPlaySuccess,
+  });
+
+  if (
+    voiceEstablished ||
+    normalized === "通話中" ||
+    normalized === "音声受信中"
+  ) {
+    return "通話中";
+  }
+
+  if (
+    PUBLIC_CONNECTING_LABELS.has(normalized) &&
+    params.inSessionMember !== false
+  ) {
+    return simplifyUserFacingStatusText(normalized);
+  }
 
   if (
     params.isInCall === true &&

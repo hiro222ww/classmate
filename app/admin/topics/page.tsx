@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { tierName } from "@/lib/planTiers";
 import { genderRestrictionAdminLabel } from "@/lib/topicManagement";
-import { DEFAULT_BILLING_NOTICE_TEXT } from "@/lib/billingNoticeDefaults";
 
 type WorldRow = {
   world_key: string;
@@ -76,22 +75,6 @@ export default function AdminTopicsPage() {
   const [wSensitive, setWSensitive] = useState(false);
   const [wMinAge, setWMinAge] = useState(0);
 
-  const [globalJoinEnabled, setGlobalJoinEnabled] = useState(false);
-const [globalJoinStart, setGlobalJoinStart] = useState("21:00");
-const [globalJoinEnd, setGlobalJoinEnd] = useState("21:30");
-
-const [billingNoticeEnabled, setBillingNoticeEnabled] = useState(true);
-const [billingNoticeText, setBillingNoticeText] = useState(
-  DEFAULT_BILLING_NOTICE_TEXT
-);
-
-type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";
-const [recruitmentTtlMode, setRecruitmentTtlMode] =
-  useState<RecruitmentTtlMode>("5");
-const [minorsEnabled, setMinorsEnabled] = useState(false);
-const [minorsRiskAck, setMinorsRiskAck] = useState(false);
-const [productionAgeLocked, setProductionAgeLocked] = useState(false);
-
 useEffect(() => {
   loadAll();
 }, []);
@@ -125,39 +108,8 @@ useEffect(() => {
 
       setTopics(tj.topics ?? []);
       setWorlds(wj.worlds ?? []);
-      const settingsRes = await fetch("/api/admin/settings", {
-  method: "GET",
-  credentials: "include",
-  cache: "no-store",
-});
-const sj = await readJsonOrThrow(settingsRes);
-
-const settings = sj.settings ?? {};
-
-setGlobalJoinEnabled(Boolean(settings.global_join_window?.enabled));
-setGlobalJoinStart(String(settings.global_join_window?.start ?? "21:00"));
-setGlobalJoinEnd(String(settings.global_join_window?.end ?? "21:30"));
-
-setBillingNoticeEnabled(Boolean(settings.billing_notice?.enabled));
-setBillingNoticeText(
-  String(settings.billing_notice?.text ?? DEFAULT_BILLING_NOTICE_TEXT)
-);
-
-const ttl = settings.recruitment_session_ttl_minutes ?? {};
-if (ttl.unlimited === true) {
-  setRecruitmentTtlMode("unlimited");
-} else if (Number(ttl.minutes) === 10) {
-  setRecruitmentTtlMode("10");
-} else if (Number(ttl.minutes) === 15) {
-  setRecruitmentTtlMode("15");
-} else {
-  setRecruitmentTtlMode("5");
-}
-
-setMinorsEnabled(settings.minors_enabled === true);
-setProductionAgeLocked(Boolean(sj.production_age_locked));
       setMsg(
-  `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length} / settings:OK）`
+  `読み込みOK（topics:${(tj.topics ?? []).length} / worlds:${(wj.worlds ?? []).length}）`
 );
     } catch (e: any) {
       setMsg(e?.message ?? "load_failed");
@@ -165,49 +117,6 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
       setBusy(false);
     }
   }
-
-  async function saveSettings() {
-  setMsg("");
-  setBusy(true);
-
-  try {
-    if (minorsEnabled && !minorsRiskAck) {
-      setMsg("未成年許可を有効にする前に、下の確認チェックリストにチェックを入れてください。");
-      setBusy(false);
-      return;
-    }
-
-    const res = await fetch("/api/admin/settings", {
-  method: "POST",
-  credentials: "include",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    global_join_window: {
-      enabled: globalJoinEnabled,
-      start: globalJoinStart,
-      end: globalJoinEnd,
-    },
-    billing_notice: {
-      enabled: billingNoticeEnabled,
-      text: billingNoticeText,
-    },
-    recruitment_session_ttl_minutes:
-      recruitmentTtlMode === "unlimited"
-        ? { unlimited: true, minutes: null }
-        : { unlimited: false, minutes: Number(recruitmentTtlMode) },
-    minors_enabled: minorsEnabled,
-  }),
-});
-
-    await readJsonOrThrow(res);
-
-    setMsg("全体設定を保存しました");
-  } catch (e: any) {
-    setMsg(e?.message ?? "settings_save_failed");
-  } finally {
-    setBusy(false);
-  }
-}
 
   async function addTopic() {
     setMsg("");
@@ -265,38 +174,115 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
     }
   }
 
+  function buildTopicPatch(t: TopicRow) {
+    return {
+      title: t.title,
+      description: t.description ?? "",
+      monthly_price: Number(t.monthly_price ?? 0),
+      is_sensitive: Boolean(t.is_sensitive),
+      min_age: Number(t.min_age ?? 0),
+      gender_restriction: t.gender_restriction ?? null,
+      is_active: t.is_active !== false,
+      is_paid: Boolean(t.is_paid),
+      display_order: Number(t.display_order ?? 0),
+      accepting_new_users: t.accepting_new_users !== false,
+      badge_label: t.badge_label ?? null,
+      default_world_key: t.default_world_key ?? null,
+    };
+  }
+
+  async function persistTopic(t: TopicRow) {
+    const res = await fetch("/api/admin/topics", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "update",
+        topic_key: t.topic_key,
+        patch: buildTopicPatch(t),
+      }),
+    });
+    await readJsonOrThrow(res);
+  }
+
+  async function persistWorld(w: WorldRow) {
+    const res = await fetch("/api/admin/worlds", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mode: "update",
+        world_key: w.world_key,
+        patch: {
+          title: w.title,
+          description: w.description ?? "",
+          is_sensitive: Boolean(w.is_sensitive),
+          min_age: Number(w.min_age ?? 0),
+        },
+      }),
+    });
+    await readJsonOrThrow(res);
+  }
+
   async function saveTopic(t: TopicRow) {
     setMsg("");
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/topics", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          mode: "update",
-          topic_key: t.topic_key,
-          patch: {
-            title: t.title,
-            description: t.description ?? "",
-            monthly_price: Number(t.monthly_price ?? 0),
-            is_sensitive: Boolean(t.is_sensitive),
-            min_age: Number(t.min_age ?? 0),
-            gender_restriction: t.gender_restriction ?? null,
-            is_active: t.is_active !== false,
-            is_paid: Boolean(t.is_paid),
-            display_order: Number(t.display_order ?? 0),
-            accepting_new_users: t.accepting_new_users !== false,
-            badge_label: t.badge_label ?? null,
-            default_world_key: t.default_world_key ?? null,
-          },
-        }),
-      });
-      await readJsonOrThrow(res);
-
+      await persistTopic(t);
       setMsg(`保存OK: ${t.topic_key}`);
       await loadAll();
     } catch (e: any) {
       setMsg(e?.message ?? "update_failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveAllChanges() {
+    setMsg("");
+    setBusy(true);
+    try {
+      const savableTopics = topics.filter((t) => !t.is_archived);
+
+      if (worlds.length > 0) {
+        const worldsRes = await fetch("/api/admin/worlds", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "bulk_update",
+            worlds: worlds.map((w) => ({
+              world_key: w.world_key,
+              patch: {
+                title: w.title,
+                description: w.description ?? "",
+                is_sensitive: Boolean(w.is_sensitive),
+                min_age: Number(w.min_age ?? 0),
+              },
+            })),
+          }),
+        });
+        await readJsonOrThrow(worldsRes);
+      }
+
+      if (savableTopics.length > 0) {
+        const topicsRes = await fetch("/api/admin/topics", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mode: "bulk_update",
+            topics: savableTopics.map((t) => ({
+              topic_key: t.topic_key,
+              patch: buildTopicPatch(t),
+            })),
+          }),
+        });
+        await readJsonOrThrow(topicsRes);
+      }
+
+      setMsg(
+        `全体を保存しました（世界観 ${worlds.length}件 / テーマ ${savableTopics.length}件）`
+      );
+      await loadAll();
+    } catch (e: any) {
+      setMsg(e?.message ?? "bulk_save_failed");
     } finally {
       setBusy(false);
     }
@@ -414,22 +400,7 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
     setMsg("");
     setBusy(true);
     try {
-      const res = await fetch("/api/admin/worlds", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          mode: "update",
-          world_key: w.world_key,
-          patch: {
-            title: w.title,
-            description: w.description ?? "",
-            is_sensitive: Boolean(w.is_sensitive),
-            min_age: Number(w.min_age ?? 0),
-          },
-        }),
-      });
-      await readJsonOrThrow(res);
-
+      await persistWorld(w);
       setMsg(`世界観 保存OK: ${w.world_key}`);
       await loadAll();
     } catch (e: any) {
@@ -541,6 +512,15 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
 
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
         世界観（worlds）は編集可能。テーマ（topics）には公開状態・受付状態・性別制限・表示順・価格を設定できます。
+        運用設定は
+        <a href="/admin/settings" style={{ marginInline: 4, fontWeight: 800 }}>
+          運用設定
+        </a>
+        、課金文言は
+        <a href="/admin/copy" style={{ marginInline: 4, fontWeight: 800 }}>
+          課金・プラン文言
+        </a>
+        から編集できます。
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
@@ -561,6 +541,19 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
           </button>
 
           <button
+            onClick={() => void saveAllChanges()}
+            disabled={busy}
+            style={{
+              ...btn,
+              background: "#1d4ed8",
+              borderColor: "#1d4ed8",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? "保存中…" : "全体を保存"}
+          </button>
+
+          <button
             onClick={() => {
               window.location.href = "/admin";
             }}
@@ -570,294 +563,6 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
           </button>
 
           {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
-        </div>
-      </section>
-
-            <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-          入校受付時間
-        </h2>
-
-        <div
-          style={{
-            marginTop: 10,
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 10,
-          }}
-        >
-          <label
-            style={{
-              fontSize: 13,
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              gridColumn: "1 / -1",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={globalJoinEnabled}
-              onChange={(e) => setGlobalJoinEnabled(e.target.checked)}
-            />
-            入校受付時間を有効にする
-          </label>
-
-          <label style={{ fontSize: 12, color: "#666" }}>
-            受付開始
-            <input
-              type="time"
-              value={globalJoinStart}
-              onChange={(e) => setGlobalJoinStart(e.target.value)}
-              style={{ ...input, width: "100%", marginTop: 6 }}
-            />
-          </label>
-
-          <label style={{ fontSize: 12, color: "#666" }}>
-            受付終了
-            <input
-              type="time"
-              value={globalJoinEnd}
-              onChange={(e) => setGlobalJoinEnd(e.target.value)}
-              style={{ ...input, width: "100%", marginTop: 6 }}
-            />
-          </label>
-
-          <button
-            onClick={saveSettings}
-            disabled={busy}
-            style={{
-              ...btn,
-              gridColumn: "1 / -1",
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            入校受付時間を保存
-          </button>
-        </div>
-      </section>
-
-      <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-          募集締切（forming/waiting TTL）
-        </h2>
-        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
-          通常「入る」の募集セッション有効時間。超過した forming/waiting は募集停止（expired）扱いになります。
-        </p>
-
-        <div
-          style={{
-            marginTop: 10,
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-            gap: 10,
-          }}
-        >
-          {(
-            [
-              { value: "5", label: "5分" },
-              { value: "10", label: "10分" },
-              { value: "15", label: "15分" },
-              { value: "unlimited", label: "無制限" },
-            ] as const
-          ).map((opt) => (
-            <label
-              key={opt.value}
-              style={{
-                fontSize: 13,
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                padding: "10px 12px",
-                borderRadius: 12,
-                border:
-                  recruitmentTtlMode === opt.value
-                    ? "2px solid #111827"
-                    : "1px solid #e5e7eb",
-                background: "#fff",
-                cursor: "pointer",
-              }}
-            >
-              <input
-                type="radio"
-                name="recruitmentTtlMode"
-                checked={recruitmentTtlMode === opt.value}
-                onChange={() => setRecruitmentTtlMode(opt.value)}
-              />
-              {opt.label}
-            </label>
-          ))}
-
-          <button
-            onClick={saveSettings}
-            disabled={busy}
-            style={{
-              ...btn,
-              gridColumn: "1 / -1",
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            募集締切設定を保存
-          </button>
-        </div>
-      </section>
-
-      <section style={{ ...card, marginTop: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-          課金ページの注意文
-        </h2>
-        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
-          プラン画面・支払い管理画面の「?」ヘルプに表示されます。ベータ期間中の案内などをここで編集できます。
-        </p>
-
-        <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-          <label
-            style={{
-              fontSize: 13,
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={billingNoticeEnabled}
-              onChange={(e) => setBillingNoticeEnabled(e.target.checked)}
-            />
-            課金ページに表示する
-          </label>
-
-          <label style={{ fontSize: 12, color: "#666" }}>
-            表示文言
-            <textarea
-              value={billingNoticeText}
-              onChange={(e) => setBillingNoticeText(e.target.value)}
-              rows={5}
-              style={{
-                ...input,
-                width: "100%",
-                marginTop: 6,
-                resize: "vertical",
-                lineHeight: 1.6,
-              }}
-            />
-          </label>
-
-          <button
-            onClick={saveSettings}
-            disabled={busy}
-            style={{
-              ...btn,
-              width: "fit-content",
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            課金注意文を保存
-          </button>
-        </div>
-      </section>
-
-      <section style={{ ...card, marginTop: 12 }}>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 10,
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-            未成年登録
-          </h2>
-          <span
-            style={{
-              display: "inline-flex",
-              padding: "4px 10px",
-              borderRadius: 999,
-              background: minorsEnabled ? "#dbeafe" : "#f3f4f6",
-              color: minorsEnabled ? "#1d4ed8" : "#374151",
-              fontWeight: 900,
-              fontSize: 12,
-            }}
-          >
-            {minorsEnabled ? "未成年登録 ON" : "未成年登録 OFF"}
-          </span>
-        </div>
-
-        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#667085", lineHeight: 1.5 }}>
-          18歳未満のプロフィール登録を許可します。本番初期運用ではOFF推奨。
-          {productionAgeLocked ? " 現在の環境では本番二重ロックにより保存できません。" : ""}
-        </p>
-
-        {minorsEnabled ? (
-          <label
-            style={{
-              marginTop: 10,
-              display: "flex",
-              gap: 8,
-              alignItems: "flex-start",
-              fontSize: 12,
-              color: "#b45309",
-              fontWeight: 800,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={minorsRiskAck}
-              onChange={(e) => setMinorsRiskAck(e.target.checked)}
-            />
-            <span>
-              未成年許可は検証環境専用であること、法務確認が必要であること、成人/未成年分離と通報強化が必要であることを理解しました。
-            </span>
-          </label>
-        ) : null}
-
-        <div
-          style={{
-            marginTop: 12,
-            padding: "12px 14px",
-            borderRadius: 12,
-            border: "1px solid #e5e7eb",
-            background: "#f9fafb",
-            display: "grid",
-            gap: 10,
-          }}
-        >
-          <div style={{ fontWeight: 800, color: "#374151" }}>
-            {minorsEnabled ? "未成年登録：許可中" : "未成年登録：停止中"}
-          </div>
-
-          <label
-            style={{
-              fontSize: 13,
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={minorsEnabled}
-              onChange={(e) => {
-                setMinorsEnabled(e.target.checked);
-                if (!e.target.checked) setMinorsRiskAck(false);
-              }}
-            />
-            18歳未満のプロフィール登録を許可する
-          </label>
-
-          <button
-            onClick={saveSettings}
-            disabled={busy}
-            style={{
-              ...btn,
-              width: "fit-content",
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            未成年登録設定を保存
-          </button>
         </div>
       </section>
 

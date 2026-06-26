@@ -16,7 +16,6 @@ import { HelpTip } from "@/components/HelpTip";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
-  DASH_CARD,
   CLASS_ENTER_BTN,
   HOME_DASHBOARD_LAYOUT_CSS,
 } from "@/components/dashboard/dashboardStyles";
@@ -44,15 +43,13 @@ import CallRequestSection from "@/components/CallRequestSection";
 import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
-import {
-  isWebPushSupported,
-  subscribeWebPush,
-  unsubscribeWebPush,
-} from "@/lib/webPushClient";
+import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
-import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
+import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
+import { supabaseAuthClient } from "@/lib/authClient";
 import { markAutoCallOnce } from "@/lib/autoCallOnce";
 import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import {
@@ -71,7 +68,6 @@ import {
   storeHomeClassSessionHint,
 } from "@/lib/homeClassSessionHint";
 import { isUserProfileComplete } from "@/lib/profileClient";
-import { buildProfileEditPath } from "@/lib/profileNavigation";
 import {
   logParticipationStatusDecision,
   mapPresenceApiRow,
@@ -316,7 +312,7 @@ function getClassStatusStyle(label: string) {
     };
   }
 
-  if (label === "待機中") {
+  if (label === "待機中" || label === "待機ルーム内") {
     return {
       background: "#fef3c7",
       color: "#92400e",
@@ -393,6 +389,8 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
+  const { enabled: notificationsEnabled, toggle: toggleNotifications } =
+    useWebPushNotifications(deviceId, "home");
   const {
     loading: currentClassLoading,
     current: currentClass,
@@ -416,7 +414,6 @@ export default function HomeClient() {
   const [presenceByClass, setPresenceByClass] = useState<
     Record<string, Record<string, PresenceRow>>
   >({});
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [profileTarget, setProfileTarget] = useState<MemberProfileTarget | null>(
     null
   );
@@ -732,29 +729,50 @@ export default function HomeClient() {
     [deviceId]
   );
 
-  useEffect(() => {
-    setMounted(true);
-
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("notifications_enabled");
-      setNotificationsEnabled(saved === "true");
+  const refreshSelfProfile = useCallback(async (id: string) => {
+    const result = await fetchSelfProfile(id);
+    if (result.ok) {
+      setProfile(result.profile);
+      logProfileExists(
+        id,
+        Boolean(
+          result.profile &&
+            typeof result.profile === "object" &&
+            String(
+              (result.profile as { display_name?: string }).display_name ?? ""
+            ).trim()
+        )
+      );
+      return;
     }
+
+    setProfile(null);
+    logProfileExists(id, false);
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!deviceId || !notificationsEnabled || !mounted) return;
+    const id = String(deviceId ?? "").trim();
+    if (!id) return;
 
-    void subscribeWebPush(deviceId)
-      .then((result) => {
-        if (!result.ok && result.error !== "permission_denied") {
-          console.warn("[home] web push resubscribe failed", result.error);
-        }
-      })
-      .catch((e) => {
-        console.warn("[home] web push resubscribe error", e);
-      });
-  }, [deviceId, notificationsEnabled, mounted]);
+    const {
+      data: { subscription },
+    } = supabaseAuthClient.auth.onAuthStateChange((event) => {
+      if (
+        event === "SIGNED_IN" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "INITIAL_SESSION"
+      ) {
+        void refreshSelfProfile(id);
+        void fetchJoinedClasses("auth_sync", { deviceId: id });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [deviceId, fetchJoinedClasses, refreshSelfProfile]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -847,10 +865,7 @@ export default function HomeClient() {
             ? "invite_success"
             : "mount";
 
-        const profilePromise = fetch(
-          `/api/profile?device_id=${encodeURIComponent(id)}`,
-          { cache: "no-store" }
-        ).catch(() => null);
+        const profilePromise = refreshSelfProfile(id);
 
         if (fetchReason === "mount") {
           await fetchJoinedClasses("mount", {
@@ -883,31 +898,7 @@ export default function HomeClient() {
           }
         }
 
-        const profileRes = await profilePromise;
-        if (cancelled || !profileRes) return;
-
-        if (profileRes.ok) {
-          const profileJson = await readJsonSafe(profileRes);
-          const nextProfile =
-            profileJson?.profile && typeof profileJson.profile === "object"
-              ? profileJson.profile
-              : profileJson?.device_id
-                ? profileJson
-                : null;
-
-          setProfile(nextProfile);
-          logProfileExists(
-            id,
-            Boolean(
-              nextProfile &&
-                typeof nextProfile === "object" &&
-                String((nextProfile as { display_name?: string }).display_name ?? "").trim()
-            )
-          );
-        } else {
-          setProfile(null);
-          logProfileExists(id, false);
-        }
+        await profilePromise;
       } catch (e: any) {
         console.error("[home] load error", e);
         if (!cancelled) {
@@ -928,7 +919,7 @@ export default function HomeClient() {
         inviteRetryTimerRef.current = null;
       }
     };
-  }, [dev, fetchJoinedClasses, searchParams]);
+  }, [dev, fetchJoinedClasses, refreshSelfProfile, searchParams]);
 
   useEffect(() => {
     function runRefresh(reason: "focus" | "visibility") {
@@ -1772,48 +1763,6 @@ return () => {
     return "入室する";
   }
 
-  async function toggleNotifications() {
-    if (typeof window === "undefined") return;
-
-    if (!isWebPushSupported()) {
-      alert(
-        "このブラウザは Web Push に対応していません。Chrome / Edge / Firefox、または iOS 16.4+ でホーム画面に追加した Safari をお試しください。"
-      );
-      return;
-    }
-
-    if (notificationsEnabled) {
-      const id = String(getDeviceId() ?? deviceId ?? "").trim();
-      if (id) {
-        await unsubscribeWebPush(id);
-      }
-      localStorage.setItem("notifications_enabled", "false");
-      setNotificationsEnabled(false);
-      return;
-    }
-
-    const id = String(getDeviceId() ?? deviceId ?? "").trim();
-    if (!id) {
-      alert("device_id_missing");
-      return;
-    }
-
-    const result = await subscribeWebPush(id);
-    if (!result.ok) {
-      if (result.error === "permission_denied") {
-        alert("通知が許可されていません。ブラウザ設定を確認してください。");
-      } else if (result.error === "vapid_not_configured") {
-        alert("Push通知は現在サーバー設定中です。しばらくしてからお試しください。");
-      } else {
-        alert("Push通知の有効化に失敗しました。");
-      }
-      return;
-    }
-
-    localStorage.setItem("notifications_enabled", "true");
-    setNotificationsEnabled(true);
-  }
-
   async function tryOpenClassWithHintSession(params: {
     target: MineClass;
     hintSessionId: string;
@@ -1968,7 +1917,10 @@ return () => {
 
       const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(await buildDeviceAuthHeaders(currentDeviceId)),
+        },
         body: JSON.stringify(openBody),
         cache: "no-store",
       });
@@ -2012,6 +1964,15 @@ return () => {
 
         if (json?.error === "membership_left") {
           logHomeOpenClassBlocked(target.id);
+          return;
+        }
+
+        if (
+          json?.error === "topic_not_active" ||
+          json?.error === "topic_not_available" ||
+          json?.error === "topic_recruitment_closed"
+        ) {
+          alert(json?.message ?? "このテーマは現在利用できません");
           return;
         }
 
@@ -2378,6 +2339,16 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   return (
     <div style={{ display: "grid", gap: 24 }}>
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
+
+      <DashboardPageHeader>
+        <DashboardHeaderNav
+          returnPath="/"
+          hasProfile={profileComplete}
+          withDev={withDev}
+          notificationsEnabled={notificationsEnabled}
+          onToggleNotifications={toggleNotifications}
+        />
+      </DashboardPageHeader>
 
       <div>
         <p style={{ margin: 0, fontSize: 15, color: "#374151" }}>
@@ -2844,51 +2815,6 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           </div>
         </section>
       ) : null}
-
-      <section
-        style={{
-          ...DASH_CARD,
-          padding: "14px 16px",
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => void toggleNotifications()}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 12,
-            border: "1px solid #e5e7eb",
-            background: notificationsEnabled ? "#f0fdf4" : "#fff",
-            color: "#4b5563",
-            fontWeight: 800,
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
-          {notificationsEnabled ? "Push通知 OFF" : "Push通知"}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => router.push(withDev(buildProfileEditPath("/")))}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 12,
-            border: profileComplete ? "1px solid #e5e7eb" : "1px solid #111827",
-            background: profileComplete ? "#fff" : "#111827",
-            color: profileComplete ? "#4b5563" : "#fff",
-            fontWeight: profileComplete ? 800 : 900,
-            fontSize: 13,
-            cursor: "pointer",
-          }}
-        >
-          {profileComplete ? "プロフィール編集" : "プロフィール登録"}
-        </button>
-      </section>
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 

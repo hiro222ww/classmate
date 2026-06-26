@@ -19,10 +19,7 @@ import {
   buildProfileEditPath,
   sanitizeReturnTo,
 } from "@/lib/profileNavigation";
-import {
-  LegalConsentCheckbox,
-  LegalDocumentLinks,
-} from "@/components/LegalDocumentLinks";
+import { LegalConsentCheckbox } from "@/components/LegalDocumentLinks";
 import {
   FormFieldLabel,
   FormSection,
@@ -854,20 +851,19 @@ export default function ProfileClient() {
         </div>
       </FormSection>
 
-      <FormSection
-        title="規約・ポリシー"
-        helpLabel="規約・ポリシーについて"
-        helpContent={
-          needsLegalConsent && hasExistingProfile
-            ? `${LEGAL_HELP} 規約・ポリシーが更新されました。引き続きご利用いただくには同意が必要です。`
-            : LEGAL_HELP
-        }
-      >
-        {needsLegalConsent ? (
+      {needsLegalConsent ? (
+        <FormSection
+          title="規約・ポリシー"
+          helpLabel="規約・ポリシーについて"
+          helpContent={
+            hasExistingProfile
+              ? `${LEGAL_HELP} 規約・ポリシーが更新されました。引き続きご利用いただくには同意が必要です。`
+              : LEGAL_HELP
+          }
+        >
           <LegalConsentCheckbox checked={legalAgreed} onChange={setLegalAgreed} />
-        ) : null}
-        <LegalDocumentLinks compact />
-      </FormSection>
+        </FormSection>
+      ) : null}
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button

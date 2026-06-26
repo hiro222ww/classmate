@@ -15,6 +15,7 @@ import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
 import { BillingNoticeTip } from "@/components/BillingNoticeTip";
 import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
+import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useRequireAccount } from "@/components/useRequireAccount";
 import { buildLoginUrl } from "@/lib/authAccount";
@@ -28,12 +29,6 @@ type Entitlements = {
 
 const TOPIC_PLANS = [400, 800, 1200] as const;
 const SLOT_PLANS = [3, 5] as const;
-
-const TOPIC_PLAN_HELP =
-  "テーマプランは任意の月額支援です。金額が高いプランに追加機能があるわけではありません。";
-
-const CLASS_SLOT_HELP =
-  "同時に参加できるクラス数の上限を拡張します。";
 
 function SoftCard({ children }: { children: React.ReactNode }) {
   return (
@@ -120,6 +115,7 @@ function PlanCard({
 export default function PremiumPage() {
   const router = useRouter();
   const { ready, loggedIn } = useRequireAccount("/premium");
+  const { copy } = useBillingCopy();
   const [deviceId, setDeviceId] = useState("");
   const [ent, setEnt] = useState<Entitlements | null>(null);
   const [busyKey, setBusyKey] = useState("");
@@ -279,7 +275,7 @@ export default function PremiumPage() {
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 900, margin: 0 }}>プラン</h1>
           <div style={{ marginTop: 8 }}>
-            <BillingNoticeTip label="ベータ期間中のご利用について" />
+            <BillingNoticeTip />
           </div>
         </div>
         <Link href={withDev("/billing")} style={{ fontWeight: 900 }}>
@@ -306,8 +302,11 @@ export default function PremiumPage() {
       <ThemePlanTopicsSection />
 
       <SoftCard>
-        <HelpTip label="テーマプランについて" content={TOPIC_PLAN_HELP}>
-          <div style={{ fontWeight: 900 }}>テーマプラン（任意の支援額）</div>
+        <HelpTip
+          label={copy.premium.topicPlanHelpLabel}
+          content={copy.premium.topicPlanHelp}
+        >
+          <div style={{ fontWeight: 900 }}>{copy.premium.topicPlanSectionTitle}</div>
         </HelpTip>
 
         <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
@@ -339,8 +338,11 @@ export default function PremiumPage() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ fontWeight: 900 }}>クラス枠</div>
-          <HelpTip label="クラス枠について" content={CLASS_SLOT_HELP} />
+          <div style={{ fontWeight: 900 }}>{copy.premium.classSlotSectionTitle}</div>
+          <HelpTip
+            label={copy.premium.classSlotHelpLabel}
+            content={copy.premium.classSlotHelp}
+          />
         </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 10 }}>

@@ -38,6 +38,22 @@ type SharedCanvasBoardProps = {
 const BOARD_REALTIME_RESUBSCRIBE_MS = 4000;
 const BOARD_STATUS_RECONNECTING = "再接続中…";
 
+const BOARD_DRAWING_LOCK_CLASS = "classmate-board-drawing";
+const BOARD_FULLSCREEN_CLASS = "classmate-board-fullscreen";
+
+function setBoardDrawingLock(active: boolean) {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle(BOARD_DRAWING_LOCK_CLASS, active);
+  if (active) {
+    window.getSelection()?.removeAllRanges();
+  }
+}
+
+function setBoardFullscreenLock(active: boolean) {
+  if (typeof document === "undefined") return;
+  document.body.classList.toggle(BOARD_FULLSCREEN_CLASS, active);
+}
+
 const BOARD_TOUCH_GUARD: CSSProperties = {
   userSelect: "none",
   WebkitUserSelect: "none",
@@ -47,10 +63,8 @@ const BOARD_TOUCH_GUARD: CSSProperties = {
 };
 
 function boardTouchAction(
-  isTouchLike: boolean,
   touchMode: "draw" | "pan"
 ): CSSProperties["touchAction"] {
-  if (!isTouchLike) return "none";
   return touchMode === "pan" ? "pan-x pan-y" : "none";
 }
 
@@ -96,10 +110,18 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   const [info, setInfo] = useState("");
   const [isTouchLike, setIsTouchLike] = useState(false);
   const [touchMode, setTouchMode] = useState<"draw" | "pan">("draw");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
 
   const sounds = useBoardSounds();
+
+  useEffect(() => {
+    return () => {
+      setBoardDrawingLock(false);
+      setBoardFullscreenLock(false);
+    };
+  }, []);
 
   const getCanvasSize = () => {
     const canvas = canvasRef.current;
@@ -838,7 +860,75 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
 
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [sessionId]);
+  }, [sessionId, isFullscreen]);
+
+  useEffect(() => {
+    setBoardFullscreenLock(isFullscreen);
+    if (isFullscreen) {
+      requestAnimationFrame(() => {
+        resizeCanvas();
+        redrawScene();
+      });
+    }
+    return () => setBoardFullscreenLock(false);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setIsFullscreen(false);
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const scroll = boardScrollRef.current;
+    if (!scroll || touchMode !== "pan" || isTouchLike) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startScroll = 0;
+    let pointerId = -1;
+
+    const onPanDown = (ev: PointerEvent) => {
+      if (ev.button !== 0) return;
+      dragging = true;
+      pointerId = ev.pointerId;
+      startX = ev.clientX;
+      startScroll = scroll.scrollLeft;
+      scroll.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    };
+
+    const onPanMove = (ev: PointerEvent) => {
+      if (!dragging || ev.pointerId !== pointerId) return;
+      scroll.scrollLeft = startScroll - (ev.clientX - startX);
+      ev.preventDefault();
+    };
+
+    const endPan = (ev: PointerEvent) => {
+      if (!dragging || ev.pointerId !== pointerId) return;
+      dragging = false;
+      pointerId = -1;
+      scroll.releasePointerCapture?.(ev.pointerId);
+      ev.preventDefault();
+    };
+
+    scroll.addEventListener("pointerdown", onPanDown, { passive: false });
+    scroll.addEventListener("pointermove", onPanMove, { passive: false });
+    scroll.addEventListener("pointerup", endPan, { passive: false });
+    scroll.addEventListener("pointercancel", endPan, { passive: false });
+
+    return () => {
+      scroll.removeEventListener("pointerdown", onPanDown);
+      scroll.removeEventListener("pointermove", onPanMove);
+      scroll.removeEventListener("pointerup", endPan);
+      scroll.removeEventListener("pointercancel", endPan);
+    };
+  }, [touchMode, isTouchLike, isFullscreen]);
 
   useEffect(() => {
     const onFocus = () => {
@@ -880,6 +970,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       lastPtRef.current = null;
       pointsRef.current = [];
       strokeIdRef.current = "";
+      setBoardDrawingLock(false);
     };
 
     const forceAbort = () => {
@@ -919,13 +1010,15 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         if (sel && sel.removeAllRanges) sel.removeAllRanges();
       }
 
-      if (isTouchLike && touchMode === "pan") return;
+      if (touchMode === "pan") return;
 
       ev.preventDefault();
       (ev.target as any)?.setPointerCapture?.(ev.pointerId);
 
       const p = getBoardPoint(ev);
       if (!p) return;
+
+      setBoardDrawingLock(true);
 
       if (tool === "eraser") {
         materializeRemoteProgressAsPendingRows();
@@ -1026,7 +1119,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     };
 
     const onUp = (ev: PointerEvent) => {
-      if (isTouchLike && touchMode === "pan") return;
+      if (touchMode === "pan") return;
 
       ev.preventDefault();
 
@@ -1104,12 +1197,18 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     });
 
     const blockBoardDefault = (ev: Event) => {
-      if (isTouchLike && touchMode === "pan") return;
+      if (touchMode === "pan") return;
+      ev.preventDefault();
+    };
+
+    const blockSelectWhileDrawing = (ev: Event) => {
+      if (!drawingRef.current) return;
       ev.preventDefault();
     };
 
     canvas.addEventListener("selectstart", blockBoardDefault);
     canvas.addEventListener("dragstart", blockBoardDefault);
+    document.addEventListener("selectstart", blockSelectWhileDrawing);
 
     const boardScroll = boardScrollRef.current;
     const boardSurface = boardSurfaceRef.current;
@@ -1144,6 +1243,7 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
       canvas.removeEventListener("contextmenu", onCtx as EventListener);
       canvas.removeEventListener("selectstart", blockBoardDefault);
       canvas.removeEventListener("dragstart", blockBoardDefault);
+      document.removeEventListener("selectstart", blockSelectWhileDrawing);
 
       for (const el of [boardScroll, boardSurface]) {
         el?.removeEventListener("selectstart", blockBoardDefault);
@@ -1173,7 +1273,19 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
     <div
       className="classmate-board-root"
       style={{
-        marginTop: 10,
+        ...(isFullscreen
+          ? {
+              position: "fixed",
+              inset: 0,
+              zIndex: 9000,
+              marginTop: 0,
+              background: "#f8fafc",
+              display: "flex",
+              flexDirection: "column",
+              padding: 12,
+              overflow: "hidden",
+            }
+          : { marginTop: 10 }),
         ...BOARD_TOUCH_GUARD,
       }}
     >
@@ -1253,72 +1365,107 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={requestClear}
-          aria-label="黒板をすべて消す"
+        <div
           style={{
-            flex: "0 0 auto",
-            marginLeft: isTouchLike ? 0 : 12,
-            marginTop: isTouchLike ? 4 : 0,
-            padding: isTouchLike ? "10px 14px" : "8px 12px",
-            minHeight: isTouchLike ? 44 : undefined,
-            borderRadius: 12,
-            border: "1px solid #fca5a5",
-            background: "#fff5f5",
-            color: "#b91c1c",
-            fontWeight: 900,
-            cursor: "pointer",
-            boxShadow: "0 0 0 1px rgba(185, 28, 28, 0.08)",
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+            flexShrink: 0,
           }}
         >
-          🗑 全消し
-        </button>
+          <button
+            type="button"
+            onClick={() => setIsFullscreen((prev) => !prev)}
+            style={{
+              padding: isTouchLike ? "10px 14px" : "8px 12px",
+              minHeight: isTouchLike ? 44 : undefined,
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isFullscreen ? "#111827" : "#fff",
+              color: isFullscreen ? "#fff" : "#111827",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            {isFullscreen ? "全画面を閉じる" : "全画面"}
+          </button>
+
+          <button
+            type="button"
+            onClick={requestClear}
+            aria-label="黒板をすべて消す"
+            style={{
+              padding: isTouchLike ? "10px 14px" : "8px 12px",
+              minHeight: isTouchLike ? 44 : undefined,
+              borderRadius: 12,
+              border: "1px solid #fca5a5",
+              background: "#fff5f5",
+              color: "#b91c1c",
+              fontWeight: 900,
+              cursor: "pointer",
+              boxShadow: "0 0 0 1px rgba(185, 28, 28, 0.08)",
+            }}
+          >
+            🗑 全消し
+          </button>
+        </div>
       </div>
 
-      {isTouchLike ? (
-        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <button
-            type="button"
-            onClick={() => setTouchMode("draw")}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 999,
-              border:
-                touchMode === "draw" ? "2px solid #111" : "1px solid #d1d5db",
-              background: touchMode === "draw" ? "#111827" : "#fff",
-              color: touchMode === "draw" ? "#fff" : "#111827",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            描画モード
-          </button>
+      <div
+        style={{
+          marginTop: 8,
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+          alignItems: "center",
+          flexShrink: 0,
+          ...BOARD_TOUCH_GUARD,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setTouchMode("draw")}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 999,
+            border:
+              touchMode === "draw" ? "2px solid #111" : "1px solid #d1d5db",
+            background: touchMode === "draw" ? "#111827" : "#fff",
+            color: touchMode === "draw" ? "#fff" : "#111827",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          描画モード
+        </button>
 
-          <button
-            type="button"
-            onClick={() => setTouchMode("pan")}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 999,
-              border:
-                touchMode === "pan" ? "2px solid #111" : "1px solid #d1d5db",
-              background: touchMode === "pan" ? "#111827" : "#fff",
-              color: touchMode === "pan" ? "#fff" : "#111827",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            移動モード
-          </button>
+        <button
+          type="button"
+          onClick={() => setTouchMode("pan")}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 999,
+            border: touchMode === "pan" ? "2px solid #111" : "1px solid #d1d5db",
+            background: touchMode === "pan" ? "#111827" : "#fff",
+            color: touchMode === "pan" ? "#fff" : "#111827",
+            fontWeight: 900,
+            cursor: "pointer",
+          }}
+        >
+          移動モード
+        </button>
 
-          <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-            {touchMode === "draw"
+        <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+          {touchMode === "draw"
+            ? isTouchLike
               ? "1本指で描画"
-              : "横スクロールして全体を確認"}
-          </span>
-        </div>
-      ) : null}
+              : "ドラッグで描画"
+            : isTouchLike
+              ? "スワイプで黒板を移動"
+              : "ドラッグで黒板を移動"}
+        </span>
+      </div>
 
       {info ? (
         <div
@@ -1338,6 +1485,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
         className="classmate-board-scroll"
         style={{
           marginTop: 10,
+          flex: isFullscreen ? 1 : undefined,
+          minHeight: isFullscreen ? 0 : undefined,
           borderRadius: 16,
           border: "1px solid rgba(0,0,0,0.08)",
           background: BOARD_OUTER_BG,
@@ -1346,7 +1495,8 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
           ...BOARD_TOUCH_GUARD,
-          touchAction: boardTouchAction(isTouchLike, touchMode),
+          touchAction: boardTouchAction(touchMode),
+          cursor: touchMode === "pan" && !isTouchLike ? "grab" : undefined,
         }}
       >
         <div
@@ -1358,15 +1508,18 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
             maxWidth: "none",
             margin: "0 auto",
             minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
-            minHeight: isTouchLike ? 420 : 620,
-            aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
+            minHeight: isFullscreen ? "100%" : isTouchLike ? 420 : 620,
+            height: isFullscreen ? "100%" : undefined,
+            aspectRatio: isFullscreen
+              ? undefined
+              : `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
             borderRadius: 16,
             border: "2px solid #073126",
             background: BOARD_BG,
             boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
             overflow: "hidden",
             ...BOARD_TOUCH_GUARD,
-            touchAction: boardTouchAction(isTouchLike, touchMode),
+            touchAction: boardTouchAction(touchMode),
           }}
         >
           <canvas
@@ -1377,12 +1530,14 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
               width: "100%",
               height: "100%",
               ...BOARD_TOUCH_GUARD,
-              touchAction: boardTouchAction(isTouchLike, touchMode),
+              touchAction: boardTouchAction(touchMode),
               cursor:
                 tool === "eraser"
                   ? "cell"
-                  : isTouchLike && touchMode === "pan"
-                    ? "grab"
+                  : touchMode === "pan"
+                    ? isTouchLike
+                      ? "grab"
+                      : "grab"
                     : "crosshair",
             }}
           />
