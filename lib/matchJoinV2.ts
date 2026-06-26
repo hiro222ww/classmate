@@ -573,8 +573,11 @@ async function getTopicGenderRestriction(topicKey: string | null) {
 function checkGenderRestriction(params: {
   topic: TopicGenderRestrictionRow | null;
   profile: ProfileRow;
+  isExistingMember?: boolean;
 }) {
-  if (params.topic?.is_archived) {
+  const isExistingMember = params.isExistingMember === true;
+
+  if (!isExistingMember && params.topic?.is_archived) {
     return NextResponse.json(
       {
         ok: false,
@@ -585,7 +588,7 @@ function checkGenderRestriction(params: {
     );
   }
 
-  if (params.topic?.is_active === false) {
+  if (!isExistingMember && params.topic?.is_active === false) {
     return NextResponse.json(
       {
         ok: false,
@@ -596,7 +599,7 @@ function checkGenderRestriction(params: {
     );
   }
 
-  if (params.topic?.accepting_new_users === false) {
+  if (!isExistingMember && params.topic?.accepting_new_users === false) {
     return NextResponse.json(
       {
         ok: false,
@@ -608,6 +611,7 @@ function checkGenderRestriction(params: {
   }
 
   if (
+    !isExistingMember &&
     genderRestrictionBlocksJoin({
       genderRestriction: params.topic?.gender_restriction,
       profileGender: params.profile.gender,
@@ -895,6 +899,9 @@ export async function matchJoinV2Post(req: Request) {
       const existingClass = forcedRes.row;
       forcedClassDeadline = existingClass.match_deadline_at ?? null;
 
+      const membershipCheck = await hasMembership(deviceId, forcedClassId);
+      if (!membershipCheck.ok) return membershipCheck.response;
+
       const topicGenderRes = await getTopicGenderRestriction(
         existingClass.topic_key ?? null
       );
@@ -903,6 +910,7 @@ export async function matchJoinV2Post(req: Request) {
       const genderBlocked = checkGenderRestriction({
         topic: topicGenderRes.row,
         profile: selfProfile,
+        isExistingMember: membershipCheck.isMember,
       });
       if (genderBlocked) return genderBlocked;
 
@@ -918,9 +926,6 @@ export async function matchJoinV2Post(req: Request) {
         topicMinAge: topicAgeMeta.topicMinAge,
       });
       if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
-
-      const membershipCheck = await hasMembership(deviceId, forcedClassId);
-      if (!membershipCheck.ok) return membershipCheck.response;
 
       if (openJoinedClass && !membershipCheck.isMember) {
         console.log(
@@ -943,9 +948,18 @@ export async function matchJoinV2Post(req: Request) {
       const topicGenderRes = await getTopicGenderRestriction(topicKey);
       if (!topicGenderRes.ok) return topicGenderRes.response;
 
+      const topicMemberRes = await userHasClassInTopic({
+        deviceId,
+        userId: userId || null,
+        worldKey,
+        topicKey,
+      });
+      if (!topicMemberRes.ok) return topicMemberRes.response;
+
       const genderBlocked = checkGenderRestriction({
         topic: topicGenderRes.row,
         profile: selfProfile,
+        isExistingMember: topicMemberRes.isMember,
       });
       if (genderBlocked) return genderBlocked;
 
@@ -962,14 +976,6 @@ export async function matchJoinV2Post(req: Request) {
 
       const topicRes = await getTopicDeadline({ worldKey, topicKey });
       if (!topicRes.ok) return topicRes.response;
-
-      const topicMemberRes = await userHasClassInTopic({
-        deviceId,
-        userId: userId || null,
-        worldKey,
-        topicKey,
-      });
-      if (!topicMemberRes.ok) return topicMemberRes.response;
 
       if (
         !topicMemberRes.isMember &&
