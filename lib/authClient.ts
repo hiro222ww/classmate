@@ -14,6 +14,7 @@ import {
   markAuthEmailSent,
 } from "@/lib/authEmailErrors";
 import { sanitizeReturnTo, buildLoginUrl } from "@/lib/authAccount";
+import { formatAuthProviderError } from "@/lib/authProviderErrors";
 
 export type AuthSessionPostResult =
   | { ok: true; status: Record<string, unknown> }
@@ -412,10 +413,11 @@ export async function signInWithGoogle(returnTo?: string) {
       });
 
   if (result.error) {
+    const message = formatAuthProviderError(result.error.message);
     return {
       ok: false as const,
       error: result.error.message,
-      message: result.error.message,
+      message,
     };
   }
 

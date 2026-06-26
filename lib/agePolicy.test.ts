@@ -8,6 +8,7 @@ import {
   isProductionAgeLocked,
   parseMinorsEnabledValue,
   resolveMinorsEnabledFromSettings,
+  resolveClientAgeMode,
 } from "@/lib/agePolicyRules";
 import { buildLegalConsentPayload } from "@/lib/legalConsent";
 import { scanContactRisk } from "@/lib/contentModeration";
@@ -66,10 +67,16 @@ describe("agePolicy production lock", () => {
     ).toEqual({ minAge: 18, maxAge: 25 });
   });
 
-  it("uses 18+ slider bounds when minors disabled", () => {
+  it("uses a flat 0-120 slider range", () => {
     expect(getAgeFilterBounds("post_high_school_only", 20)).toEqual({
-      sliderMin: 18,
-      sliderMax: 60,
+      sliderMin: 0,
+      sliderMax: 120,
+      defaultMin: 18,
+      defaultMax: 25,
+    });
+    expect(getAgeFilterBounds("minor_separated_test", 16)).toEqual({
+      sliderMin: 0,
+      sliderMax: 120,
       defaultMin: 18,
       defaultMax: 25,
     });
@@ -92,13 +99,14 @@ describe("agePolicy production lock", () => {
     expect(resolveMinorsEnabledFromSettings(null)).toBe(false);
   });
 
-  it("allows teen slider bounds when minors enabled and user is minor", () => {
-    expect(getAgeFilterBounds("minor_separated_test", 16)).toEqual({
-      sliderMin: 13,
-      sliderMax: 17,
-      defaultMin: 15,
-      defaultMax: 17,
-    });
+  it("forces post_high_school_only on client when production age is locked", () => {
+    expect(
+      resolveClientAgeMode({
+        production_age_locked: true,
+        age_mode: "minor_separated_test",
+        minors_enabled: true,
+      })
+    ).toBe("post_high_school_only");
   });
 });
 

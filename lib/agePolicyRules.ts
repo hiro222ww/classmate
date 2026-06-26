@@ -3,8 +3,9 @@
 /** 18歳未満 / 高校生以下を対象外とする本番初期モード */
 export const ADULT_AGE_THRESHOLD = 18;
 
-/** ON 時の年齢スライダー上限（OFF 時の 130 とは別） */
-export const MATCH_PREFS_SLIDER_MAX = 60;
+/** ON 時の年齢スライダー範囲（OFF 時の 130 とは別） */
+export const MATCH_PREFS_SLIDER_MIN = 0;
+export const MATCH_PREFS_SLIDER_MAX = 120;
 
 export type AgeMode =
   | "post_high_school_only"
@@ -106,6 +107,18 @@ export function resolveAgeModeFromSettings(settingsJson: unknown): AgeMode {
   return ageModeFromLegacyMinors(resolveMinorsEnabledFromSettings(settingsJson));
 }
 
+/** Client UI: production lock always uses adult-only match slider bounds. */
+export function resolveClientAgeMode(settingsJson: unknown): AgeMode {
+  if (!settingsJson || typeof settingsJson !== "object") {
+    return "post_high_school_only";
+  }
+  const row = settingsJson as Record<string, unknown>;
+  if (row.production_age_locked === true) {
+    return "post_high_school_only";
+  }
+  return resolveAgeModeFromSettings(settingsJson);
+}
+
 export function adultOnlyUserMessage() {
   return "現在このサービスは18歳以上のみ利用できます。";
 }
@@ -123,42 +136,13 @@ export type AgeFilterBounds = {
 
 /** UI/API shared bounds for match-prefs age sliders. */
 export function getAgeFilterBounds(
-  mode: AgeMode,
-  selfAge: number | null
+  _mode?: AgeMode,
+  _selfAge?: number | null
 ): AgeFilterBounds {
-  const sliderMax = MATCH_PREFS_SLIDER_MAX;
-
-  if (mode === "post_high_school_only") {
-    return {
-      sliderMin: ADULT_AGE_THRESHOLD,
-      sliderMax,
-      defaultMin: ADULT_AGE_THRESHOLD,
-      defaultMax: 25,
-    };
-  }
-
-  if (mode === "open_16_plus") {
-    return {
-      sliderMin: 16,
-      sliderMax,
-      defaultMin: 16,
-      defaultMax: 25,
-    };
-  }
-
-  if (selfAge !== null && selfAge < ADULT_AGE_THRESHOLD) {
-    return {
-      sliderMin: 13,
-      sliderMax: ADULT_AGE_THRESHOLD - 1,
-      defaultMin: 15,
-      defaultMax: ADULT_AGE_THRESHOLD - 1,
-    };
-  }
-
   return {
-    sliderMin: ADULT_AGE_THRESHOLD,
-    sliderMax,
-    defaultMin: ADULT_AGE_THRESHOLD,
+    sliderMin: MATCH_PREFS_SLIDER_MIN,
+    sliderMax: MATCH_PREFS_SLIDER_MAX,
+    defaultMin: 18,
     defaultMax: 25,
   };
 }

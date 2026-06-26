@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { completeAuthCallback } from "@/lib/authClient";
 import { sanitizeReturnTo } from "@/lib/authAccount";
+import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { withDev } from "@/lib/withDev";
 
 export default function AuthCallbackClient() {
@@ -21,6 +22,14 @@ export default function AuthCallbackClient() {
 
   useEffect(() => {
     let cancelled = false;
+
+    const oauthError = readOAuthCallbackError(searchParams);
+    if (oauthError) {
+      setError(oauthError);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     (async () => {
       const deviceId = getDeviceId();
@@ -51,7 +60,7 @@ export default function AuthCallbackClient() {
     return () => {
       cancelled = true;
     };
-  }, [returnTo]);
+  }, [returnTo, searchParams]);
 
   return (
     <main style={{ maxWidth: 520, margin: "0 auto", padding: 24 }}>

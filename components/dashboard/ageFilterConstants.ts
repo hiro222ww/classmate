@@ -1,7 +1,7 @@
-import type { AgeMode } from "@/lib/agePolicyRules";
 import {
   getAgeFilterBounds,
-  getDefaultMatchPrefsForMode,
+  MATCH_PREFS_SLIDER_MAX,
+  MATCH_PREFS_SLIDER_MIN,
 } from "@/lib/agePolicyRules";
 
 export type MatchPrefs = {
@@ -17,43 +17,35 @@ export const AGE_FILTER_OFF_PREFS: MatchPrefs = {
   max_age: AGE_FILTER_OFF_MAX,
 };
 
-/** @deprecated use getDefaultMatchPrefsForMode */
 export const AGE_FILTER_ON_DEFAULT: MatchPrefs = { min_age: 18, max_age: 25 };
 
-export function resolveAgeFilterSliderBounds(
-  mode: AgeMode,
-  selfAge: number | null
-) {
-  const bounds = getAgeFilterBounds(mode, selfAge);
+export const AGE_FILTER_SLIDER_MIN = MATCH_PREFS_SLIDER_MIN;
+export const AGE_FILTER_SLIDER_MAX = MATCH_PREFS_SLIDER_MAX;
+
+export function resolveAgeFilterSliderBounds() {
+  const bounds = getAgeFilterBounds();
   return {
     sliderMin: bounds.sliderMin,
     sliderMax: bounds.sliderMax,
   };
 }
 
-export function sanitizeActiveMatchPrefs(
-  prefs: MatchPrefs,
-  mode: AgeMode,
-  selfAge: number | null
-): MatchPrefs {
+export function resolveAgeFilterOnDefault(): MatchPrefs {
+  const bounds = getAgeFilterBounds();
+  return { min_age: bounds.defaultMin, max_age: bounds.defaultMax };
+}
+
+export function sanitizeActiveMatchPrefs(prefs: MatchPrefs): MatchPrefs {
   if (isAgeFilterOff(prefs)) return AGE_FILTER_OFF_PREFS;
 
   if (prefs.max_age >= AGE_FILTER_OFF_MAX) {
-    return resolveAgeFilterOnDefault(mode, selfAge);
+    return resolveAgeFilterOnDefault();
   }
 
-  const bounds = resolveAgeFilterSliderBounds(mode, selfAge);
   return normalizeMatchPrefs({
-    min_age: clampAge(prefs.min_age, bounds.sliderMin, bounds.sliderMax),
-    max_age: clampAge(prefs.max_age, bounds.sliderMin, bounds.sliderMax),
+    min_age: clampAge(prefs.min_age, AGE_FILTER_SLIDER_MIN, AGE_FILTER_SLIDER_MAX),
+    max_age: clampAge(prefs.max_age, AGE_FILTER_SLIDER_MIN, AGE_FILTER_SLIDER_MAX),
   });
-}
-
-export function resolveAgeFilterOnDefault(
-  mode: AgeMode,
-  selfAge: number | null
-): MatchPrefs {
-  return getDefaultMatchPrefsForMode(mode, selfAge);
 }
 
 export const AGE_PREF_HELP_TEXT =

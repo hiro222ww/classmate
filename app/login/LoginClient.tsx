@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { signInWithGoogle } from "@/lib/authClient";
 import { sanitizeReturnTo } from "@/lib/authAccount";
+import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { withDev } from "@/lib/withDev";
 
 export default function LoginClient() {
@@ -15,8 +16,13 @@ export default function LoginClient() {
     return sanitizeReturnTo(raw);
   }, [searchParams]);
 
+  const oauthError = useMemo(
+    () => readOAuthCallbackError(searchParams),
+    [searchParams]
+  );
+
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(oauthError ?? "");
 
   async function onGoogleLogin() {
     setBusy(true);

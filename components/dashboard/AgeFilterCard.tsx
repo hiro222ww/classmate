@@ -1,12 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HelpTip } from "@/components/HelpTip";
-import {
-  adultOnlyUserMessage,
-  resolveAgeModeFromSettings,
-  type AgeMode,
-} from "@/lib/agePolicyRules";
 import { logMatchPrefsGet } from "@/lib/entryFlowLog";
 import {
   AGE_FILTER_OFF_MAX,
@@ -35,6 +30,9 @@ type AgeFilterCardProps = {
   onProfileRequired?: () => void;
 };
 
+const sliderBounds = resolveAgeFilterSliderBounds();
+const defaultOnPrefs = resolveAgeFilterOnDefault();
+
 export function AgeFilterCard({
   deviceId,
   hasProfile,
@@ -49,25 +47,8 @@ export function AgeFilterCard({
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [ageMode, setAgeMode] = useState<AgeMode>("post_high_school_only");
-  const [selfAge, setSelfAge] = useState<number | null>(null);
-  const sliderBounds = useMemo(
-    () => resolveAgeFilterSliderBounds(ageMode, selfAge),
-    [ageMode, selfAge]
-  );
-  const defaultOnPrefs = useMemo(
-    () => resolveAgeFilterOnDefault(ageMode, selfAge),
-    [ageMode, selfAge]
-  );
-  const activePrefs = useMemo(
-    () => sanitizeActiveMatchPrefs(prefs, ageMode, selfAge),
-    [prefs, ageMode, selfAge]
-  );
+  const activePrefs = sanitizeActiveMatchPrefs(prefs);
   const lastOnPrefsRef = useRef<MatchPrefs>(defaultOnPrefs);
-
-  useEffect(() => {
-    lastOnPrefsRef.current = defaultOnPrefs;
-  }, [defaultOnPrefs]);
 
   const ageFilterEnabled = !isAgeFilterOff(activePrefs);
   const displayMinAge = Math.min(activePrefs.min_age, activePrefs.max_age);
@@ -123,10 +104,12 @@ export function AgeFilterCard({
           throw new Error(j?.error ?? j?.message ?? `match_prefs_save:${r.status}`);
         }
 
-        const saved = normalizeMatchPrefs({
-          min_age: Number(j?.minAge ?? payload.min_age),
-          max_age: Number(j?.maxAge ?? payload.max_age),
-        });
+        const saved = sanitizeActiveMatchPrefs(
+          normalizeMatchPrefs({
+            min_age: Number(j?.minAge ?? payload.min_age),
+            max_age: Number(j?.maxAge ?? payload.max_age),
+          })
+        );
         if (!isAgeFilterOff(saved)) {
           lastOnPrefsRef.current = saved;
         }
@@ -146,14 +129,10 @@ export function AgeFilterCard({
     async (enabled: boolean) => {
       let next: MatchPrefs;
       if (enabled) {
-        next = sanitizeActiveMatchPrefs(lastOnPrefsRef.current, ageMode, selfAge);
+        next = sanitizeActiveMatchPrefs(lastOnPrefsRef.current);
       } else {
         if (!isAgeFilterOff(activePrefs)) {
-          lastOnPrefsRef.current = sanitizeActiveMatchPrefs(
-            activePrefs,
-            ageMode,
-            selfAge
-          );
+          lastOnPrefsRef.current = sanitizeActiveMatchPrefs(activePrefs);
         }
         next = AGE_FILTER_OFF_PREFS;
         setEditing(false);
@@ -161,13 +140,13 @@ export function AgeFilterCard({
       applyPrefs(next);
       await savePrefs(next);
     },
-    [activePrefs, ageMode, applyPrefs, savePrefs, selfAge]
+    [activePrefs, applyPrefs, savePrefs]
   );
 
   const openEditor = useCallback(() => {
-    setDraftPrefs(sanitizeActiveMatchPrefs(activePrefs, ageMode, selfAge));
+    setDraftPrefs(sanitizeActiveMatchPrefs(activePrefs));
     setEditing(true);
-  }, [activePrefs, ageMode, selfAge]);
+  }, [activePrefs]);
 
   const finishEditing = useCallback(async () => {
     const ok = await savePrefs(draftPrefs);
@@ -193,37 +172,6 @@ export function AgeFilterCard({
       onPrefsLoadedChange?.(false);
 
       try {
-        let loadedAgeMode: AgeMode = "post_high_school_only";
-        let loadedSelfAge: number | null = null;
-
-        const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-        if (settingsRes.ok) {
-          const settingsJson = await settingsRes.json().catch(() => null);
-          loadedAgeMode = resolveAgeModeFromSettings(settingsJson);
-          if (alive) {
-            setAgeMode(loadedAgeMode);
-          }
-        } else if (alive) {
-          setAgeMode("post_high_school_only");
-        }
-
-        if (hasProfile !== false && deviceId) {
-          const profileRes = await fetch(
-            `/api/profile?device_id=${encodeURIComponent(deviceId)}`,
-            { cache: "no-store" }
-          );
-          if (profileRes.ok) {
-            const profileJson = await profileRes.json().catch(() => null);
-            const age = Number(profileJson?.profile?.age);
-            if (Number.isFinite(age)) {
-              loadedSelfAge = age;
-              if (alive) {
-                setSelfAge(age);
-              }
-            }
-          }
-        }
-
         const pr = await fetch("/api/user/match-prefs", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -247,14 +195,11 @@ export function AgeFilterCard({
         if (!alive) return;
 
         if (pr.ok && pj?.prefs) {
-          const rawPrefs = normalizeMatchPrefs({
-            min_age: normalizePrefsAge(pj.prefs.min_age, AGE_FILTER_OFF_MIN),
-            max_age: normalizePrefsAge(pj.prefs.max_age, AGE_FILTER_OFF_MAX),
-          });
           const nextPrefs = sanitizeActiveMatchPrefs(
-            rawPrefs,
-            loadedAgeMode,
-            loadedSelfAge
+            normalizeMatchPrefs({
+              min_age: normalizePrefsAge(pj.prefs.min_age, AGE_FILTER_OFF_MIN),
+              max_age: normalizePrefsAge(pj.prefs.max_age, AGE_FILTER_OFF_MAX),
+            })
           );
           if (!isAgeFilterOff(nextPrefs)) {
             lastOnPrefsRef.current = nextPrefs;
@@ -282,7 +227,7 @@ export function AgeFilterCard({
     return () => {
       alive = false;
     };
-  }, [applyPrefs, deviceId, hasProfile, onPrefsLoadedChange]);
+  }, [applyPrefs, deviceId, onPrefsLoadedChange]);
 
   const controlsDisabled =
     disabled ||
@@ -393,12 +338,6 @@ export function AgeFilterCard({
           <div style={{ fontSize: 13, fontWeight: 800, color: "#374151" }}>
             {draftMinAge}〜{draftMaxAge}歳
           </div>
-
-          {ageMode === "post_high_school_only" && draftMinAge < 18 ? (
-            <p style={{ margin: 0, fontSize: 12, color: "#92400e" }}>
-              {adultOnlyUserMessage()}
-            </p>
-          ) : null}
 
           <input
             type="range"
