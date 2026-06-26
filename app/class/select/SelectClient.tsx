@@ -44,7 +44,6 @@ import {
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
-import { openJoinedClassRoom } from "@/lib/openJoinedClassClient";
 
 type World = {
   world_key: string;
@@ -200,11 +199,7 @@ export default function SelectClient() {
   };
 
   const [deviceId, setDeviceId] = useState("");
-  const {
-    loading: currentClassLoading,
-    current: currentClass,
-    refresh: refreshCurrentClass,
-  } = useCurrentClass(deviceId);
+  const { refresh: refreshCurrentClass } = useCurrentClass(deviceId);
 
   const [worlds, setWorlds] = useState<World[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -234,7 +229,6 @@ export default function SelectClient() {
     code: string;
     message: string;
   } | null>(null);
-  const [openingReturnClass, setOpeningReturnClass] = useState(false);
   const [joinedClassesLoading, setJoinedClassesLoading] = useState(false);
   const [joinedClassCount, setJoinedClassCount] = useState(0);
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
@@ -948,46 +942,6 @@ export default function SelectClient() {
     await joinMatchedBoard(freeBoard);
   }
 
-  async function openReturnClass() {
-    if (!currentClass || openingReturnClass) return;
-
-    const id = String(deviceId || getDeviceId() || "").trim();
-    if (!id) {
-      alert("device_id_missing");
-      return;
-    }
-
-    setOpeningReturnClass(true);
-    try {
-      const result = await openJoinedClassRoom({
-        deviceId: id,
-        current: currentClass,
-        devQuery,
-      });
-
-      if (!result.ok) {
-        alert(result.message ?? result.error);
-        return;
-      }
-
-      pushRecentClass(
-        {
-          id: result.classId,
-          title: currentClass.topicTitle ?? currentClass.name,
-          url: result.roomUrl,
-        },
-        20
-      );
-
-      window.location.href = result.roomUrl;
-    } catch (e: unknown) {
-      console.error(e);
-      alert(e instanceof Error ? e.message : "open_class_failed");
-    } finally {
-      setOpeningReturnClass(false);
-    }
-  }
-
   function BoardCard({ b }: { b: EntryBoard }) {
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
@@ -1078,10 +1032,7 @@ export default function SelectClient() {
   const debugProfileDeviceId = profile?.device_id ?? "-";
   const debugDisplayName = profile?.display_name ?? "-";
   const showJoinedClassesCard =
-    currentClassLoading ||
-    joinedClassesLoading ||
-    Boolean(currentClass) ||
-    joinedClassCount > 0;
+    joinedClassesLoading || joinedClassCount > 0;
 
   return (
     <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }}>
@@ -1308,16 +1259,9 @@ export default function SelectClient() {
         {showJoinedClassesCard ? (
           <ReturnClassCard
             className="home-dash-return"
-            loading={
-              (currentClassLoading || joinedClassesLoading) &&
-              !currentClass &&
-              joinedClassCount === 0
-            }
-            opening={openingReturnClass}
-            canEnterCurrent={Boolean(currentClass)}
-            onEnterCurrent={() => void openReturnClass()}
+            loading={joinedClassesLoading && joinedClassCount === 0}
             listHref={withDev("/")}
-            listLabel={currentClass ? "他のクラスを選ぶ" : "所属クラス一覧へ"}
+            listLabel="ホームで選ぶ"
           />
         ) : null}
 

@@ -9,7 +9,7 @@ import {
 } from "@/components/dashboard/dashboardStyles";
 
 const RETURN_CLASS_HELP_TEXT =
-  "すでに所属しているクラスに戻れます。入校受付時間外でも入室できます。";
+  "ホームの所属クラス一覧から、入りたいクラスを選べます。入校受付時間外でも入室できます。";
 
 type ReturnClassCardProps = {
   className?: string;

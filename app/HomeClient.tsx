@@ -13,7 +13,6 @@ import {
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
 import { HelpTip } from "@/components/HelpTip";
-import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
@@ -2426,22 +2425,13 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           gridTemplateColumns: "1fr",
         }}
       >
-        <div className="home-dash-bottom">
-          <JoinNewCard
-            className="home-dash-join"
-            quickJoinBusy={quickBusy}
-            quickJoinDisabled={!joinWindowOpen}
-            onQuickJoin={quickJoinFreeAndOpen}
-            onPickPlace={() => router.push(withDev("/class/select"))}
-          />
-
-          <AgeFilterCard
-            className="home-dash-age"
-            deviceId={deviceId}
-            hasProfile={profileComplete}
-            disabled={loading}
-          />
-        </div>
+        <JoinNewCard
+          className="home-dash-join"
+          quickJoinBusy={quickBusy}
+          quickJoinDisabled={!joinWindowOpen}
+          onQuickJoin={quickJoinFreeAndOpen}
+          onPickPlace={() => router.push(withDev("/class/select"))}
+        />
       </div>
 
       {hasJoinedClasses ? (
