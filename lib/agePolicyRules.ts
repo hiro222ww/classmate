@@ -3,6 +3,9 @@
 /** 18歳未満 / 高校生以下を対象外とする本番初期モード */
 export const ADULT_AGE_THRESHOLD = 18;
 
+/** ON 時の年齢スライダー上限（OFF 時の 130 とは別） */
+export const MATCH_PREFS_SLIDER_MAX = 60;
+
 export type AgeMode =
   | "post_high_school_only"
   | "minor_separated_test"
@@ -123,7 +126,7 @@ export function getAgeFilterBounds(
   mode: AgeMode,
   selfAge: number | null
 ): AgeFilterBounds {
-  const sliderMax = 130;
+  const sliderMax = MATCH_PREFS_SLIDER_MAX;
 
   if (mode === "post_high_school_only") {
     return {

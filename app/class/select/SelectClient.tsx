@@ -203,7 +203,6 @@ export default function SelectClient() {
   const {
     loading: currentClassLoading,
     current: currentClass,
-    hasMembership: hasJoinedClasses,
     refresh: refreshCurrentClass,
   } = useCurrentClass(deviceId);
 
@@ -236,6 +235,8 @@ export default function SelectClient() {
     message: string;
   } | null>(null);
   const [openingReturnClass, setOpeningReturnClass] = useState(false);
+  const [joinedClassesLoading, setJoinedClassesLoading] = useState(false);
+  const [joinedClassCount, setJoinedClassCount] = useState(0);
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
 
   async function reloadCatalog() {
@@ -440,6 +441,33 @@ export default function SelectClient() {
     }
   }
 
+  async function refreshJoinedClassCount(id: string) {
+    const normalized = String(id ?? "").trim();
+    if (!normalized) {
+      setJoinedClassCount(0);
+      setJoinedClassesLoading(false);
+      return;
+    }
+
+    setJoinedClassesLoading(true);
+    try {
+      const r = await fetch(
+        `/api/class/mine?deviceId=${encodeURIComponent(normalized)}&lite=1`,
+        { cache: "no-store" }
+      );
+      const j = await r.json().catch(() => null);
+      if (r.ok && j?.ok && Array.isArray(j.classes)) {
+        setJoinedClassCount(j.classes.length);
+      } else {
+        setJoinedClassCount(0);
+      }
+    } catch {
+      setJoinedClassCount(0);
+    } finally {
+      setJoinedClassesLoading(false);
+    }
+  }
+
   async function finalizeFromSession(id: string, sessionId: string) {
     const fr = await fetch("/api/billing/finalize", {
       method: "POST",
@@ -514,6 +542,7 @@ export default function SelectClient() {
         if (!alive) return;
 
         void refreshCurrentClass();
+        void refreshJoinedClassCount(id);
 
         await reloadJoinWindow();
         if (!alive) return;
@@ -1048,6 +1077,11 @@ export default function SelectClient() {
 
   const debugProfileDeviceId = profile?.device_id ?? "-";
   const debugDisplayName = profile?.display_name ?? "-";
+  const showJoinedClassesCard =
+    currentClassLoading ||
+    joinedClassesLoading ||
+    Boolean(currentClass) ||
+    joinedClassCount > 0;
 
   return (
     <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }}>
@@ -1250,7 +1284,7 @@ export default function SelectClient() {
                 fontWeight: 900,
               }}
             >
-              今のクラスを見る
+              所属クラス一覧へ
             </Link>
             <Link
               href={withDev("/premium")}
@@ -1271,12 +1305,19 @@ export default function SelectClient() {
       ) : null}
 
       <div style={{ marginTop: 20, display: "grid", gap: 16, gridTemplateColumns: "1fr" }}>
-        {hasJoinedClasses || currentClassLoading ? (
+        {showJoinedClassesCard ? (
           <ReturnClassCard
             className="home-dash-return"
-            loading={currentClassLoading}
+            loading={
+              (currentClassLoading || joinedClassesLoading) &&
+              !currentClass &&
+              joinedClassCount === 0
+            }
             opening={openingReturnClass}
-            onOpen={() => void openReturnClass()}
+            canEnterCurrent={Boolean(currentClass)}
+            onEnterCurrent={() => void openReturnClass()}
+            listHref={withDev("/")}
+            listLabel={currentClass ? "他のクラスを選ぶ" : "所属クラス一覧へ"}
           />
         ) : null}
 
@@ -1289,6 +1330,9 @@ export default function SelectClient() {
           onReload={() => {
             void reloadCatalog();
             void refreshCurrentClass();
+            if (deviceId) {
+              void refreshJoinedClassCount(deviceId);
+            }
           }}
         />
 

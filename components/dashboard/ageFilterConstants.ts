@@ -31,6 +31,24 @@ export function resolveAgeFilterSliderBounds(
   };
 }
 
+export function sanitizeActiveMatchPrefs(
+  prefs: MatchPrefs,
+  mode: AgeMode,
+  selfAge: number | null
+): MatchPrefs {
+  if (isAgeFilterOff(prefs)) return AGE_FILTER_OFF_PREFS;
+
+  if (prefs.max_age >= AGE_FILTER_OFF_MAX) {
+    return resolveAgeFilterOnDefault(mode, selfAge);
+  }
+
+  const bounds = resolveAgeFilterSliderBounds(mode, selfAge);
+  return normalizeMatchPrefs({
+    min_age: clampAge(prefs.min_age, bounds.sliderMin, bounds.sliderMax),
+    max_age: clampAge(prefs.max_age, bounds.sliderMin, bounds.sliderMax),
+  });
+}
+
 export function resolveAgeFilterOnDefault(
   mode: AgeMode,
   selfAge: number | null

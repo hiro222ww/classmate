@@ -69,7 +69,7 @@ describe("agePolicy production lock", () => {
   it("uses 18+ slider bounds when minors disabled", () => {
     expect(getAgeFilterBounds("post_high_school_only", 20)).toEqual({
       sliderMin: 18,
-      sliderMax: 130,
+      sliderMax: 60,
       defaultMin: 18,
       defaultMax: 25,
     });

@@ -15,12 +15,11 @@ import { DevPanel } from "@/components/DevPanel";
 import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
-import { ReturnClassCard } from "@/components/dashboard/ReturnClassCard";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
   DASH_CARD,
+  CLASS_ENTER_BTN,
   HOME_DASHBOARD_LAYOUT_CSS,
-  PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import { withDev } from "@/lib/withDev";
@@ -55,7 +54,6 @@ import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
-import { openJoinedClassRoom } from "@/lib/openJoinedClassClient";
 import { markAutoCallOnce } from "@/lib/autoCallOnce";
 import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import {
@@ -1769,52 +1767,10 @@ return () => {
   const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
   const profileComplete = isUserProfileComplete(profile);
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
-  const primaryReturnClass = visible[0] ?? null;
-  const openingPrimaryReturn =
-    (!!primaryReturnClass && openingClassId === primaryReturnClass.id) ||
-    (Boolean(currentClass) && openingClassId === currentClass?.classId);
-
-  const showReturnCard =
-    currentClassLoading || Boolean(currentClass) || Boolean(primaryReturnClass);
 
   function joinedClassEnterLabel(opening: boolean) {
-    if (opening) return "入っています…";
-    return "今のクラスを見る";
-  }
-
-  async function openReturnClass() {
-    if (primaryReturnClass) {
-      await openClass(primaryReturnClass);
-      return;
-    }
-
-    if (!currentClass) return;
-
-    const currentDeviceId = String(getDeviceId() ?? deviceId ?? "").trim();
-    if (!currentDeviceId) {
-      alert("device_id_missing");
-      return;
-    }
-
-    setOpeningClassId(currentClass.classId);
-    try {
-      const result = await openJoinedClassRoom({
-        deviceId: currentDeviceId,
-        current: currentClass,
-      });
-
-      if (!result.ok) {
-        alert(result.message ?? result.error);
-        return;
-      }
-
-      router.push(buildRoomUrl(result.classId, result.sessionId, { openJoinedClass: true }));
-    } catch (e: unknown) {
-      console.error(e);
-      alert(e instanceof Error ? e.message : "open_class_failed");
-    } finally {
-      setOpeningClassId(null);
-    }
+    if (opening) return "入室中…";
+    return "入室する";
   }
 
   async function toggleNotifications() {
@@ -2411,7 +2367,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     }
   }
 
-  if (loading && !showReturnCard && classes.length === 0) {
+  if (
+    loading &&
+    classes.length === 0 &&
+    !hasJoinedClasses &&
+    !currentClassLoading
+  ) {
     return <p style={{ margin: 0 }}>読み込み中...</p>;
   }
 
@@ -2465,15 +2426,6 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           gridTemplateColumns: "1fr",
         }}
       >
-        {showReturnCard ? (
-          <ReturnClassCard
-            className="home-dash-return"
-            loading={currentClassLoading && !primaryReturnClass && !currentClass}
-            opening={openingPrimaryReturn}
-            onOpen={() => void openReturnClass()}
-          />
-        ) : null}
-
         <div className="home-dash-bottom">
           <JoinNewCard
             className="home-dash-join"
@@ -2715,19 +2667,20 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     }}
                   />
 
-                  <button
-                    type="button"
-                    onClick={() => void openClass(c)}
-                    disabled={opening}
-                    style={{
-                      ...PRIMARY_BTN,
-                      marginTop: 14,
-                      opacity: opening ? 0.75 : 1,
-                      cursor: opening ? "default" : "pointer",
-                    }}
-                  >
-                    {joinedClassEnterLabel(opening)}
-                  </button>
+                  <div style={{ marginTop: 14, display: "flex" }}>
+                    <button
+                      type="button"
+                      onClick={() => void openClass(c)}
+                      disabled={opening}
+                      style={{
+                        ...CLASS_ENTER_BTN,
+                        opacity: opening ? 0.75 : 1,
+                        cursor: opening ? "default" : "pointer",
+                      }}
+                    >
+                      {joinedClassEnterLabel(opening)}
+                    </button>
+                  </div>
 
                   <details style={{ marginTop: 12 }}>
                     <summary

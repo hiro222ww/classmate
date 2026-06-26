@@ -20,6 +20,23 @@ export const PRIMARY_BTN: CSSProperties = {
   width: "100%",
 };
 
+export const CLASS_ENTER_BTN: CSSProperties = {
+  padding: "10px 18px",
+  borderRadius: 10,
+  border: "none",
+  background: "#16a34a",
+  color: "#fff",
+  fontWeight: 800,
+  fontSize: 14,
+  cursor: "pointer",
+  width: "fit-content",
+  minWidth: 108,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  boxShadow: "0 1px 2px rgba(22, 163, 74, 0.2)",
+};
+
 export const SECONDARY_BTN: CSSProperties = {
   padding: "11px 16px",
   borderRadius: 12,

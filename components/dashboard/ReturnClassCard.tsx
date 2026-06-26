@@ -1,23 +1,34 @@
 "use client";
 
+import Link from "next/link";
 import { HelpTip } from "@/components/HelpTip";
-import { DASH_CARD, PRIMARY_BTN } from "@/components/dashboard/dashboardStyles";
+import {
+  CLASS_ENTER_BTN,
+  DASH_CARD,
+  SECONDARY_BTN,
+} from "@/components/dashboard/dashboardStyles";
 
 const RETURN_CLASS_HELP_TEXT =
-  "所属中のクラスに戻れます。入校受付時間外でも、すでに所属しているクラスには入れます。";
+  "すでに所属しているクラスに戻れます。入校受付時間外でも入室できます。";
 
 type ReturnClassCardProps = {
   className?: string;
   loading?: boolean;
   opening?: boolean;
-  onOpen: () => void;
+  canEnterCurrent?: boolean;
+  onEnterCurrent?: () => void;
+  listHref?: string;
+  listLabel?: string;
 };
 
 export function ReturnClassCard({
   className,
   loading = false,
   opening = false,
-  onOpen,
+  canEnterCurrent = false,
+  onEnterCurrent,
+  listHref,
+  listLabel = "所属クラス一覧へ",
 }: ReturnClassCardProps) {
   if (loading) {
     return (
@@ -32,7 +43,7 @@ export function ReturnClassCard({
         >
           <div
             style={{
-              width: 140,
+              width: 100,
               height: 18,
               borderRadius: 8,
               background: "#f3f4f6",
@@ -41,9 +52,9 @@ export function ReturnClassCard({
         </div>
         <div
           style={{
-            width: "100%",
-            height: 44,
-            borderRadius: 12,
+            width: 140,
+            height: 40,
+            borderRadius: 10,
             background: "#f3f4f6",
           }}
         />
@@ -70,26 +81,45 @@ export function ReturnClassCard({
             lineHeight: 1.3,
           }}
         >
-          今のクラスに戻る
+          所属クラス
         </h2>
-        <HelpTip
-          label="今のクラスに戻るについて"
-          content={RETURN_CLASS_HELP_TEXT}
-        />
+        <HelpTip label="所属クラスについて" content={RETURN_CLASS_HELP_TEXT} />
       </div>
 
-      <button
-        type="button"
-        onClick={onOpen}
-        disabled={opening}
-        style={{
-          ...PRIMARY_BTN,
-          opacity: opening ? 0.75 : 1,
-          cursor: opening ? "default" : "pointer",
-        }}
-      >
-        {opening ? "入っています…" : "今のクラスを見る"}
-      </button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {canEnterCurrent && onEnterCurrent ? (
+          <button
+            type="button"
+            onClick={onEnterCurrent}
+            disabled={opening}
+            style={{
+              ...CLASS_ENTER_BTN,
+              opacity: opening ? 0.75 : 1,
+              cursor: opening ? "default" : "pointer",
+            }}
+          >
+            {opening ? "入室中…" : "入室する"}
+          </button>
+        ) : null}
+
+        {listHref ? (
+          <Link
+            href={listHref}
+            style={{
+              ...SECONDARY_BTN,
+              width: "auto",
+              minWidth: 108,
+              textAlign: "center",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {listLabel}
+          </Link>
+        ) : null}
+      </div>
     </section>
   );
 }

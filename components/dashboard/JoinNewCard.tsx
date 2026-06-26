@@ -4,7 +4,7 @@ import { HelpTip } from "@/components/HelpTip";
 import { DASH_CARD, PRIMARY_BTN, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
 
 const JOIN_NEW_HELP_TEXT =
-  "別のクラスへ新規参加する導線です。すでに所属中のクラスに戻る場合は「今のクラスに戻る」を使ってください。";
+  "別のクラスへ新規参加する導線です。すでに所属中のクラスに戻る場合は「所属クラス」から選んでください。";
 
 type JoinNewCardProps = {
   className?: string;

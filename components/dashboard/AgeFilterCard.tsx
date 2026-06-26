@@ -19,6 +19,7 @@ import {
   normalizeMatchPrefs,
   resolveAgeFilterOnDefault,
   resolveAgeFilterSliderBounds,
+  sanitizeActiveMatchPrefs,
   type MatchPrefs,
 } from "@/components/dashboard/ageFilterConstants";
 import { normalizePrefsAge } from "@/lib/agePolicyRules";
@@ -58,15 +59,19 @@ export function AgeFilterCard({
     () => resolveAgeFilterOnDefault(ageMode, selfAge),
     [ageMode, selfAge]
   );
+  const activePrefs = useMemo(
+    () => sanitizeActiveMatchPrefs(prefs, ageMode, selfAge),
+    [prefs, ageMode, selfAge]
+  );
   const lastOnPrefsRef = useRef<MatchPrefs>(defaultOnPrefs);
 
   useEffect(() => {
     lastOnPrefsRef.current = defaultOnPrefs;
   }, [defaultOnPrefs]);
 
-  const ageFilterEnabled = !isAgeFilterOff(prefs);
-  const displayMinAge = Math.min(prefs.min_age, prefs.max_age);
-  const displayMaxAge = Math.max(prefs.min_age, prefs.max_age);
+  const ageFilterEnabled = !isAgeFilterOff(activePrefs);
+  const displayMinAge = Math.min(activePrefs.min_age, activePrefs.max_age);
+  const displayMaxAge = Math.max(activePrefs.min_age, activePrefs.max_age);
   const draftMinAge = Math.min(draftPrefs.min_age, draftPrefs.max_age);
   const draftMaxAge = Math.max(draftPrefs.min_age, draftPrefs.max_age);
 
@@ -141,10 +146,14 @@ export function AgeFilterCard({
     async (enabled: boolean) => {
       let next: MatchPrefs;
       if (enabled) {
-        next = lastOnPrefsRef.current;
+        next = sanitizeActiveMatchPrefs(lastOnPrefsRef.current, ageMode, selfAge);
       } else {
-        if (!isAgeFilterOff(prefs)) {
-          lastOnPrefsRef.current = normalizeMatchPrefs(prefs);
+        if (!isAgeFilterOff(activePrefs)) {
+          lastOnPrefsRef.current = sanitizeActiveMatchPrefs(
+            activePrefs,
+            ageMode,
+            selfAge
+          );
         }
         next = AGE_FILTER_OFF_PREFS;
         setEditing(false);
@@ -152,13 +161,13 @@ export function AgeFilterCard({
       applyPrefs(next);
       await savePrefs(next);
     },
-    [applyPrefs, prefs, savePrefs]
+    [activePrefs, ageMode, applyPrefs, savePrefs, selfAge]
   );
 
   const openEditor = useCallback(() => {
-    setDraftPrefs(prefs);
+    setDraftPrefs(sanitizeActiveMatchPrefs(activePrefs, ageMode, selfAge));
     setEditing(true);
-  }, [prefs]);
+  }, [activePrefs, ageMode, selfAge]);
 
   const finishEditing = useCallback(async () => {
     const ok = await savePrefs(draftPrefs);
@@ -184,11 +193,15 @@ export function AgeFilterCard({
       onPrefsLoadedChange?.(false);
 
       try {
+        let loadedAgeMode: AgeMode = "post_high_school_only";
+        let loadedSelfAge: number | null = null;
+
         const settingsRes = await fetch("/api/settings", { cache: "no-store" });
         if (settingsRes.ok) {
           const settingsJson = await settingsRes.json().catch(() => null);
+          loadedAgeMode = resolveAgeModeFromSettings(settingsJson);
           if (alive) {
-            setAgeMode(resolveAgeModeFromSettings(settingsJson));
+            setAgeMode(loadedAgeMode);
           }
         } else if (alive) {
           setAgeMode("post_high_school_only");
@@ -202,8 +215,11 @@ export function AgeFilterCard({
           if (profileRes.ok) {
             const profileJson = await profileRes.json().catch(() => null);
             const age = Number(profileJson?.profile?.age);
-            if (alive && Number.isFinite(age)) {
-              setSelfAge(age);
+            if (Number.isFinite(age)) {
+              loadedSelfAge = age;
+              if (alive) {
+                setSelfAge(age);
+              }
             }
           }
         }
@@ -231,10 +247,15 @@ export function AgeFilterCard({
         if (!alive) return;
 
         if (pr.ok && pj?.prefs) {
-          const nextPrefs = normalizeMatchPrefs({
+          const rawPrefs = normalizeMatchPrefs({
             min_age: normalizePrefsAge(pj.prefs.min_age, AGE_FILTER_OFF_MIN),
             max_age: normalizePrefsAge(pj.prefs.max_age, AGE_FILTER_OFF_MAX),
           });
+          const nextPrefs = sanitizeActiveMatchPrefs(
+            rawPrefs,
+            loadedAgeMode,
+            loadedSelfAge
+          );
           if (!isAgeFilterOff(nextPrefs)) {
             lastOnPrefsRef.current = nextPrefs;
           }
