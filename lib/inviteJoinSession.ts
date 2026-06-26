@@ -174,17 +174,6 @@ export async function resolveInviteJoinSession(
         reason: "requested_session",
       };
     }
-
-    if (joinable.reason === "recruitment_closed") {
-      return {
-        ok: false,
-        error: "recruitment_closed",
-        requestedSessionId,
-        sessionStatus: requested.status,
-        memberCount: requested.memberCount,
-        reason: joinable.reason,
-      };
-    }
   }
 
   const canonical = pickCanonicalOpenJoinedSession({

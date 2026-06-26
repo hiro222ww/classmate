@@ -60,6 +60,9 @@ export function isTopicVisibleOnBillingPage(topic: TopicPublicRow) {
   return topic.is_active !== false;
 }
 
+/** Class select, billing, and other user-facing topic lists. */
+export const isTopicListedForUsers = isTopicVisibleOnBillingPage;
+
 export function isTopicAcceptingNewUsers(topic: TopicPublicRow) {
   return topic.accepting_new_users !== false;
 }

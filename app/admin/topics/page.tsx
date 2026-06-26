@@ -467,8 +467,13 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
     }
   }
 
-  const visibleTopics = useMemo(
-    () => topics.filter((t) => !t.is_archived),
+  const publishedTopics = useMemo(
+    () => topics.filter((t) => !t.is_archived && t.is_active !== false),
+    [topics]
+  );
+
+  const unpublishedTopics = useMemo(
+    () => topics.filter((t) => !t.is_archived && t.is_active === false),
     [topics]
   );
 
@@ -1271,11 +1276,11 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
 
       <section style={{ ...card, marginTop: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-          表示中のテーマ
+          公開中のテーマ
         </h2>
 
         <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.5 }}>
-          公開（is_active）= 課金ページ等への表示。新規受付 OFF でも一覧表示は可能です。非表示にする = アーカイブ（完全非公開）。
+          公開 ON のテーマだけ、クラス選択・課金ページなどに表示されます。公開 OFF にしたテーマは下の「非公開」へ移ります。完全に隠す場合は「非表示にする」（アーカイブ）を使ってください。
         </div>
 
         <div style={{ marginTop: 12, overflowX: "auto" }}>
@@ -1307,7 +1312,7 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
             </thead>
 
             <tbody>
-              {visibleTopics.map((t) => (
+              {publishedTopics.map((t) => (
                 <tr key={t.topic_key} style={{ borderBottom: "1px solid #f3f3f3" }}>
                   <td
                     style={{
@@ -1577,10 +1582,10 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
                 </tr>
               ))}
 
-              {visibleTopics.length === 0 ? (
+              {publishedTopics.length === 0 ? (
                 <tr>
                   <td colSpan={14} style={{ padding: 10, color: "#666" }}>
-                    表示中のテーマがありません
+                    公開中のテーマがありません
                   </td>
                 </tr>
               ) : null}
@@ -1588,6 +1593,97 @@ setProductionAgeLocked(Boolean(sj.production_age_locked));
           </table>
         </div>
       </section>
+
+      {unpublishedTopics.length > 0 ? (
+        <section style={{ ...card, marginTop: 12, borderColor: "#e5e7eb" }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#374151" }}>
+            非公開のテーマ（公開 OFF）
+          </h2>
+          <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.5 }}>
+            ユーザー向け画面には出ません。公開に戻すにはチェックを ON にして保存してください。
+          </div>
+          <div style={{ marginTop: 12, overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                minWidth: 900,
+                borderCollapse: "collapse",
+                fontSize: 12,
+              }}
+            >
+              <thead>
+                <tr style={{ borderBottom: "1px solid #eee" }}>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>topic_key</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>タイトル</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>性別制限</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>公開</th>
+                  <th style={{ textAlign: "left", padding: "8px 6px" }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unpublishedTopics.map((t) => (
+                  <tr key={t.topic_key} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                    <td
+                      style={{
+                        padding: "8px 6px",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      }}
+                    >
+                      {t.topic_key}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>{t.title}</td>
+                    <td style={{ padding: "8px 6px" }}>
+                      {genderRestrictionAdminLabel(t.gender_restriction)}
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>
+                      <input
+                        type="checkbox"
+                        checked={t.is_active !== false}
+                        onChange={(e) =>
+                          setTopics((prev) =>
+                            prev.map((x) =>
+                              x.topic_key === t.topic_key
+                                ? { ...x, is_active: e.target.checked }
+                                : x
+                            )
+                          )
+                        }
+                      />
+                    </td>
+                    <td style={{ padding: "8px 6px" }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => saveTopic(t)}
+                          disabled={busy}
+                          style={{
+                            ...btn,
+                            padding: "8px 10px",
+                            opacity: busy ? 0.6 : 1,
+                          }}
+                        >
+                          保存
+                        </button>
+                        <button
+                          onClick={() => archiveTopic(t.topic_key)}
+                          disabled={busy}
+                          style={{
+                            ...btnGhost,
+                            padding: "8px 10px",
+                            opacity: busy ? 0.6 : 1,
+                          }}
+                        >
+                          非表示にする
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       <section style={{ ...card, marginTop: 12, borderColor: "#f2b7c0" }}>
         <h2

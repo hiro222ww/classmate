@@ -11,6 +11,7 @@ type TopicRow = {
   min_age: number;
   monthly_price: number;
   is_archived?: boolean;
+  is_active?: boolean;
   created_at?: string;
 };
 
@@ -200,7 +201,12 @@ export default function AdminTopicEditor({ onPatched }: { onPatched?: () => void
     }
   }
 
-  const visibleTopics = topics.filter((t) => !t.is_archived);
+  const publishedTopics = topics.filter(
+    (t) => !t.is_archived && t.is_active !== false
+  );
+  const unpublishedTopics = topics.filter(
+    (t) => !t.is_archived && t.is_active === false
+  );
   const archivedTopics = topics.filter((t) => t.is_archived);
 
   return (
@@ -281,7 +287,7 @@ export default function AdminTopicEditor({ onPatched }: { onPatched?: () => void
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleTopics.map((t) => (
+                  {publishedTopics.map((t) => (
                     <tr key={t.topic_key} style={{ borderBottom: "1px solid #1f1f22" }}>
                       <td style={{ padding: "8px 6px", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
                         {t.topic_key}
@@ -343,7 +349,7 @@ export default function AdminTopicEditor({ onPatched }: { onPatched?: () => void
                     </tr>
                   ))}
 
-                  {visibleTopics.length === 0 ? (
+                  {publishedTopics.length === 0 ? (
                     <tr>
                       <td colSpan={7} style={{ padding: 10, color: "#ddd" }}>なし</td>
                     </tr>

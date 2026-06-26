@@ -94,16 +94,10 @@ export async function GET(req: Request) {
 
     const supabase = getSupabase();
 
-    let q = supabase
+    const { data, error } = await supabase
       .from("topics")
       .select(TOPIC_PUBLIC_SELECT)
-      .eq("is_archived", false);
-
-    if (purpose === "billing") {
-      q = q.eq("is_active", true);
-    }
-
-    const { data, error } = await q
+      .eq("is_archived", false)
       .order("display_order", { ascending: true })
       .order("created_at", { ascending: true });
 
@@ -111,12 +105,15 @@ export async function GET(req: Request) {
       return bad(500, error.message, { where: "topics_get" });
     }
 
-    const topics = [...((data ?? []) as TopicRow[])].sort(
-      compareTopicsByDisplayOrder
-    );
+    const topics = [...((data ?? []) as TopicRow[])]
+      .filter(
+        (topic) => !topic.is_archived && topic.is_active !== false
+      )
+      .sort(compareTopicsByDisplayOrder);
 
     return ok({
       topics,
+      purpose: purpose || "public",
     });
   } catch (e: any) {
     return bad(500, e?.message ?? "topics_failed", { where: "catch" });
