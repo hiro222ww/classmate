@@ -35,7 +35,7 @@ export default function LoginClient() {
 
     const result = await sendAccountMagicLink(email, returnTo);
     if (!result.ok) {
-      setError(result.error);
+      setError(result.message ?? result.error);
       setBusy(false);
       return;
     }
@@ -96,7 +96,7 @@ export default function LoginClient() {
 
         <button
           type="submit"
-          disabled={busy}
+          disabled={busy || Boolean(message)}
           style={{
             padding: "12px 14px",
             borderRadius: 12,

@@ -5,6 +5,14 @@ import { USER_ID_CACHE_KEY } from "@/lib/userIdentity";
 import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
 import { buildAuthCallbackUrl } from "@/lib/authCallbackUrl";
+import {
+  authEmailResendCooldownMessage,
+  checkAuthEmailResendCooldown,
+  formatAuthEmailError,
+  isEmailAlreadyRegisteredError,
+  isEmailRateLimitError,
+  markAuthEmailSent,
+} from "@/lib/authEmailErrors";
 import { sanitizeReturnTo, buildLoginUrl } from "@/lib/authAccount";
 
 export type AuthSessionPostResult =
@@ -378,11 +386,20 @@ export async function signInWithMagicLink(email: string, returnTo?: string) {
   return sendAccountMagicLink(email, returnTo);
 }
 
-/** 新規登録・ログイン共通のマジックリンク送信 */
+/** 新規登録・ログイン共通のマジックリンク送信（1リクエスト1通まで） */
 export async function sendAccountMagicLink(email: string, returnTo?: string) {
   const normalized = String(email ?? "").trim().toLowerCase();
   if (!normalized) {
     return { ok: false as const, error: "email_required" };
+  }
+
+  const cooldown = checkAuthEmailResendCooldown(normalized);
+  if (!cooldown.ok) {
+    return {
+      ok: false as const,
+      error: "email_rate_limit_exceeded",
+      message: authEmailResendCooldownMessage(cooldown.waitSeconds),
+    };
   }
 
   const returnPath = sanitizeReturnTo(returnTo ?? "/home");
@@ -398,11 +415,28 @@ export async function sendAccountMagicLink(email: string, returnTo?: string) {
     );
 
     if (!upgradeError) {
+      markAuthEmailSent(normalized);
       return { ok: true as const, mode: "upgrade" as const, callbackUrl: callback };
     }
 
-    console.info("[auth] anonymous upgrade failed; falling back to OTP", {
-      message: upgradeError.message,
+    if (isEmailRateLimitError(upgradeError.message)) {
+      return {
+        ok: false as const,
+        error: "email_rate_limit_exceeded",
+        message: formatAuthEmailError(upgradeError.message),
+      };
+    }
+
+    if (!isEmailAlreadyRegisteredError(upgradeError.message)) {
+      return {
+        ok: false as const,
+        error: upgradeError.message,
+        message: formatAuthEmailError(upgradeError.message),
+      };
+    }
+
+    console.info("[auth] email already registered; using magic link login", {
+      email: normalized,
     });
   }
 
@@ -414,9 +448,14 @@ export async function sendAccountMagicLink(email: string, returnTo?: string) {
   });
 
   if (error) {
-    return { ok: false as const, error: error.message };
+    return {
+      ok: false as const,
+      error: error.message,
+      message: formatAuthEmailError(error.message),
+    };
   }
 
+  markAuthEmailSent(normalized);
   return { ok: true as const, mode: "otp" as const, callbackUrl: callback };
 }
 
