@@ -407,6 +407,7 @@ export async function POST(req: Request) {
     await expireStaleRecruitmentSessions(supabaseAdmin, {
       classIds: session.classId ? [session.classId] : undefined,
       ttlMinutes: recruitmentSessionTtlMinutes,
+      keepSessionsWithMembers: true,
     });
     repairMs += Date.now() - repairStartMs;
 

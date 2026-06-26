@@ -9,7 +9,6 @@ import {
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 import {
   evaluateOpenJoinedSessionReuse,
-  isSessionEligibleForNormalJoin,
   normalizeSessionStatus,
 } from "@/lib/recruitment";
 
@@ -52,7 +51,7 @@ function isTerminalSessionStatus(status: unknown) {
   return TERMINAL_SESSION_STATUSES.has(normalizeSessionStatus(status));
 }
 
-function canJoinRequestedSession(params: {
+export function canJoinRequestedSession(params: {
   session: ClassSessionRow;
   matchDeadlineAt?: string | null;
   recruitmentSessionTtlMinutes: number | null;
@@ -72,18 +71,8 @@ function canJoinRequestedSession(params: {
     return { joinable: false as const, reason: reuse.reason ?? "unknown" };
   }
 
-  const status = normalizeSessionStatus(params.session.status);
-  if (
-    !isSessionEligibleForNormalJoin({
-      sessionStatus: params.session.status,
-      sessionCreatedAt: params.session.createdAt,
-      recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
-    }) &&
-    status !== "active"
-  ) {
-    return { joinable: false as const, reason: "recruitment_closed" as const };
-  }
-
+  // evaluateOpenJoinedSessionReuse already allows stale recruiting sessions when
+  // members are present (invite while host is waiting alone > recruitment TTL).
   return { joinable: true as const, reason: null };
 }
 

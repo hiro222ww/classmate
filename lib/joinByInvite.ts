@@ -497,10 +497,8 @@ export async function executeJoinByInvite(
     return {
       httpStatus: resolved.error === "recruitment_closed" ? 403 : 400,
       result: failure(requestId, {
-        code: code === "server_error" ? "expired_invite" : code,
-        message: joinByInviteUserMessage(
-          code === "server_error" ? "expired_invite" : code
-        ),
+        code,
+        message: joinByInviteUserMessage(code),
         classId,
         sessionId: requestedSessionId,
         detail: resolved.error,
