@@ -34,6 +34,8 @@ export async function resolveRequestIdentity(params: {
   deviceId?: unknown;
   accessToken?: string | null;
   requireAuth?: boolean;
+  /** Invite join: use device_id only and skip bearer/device-link mismatch checks. */
+  ignoreAuth?: boolean;
 }): Promise<
   | { ok: true; identity: ResolvedRequestIdentity }
   | { ok: false; status: number; error: string; message?: string }
@@ -51,13 +53,29 @@ export async function resolveRequestIdentity(params: {
     };
   }
 
+  if (params.ignoreAuth === true) {
+    return {
+      ok: true,
+      identity: {
+        userId: "",
+        deviceId,
+        isAnonymous: true,
+        hasLinkedEmail: false,
+        email: null,
+        accessToken: null,
+        authError: null,
+      },
+    };
+  }
+
   const accessToken =
-    params.accessToken ??
-    (() => {
-      const header = params.req.headers.get("authorization") ?? "";
-      const match = header.match(/^Bearer\s+(.+)$/i);
-      return match?.[1]?.trim() ?? null;
-    })();
+    params.accessToken !== undefined
+      ? params.accessToken
+      : (() => {
+          const header = params.req.headers.get("authorization") ?? "";
+          const match = header.match(/^Bearer\s+(.+)$/i);
+          return match?.[1]?.trim() ?? null;
+        })();
 
   const verified = await verifySupabaseAccessToken(accessToken);
   if (!verified.user) {

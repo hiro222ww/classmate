@@ -2987,7 +2987,13 @@ const name = rawName === "You" ? "参加者" : rawName;
             error: responseCode,
             step: "restore_login",
           });
-          router.push(withDev("/login"));
+          router.push(
+            withDev(
+              buildProfileEditPath(
+                buildCurrentPathReturnTo(pathname, searchParams.toString())
+              )
+            )
+          );
           joinResultError = responseCode;
           return;
         }

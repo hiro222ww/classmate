@@ -23,10 +23,39 @@ export function actorKey(actor: ActorLookup): string {
   return actor.userId || actor.deviceId;
 }
 
+export async function resolveInviteApiActor(params: {
+  req: Request;
+  deviceId: string;
+}): Promise<
+  | { ok: true; actor: ApiActor }
+  | { ok: false; status: number; error: string; message?: string }
+> {
+  const first = await resolveApiActor({
+    req: params.req,
+    deviceId: params.deviceId,
+  });
+  if (first.ok) return first;
+
+  if (
+    first.error === "device_user_mismatch" ||
+    first.error === "auth_required" ||
+    first.error === "invalid_access_token"
+  ) {
+    return resolveApiActor({
+      req: params.req,
+      deviceId: params.deviceId,
+      ignoreAuth: true,
+    });
+  }
+
+  return first;
+}
+
 export async function resolveApiActor(params: {
   req: Request;
   deviceId?: unknown;
   requireAuth?: boolean;
+  ignoreAuth?: boolean;
 }): Promise<
   | { ok: true; actor: ApiActor }
   | { ok: false; status: number; error: string; message?: string }
@@ -35,6 +64,7 @@ export async function resolveApiActor(params: {
     req: params.req,
     deviceId: params.deviceId,
     requireAuth: params.requireAuth ?? false,
+    ignoreAuth: params.ignoreAuth,
   });
 
   if (!identityResult.ok) {

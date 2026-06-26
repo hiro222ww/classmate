@@ -30,7 +30,7 @@ describe("joinByInviteTypes", () => {
   it("returns user-facing messages per code", () => {
     expect(joinByInviteUserMessage("already_member")).toContain("すでに");
     expect(joinByInviteUserMessage("needs_profile")).toContain("プロフィール");
-    expect(joinByInviteUserMessage("restore_login")).toContain("ログイン");
+    expect(joinByInviteUserMessage("restore_login")).toContain("プロフィール");
   });
 });
 

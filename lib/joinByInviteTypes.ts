@@ -80,7 +80,7 @@ export function joinByInviteUserMessage(code: JoinByInviteCode): string {
     case "needs_profile":
       return "参加するにはプロフィール登録が必要です";
     case "restore_login":
-      return "ログインが必要です";
+      return "参加するにはプロフィール登録が必要です";
     case "reregister_device":
       return "端末の再登録が必要です。しばらくしてからもう一度お試しください";
     case "auth_required":
@@ -122,7 +122,10 @@ export function mapLegacyInviteError(error: string): JoinByInviteFailureCode {
     return "invalid_invite";
   }
   if (code === "device_secret_required" || code === "device_secret_mismatch") {
-    return "restore_login";
+    return "reregister_device";
+  }
+  if (code === "device_user_mismatch" || code === "profile_user_mismatch") {
+    return "needs_profile";
   }
   if (code === "auth_required" || code === "device_id_required") {
     return "auth_required";

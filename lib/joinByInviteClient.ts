@@ -7,6 +7,8 @@ import {
 } from "@/lib/authClient";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { getDeviceId } from "@/lib/device";
+import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
+import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { logInviteJoinClient } from "@/lib/inviteDiagnostics";
 import type { JoinByInviteResult } from "@/lib/joinByInviteTypes";
 
@@ -35,17 +37,20 @@ export async function waitForInviteAuthReady(
   }
 
   const boot = await authBootstrapPromise;
+  authBootstrapPromise = null;
+
   if (!boot.ok) {
-    authBootstrapPromise = null;
-    return {
-      ok: false,
-      error: boot.error ?? "auth_bootstrap_failed",
-    };
+    console.warn("[invite-join] auth bootstrap skipped", {
+      deviceId: deviceId.slice(-6),
+      error: boot.error ?? "unknown",
+    });
   }
 
   const token = await getAuthAccessToken();
   if (!token) {
-    return { ok: false, error: "access_token_missing" };
+    console.info("[invite-join] continuing with device identity only", {
+      deviceId: deviceId.slice(-6),
+    });
   }
 
   return { ok: true };
@@ -55,16 +60,34 @@ export function resetInviteAuthBootstrapLock() {
   authBootstrapPromise = null;
 }
 
-export async function callJoinByInviteApi(params: {
+async function fetchJoinByInvite(params: {
   classId: string;
   sessionId: string;
   deviceId: string;
   reregisterDevice?: boolean;
   signal?: AbortSignal;
-}): Promise<InviteJoinClientResult> {
-  const res = await authenticatedFetch("/api/class/join-by-invite", {
+  useAuth?: boolean;
+}) {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "x-device-id": params.deviceId,
+  };
+
+  const deviceSecret = getOrCreateDeviceSecret();
+  if (deviceSecret) {
+    headers[DEVICE_SECRET_HEADER] = deviceSecret;
+  }
+
+  if (params.useAuth !== false) {
+    const token = await getAuthAccessToken();
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
+  }
+
+  return fetch("/api/class/join-by-invite", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({
       classId: params.classId,
       sessionId: params.sessionId,
@@ -74,6 +97,17 @@ export async function callJoinByInviteApi(params: {
     cache: "no-store",
     signal: params.signal,
   });
+}
+
+export async function callJoinByInviteApi(params: {
+  classId: string;
+  sessionId: string;
+  deviceId: string;
+  reregisterDevice?: boolean;
+  signal?: AbortSignal;
+  useAuth?: boolean;
+}): Promise<InviteJoinClientResult> {
+  const res = await fetchJoinByInvite(params);
 
   let json: JoinByInviteResult | null = null;
   let parseError = false;
@@ -182,6 +216,29 @@ export async function runInviteJoinWithAuth(params: {
     deviceId,
     signal: params.signal,
   });
+
+  if (
+    !result.ok &&
+    (result.data.code === "reregister_device" ||
+      result.data.code === "restore_login")
+  ) {
+    logInviteJoinClient("step", {
+      classId: params.classId,
+      sessionId: params.sessionId,
+      deviceId,
+      step: "device_identity_retry",
+      error: result.data.code,
+    });
+    resetInviteAuthBootstrapLock();
+    result = await callJoinByInviteApi({
+      classId: params.classId,
+      sessionId: params.sessionId,
+      deviceId,
+      reregisterDevice: true,
+      useAuth: false,
+      signal: params.signal,
+    });
+  }
 
   if (
     !result.ok &&

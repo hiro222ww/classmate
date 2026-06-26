@@ -10,7 +10,7 @@ import { enforceDeviceJoinAge } from "@/lib/joinAgeGuard";
 import {
   hasClassMembershipForActor,
   profileExistsForActor,
-  resolveApiActor,
+  resolveInviteApiActor,
   getClassSlotsForActor,
 } from "@/lib/actorIdentity";
 import {
@@ -198,17 +198,14 @@ export async function executeJoinByInvite(
     };
   }
 
-  const actorResult = await resolveApiActor({
+  const actorResult = await resolveInviteApiActor({
     req: input.req,
     deviceId,
   });
 
   if (!actorResult.ok) {
     const mapped = mapLegacyInviteError(actorResult.error);
-    const code =
-      actorResult.error === "device_user_mismatch"
-        ? "restore_login"
-        : mapped;
+    const code = mapped;
     return {
       httpStatus: actorResult.status,
       result: failure(requestId, {
@@ -261,7 +258,7 @@ export async function executeJoinByInvite(
           deviceId,
           bodySecret: body.deviceSecret,
           hasLinkedEmail: hasLinkedEmailFromAuthUser(verified.user),
-          allowSecretReregistration: body.reregisterDevice === true,
+          allowSecretReregistration: true,
         });
       } catch (error) {
         if (error instanceof DeviceOwnershipError) {
