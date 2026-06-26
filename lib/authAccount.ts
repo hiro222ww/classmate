@@ -1,7 +1,7 @@
 /** Account auth helpers — safe for client and server imports (no Supabase admin). */
 
 export const LOGIN_REQUIRED_MESSAGE =
-  "続行するにはログインまたは新規登録が必要です。";
+  "続行するには Google でログインしてください。";
 
 export function sanitizeReturnTo(value: unknown, fallback = "/home"): string {
   const raw = String(value ?? "").trim();

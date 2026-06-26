@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import AppLifecycleBoot from "@/components/AppLifecycleBoot";
 import AuthBoot from "@/components/AuthBoot";
+import AppAccountNav from "@/components/AppAccountNav";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
 
@@ -43,6 +45,9 @@ export default function RootLayout({
       >
         <AppLifecycleBoot />
         <AuthBoot />
+        <Suspense fallback={null}>
+          <AppAccountNav />
+        </Suspense>
         {/* ▼ メインコンテンツ */}
         <div style={{ minHeight: "100vh" }}>{children}</div>
 
