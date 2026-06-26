@@ -76,41 +76,53 @@ export default function AppAccountNav() {
     : withDev(buildLoginUrl(returnTo));
 
   return (
-    <nav
-      aria-label="アカウント"
+    <header
       style={{
-        position: "fixed",
-        top: 12,
-        right: 14,
+        position: "sticky",
+        top: 0,
         zIndex: 60,
         display: "flex",
-        gap: 8,
+        justifyContent: "flex-end",
         alignItems: "center",
+        minHeight: 44,
+        padding: "6px 14px",
+        background: "rgba(255, 255, 255, 0.95)",
+        borderBottom: "1px solid #f3f4f6",
+        backdropFilter: "blur(6px)",
       }}
     >
-      <Link
-        href={href}
+      <nav
+        aria-label="アカウント"
         style={{
-          display: "inline-flex",
+          display: "flex",
+          gap: 8,
           alignItems: "center",
-          padding: "8px 12px",
-          borderRadius: 999,
-          border: "1px solid #e5e7eb",
-          background: "#fff",
-          color: "#111827",
-          fontSize: 12,
-          fontWeight: 800,
-          textDecoration: "none",
-          boxShadow: "0 1px 2px rgba(15, 23, 42, 0.06)",
-          opacity: ready ? 1 : 0.65,
-          maxWidth: 220,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
         }}
       >
-        {label}
-      </Link>
-    </nav>
+        <Link
+          href={href}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            padding: "8px 12px",
+            borderRadius: 999,
+            border: "1px solid #e5e7eb",
+            background: "#fff",
+            color: "#111827",
+            fontSize: 12,
+            fontWeight: 800,
+            textDecoration: "none",
+            boxShadow: "0 1px 2px rgba(15, 23, 42, 0.06)",
+            opacity: ready ? 1 : 0.65,
+            maxWidth: 220,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </Link>
+      </nav>
+    </header>
   );
 }

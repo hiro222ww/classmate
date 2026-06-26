@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { signInWithGoogle } from "@/lib/authClient";
 import { sanitizeReturnTo } from "@/lib/authAccount";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
+import { HelpTip } from "@/components/HelpTip";
 import { withDev } from "@/lib/withDev";
 
 export default function LoginClient() {
@@ -45,13 +46,21 @@ export default function LoginClient() {
         gap: 16,
       }}
     >
-      <header>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>
           ログイン / 新規登録
         </h1>
-        <p style={{ margin: "8px 0 0", color: "#6b7280", lineHeight: 1.65 }}>
-          Google アカウントでログインします。初めての方も同じボタンから登録できます。
-        </p>
+        <HelpTip
+          label="ログインについて"
+          content="Google アカウントでログインします。初めての方も同じボタンから登録できます。ログイン後、元の画面に戻ります。メール送信は使わないため、送信上限の影響を受けません。"
+        />
       </header>
 
       <section
@@ -96,10 +105,6 @@ export default function LoginClient() {
           />
           {busy ? "Google に移動中…" : "Google で続ける"}
         </button>
-
-        <p style={{ margin: 0, fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
-          ログイン後、元の画面に戻ります。メール送信は使わないため、送信上限の影響を受けません。
-        </p>
       </section>
 
       {error ? (

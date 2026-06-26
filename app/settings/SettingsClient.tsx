@@ -15,6 +15,8 @@ import {
   isLoggedInAccount,
 } from "@/lib/authAccount";
 import { isDevFeatureEnabled } from "@/lib/devMode";
+import { SectionTitle } from "@/components/FormFieldLabel";
+import { HelpTip } from "@/components/HelpTip";
 
 type AuthStatus = {
   userId: string;
@@ -109,12 +111,11 @@ export default function SettingsClient() {
         gap: 16,
       }}
     >
-      <header>
-        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>アカウント設定</h1>
-        <p style={{ margin: "8px 0 0", color: "#6b7280", lineHeight: 1.65 }}>
-          ログイン状態の確認、ログアウト、課金管理への導線です。
-        </p>
-      </header>
+      <SectionTitle
+        title="アカウント設定"
+        helpLabel="アカウント設定について"
+        helpContent="ログイン状態の確認、ログアウト、課金管理への導線です。"
+      />
 
       {loading ? <p>読み込み中…</p> : null}
 
@@ -127,7 +128,22 @@ export default function SettingsClient() {
           gap: 12,
         }}
       >
-        <div style={{ fontWeight: 900, fontSize: 16 }}>アカウント</div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ fontWeight: 900, fontSize: 16 }}>アカウント</div>
+          {!loggedIn ? (
+            <HelpTip
+              label="ログイン状態について"
+              content={`現在: ${accountStatusLabel(status)}`}
+            />
+          ) : null}
+        </div>
 
         {loggedIn ? (
           <>
@@ -152,10 +168,6 @@ export default function SettingsClient() {
             </button>
           </>
         ) : (
-          <>
-            <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-              現在: {accountStatusLabel(status)}
-            </p>
           <Link
             href={withDev(buildLoginUrl("/settings"))}
             style={{
@@ -171,7 +183,6 @@ export default function SettingsClient() {
           >
             Google でログイン
           </Link>
-          </>
         )}
       </section>
 
@@ -184,10 +195,20 @@ export default function SettingsClient() {
           gap: 10,
         }}
       >
-        <div style={{ fontWeight: 900, fontSize: 16 }}>課金</div>
-        <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-          プランの確認・変更、支払い管理はこちらから行えます。
-        </p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ fontWeight: 900, fontSize: 16 }}>課金</div>
+          <HelpTip
+            label="課金について"
+            content="プランの確認・変更、支払い管理はこちらから行えます。"
+          />
+        </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Link
             href={withDev("/premium")}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { BillingNoticeTip } from "@/components/BillingNoticeTip";
+import { HelpTip } from "@/components/HelpTip";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { buildLoginUrl } from "@/lib/authAccount";
@@ -182,19 +183,22 @@ function BillingPageInner() {
         }}
       >
         <div>
-          <h1 style={{ margin: "0", fontSize: 28, fontWeight: 900 }}>
-            お支払い管理
-          </h1>
-          <p
+          <div
             style={{
-              margin: "10px 0 0",
-              fontSize: 14,
-              color: "#666",
-              lineHeight: 1.6,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
             }}
           >
-            プランの変更・解約は Stripe の画面で行います。
-          </p>
+            <h1 style={{ margin: "0", fontSize: 28, fontWeight: 900 }}>
+              お支払い管理
+            </h1>
+            <HelpTip
+              label="お支払い管理について"
+              content="プランの変更・解約は Stripe の画面で行います。"
+            />
+          </div>
           <div style={{ marginTop: 8 }}>
             <BillingNoticeTip label="ベータ期間中のご利用について" />
           </div>

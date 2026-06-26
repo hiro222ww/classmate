@@ -52,11 +52,7 @@ export function BillingNoticeTip({
 
   return (
     <HelpTip label={label} content={notice.text} maxWidth={maxWidth}>
-      {children ?? (
-        <span style={{ fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
-          {label}
-        </span>
-      )}
+      {children ?? null}
     </HelpTip>
   );
 }

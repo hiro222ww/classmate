@@ -23,6 +23,12 @@ import {
   LegalConsentCheckbox,
   LegalDocumentLinks,
 } from "@/components/LegalDocumentLinks";
+import {
+  FormFieldLabel,
+  FormSection,
+  SectionTitle,
+} from "@/components/FormFieldLabel";
+import { HelpTip } from "@/components/HelpTip";
 import Link from "next/link";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 
@@ -56,6 +62,24 @@ type ProfileResponse = {
 const MAX_PHOTO_MB = 8;
 const TARGET_PHOTO_SIZE = 1024;
 const TARGET_PHOTO_QUALITY = 0.82;
+
+const PROFILE_REGISTER_HELP =
+  "ニックネーム・生年月日・性別を登録すると、クラスに参加できます。";
+const PROFILE_EDIT_HELP =
+  "表示名や写真など、登録済みの内容を変更できます。";
+const BASIC_INFO_HELP =
+  "クラス参加に必要な項目です。生年月日は年齢のみ表示され、本人確認用に使います。";
+const BIRTHDATE_HELP =
+  "プロフィールには生年月日ではなく、年齢のみ表示されます。";
+const MINOR_FUTURE_HELP =
+  "今後の運用状況に応じて受付を開始する可能性があります。";
+const PROFILE_DETAIL_HELP =
+  "任意の項目です。趣味や自己紹介、写真は他の参加者に公開されます。";
+const SHOW_AGE_HELP =
+  "OFFにすると、プロフィール詳細では年齢が表示されません。";
+const PHOTO_HELP = "任意です。正方形に近い写真がおすすめです。";
+const LEGAL_HELP =
+  "利用規約とプライバシーポリシーへの同意が必要です。更新があった場合は再同意が必要です。";
 
 function isValidISODateString(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -538,12 +562,14 @@ export default function ProfileClient() {
   }
 
   return (
-    <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
-      <p style={{ margin: 0, opacity: 0.7, fontSize: 13, lineHeight: 1.6 }}>
-        {hasExistingProfile
-          ? "登録済みのプロフィールを更新できます。"
-          : "ニックネーム・生年月日・性別を登録してください。"}
-      </p>
+    <form onSubmit={onSubmit} style={{ display: "grid", gap: 16 }}>
+      <SectionTitle
+        title={hasExistingProfile ? "プロフィール編集" : "プロフィール登録"}
+        helpLabel="プロフィールについて"
+        helpContent={
+          hasExistingProfile ? PROFILE_EDIT_HELP : PROFILE_REGISTER_HELP
+        }
+      />
 
       {isDevFeatureEnabled() && (
         <div
@@ -579,114 +605,146 @@ export default function ProfileClient() {
         </div>
       )}
 
-      <p style={{ margin: 0, opacity: 0.7, fontSize: 13, lineHeight: 1.6 }}>
-        {minorsEnabled !== true ? (
-          adultOnlyUserMessage()
-        ) : (
+      <FormSection
+        title="基本情報"
+        helpLabel="基本情報について"
+        helpContent={
           <>
-            {guardianConsentRequiredMessage()}
+            {BASIC_INFO_HELP}
             <br />
-            保護者の同意を得たうえでご利用ください。
+            <br />
+            {minorsEnabled !== true ? (
+              adultOnlyUserMessage()
+            ) : (
+              <>
+                {guardianConsentRequiredMessage()}
+                <br />
+                保護者の同意を得たうえでご利用ください。
+              </>
+            )}
           </>
-        )}
-      </p>
+        }
+      >
+        <div style={{ display: "grid", gap: 6 }}>
+          <FormFieldLabel>ニックネーム（必須）</FormFieldLabel>
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="例：たろう"
+            style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
+            required
+          />
+        </div>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <label style={{ fontWeight: 700 }}>ニックネーム（必須）</label>
-        <input
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="例：たろう"
-          style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
-          required
-        />
-      </div>
-
-      <div style={{ display: "grid", gap: 6 }}>
-        <label style={{ fontWeight: 700 }}>生年月日（必須）</label>
-        <input
-          type="date"
-          value={birthDate}
-          onChange={(e) => {
-            setBirthDate(e.target.value);
-            setGuardianConsent(false);
-            setErrorMsg("");
-          }}
-          max={todayISO}
-          style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
-          required
-        />
-
-        {age !== null && <p style={{ margin: 0, color: "#555" }}>年齢：{age}歳</p>}
-        <p style={{ margin: 0, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
-          プロフィールには生年月日ではなく、年齢のみ表示されます。
-        </p>
-
-        {isMinor && minorsEnabled !== true && (
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              padding: 10,
-              borderRadius: 12,
-              border: "1px solid #f5c2c7",
-              background: "#f8d7da",
-            }}
+        <div style={{ display: "grid", gap: 6 }}>
+          <FormFieldLabel
+            helpLabel="生年月日について"
+            helpContent={BIRTHDATE_HELP}
           >
-            <div style={{ fontWeight: 800, color: "#842029" }}>
-              {adultOnlyUserMessage()}
-            </div>
-            <p style={{ margin: 0, color: "#842029", fontSize: 13, lineHeight: 1.6 }}>
-              今後の運用状況に応じて受付を開始する可能性があります。
+            生年月日（必須）
+          </FormFieldLabel>
+          <input
+            type="date"
+            value={birthDate}
+            onChange={(e) => {
+              setBirthDate(e.target.value);
+              setGuardianConsent(false);
+              setErrorMsg("");
+            }}
+            max={todayISO}
+            style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
+            required
+          />
+
+          {age !== null ? (
+            <p style={{ margin: 0, fontWeight: 700, color: "#374151" }}>
+              年齢：{age}歳
             </p>
-          </div>
-        )}
+          ) : null}
 
-        {isMinor && minorsEnabled === true && (
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-              padding: 10,
-              borderRadius: 12,
-              border: "1px solid #ffeeba",
-              background: "#fff3cd",
-            }}
-          >
-            <label
+          {isMinor && minorsEnabled !== true && (
+            <div
               style={{
-                display: "flex",
-                alignItems: "center",
+                display: "grid",
                 gap: 8,
-                color: "#664d03",
-                fontWeight: 700,
+                padding: 10,
+                borderRadius: 12,
+                border: "1px solid #f5c2c7",
+                background: "#f8d7da",
               }}
             >
-              <input
-                type="checkbox"
-                checked={guardianConsent}
-                onChange={(e) => setGuardianConsent(e.target.checked)}
-              />
-              保護者の同意を得ています
-            </label>
-          </div>
-        )}
-      </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  flexWrap: "wrap",
+                  fontWeight: 800,
+                  color: "#842029",
+                }}
+              >
+                <span>{adultOnlyUserMessage()}</span>
+                <HelpTip label="受付について" content={MINOR_FUTURE_HELP} />
+              </div>
+            </div>
+          )}
 
-      <div
-        style={{
-          padding: 12,
-          border: "1px solid #e5e7eb",
-          borderRadius: 10,
-          background: "#fafafa",
-        }}
+          {isMinor && minorsEnabled === true && (
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                padding: 10,
+                borderRadius: 12,
+                border: "1px solid #ffeeba",
+                background: "#fff3cd",
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: "#664d03",
+                  fontWeight: 700,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={guardianConsent}
+                  onChange={(e) => setGuardianConsent(e.target.checked)}
+                />
+                保護者の同意を得ています
+              </label>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gap: 6 }}>
+          <FormFieldLabel>性別（必須）</FormFieldLabel>
+          <select
+            value={gender}
+            onChange={(e) => setGender(e.target.value as Gender)}
+            style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
+            required
+          >
+            <option value="">選択してください</option>
+            <option value="male">男性</option>
+            <option value="female">女性</option>
+          </select>
+        </div>
+      </FormSection>
+
+      <FormSection
+        title="プロフィール詳細"
+        helpLabel="プロフィール詳細について"
+        helpContent={PROFILE_DETAIL_HELP}
       >
         <label
           style={{
             display: "flex",
-            alignItems: "flex-start",
+            alignItems: "center",
             gap: 8,
-            lineHeight: 1.6,
             fontWeight: 700,
           }}
         >
@@ -694,157 +752,122 @@ export default function ProfileClient() {
             type="checkbox"
             checked={showAge}
             onChange={(e) => setShowAge(e.target.checked)}
-            style={{ marginTop: 3 }}
           />
-          <span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             プロフィールに年齢を表示する
-            <span
-              style={{
-                display: "block",
-                marginTop: 4,
-                fontSize: 12,
-                color: "#6b7280",
-                fontWeight: 600,
-              }}
-            >
-              OFFにすると、プロフィール詳細では年齢が表示されません。
-            </span>
+            <HelpTip label="年齢表示について" content={SHOW_AGE_HELP} />
           </span>
         </label>
-      </div>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <label style={{ fontWeight: 700 }}>趣味（任意）</label>
-        <textarea
-          value={hobbies}
-          onChange={(e) => setHobbies(e.target.value)}
-          placeholder="例：読書、散歩、ゲーム"
-          rows={3}
-          maxLength={500}
-          style={{
-            padding: 10,
-            border: "1px solid #ccc",
-            borderRadius: 8,
-            resize: "vertical",
-            fontFamily: "inherit",
-          }}
-        />
-      </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <FormFieldLabel>趣味（任意）</FormFieldLabel>
+          <textarea
+            value={hobbies}
+            onChange={(e) => setHobbies(e.target.value)}
+            placeholder="例：読書、散歩、ゲーム"
+            rows={3}
+            maxLength={500}
+            style={{
+              padding: 10,
+              border: "1px solid #ccc",
+              borderRadius: 8,
+              resize: "vertical",
+              fontFamily: "inherit",
+            }}
+          />
+        </div>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <label style={{ fontWeight: 700 }}>ひとこと / 自己紹介（任意）</label>
-        <textarea
-          value={bio}
-          onChange={(e) => setBio(e.target.value)}
-          placeholder="例：はじめまして。よろしくお願いします。"
-          rows={4}
-          maxLength={500}
-          style={{
-            padding: 10,
-            border: "1px solid #ccc",
-            borderRadius: 8,
-            resize: "vertical",
-            fontFamily: "inherit",
-          }}
-        />
-      </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <FormFieldLabel>ひとこと / 自己紹介（任意）</FormFieldLabel>
+          <textarea
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            placeholder="例：はじめまして。よろしくお願いします。"
+            rows={4}
+            maxLength={500}
+            style={{
+              padding: 10,
+              border: "1px solid #ccc",
+              borderRadius: 8,
+              resize: "vertical",
+              fontFamily: "inherit",
+            }}
+          />
+        </div>
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <label style={{ fontWeight: 700 }}>性別（必須）</label>
-        <select
-          value={gender}
-          onChange={(e) => setGender(e.target.value as Gender)}
-          style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
-          required
-        >
-          <option value="">選択してください</option>
-          <option value="male">男性</option>
-          <option value="female">女性</option>
-        </select>
-      </div>
+        <div style={{ display: "grid", gap: 6 }}>
+          <FormFieldLabel
+            helpLabel="プロフィール写真について"
+            helpContent={PHOTO_HELP}
+          >
+            プロフィール写真（任意）
+          </FormFieldLabel>
+          <input
+            type="file"
+            accept="image/*"
+            disabled={compressing || submitting}
+            onChange={(e) => {
+              const next = e.target.files?.[0] ?? null;
+              void handlePhotoChange(next);
+              e.currentTarget.value = "";
+            }}
+          />
 
-      <div style={{ display: "grid", gap: 6 }}>
-        <label style={{ fontWeight: 700 }}>プロフィール写真（任意）</label>
-        <input
-          type="file"
-          accept="image/*"
-          disabled={compressing || submitting}
-          onChange={(e) => {
-            const next = e.target.files?.[0] ?? null;
-            void handlePhotoChange(next);
-            e.currentTarget.value = "";
-          }}
-        />
+          {compressing ? (
+            <p style={{ margin: 0, color: "#555", fontWeight: 700 }}>
+              画像を圧縮しています...
+            </p>
+          ) : null}
 
-        {compressing ? (
-          <p style={{ margin: 0, color: "#555", fontSize: 13 }}>
-            画像を圧縮しています...
-          </p>
-        ) : null}
+          {photoInfo ? (
+            <p style={{ margin: 0, color: "#166534", fontWeight: 700 }}>
+              {photoInfo}
+            </p>
+          ) : null}
 
-        {photoInfo ? (
-          <p style={{ margin: 0, color: "#166534", fontSize: 13, fontWeight: 700 }}>
-            {photoInfo}
-          </p>
-        ) : null}
+          <img
+            src={previewUrl}
+            alt="preview"
+            onError={(e) => {
+              console.log("[profile preview ng]", {
+                photoPath,
+                previewUrl,
+              });
+              e.currentTarget.onerror = null;
+              e.currentTarget.src = "/default-avatar.jpg";
+            }}
+            onLoad={() => {
+              console.log("[profile preview ok]", {
+                photoPath,
+                previewUrl,
+              });
+            }}
+            style={{
+              width: 120,
+              height: 120,
+              objectFit: "cover",
+              borderRadius: 12,
+              border: "1px solid #ddd",
+              background: "#f3f4f6",
+            }}
+          />
+        </div>
+      </FormSection>
 
-        <img
-          src={previewUrl}
-          alt="preview"
-          onError={(e) => {
-            console.log("[profile preview ng]", {
-              photoPath,
-              previewUrl,
-            });
-            e.currentTarget.onerror = null;
-            e.currentTarget.src = "/default-avatar.jpg";
-          }}
-          onLoad={() => {
-            console.log("[profile preview ok]", {
-              photoPath,
-              previewUrl,
-            });
-          }}
-          style={{
-            width: 120,
-            height: 120,
-            objectFit: "cover",
-            borderRadius: 12,
-            border: "1px solid #ddd",
-            background: "#f3f4f6",
-          }}
-        />
-      </div>
-
-      <div
-        style={{
-          padding: 12,
-          border: "1px solid #ddd",
-          borderRadius: 10,
-          background: "#fafafa",
-          display: "grid",
-          gap: 12,
-        }}
+      <FormSection
+        title="規約・ポリシー"
+        helpLabel="規約・ポリシーについて"
+        helpContent={
+          needsLegalConsent && hasExistingProfile
+            ? `${LEGAL_HELP} 規約・ポリシーが更新されました。引き続きご利用いただくには同意が必要です。`
+            : LEGAL_HELP
+        }
       >
         {needsLegalConsent ? (
-          <>
-            {hasExistingProfile ? (
-              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#92400e" }}>
-                規約・ポリシーが更新されました。引き続きご利用いただくには、以下への同意が必要です。
-              </p>
-            ) : null}
-            <LegalConsentCheckbox checked={legalAgreed} onChange={setLegalAgreed} />
-          </>
-        ) : (
-          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#4b5563" }}>
-            規約・ポリシー
-          </p>
-        )}
+          <LegalConsentCheckbox checked={legalAgreed} onChange={setLegalAgreed} />
+        ) : null}
         <LegalDocumentLinks compact />
-        <p style={{ margin: "8px 0 0", fontSize: 13 }}>
-          <Link href={withDev("/settings")}>アカウント設定</Link>
-        </p>
-      </div>
+      </FormSection>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button
@@ -860,7 +883,13 @@ export default function ProfileClient() {
             cursor: canSubmit ? "pointer" : "not-allowed",
           }}
         >
-          {compressing ? "画像処理中..." : submitting ? "保存中..." : hasExistingProfile ? "更新する" : "保存する"}
+          {compressing
+            ? "画像処理中..."
+            : submitting
+              ? "保存中..."
+              : hasExistingProfile
+                ? "更新する"
+                : "保存する"}
         </button>
 
         <button
@@ -877,6 +906,23 @@ export default function ProfileClient() {
         >
           戻る
         </button>
+
+        <Link
+          href={withDev("/settings")}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 10,
+            border: "1px solid #e5e7eb",
+            background: "#fff",
+            fontWeight: 800,
+            textDecoration: "none",
+            color: "#111",
+            display: "inline-flex",
+            alignItems: "center",
+          }}
+        >
+          アカウント設定
+        </Link>
       </div>
     </form>
   );

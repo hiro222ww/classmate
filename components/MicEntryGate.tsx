@@ -33,11 +33,19 @@ export function MicEntryGate({
       }}
       aria-label="通話参加の準備"
     >
-      <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ fontWeight: 900, fontSize: 16 }}>通話の準備</div>
-        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-          マイクを使って話すか、聞き専で参加できます。
-        </p>
+        <HelpTip
+          label="通話の準備について"
+          content="マイクを使って話すか、聞き専で参加できます。聞き専はマイクを使わず、他の参加者の音声だけ聞く参加方法です。後からマイクを許可して発話することもできます。"
+        />
       </div>
 
       {errorTitle ? (
@@ -55,8 +63,12 @@ export function MicEntryGate({
           <div style={{ fontWeight: 900 }}>{errorTitle}</div>
           {errorBody ? <div style={{ marginTop: 6 }}>{errorBody}</div> : null}
           {showInAppHint ? (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#b45309" }}>
-              {IN_APP_BROWSER_NOTICE_SHORT}
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontWeight: 800 }}>アプリ内ブラウザの場合</span>
+              <HelpTip
+                label="アプリ内ブラウザについて"
+                content={IN_APP_BROWSER_NOTICE_SHORT}
+              />
             </div>
           ) : null}
         </div>
@@ -97,15 +109,6 @@ export function MicEntryGate({
       >
         聞き専で参加
       </button>
-
-      <HelpTip
-        label="聞き専について"
-        content="マイクを使わず、他の参加者の音声だけ聞く参加方法です。後からマイクを許可して発話することもできます。"
-      >
-        <span style={{ fontSize: 12, color: "#9ca3af", fontWeight: 700 }}>
-          聞き専とは
-        </span>
-      </HelpTip>
     </section>
   );
 }

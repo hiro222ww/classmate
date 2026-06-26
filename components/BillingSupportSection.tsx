@@ -99,9 +99,11 @@ export function BillingSupportSection({
               {BILLING_PORTAL_LOGIN_LINK_LABEL}
             </a>
           ) : (
-            <p style={{ ...mutedTextStyle, fontSize: 12 }}>
-              Stripe の課金管理リンクは準備中です。下の「{BILLING_TROUBLES_SUMMARY}」をご確認ください。
-            </p>
+            <HelpTip
+              label="Stripe課金管理について"
+              maxWidth={320}
+              content={`Stripe の課金管理リンクは準備中です。${BILLING_TROUBLES_SUMMARY}をご確認ください。`}
+            />
           )}
         </div>
       ) : null}
@@ -112,17 +114,7 @@ export function BillingSupportSection({
             label="β期間中のご利用について"
             maxWidth={320}
             content={BILLING_BETA_NOTICE}
-          >
-            <span
-              style={{
-                fontSize: 13,
-                color: "#9ca3af",
-                fontWeight: 700,
-              }}
-            >
-              β期間中のご利用について
-            </span>
-          </HelpTip>
+          />
         </div>
       ) : null}
 

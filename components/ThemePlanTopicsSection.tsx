@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { HelpTip } from "@/components/HelpTip";
 import {
   compareTopicsByDisplayOrder,
   isTopicVisibleOnBillingPage,
@@ -103,13 +104,29 @@ export function ThemePlanTopicsSection() {
       }}
     >
       <div>
-        <div style={{ fontWeight: 900, fontSize: 16 }}>{THEME_PLAN_TOPICS_HEADING}</div>
-        <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
-          {THEME_PLAN_TOPICS_INTRO}
-        </p>
-        <p style={{ margin: "8px 0 0", fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
-          {THEME_PLAN_TOPICS_CHANGE_NOTE}
-        </p>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ fontWeight: 900, fontSize: 16 }}>
+            {THEME_PLAN_TOPICS_HEADING}
+          </div>
+          <HelpTip
+            label="テーマプランのテーマについて"
+            content={
+              <>
+                {THEME_PLAN_TOPICS_INTRO}
+                <br />
+                <br />
+                {THEME_PLAN_TOPICS_CHANGE_NOTE}
+              </>
+            }
+          />
+        </div>
       </div>
 
       {loading ? (

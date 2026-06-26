@@ -32,6 +32,9 @@ const SLOT_PLANS = [3, 5] as const;
 const TOPIC_PLAN_HELP =
   "テーマプランは任意の月額支援です。金額が高いプランに追加機能があるわけではありません。";
 
+const CLASS_SLOT_HELP =
+  "同時に参加できるクラス数の上限を拡張します。";
+
 function SoftCard({ children }: { children: React.ReactNode }) {
   return (
     <section
@@ -328,17 +331,17 @@ export default function PremiumPage() {
       </SoftCard>
 
       <SoftCard>
-        <div style={{ fontWeight: 900 }}>クラス枠</div>
-        <p
+        <div
           style={{
-            margin: "8px 0 0",
-            fontSize: 13,
-            color: "#6b7280",
-            lineHeight: 1.6,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
           }}
         >
-          同時に参加できるクラス数の上限を拡張します。
-        </p>
+          <div style={{ fontWeight: 900 }}>クラス枠</div>
+          <HelpTip label="クラス枠について" content={CLASS_SLOT_HELP} />
+        </div>
 
         <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
           {SLOT_PLANS.map((s) => (
