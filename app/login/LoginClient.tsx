@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { sendAccountMagicLink } from "@/lib/authClient";
 import { sanitizeReturnTo } from "@/lib/authAccount";
+import { buildAuthCallbackUrl, isLocalAuthOrigin } from "@/lib/authCallbackUrl";
 import { withDev } from "@/lib/withDev";
 
 export default function LoginClient() {
@@ -19,6 +20,12 @@ export default function LoginClient() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+
+  const callbackPreview = useMemo(() => buildAuthCallbackUrl(returnTo), [returnTo]);
+  const localCallbackWarning = useMemo(
+    () => isLocalAuthOrigin(callbackPreview),
+    [callbackPreview]
+  );
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -119,6 +126,24 @@ export default function LoginClient() {
       ) : null}
       {error ? (
         <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}>{error}</p>
+      ) : null}
+
+      {localCallbackWarning ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 12,
+            color: "#92400e",
+            lineHeight: 1.65,
+            padding: 12,
+            borderRadius: 12,
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+          }}
+        >
+          ローカル環境（localhost）では、スマホのメールアプリからリンクを開けません。
+          PC の同じブラウザで開くか、本番 URL（NEXT_PUBLIC_APP_ORIGIN）を設定してください。
+        </p>
       ) : null}
 
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#6b7280" }}>

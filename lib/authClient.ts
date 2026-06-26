@@ -1,10 +1,10 @@
 "use client";
 
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type EmailOtpType, type Session, type SupabaseClient } from "@supabase/supabase-js";
 import { USER_ID_CACHE_KEY } from "@/lib/userIdentity";
 import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
-import { buildAppUrl } from "@/lib/appOrigin";
+import { buildAuthCallbackUrl } from "@/lib/authCallbackUrl";
 import { sanitizeReturnTo, buildLoginUrl } from "@/lib/authAccount";
 
 export type AuthSessionPostResult =
@@ -224,7 +224,85 @@ export async function bootstrapAuthSession(deviceId: string) {
   };
 }
 
+const AUTH_OTP_TYPES = new Set<EmailOtpType>([
+  "signup",
+  "invite",
+  "magiclink",
+  "recovery",
+  "email_change",
+  "email",
+]);
+
+function parseEmailOtpType(value: string | null): EmailOtpType | null {
+  if (!value) return null;
+  return AUTH_OTP_TYPES.has(value as EmailOtpType)
+    ? (value as EmailOtpType)
+    : null;
+}
+
+async function wait(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** メールリンク（PKCE / token_hash / implicit hash）からセッションを確立 */
+export async function establishSessionFromAuthCallbackUrl(): Promise<{
+  ok: boolean;
+  error?: string;
+}> {
+  if (typeof window === "undefined") {
+    return { ok: false, error: "not_in_browser" };
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const code = searchParams.get("code");
+
+  if (code) {
+    const { error } = await supabaseAuthClient.auth.exchangeCodeForSession(code);
+    if (!error) {
+      return { ok: true };
+    }
+    console.warn("[auth] exchangeCodeForSession failed", error.message);
+  }
+
+  const tokenHash = searchParams.get("token_hash");
+  const otpType = parseEmailOtpType(searchParams.get("type"));
+  if (tokenHash && otpType) {
+    const { error } = await supabaseAuthClient.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: otpType,
+    });
+    if (!error) {
+      return { ok: true };
+    }
+    console.warn("[auth] verifyOtp failed", error.message);
+  }
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const { data, error } = await supabaseAuthClient.auth.getSession();
+    if (error) {
+      console.warn("[auth] getSession during callback", error.message);
+    }
+    if (data.session?.access_token) {
+      cacheUserId(data.session.user.id);
+      return { ok: true };
+    }
+    await wait(150);
+  }
+
+  return { ok: false, error: "session_missing" };
+}
+
 export async function completeAuthCallback(deviceId: string, redirectTo: string) {
+  const established = await establishSessionFromAuthCallbackUrl();
+  if (!established.ok) {
+    return {
+      ok: false as const,
+      error: established.error ?? "session_missing",
+      message:
+        "ログインリンクの有効期限が切れているか、リンク先の設定が正しくありません。もう一度メールを送り直してください。",
+    };
+  }
+
   const { data, error } = await supabaseAuthClient.auth.getSession();
   if (error || !data.session?.access_token) {
     return {
@@ -308,20 +386,19 @@ export async function sendAccountMagicLink(email: string, returnTo?: string) {
   }
 
   const returnPath = sanitizeReturnTo(returnTo ?? "/home");
-  const callback = buildAppUrl(
-    `/auth/callback?returnTo=${encodeURIComponent(returnPath)}`
-  );
+  const callback = buildAuthCallbackUrl(returnPath);
 
   const session = (await supabaseAuthClient.auth.getSession()).data.session;
   const isAnonymous = session?.user?.is_anonymous === true;
 
   if (isAnonymous && session?.access_token) {
-    const { error: upgradeError } = await supabaseAuthClient.auth.updateUser({
-      email: normalized,
-    });
+    const { error: upgradeError } = await supabaseAuthClient.auth.updateUser(
+      { email: normalized },
+      { emailRedirectTo: callback }
+    );
 
     if (!upgradeError) {
-      return { ok: true as const, mode: "upgrade" as const };
+      return { ok: true as const, mode: "upgrade" as const, callbackUrl: callback };
     }
 
     console.info("[auth] anonymous upgrade failed; falling back to OTP", {
@@ -340,7 +417,7 @@ export async function sendAccountMagicLink(email: string, returnTo?: string) {
     return { ok: false as const, error: error.message };
   }
 
-  return { ok: true as const, mode: "otp" as const };
+  return { ok: true as const, mode: "otp" as const, callbackUrl: callback };
 }
 
 export async function signOutAccount() {
