@@ -26,6 +26,7 @@ import {
 } from "@/lib/entryFlowLog";
 import { isJoinAllowedDeviceId, isLegacyStoredDeviceId } from "@/lib/deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
@@ -788,7 +789,10 @@ export default function SelectClient() {
 
       const matchRes = await fetch("/api/class/match-join-v2", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(await buildDeviceAuthHeaders(deviceId)),
+        },
         body: JSON.stringify(matchBody),
         cache: "no-store",
       });
@@ -1044,6 +1048,7 @@ export default function SelectClient() {
       <DashboardPageHeader>
         <DashboardHeaderNav
           returnPath="/class/select"
+          deviceId={deviceId}
           hasProfile={hasProfile === true}
           withDev={withDev}
           notificationsEnabled={notificationsEnabled}

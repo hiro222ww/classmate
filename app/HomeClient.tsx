@@ -2109,7 +2109,10 @@ console.log("[home] resolved ids", { classId, sessionId, json });
 
       const res = await fetch("/api/class/match-join-v2", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(await buildDeviceAuthHeaders(currentDeviceId)),
+        },
         body: JSON.stringify(quickBody),
         cache: "no-store",
       });
@@ -2333,7 +2336,22 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     !hasJoinedClasses &&
     !currentClassLoading
   ) {
-    return <p style={{ margin: 0 }}>読み込み中...</p>;
+    return (
+      <div style={{ display: "grid", gap: 24 }}>
+        <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
+        <DashboardPageHeader>
+          <DashboardHeaderNav
+            returnPath="/"
+            deviceId={deviceId}
+            hasProfile={profileComplete}
+            withDev={withDev}
+            notificationsEnabled={notificationsEnabled}
+            onToggleNotifications={toggleNotifications}
+          />
+        </DashboardPageHeader>
+        <p style={{ margin: 0 }}>読み込み中...</p>
+      </div>
+    );
   }
 
   return (
@@ -2343,6 +2361,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       <DashboardPageHeader>
         <DashboardHeaderNav
           returnPath="/"
+          deviceId={deviceId}
           hasProfile={profileComplete}
           withDev={withDev}
           notificationsEnabled={notificationsEnabled}

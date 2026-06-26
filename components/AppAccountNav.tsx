@@ -10,13 +10,18 @@ import {
   sanitizeReturnTo,
 } from "@/lib/authAccount";
 import { bootstrapAuthSession, fetchAuthStatus } from "@/lib/authClient";
+import { supabaseAuthClient } from "@/lib/authClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 
 const HIDDEN_PREFIXES = ["/admin", "/login", "/auth/callback"];
+const DASHBOARD_HEADER_PATHS = new Set(["/", "/class/select"]);
 
 function shouldHideNav(pathname: string) {
-  return HIDDEN_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  if (HIDDEN_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return true;
+  }
+  return DASHBOARD_HEADER_PATHS.has(pathname);
 }
 
 export default function AppAccountNav() {
@@ -39,7 +44,7 @@ export default function AppAccountNav() {
 
     let alive = true;
 
-    void (async () => {
+    const load = async () => {
       const deviceId = getDeviceId();
       if (!deviceId) {
         if (alive) setReady(true);
@@ -62,10 +67,26 @@ export default function AppAccountNav() {
       } finally {
         if (alive) setReady(true);
       }
-    })();
+    };
+
+    void load();
+
+    const {
+      data: { subscription },
+    } = supabaseAuthClient.auth.onAuthStateChange((event) => {
+      if (
+        event === "SIGNED_IN" ||
+        event === "SIGNED_OUT" ||
+        event === "TOKEN_REFRESHED" ||
+        event === "INITIAL_SESSION"
+      ) {
+        void load();
+      }
+    });
 
     return () => {
       alive = false;
+      subscription.unsubscribe();
     };
   }, [hidden, pathname]);
 

@@ -52,8 +52,9 @@ export async function proxy(req: NextRequest) {
   const isLoginPage = pathname === "/admin/login";
   const isLoginApi = pathname === "/api/admin/login";
   const isLogoutApi = pathname === "/api/admin/logout";
+  const isSessionApi = pathname === "/api/admin/session";
 
-  if (isLoginPage || isLoginApi || isLogoutApi) {
+  if (isLoginPage || isLoginApi || isLogoutApi || isSessionApi) {
     return NextResponse.next();
   }
 

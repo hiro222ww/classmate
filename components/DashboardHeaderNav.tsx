@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { buildLoginUrl } from "@/lib/authAccount";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
+import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 
 type Props = {
   returnPath: string;
+  deviceId: string;
   hasProfile: boolean;
   withDev: (path: string) => string;
   notificationsEnabled?: boolean;
@@ -14,11 +17,19 @@ type Props = {
 
 export function DashboardHeaderNav({
   returnPath,
+  deviceId,
   hasProfile,
   withDev,
   notificationsEnabled = false,
   onToggleNotifications,
 }: Props) {
+  const { ready, loggedIn, accountLabel, adminAuthenticated } =
+    useDashboardAccountStatus(deviceId);
+
+  const accountHref = loggedIn
+    ? withDev("/settings")
+    : withDev(buildLoginUrl(returnPath));
+
   return (
     <div
       style={{
@@ -115,6 +126,45 @@ export function DashboardHeaderNav({
       >
         お支払い・解約
       </Link>
+
+      <Link
+        href={accountHref}
+        style={{
+          padding: "8px 10px",
+          borderRadius: 12,
+          border: loggedIn ? "1px solid #dbeafe" : "1px solid #e5e7eb",
+          background: loggedIn ? "#eff6ff" : "#fff",
+          fontWeight: 800,
+          fontSize: 12,
+          color: "#111827",
+          textDecoration: "none",
+          opacity: ready ? 1 : 0.65,
+          maxWidth: 200,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {accountLabel}
+      </Link>
+
+      {adminAuthenticated ? (
+        <Link
+          href={withDev("/admin")}
+          style={{
+            padding: "8px 10px",
+            borderRadius: 12,
+            border: "1px solid #c4b5fd",
+            background: "#f5f3ff",
+            fontWeight: 900,
+            fontSize: 13,
+            color: "#5b21b6",
+            textDecoration: "none",
+          }}
+        >
+          管理
+        </Link>
+      ) : null}
 
       {isDevFeatureEnabled() ? (
         <Link
