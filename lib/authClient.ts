@@ -109,6 +109,7 @@ export const supabaseAuthClient =
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      flowType: "pkce",
       storageKey: "classmate_supabase_auth",
     },
   });
@@ -307,7 +308,7 @@ export async function completeAuthCallback(deviceId: string, redirectTo: string)
       ok: false as const,
       error: established.error ?? "session_missing",
       message:
-        "ログインリンクの有効期限が切れているか、リンク先の設定が正しくありません。もう一度メールを送り直してください。",
+        "ログインに失敗しました。もう一度 Google でログインしてください。",
     };
   }
 
@@ -382,6 +383,53 @@ export async function completeAuthCallback(deviceId: string, redirectTo: string)
   return { ok: true as const };
 }
 
+export async function signInWithGoogle(returnTo?: string) {
+  if (typeof window === "undefined") {
+    return { ok: false as const, error: "not_in_browser" };
+  }
+
+  const returnPath = sanitizeReturnTo(returnTo ?? "/home");
+  const redirectTo = buildAuthCallbackUrl(returnPath);
+
+  const session = (await supabaseAuthClient.auth.getSession()).data.session;
+  const isAnonymous = session?.user?.is_anonymous === true;
+
+  const oauthOptions = {
+    redirectTo,
+    queryParams: {
+      prompt: "select_account",
+    },
+  };
+
+  const result = isAnonymous && session?.access_token
+    ? await supabaseAuthClient.auth.linkIdentity({
+        provider: "google",
+        options: oauthOptions,
+      })
+    : await supabaseAuthClient.auth.signInWithOAuth({
+        provider: "google",
+        options: oauthOptions,
+      });
+
+  if (result.error) {
+    return {
+      ok: false as const,
+      error: result.error.message,
+      message: result.error.message,
+    };
+  }
+
+  if (result.data?.url) {
+    window.location.assign(result.data.url);
+  }
+
+  return {
+    ok: true as const,
+    mode: isAnonymous ? ("link" as const) : ("oauth" as const),
+  };
+}
+
+/** @deprecated メールログインは停止中。Google ログインを使用 */
 export async function signInWithMagicLink(email: string, returnTo?: string) {
   return sendAccountMagicLink(email, returnTo);
 }

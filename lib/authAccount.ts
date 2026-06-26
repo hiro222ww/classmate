@@ -19,7 +19,7 @@ export function isLoggedInAccount(status: {
   hasLinkedEmail?: boolean | null;
 } | null | undefined): boolean {
   if (!status) return false;
-  return status.isAnonymous !== true && status.hasLinkedEmail === true;
+  return status.isAnonymous !== true;
 }
 
 export function accountStatusLabel(status: {

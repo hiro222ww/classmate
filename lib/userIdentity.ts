@@ -50,7 +50,7 @@ export function hasLinkedEmailFromAuthUser(user: {
   return Boolean(String(user.email ?? "").trim());
 }
 
-export function anonymousUserNotice(isAnonymous: boolean, hasLinkedEmail: boolean) {
-  if (!isAnonymous && hasLinkedEmail) return null;
-  return "ログインまたは新規登録すると、プロフィール・プラン・参加履歴を端末をまたいで利用できます。";
+export function anonymousUserNotice(isAnonymous: boolean, _hasLinkedEmail: boolean) {
+  if (!isAnonymous) return null;
+  return "ログインすると、プロフィール・プラン・参加履歴を端末をまたいで利用できます。";
 }

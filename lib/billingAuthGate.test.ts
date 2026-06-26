@@ -26,7 +26,7 @@ describe("billingAuthGate", () => {
     expect(
       isAccountLinkedForBilling({
         isAnonymous: false,
-        hasLinkedEmail: true,
+        hasLinkedEmail: false,
       })
     ).toBe(true);
   });
@@ -43,16 +43,12 @@ describe("billingAuthGate", () => {
     }
   });
 
-  it("blocks users without linked email from billing", () => {
+  it("allows non-anonymous users for billing (Google login)", () => {
     const gate = assertBillingAccountLinked(
       identity({ hasLinkedEmail: false, email: null }),
       "/premium"
     );
-    expect(gate.ok).toBe(false);
-    if (!gate.ok) {
-      expect(gate.error).toBe("auth_required");
-      expect(gate.message).toBe(billingLoginRequiredResponse("/premium").message);
-    }
+    expect(gate.ok).toBe(true);
   });
 
   it("requires auth user id for billing routes", () => {

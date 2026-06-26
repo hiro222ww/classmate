@@ -3,9 +3,8 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { sendAccountMagicLink } from "@/lib/authClient";
+import { signInWithGoogle } from "@/lib/authClient";
 import { sanitizeReturnTo } from "@/lib/authAccount";
-import { buildAuthCallbackUrl, isLocalAuthOrigin } from "@/lib/authCallbackUrl";
 import { withDev } from "@/lib/withDev";
 
 export default function LoginClient() {
@@ -16,36 +15,18 @@ export default function LoginClient() {
     return sanitizeReturnTo(raw);
   }, [searchParams]);
 
-  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const callbackPreview = useMemo(() => buildAuthCallbackUrl(returnTo), [returnTo]);
-  const localCallbackWarning = useMemo(
-    () => isLocalAuthOrigin(callbackPreview),
-    [callbackPreview]
-  );
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function onGoogleLogin() {
     setBusy(true);
-    setMessage("");
     setError("");
 
-    const result = await sendAccountMagicLink(email, returnTo);
+    const result = await signInWithGoogle(returnTo);
     if (!result.ok) {
       setError(result.message ?? result.error);
       setBusy(false);
-      return;
     }
-
-    setMessage(
-      result.mode === "upgrade"
-        ? "確認メールを送信しました。メール内のリンクを開くと、アカウント登録が完了します。"
-        : "ログイン用のリンクをメールで送信しました。メール内のリンクを開いてください。"
-    );
-    setBusy(false);
   }
 
   return (
@@ -63,12 +44,11 @@ export default function LoginClient() {
           ログイン / 新規登録
         </h1>
         <p style={{ margin: "8px 0 0", color: "#6b7280", lineHeight: 1.65 }}>
-          メールアドレスを入力してください。アカウントがなければ作成され、あればログインできます。
+          Google アカウントでログインします。初めての方も同じボタンから登録できます。
         </p>
       </header>
 
-      <form
-        onSubmit={onSubmit}
+      <section
         style={{
           border: "1px solid #e5e7eb",
           borderRadius: 18,
@@ -77,78 +57,52 @@ export default function LoginClient() {
           gap: 12,
         }}
       >
-        <label style={{ display: "grid", gap: 6, fontSize: 13 }}>
-          メールアドレス
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            required
-            autoComplete="email"
-            style={{
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-            }}
-          />
-        </label>
-
         <button
-          type="submit"
-          disabled={busy || Boolean(message)}
+          type="button"
+          disabled={busy}
+          onClick={() => void onGoogleLogin()}
           style={{
-            padding: "12px 14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            padding: "14px 16px",
             borderRadius: 12,
-            border: "none",
-            background: "#111827",
-            color: "#fff",
+            border: "1px solid #d1d5db",
+            background: "#fff",
+            color: "#111827",
             fontWeight: 900,
+            fontSize: 15,
             cursor: busy ? "default" : "pointer",
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "送信中…" : "メールで続ける"}
+          <span
+            aria-hidden
+            style={{
+              display: "inline-flex",
+              width: 20,
+              height: 20,
+              borderRadius: 4,
+              background:
+                "conic-gradient(from 45deg, #ea4335, #fbbc05, #34a853, #4285f4, #ea4335)",
+            }}
+          />
+          {busy ? "Google に移動中…" : "Google で続ける"}
         </button>
-      </form>
 
-      {message ? (
-        <p
-          style={{
-            margin: 0,
-            color: "#166534",
-            fontWeight: 700,
-            lineHeight: 1.65,
-          }}
-        >
-          {message}
+        <p style={{ margin: 0, fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
+          ログイン後、元の画面に戻ります。メール送信は使わないため、送信上限の影響を受けません。
         </p>
-      ) : null}
-      {error ? (
-        <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}>{error}</p>
-      ) : null}
+      </section>
 
-      {localCallbackWarning ? (
-        <p
-          style={{
-            margin: 0,
-            fontSize: 12,
-            color: "#92400e",
-            lineHeight: 1.65,
-            padding: 12,
-            borderRadius: 12,
-            background: "#fffbeb",
-            border: "1px solid #fde68a",
-          }}
-        >
-          ローカル環境（localhost）では、スマホのメールアプリからリンクを開けません。
-          PC の同じブラウザで開くか、本番 URL（NEXT_PUBLIC_APP_ORIGIN）を設定してください。
+      {error ? (
+        <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700, lineHeight: 1.65 }}>
+          {error}
         </p>
       ) : null}
 
       <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#6b7280" }}>
-        ログイン後、元の画面に戻ります。
-        <br />
         <Link href={withDev("/home")}>ホームへ戻る</Link>
         {" · "}
         <Link href={withDev("/settings")}>アカウント設定</Link>

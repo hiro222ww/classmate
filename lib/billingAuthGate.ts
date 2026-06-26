@@ -8,7 +8,7 @@ export function isAccountLinkedForBilling(identity: {
   isAnonymous: boolean;
   hasLinkedEmail: boolean;
 }): boolean {
-  return !identity.isAnonymous && identity.hasLinkedEmail;
+  return !identity.isAnonymous;
 }
 
 export function billingLoginRequiredResponse(returnTo = "/premium") {

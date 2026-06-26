@@ -156,21 +156,21 @@ export default function SettingsClient() {
             <p style={{ margin: 0, fontSize: 13, color: "#6b7280", lineHeight: 1.65 }}>
               現在: {accountStatusLabel(status)}
             </p>
-            <Link
-              href={withDev(buildLoginUrl("/settings"))}
-              style={{
-                display: "inline-block",
-                width: "fit-content",
-                padding: "12px 14px",
-                borderRadius: 12,
-                background: "#111827",
-                color: "#fff",
-                fontWeight: 900,
-                textDecoration: "none",
-              }}
-            >
-              ログイン / 新規登録
-            </Link>
+          <Link
+            href={withDev(buildLoginUrl("/settings"))}
+            style={{
+              display: "inline-block",
+              width: "fit-content",
+              padding: "12px 14px",
+              borderRadius: 12,
+              background: "#111827",
+              color: "#fff",
+              fontWeight: 900,
+              textDecoration: "none",
+            }}
+          >
+            Google でログイン
+          </Link>
           </>
         )}
       </section>
