@@ -817,6 +817,8 @@ export default function RoomClient() {
   const [autoCallRecheckTick, setAutoCallRecheckTick] = useState(0);
   const [roomSessionReady, setRoomSessionReady] = useState(false);
   const [sessionResolving, setSessionResolving] = useState(false);
+  const [membersListInitialFetchDone, setMembersListInitialFetchDone] =
+    useState(false);
   const [callBlockTick, setCallBlockTick] = useState(0);
   const roomLifecycleReadyRef = useRef(false);
   const sessionResolvingRef = useRef(false);
@@ -1255,6 +1257,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     roomFastReadyKeyRef.current = null;
     inviteJoinDoneKeyRef.current = null;
     inviteJoinTraceRef.current = createEmptyInviteJoinApiTrace();
+    setMembersListInitialFetchDone(false);
     setLifecycleReady(false);
     setResolving(false);
     cancelAutoCallTimer("session_changed");
@@ -2200,6 +2203,7 @@ if (!res.ok || !json?.ok) {
       } catch (e: any) {
         if (e?.name !== "AbortError") setSoftConnectionError("status");
       } finally {
+        setMembersListInitialFetchDone(true);
         roomLog(
           `[room-perf] fetchStatus ms=${Date.now() - fetchStatusStartMs} reason=${fetchReason}`
         );
@@ -4100,7 +4104,9 @@ const name = rawName === "You" ? "参加者" : rawName;
                 参加メンバー
               </div>
 
-              {visibleMembers.length === 0 ? (
+              {sessionResolving || !roomSessionReady || !membersListInitialFetchDone ? (
+                <div style={{ color: "#6b7280" }}>メンバーを読み込み中…</div>
+              ) : visibleMembers.length === 0 ? (
                 <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>

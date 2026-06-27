@@ -415,6 +415,10 @@ export default function HomeClient() {
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
   const [membersByClass, setMembersByClass] = useState<Record<string, ClassMember[]>>({});
+  const [membersLoadingByClass, setMembersLoadingByClass] = useState<
+    Record<string, boolean>
+  >({});
+  const membersInitialLoadedRef = useRef<Set<string>>(new Set());
   const [presenceByClass, setPresenceByClass] = useState<
     Record<string, Record<string, PresenceRow>>
   >({});
@@ -839,6 +843,8 @@ export default function HomeClient() {
         setProfile(null);
         setClasses([]);
         setMembersByClass({});
+        setMembersLoadingByClass({});
+        membersInitialLoadedRef.current = new Set();
         setPresenceByClass({});
 
         const id = String(getDeviceId() ?? "").trim();
@@ -1034,6 +1040,20 @@ async function loadMembersAndPresence() {
   const classIds = classes.map((c) => c.id).filter(Boolean);
   const viewerId = String(deviceId ?? "").trim();
   let shouldRefreshJoinedClasses = false;
+
+  const pendingInitialLoadIds = classIds.filter(
+    (classId) => !membersInitialLoadedRef.current.has(classId)
+  );
+  if (pendingInitialLoadIds.length > 0) {
+    setMembersLoadingByClass((prev) => {
+      const next = { ...prev };
+      for (const classId of pendingInitialLoadIds) {
+        next[classId] = true;
+      }
+      return next;
+    });
+  }
+
   try {
     
     const results = await Promise.all(
@@ -1456,8 +1476,29 @@ return {
         prevMemberStatusRef.current = nextMemberStatusByClass;
         setMembersByClass(nextMembersByClass);
         setPresenceByClass(nextPresenceByClass);
+
+        for (const classId of classIds) {
+          membersInitialLoadedRef.current.add(classId);
+        }
+        setMembersLoadingByClass((prev) => {
+          const next = { ...prev };
+          for (const classId of classIds) {
+            next[classId] = false;
+          }
+          return next;
+        });
       } catch (e) {
         console.error("[home] members/presence load failed", e);
+        for (const classId of classIds) {
+          membersInitialLoadedRef.current.add(classId);
+        }
+        setMembersLoadingByClass((prev) => {
+          const next = { ...prev };
+          for (const classId of classIds) {
+            next[classId] = false;
+          }
+          return next;
+        });
       }
     }
 
@@ -2225,6 +2266,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     prevPresenceRef.current = { ...prevPresenceRef.current };
     delete prevPresenceRef.current[classId];
     delete prevMemberStatusRef.current[classId];
+    membersInitialLoadedRef.current.delete(classId);
+    setMembersLoadingByClass((prev) => {
+      const next = { ...prev };
+      delete next[classId];
+      return next;
+    });
   }
 
   async function leaveClass(
@@ -2450,6 +2497,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                 leavingClassId === c.id || leavingClassIdsRef.current.has(c.id);
               const opening = openingClassId === c.id;
               const members = membersByClass[c.id] ?? [];
+              const membersLoading = membersLoadingByClass[c.id] === true;
               const presenceMap = presenceByClass[c.id] ?? {};
               const prevStatuses = prevMemberStatusRef.current[c.id] ?? {};
               const lastInSessionAtMap =
@@ -2525,8 +2573,10 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                           fontWeight: 800,
                         }}
                       >
-                        参加者 {members.length}人
-                        {onlineSummary ? ` · ${onlineSummary}` : ""}
+                        {membersLoading
+                          ? "読み込み中…"
+                          : `参加者 ${members.length}人`}
+                        {!membersLoading && onlineSummary ? ` · ${onlineSummary}` : ""}
                       </div>
                     </div>
 
@@ -2569,7 +2619,18 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     </div>
                   </div>
 
-                  {avatarPreview.length > 0 ? (
+                  {membersLoading ? (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        fontSize: 12,
+                        color: "#64748b",
+                        fontWeight: 700,
+                      }}
+                    >
+                      メンバーを読み込み中…
+                    </div>
+                  ) : avatarPreview.length > 0 ? (
                     <div
                       style={{
                         display: "flex",
@@ -2680,10 +2741,21 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                         userSelect: "none",
                       }}
                     >
-                      クラスメートを見る（{members.length}人）
+                      クラスメートを見る（
+                      {membersLoading ? "読み込み中…" : `${members.length}人`}）
                     </summary>
 
-                    {members.length === 0 ? (
+                    {membersLoading ? (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#6b7280",
+                          marginTop: 8,
+                        }}
+                      >
+                        メンバーを読み込み中…
+                      </div>
+                    ) : members.length === 0 ? (
                       <div
                         style={{
                           fontSize: 12,
