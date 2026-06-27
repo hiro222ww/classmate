@@ -14,6 +14,14 @@ export function useWebPushNotifications(
 ) {
   const [enabled, setEnabled] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => setFeedback(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
 
   useEffect(() => {
     setMounted(true);
@@ -38,45 +46,60 @@ export function useWebPushNotifications(
 
   const toggle = useCallback(async () => {
     if (typeof window === "undefined") return;
+    if (busy) return;
 
-    if (!isWebPushSupported()) {
-      alert(
-        "このブラウザは Web Push に対応していません。Chrome / Edge / Firefox、または iOS 16.4+ でホーム画面に追加した Safari をお試しください。"
-      );
-      return;
-    }
+    setBusy(true);
+    setFeedback(null);
 
-    const id = String(getDeviceId() ?? deviceId ?? "").trim();
-
-    if (enabled) {
-      if (id) {
-        await unsubscribeWebPush(id);
+    try {
+      if (!isWebPushSupported()) {
+        alert(
+          "このブラウザは Web Push に対応していません。Chrome / Edge / Firefox、または iOS 16.4+ でホーム画面に追加した Safari をお試しください。"
+        );
+        return;
       }
-      localStorage.setItem("notifications_enabled", "false");
-      setEnabled(false);
-      return;
-    }
 
-    if (!id) {
-      alert("device_id_missing");
-      return;
-    }
+      const id = String(getDeviceId() ?? deviceId ?? "").trim();
 
-    const result = await subscribeWebPush(id);
-    if (!result.ok) {
-      if (result.error === "permission_denied") {
-        alert("通知が許可されていません。ブラウザ設定を確認してください。");
-      } else if (result.error === "vapid_not_configured") {
-        alert("Push通知は現在サーバー設定中です。しばらくしてからお試しください。");
-      } else {
-        alert("Push通知の有効化に失敗しました。");
+      if (enabled) {
+        if (id) {
+          await unsubscribeWebPush(id);
+        }
+        localStorage.setItem("notifications_enabled", "false");
+        setEnabled(false);
+        setFeedback("プッシュ通知をオフにしました");
+        return;
       }
-      return;
+
+      if (!id) {
+        alert("device_id_missing");
+        return;
+      }
+
+      setFeedback("通知を設定しています…");
+
+      const result = await subscribeWebPush(id);
+      if (!result.ok) {
+        setFeedback(null);
+        if (result.error === "permission_denied") {
+          alert("通知が許可されていません。ブラウザ設定を確認してください。");
+        } else if (result.error === "vapid_not_configured") {
+          alert(
+            "Push通知は現在サーバー設定中です。しばらくしてからお試しください。"
+          );
+        } else {
+          alert("Push通知の有効化に失敗しました。");
+        }
+        return;
+      }
+
+      localStorage.setItem("notifications_enabled", "true");
+      setEnabled(true);
+      setFeedback("プッシュ通知 ON！ 今ひま？・メッセージなどが届きます");
+    } finally {
+      setBusy(false);
     }
+  }, [busy, deviceId, enabled]);
 
-    localStorage.setItem("notifications_enabled", "true");
-    setEnabled(true);
-  }, [deviceId, enabled]);
-
-  return { enabled, toggle, mounted };
+  return { enabled, toggle, busy, feedback, mounted };
 }

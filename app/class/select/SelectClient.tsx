@@ -202,8 +202,12 @@ export default function SelectClient() {
   };
 
   const [deviceId, setDeviceId] = useState("");
-  const { enabled: notificationsEnabled, toggle: toggleNotifications } =
-    useWebPushNotifications(deviceId, "select");
+  const {
+    enabled: notificationsEnabled,
+    toggle: toggleNotifications,
+    busy: notificationsBusy,
+    feedback: notificationsFeedback,
+  } = useWebPushNotifications(deviceId, "select");
   const { refresh: refreshCurrentClass } = useCurrentClass(deviceId);
 
   const [worlds, setWorlds] = useState<World[]>([]);
@@ -1052,6 +1056,8 @@ export default function SelectClient() {
           hasProfile={hasProfile === true}
           withDev={withDev}
           notificationsEnabled={notificationsEnabled}
+          notificationsBusy={notificationsBusy}
+          notificationsFeedback={notificationsFeedback}
           onToggleNotifications={toggleNotifications}
         />
       </DashboardPageHeader>

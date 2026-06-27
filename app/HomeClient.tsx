@@ -389,8 +389,12 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
-  const { enabled: notificationsEnabled, toggle: toggleNotifications } =
-    useWebPushNotifications(deviceId, "home");
+  const {
+    enabled: notificationsEnabled,
+    toggle: toggleNotifications,
+    busy: notificationsBusy,
+    feedback: notificationsFeedback,
+  } = useWebPushNotifications(deviceId, "home");
   const {
     loading: currentClassLoading,
     current: currentClass,
@@ -2346,6 +2350,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             hasProfile={profileComplete}
             withDev={withDev}
             notificationsEnabled={notificationsEnabled}
+            notificationsBusy={notificationsBusy}
+            notificationsFeedback={notificationsFeedback}
             onToggleNotifications={toggleNotifications}
           />
         </DashboardPageHeader>
@@ -2365,6 +2371,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           hasProfile={profileComplete}
           withDev={withDev}
           notificationsEnabled={notificationsEnabled}
+          notificationsBusy={notificationsBusy}
+          notificationsFeedback={notificationsFeedback}
           onToggleNotifications={toggleNotifications}
         />
       </DashboardPageHeader>

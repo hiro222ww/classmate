@@ -5,6 +5,7 @@ import { buildLoginUrl } from "@/lib/authAccount";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { PushNotificationBell } from "@/components/PushNotificationBell";
 
 type Props = {
   returnPath: string;
@@ -12,7 +13,9 @@ type Props = {
   hasProfile: boolean;
   withDev: (path: string) => string;
   notificationsEnabled?: boolean;
-  onToggleNotifications?: () => void;
+  notificationsBusy?: boolean;
+  notificationsFeedback?: string | null;
+  onToggleNotifications?: () => void | Promise<void>;
 };
 
 export function DashboardHeaderNav({
@@ -21,6 +24,8 @@ export function DashboardHeaderNav({
   hasProfile,
   withDev,
   notificationsEnabled = false,
+  notificationsBusy = false,
+  notificationsFeedback = null,
   onToggleNotifications,
 }: Props) {
   const { ready, loggedIn, accountLabel, adminAuthenticated } =
@@ -41,42 +46,12 @@ export function DashboardHeaderNav({
       }}
     >
       {onToggleNotifications ? (
-        <button
-          type="button"
-          onClick={() => void onToggleNotifications()}
-          title={
-            notificationsEnabled
-              ? "プッシュ通知をオフにする"
-              : "プッシュ通知をオンにする"
-          }
-          aria-label={
-            notificationsEnabled
-              ? "プッシュ通知をオフにする"
-              : "プッシュ通知をオンにする"
-          }
-          aria-pressed={notificationsEnabled}
-          style={{
-            width: 38,
-            height: 38,
-            padding: 0,
-            borderRadius: 12,
-            border: notificationsEnabled
-              ? "1px solid #86efac"
-              : "1px solid #e5e7eb",
-            background: notificationsEnabled ? "#f0fdf4" : "#fff",
-            color: notificationsEnabled ? "#15803d" : "#6b7280",
-            fontWeight: 800,
-            fontSize: 17,
-            lineHeight: 1,
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          <span aria-hidden>🔔</span>
-        </button>
+        <PushNotificationBell
+          enabled={notificationsEnabled}
+          busy={notificationsBusy}
+          feedback={notificationsFeedback}
+          onToggle={onToggleNotifications}
+        />
       ) : null}
 
       <Link
