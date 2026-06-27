@@ -308,40 +308,14 @@ export async function pruneStaleUserDeviceSessionRows(params: {
     return 0;
   }
 
-  const staleDeviceIds = new Set<string>();
-
-  const { data: linkedDevices } = await client
-    .from("user_devices")
-    .select("device_id")
-    .eq("user_id", userId);
-
-  for (const row of linkedDevices ?? []) {
-    const linkedId = String(row.device_id ?? "").trim();
-    if (linkedId && linkedId !== deviceId) {
-      staleDeviceIds.add(linkedId);
-    }
-  }
-
-  const { data: sameUserRows } = await client
-    .from("session_members")
-    .select("device_id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .neq("device_id", deviceId);
-
-  for (const row of sameUserRows ?? []) {
-    const linkedId = String(row.device_id ?? "").trim();
-    if (linkedId) staleDeviceIds.add(linkedId);
-  }
-
-  if (staleDeviceIds.size === 0) return 0;
-
-  const staleList = [...staleDeviceIds];
+  // Only delete rows tagged with this user_id. Never delete by linked device_id alone —
+  // that device_id may now belong to a different guest in the same session.
   const { data: removedRows, error } = await client
     .from("session_members")
     .delete()
     .eq("session_id", sessionId)
-    .in("device_id", staleList)
+    .eq("user_id", userId)
+    .neq("device_id", deviceId)
     .select("device_id");
 
   if (error) {
@@ -352,18 +326,24 @@ export async function pruneStaleUserDeviceSessionRows(params: {
     return 0;
   }
 
-  await client
-    .from("class_presence")
-    .delete()
-    .eq("class_id", classId)
-    .in("device_id", staleList);
+  const removedDeviceIds = (removedRows ?? [])
+    .map((row) => String(row.device_id ?? "").trim())
+    .filter(Boolean);
 
-  const removed = removedRows?.length ?? 0;
+  if (removedDeviceIds.length > 0) {
+    await client
+      .from("class_presence")
+      .delete()
+      .eq("class_id", classId)
+      .in("device_id", removedDeviceIds);
+  }
+
+  const removed = removedDeviceIds.length;
   if (removed > 0) {
     console.log(
       `[session-members] cleanup reason=stale_user_device session=${tailJoinId(sessionId)} ` +
         `user=${tailJoinId(userId)} keep=${tailJoinId(deviceId)} removed=${removed} ` +
-        `devices=${staleList.map((id) => tailJoinId(id)).join(",")}`
+        `devices=${removedDeviceIds.map((id) => tailJoinId(id)).join(",")}`
     );
   }
 
