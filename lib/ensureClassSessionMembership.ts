@@ -183,14 +183,28 @@ export async function ensureClassSessionMembership(
 
   const existingMembershipQuery = sb
     .from("class_memberships")
-    .select("class_id")
+    .select("class_id,device_id,user_id")
     .eq("class_id", ids.classId);
 
-  const { data: existingMembership } = await (
+  const { data: existingMembershipRows, error: existingMembershipError } = await (
     membershipFilter.column === "user_id"
       ? existingMembershipQuery.eq("user_id", membershipFilter.value)
       : existingMembershipQuery.eq("device_id", membershipFilter.value)
-  ).maybeSingle();
+  ).limit(1);
+
+  if (existingMembershipError) {
+    return {
+      ok: false,
+      error: "membership_lookup_failed",
+      status: "blocked",
+      details: [existingMembershipError.message],
+    };
+  }
+
+  const existingMembership = existingMembershipRows?.[0] ?? null;
+  const existingMembershipOnThisDevice =
+    existingMembership &&
+    String(existingMembership.device_id ?? "").trim() === ids.deviceId;
 
   const { data: existingSessionMember } = await sb
     .from("session_members")
@@ -227,7 +241,42 @@ export async function ensureClassSessionMembership(
   let sessionMemberUpserted = false;
   let presenceUpserted = false;
 
-  {
+  if (existingMembership && !existingMembershipOnThisDevice) {
+    if (userId && !existingMembership.user_id) {
+      const { error: backfillError } = await sb
+        .from("class_memberships")
+        .update({ user_id: userId })
+        .eq("class_id", ids.classId)
+        .eq("device_id", String(existingMembership.device_id ?? "").trim());
+
+      if (backfillError) {
+        steps.push({
+          step: "class_memberships",
+          status: "failed",
+          action: "backfill_membership_user_id",
+          error: backfillError.message,
+        });
+        return {
+          ok: false,
+          error: "membership_upsert_failed",
+          status: "partial",
+          steps,
+          failedStep: "class_memberships",
+          details: [backfillError.message],
+        };
+      }
+    }
+
+    steps.push({
+      step: "class_memberships",
+      status: "skipped",
+      action: "already_member_other_device",
+    });
+    console.log(
+      `[join-state] step=class_memberships skipped class=${tailJoinId(ids.classId)} ` +
+        `device=${tailJoinId(ids.deviceId)} reason=already_member`
+    );
+  } else {
     const { error } = await sb.from("class_memberships").upsert(
       {
         class_id: ids.classId,
@@ -235,7 +284,7 @@ export async function ensureClassSessionMembership(
         user_id: userId,
         joined_at: now,
       },
-      { onConflict: "class_id,device_id" }
+      { onConflict: "device_id,class_id" }
     );
 
     if (error) {

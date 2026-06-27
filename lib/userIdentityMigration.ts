@@ -103,17 +103,33 @@ async function linkSatelliteRows(userId: string, deviceId: string) {
     matchPrefsLinked = true;
   }
 
-  await supabaseAdmin
-    .from("class_memberships")
-    .update({ user_id: userId })
-    .eq("device_id", deviceId)
-    .is("user_id", null);
+  const { data: linkedDevices } = await supabaseAdmin
+    .from("user_devices")
+    .select("device_id")
+    .eq("user_id", userId);
 
-  await supabaseAdmin
-    .from("session_members")
-    .update({ user_id: userId })
-    .eq("device_id", deviceId)
-    .is("user_id", null);
+  const linkedDeviceIds = [
+    ...new Set([
+      deviceId,
+      ...(linkedDevices ?? [])
+        .map((row) => String(row.device_id ?? "").trim())
+        .filter(Boolean),
+    ]),
+  ];
+
+  if (linkedDeviceIds.length > 0) {
+    await supabaseAdmin
+      .from("class_memberships")
+      .update({ user_id: userId })
+      .in("device_id", linkedDeviceIds)
+      .is("user_id", null);
+
+    await supabaseAdmin
+      .from("session_members")
+      .update({ user_id: userId })
+      .in("device_id", linkedDeviceIds)
+      .is("user_id", null);
+  }
 
   return { entitlementsLinked, billingLinked, matchPrefsLinked };
 }

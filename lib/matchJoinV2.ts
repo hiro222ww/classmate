@@ -1197,6 +1197,7 @@ export async function matchJoinV2Post(req: Request) {
       classId: classIdOut,
       sessionId: resolvedSessionId,
       deviceId,
+      userId: userId || null,
       source: openJoinedClass ? "restore" : "normal_join",
       displayName: joinDisplayName,
     });
