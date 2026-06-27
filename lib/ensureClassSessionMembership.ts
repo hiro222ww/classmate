@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { pruneSplitClassSessionMemberships } from "@/lib/classSessionSelection";
+import { pruneSplitClassSessionMemberships, pruneStaleUserDeviceSessionRows } from "@/lib/classSessionSelection";
 import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import {
   auditJoinStateInvariants,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/joinStateInvariants";
 import { resolveDisplayName } from "@/lib/resolveDisplayName";
 import { resolveUserIdForDevice } from "@/lib/userIdentityMigration";
+import { isValidUuid } from "@/lib/userIdentity";
 import {
   membershipFilterForActor,
 } from "@/lib/actorIdentity";
@@ -323,8 +324,18 @@ export async function ensureClassSessionMembership(
       .eq("device_id", ids.deviceId)
       .maybeSingle();
 
+    let profileDisplayName = profile?.display_name;
+    if (!profileDisplayName && userId && isValidUuid(userId)) {
+      const { data: profileByUser } = await sb
+        .from("user_profiles")
+        .select("display_name")
+        .eq("user_id", userId)
+        .maybeSingle();
+      profileDisplayName = profileByUser?.display_name;
+    }
+
     displayName = resolveDisplayName({
-      profileDisplayName: profile?.display_name,
+      profileDisplayName,
       sessionMemberDisplayName: null,
     }).displayName;
   }
@@ -370,6 +381,19 @@ export async function ensureClassSessionMembership(
     console.log(
       `[join-state] step=session_members applied session=${tailJoinId(ids.sessionId)} device=${tailJoinId(ids.deviceId)}`
     );
+
+    if (userId && isValidUuid(userId)) {
+      const pruned = await pruneStaleUserDeviceSessionRows({
+        classId: ids.classId,
+        sessionId: ids.sessionId,
+        deviceId: ids.deviceId,
+        userId,
+        client: sb,
+      });
+      if (pruned > 0) {
+        selfHealed.push(`stale_user_device_session_members:${pruned}`);
+      }
+    }
   }
 
   const sessionStatus = String(session.status ?? "forming");

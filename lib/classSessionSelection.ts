@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { tailJoinId } from "@/lib/joinStateInvariants";
+import { isValidUuid } from "@/lib/userIdentity";
 import {
   evaluateOpenJoinedSessionReuse,
   isDeadlinePassed,
@@ -277,6 +278,92 @@ export async function pruneSplitClassSessionMemberships(params: {
         `from=${(removedRows ?? [])
           .map((row) => tailJoinId(String(row.session_id ?? "")))
           .join(",")}`
+    );
+  }
+
+  return removed;
+}
+
+export async function pruneStaleUserDeviceSessionRows(params: {
+  classId: string;
+  sessionId: string;
+  deviceId: string;
+  userId: string;
+  client?: SupabaseClient;
+}): Promise<number> {
+  const client = params.client ?? supabaseAdmin;
+  const classId = String(params.classId ?? "").trim();
+  const sessionId = String(params.sessionId ?? "").trim();
+  const deviceId = String(params.deviceId ?? "").trim();
+  const userId = String(params.userId ?? "").trim();
+
+  if (
+    !classId ||
+    !sessionId ||
+    !deviceId ||
+    !isValidUuid(userId) ||
+    !isValidUuid(sessionId) ||
+    !isValidUuid(classId)
+  ) {
+    return 0;
+  }
+
+  const staleDeviceIds = new Set<string>();
+
+  const { data: linkedDevices } = await client
+    .from("user_devices")
+    .select("device_id")
+    .eq("user_id", userId);
+
+  for (const row of linkedDevices ?? []) {
+    const linkedId = String(row.device_id ?? "").trim();
+    if (linkedId && linkedId !== deviceId) {
+      staleDeviceIds.add(linkedId);
+    }
+  }
+
+  const { data: sameUserRows } = await client
+    .from("session_members")
+    .select("device_id")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .neq("device_id", deviceId);
+
+  for (const row of sameUserRows ?? []) {
+    const linkedId = String(row.device_id ?? "").trim();
+    if (linkedId) staleDeviceIds.add(linkedId);
+  }
+
+  if (staleDeviceIds.size === 0) return 0;
+
+  const staleList = [...staleDeviceIds];
+  const { data: removedRows, error } = await client
+    .from("session_members")
+    .delete()
+    .eq("session_id", sessionId)
+    .in("device_id", staleList)
+    .select("device_id");
+
+  if (error) {
+    console.warn(
+      `[session-members] prune-stale-user failed session=${tailJoinId(sessionId)} ` +
+        `user=${tailJoinId(userId)} err=${error.message}`
+    );
+    return 0;
+  }
+
+  await client
+    .from("class_presence")
+    .delete()
+    .eq("class_id", classId)
+    .in("device_id", staleList);
+
+  const removed = removedRows?.length ?? 0;
+  if (removed > 0) {
+    console.log(
+      `[session-members] cleanup reason=stale_user_device session=${tailJoinId(sessionId)} ` +
+        `user=${tailJoinId(userId)} keep=${tailJoinId(deviceId)} removed=${removed} ` +
+        `devices=${staleList.map((id) => tailJoinId(id)).join(",")}`
     );
   }
 

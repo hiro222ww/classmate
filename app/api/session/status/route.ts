@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
   logDisplayNameResolution,
-  pickLatestSessionMemberByDevice,
+  pickCanonicalSessionMembers,
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
 import { auditJoinStateInvariants } from "@/lib/joinStateInvariants";
@@ -41,6 +41,7 @@ type SessionRow = {
 
 type SessionMemberRow = {
   device_id?: string | null;
+  user_id?: string | null;
   display_name?: string | null;
   joined_at?: string | null;
 };
@@ -131,7 +132,7 @@ async function getSession(sb: ReturnType<typeof admin>, sessionId: string) {
 async function getRawMembers(sb: ReturnType<typeof admin>, sessionId: string) {
   const { data, error } = await sb
     .from("session_members")
-    .select("device_id,display_name,joined_at")
+    .select("device_id,user_id,display_name,joined_at")
     .eq("session_id", sessionId)
     .not("device_id", "is", null)
     .neq("device_id", "")
@@ -245,7 +246,7 @@ function buildMembers(
   profileMap: Map<string, UserProfileRow>,
   presenceMap: Map<string, PresenceInfo>
 ) {
-  const latestByDevice = pickLatestSessionMemberByDevice(rawMembers);
+  const latestByDevice = pickCanonicalSessionMembers(rawMembers);
 
   const members = Array.from(latestByDevice.entries()).map(
     ([deviceId, row]) => {
@@ -291,7 +292,7 @@ function buildMembersFast(
   rawMembers: SessionMemberRow[],
   profileMap: Map<string, UserProfileRow>
 ) {
-  const latestByDevice = pickLatestSessionMemberByDevice(rawMembers);
+  const latestByDevice = pickCanonicalSessionMembers(rawMembers);
 
   const members = Array.from(latestByDevice.entries()).map(
     ([deviceId, row]) => {

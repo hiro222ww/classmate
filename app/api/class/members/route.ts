@@ -3,7 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   logDisplayNameResolution,
   normalizeDisplayNameInput,
-  pickLatestSessionMemberByDevice,
+  pickCanonicalSessionMembers,
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
 
@@ -158,7 +158,7 @@ export async function GET(req: Request) {
     if (sessionId) {
       const { data: sessionRows, error: sessionErr } = await sb
         .from("session_members")
-        .select("device_id, display_name, joined_at")
+        .select("device_id, user_id, display_name, joined_at")
         .eq("session_id", sessionId)
         .order("joined_at", { ascending: true });
 
@@ -173,7 +173,7 @@ export async function GET(req: Request) {
         );
       }
 
-      const latestByDevice = pickLatestSessionMemberByDevice(sessionRows ?? []);
+      const latestByDevice = pickCanonicalSessionMembers(sessionRows ?? []);
       const deviceIds = Array.from(latestByDevice.keys());
 
       const profilesRes = await loadProfiles(sb, deviceIds);

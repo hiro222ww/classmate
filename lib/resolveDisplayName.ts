@@ -71,9 +71,17 @@ export function resolveDisplayName(
 
 export type SessionMemberLike = {
   device_id?: unknown;
+  user_id?: unknown;
   joined_at?: unknown;
   display_name?: unknown;
 };
+
+function joinedAtMs(row: SessionMemberLike): number {
+  const joinedAt =
+    normalizeDisplayNameInput(row.joined_at) || new Date(0).toISOString();
+  const ms = new Date(joinedAt).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
 
 export function pickLatestSessionMemberByDevice<T extends SessionMemberLike>(
   rows: T[]
@@ -104,6 +112,39 @@ export function pickLatestSessionMemberByDevice<T extends SessionMemberLike>(
   }
 
   return byDevice;
+}
+
+/** One logged-in user appears once even if multiple device rows exist in session_members. */
+export function pickCanonicalSessionMembers<T extends SessionMemberLike>(
+  rows: T[]
+): Map<string, T> {
+  const latestByDevice = pickLatestSessionMemberByDevice(rows);
+  const latestByUserId = new Map<string, T>();
+  const guestsByDevice = new Map<string, T>();
+
+  for (const row of latestByDevice.values()) {
+    const deviceId = normalizeDisplayNameInput(row.device_id);
+    if (!deviceId) continue;
+
+    const userId = normalizeDisplayNameInput(row.user_id);
+    if (userId) {
+      const prev = latestByUserId.get(userId);
+      if (!prev || joinedAtMs(prev) <= joinedAtMs(row)) {
+        latestByUserId.set(userId, row);
+      }
+      continue;
+    }
+
+    guestsByDevice.set(deviceId, row);
+  }
+
+  const canonical = new Map<string, T>(guestsByDevice);
+  for (const row of latestByUserId.values()) {
+    const deviceId = normalizeDisplayNameInput(row.device_id);
+    if (deviceId) canonical.set(deviceId, row);
+  }
+
+  return canonical;
 }
 
 export function logDisplayNameResolution(
