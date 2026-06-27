@@ -6,65 +6,12 @@ import {
   pickCanonicalSessionMembers,
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
+import { loadProfileMapForMembers } from "@/lib/sessionMemberProfiles";
 
 export const dynamic = "force-dynamic";
 
 function normalizeDeviceId(v: unknown) {
-  return normalizeDisplayNameInput(v);
-}
-
-async function loadProfiles(
-  sb: typeof supabaseAdmin,
-  deviceIds: string[]
-) {
-  const ids = Array.from(
-    new Set(deviceIds.map((id) => normalizeDeviceId(id)).filter(Boolean))
-  );
-
-  if (ids.length === 0) {
-    return {
-      ok: true as const,
-      profileMap: new Map<
-        string,
-        { display_name?: string | null; photo_path?: string | null }
-      >(),
-    };
-  }
-
-  const { data, error } = await sb
-    .from("user_profiles")
-    .select("device_id, display_name, photo_path")
-    .in("device_id", ids);
-
-  if (error) {
-    return {
-      ok: false as const,
-      error,
-      profileMap: new Map<
-        string,
-        { display_name?: string | null; photo_path?: string | null }
-      >(),
-    };
-  }
-
-  const profileMap = new Map<
-    string,
-    { display_name?: string | null; photo_path?: string | null }
-  >();
-
-  for (const p of data ?? []) {
-    const did = normalizeDeviceId((p as { device_id?: string }).device_id);
-    if (!did) continue;
-    profileMap.set(
-      did,
-      p as { display_name?: string | null; photo_path?: string | null }
-    );
-  }
-
-  return {
-    ok: true as const,
-    profileMap,
-  };
+  return String(v ?? "").trim();
 }
 
 async function loadPresenceDisplayNames(
@@ -174,21 +121,27 @@ export async function GET(req: Request) {
       }
 
       const latestByDevice = pickCanonicalSessionMembers(sessionRows ?? []);
-      const deviceIds = Array.from(latestByDevice.keys());
 
-      const profilesRes = await loadProfiles(sb, deviceIds);
+      const profilesRes = await loadProfileMapForMembers(
+        sb,
+        Array.from(latestByDevice.entries()).map(([deviceId, row]) => ({
+          deviceId,
+          userId: (row as { user_id?: string | null }).user_id ?? null,
+        }))
+      );
 
       if (!profilesRes.ok) {
         return NextResponse.json(
           {
             ok: false,
             error: "profiles_failed",
-            detail: profilesRes.error.message,
+            detail: profilesRes.error,
           },
           { status: 500 }
         );
       }
 
+      const deviceIds = Array.from(latestByDevice.keys());
       const presenceMap = await loadPresenceDisplayNames(sb, classId, deviceIds);
 
       const members = Array.from(latestByDevice.entries())
@@ -220,7 +173,7 @@ export async function GET(req: Request) {
 
     const { data: membershipRows, error: membershipErr } = await sb
       .from("class_memberships")
-      .select("device_id, joined_at")
+      .select("device_id, user_id, joined_at")
       .eq("class_id", classId)
       .order("joined_at", { ascending: true });
 
@@ -235,22 +188,30 @@ export async function GET(req: Request) {
       );
     }
 
-    const deviceIds = (membershipRows ?? [])
-      .map((row) => normalizeDeviceId((row as { device_id?: string }).device_id))
-      .filter(Boolean);
-
-    const profilesRes = await loadProfiles(sb, deviceIds);
+    const profilesRes = await loadProfileMapForMembers(
+      sb,
+      (membershipRows ?? [])
+        .map((row) => ({
+          deviceId: normalizeDeviceId((row as { device_id?: string }).device_id),
+          userId: (row as { user_id?: string | null }).user_id ?? null,
+        }))
+        .filter((row) => Boolean(row.deviceId))
+    );
 
     if (!profilesRes.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "profiles_failed",
-          detail: profilesRes.error.message,
+          detail: profilesRes.error,
         },
         { status: 500 }
       );
     }
+
+    const deviceIds = (membershipRows ?? [])
+      .map((row) => normalizeDeviceId((row as { device_id?: string }).device_id))
+      .filter(Boolean);
 
     const presenceMap = await loadPresenceDisplayNames(sb, classId, deviceIds);
 

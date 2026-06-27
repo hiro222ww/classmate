@@ -6,6 +6,7 @@ import {
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
 import { auditJoinStateInvariants } from "@/lib/joinStateInvariants";
+import { loadProfileMapForMembers } from "@/lib/sessionMemberProfiles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -150,30 +151,29 @@ async function getRawMembers(sb: ReturnType<typeof admin>, sessionId: string) {
 
 async function getProfileMap(
   sb: ReturnType<typeof admin>,
-  deviceIds: string[]
+  members: SessionMemberRow[]
 ) {
-  if (deviceIds.length === 0) {
-    return {
-      ok: true as const,
-      profileMap: new Map<string, UserProfileRow>(),
-    };
-  }
+  const profileRes = await loadProfileMapForMembers(
+    sb,
+    members
+      .map((row) => ({
+        deviceId: String(row.device_id ?? "").trim(),
+        userId: row.user_id ?? null,
+      }))
+      .filter((row) => Boolean(row.deviceId))
+  );
 
-  const { data, error } = await sb
-    .from("user_profiles")
-    .select("device_id,display_name,photo_path")
-    .in("device_id", deviceIds);
-
-  if (error) {
-    return { ok: false as const, error };
+  if (!profileRes.ok) {
+    return { ok: false as const, error: new Error(profileRes.error) };
   }
 
   const map = new Map<string, UserProfileRow>();
-
-  for (const row of (Array.isArray(data) ? data : []) as UserProfileRow[]) {
-    const did = String(row.device_id ?? "").trim();
-    if (!did) continue;
-    map.set(did, row);
+  for (const [deviceId, profile] of profileRes.profileMap.entries()) {
+    map.set(deviceId, {
+      device_id: deviceId,
+      display_name: profile.display_name ?? null,
+      photo_path: profile.photo_path ?? null,
+    });
   }
 
   return {
@@ -435,7 +435,7 @@ export async function GET(req: Request) {
 
     if (fast) {
       const profilesStart = Date.now();
-      const profileMapRes = await getProfileMap(sb, deviceIds);
+      const profileMapRes = await getProfileMap(sb, rawMembersRes.members);
       profilesMs = Date.now() - profilesStart;
       if (!profileMapRes.ok) {
         return NextResponse.json(
@@ -450,7 +450,7 @@ export async function GET(req: Request) {
     } else {
       const enrichStart = Date.now();
       const [profileMapRes, presenceMapRes] = await Promise.all([
-        getProfileMap(sb, deviceIds),
+        getProfileMap(sb, rawMembersRes.members),
         getPresenceMap(sb, deviceIds, sessionIdRaw, classIdRaw),
       ]);
       const enrichMs = Date.now() - enrichStart;
