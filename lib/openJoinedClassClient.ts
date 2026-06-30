@@ -1,69 +1,235 @@
 "use client";
 
-import { markAutoCallOnce } from "@/lib/autoCallOnce";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
+import type { CurrentClassSnapshot } from "@/lib/currentClassTypes";
+import {
+  readHomeClassSessionHint,
+  storeHomeClassSessionHint,
+} from "@/lib/homeClassSessionHint";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
-import type { CurrentClassSnapshot } from "@/lib/currentClassTypes";
 
 export type OpenJoinedClassResult =
-  | { ok: true; classId: string; sessionId: string; roomUrl: string }
-  | { ok: false; error: string; message?: string };
+  | { ok: true; roomPath: string }
+  | { ok: false; message: string };
 
-export async function openJoinedClassRoom(params: {
+async function readJsonSafe(res: Response) {
+  const raw = await res.text().catch(() => "");
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildRoomPath(
+  classId: string,
+  sessionId: string,
+  withDev: (path: string) => string,
+  openJoinedClass = true
+) {
+  const params = new URLSearchParams({
+    autojoin: "1",
+    classId,
+    sessionId,
+  });
+  if (openJoinedClass) params.set("openJoinedClass", "1");
+  return withDev(`/room?${params.toString()}`);
+}
+
+async function tryOpenWithHintSession(params: {
   deviceId: string;
-  current: Pick<
-    CurrentClassSnapshot,
-    "classId" | "sessionId" | "topicKey" | "worldKey"
-  >;
-  devQuery?: string;
-}): Promise<OpenJoinedClassResult> {
-  const deviceId = String(params.deviceId ?? "").trim();
-  const classId = String(params.current.classId ?? "").trim();
+  classId: string;
+  hintSessionId: string;
+  withDev: (path: string) => string;
+}): Promise<string | null> {
+  const { deviceId, classId, hintSessionId, withDev } = params;
+  try {
+    const qs = new URLSearchParams({
+      sessionId: hintSessionId,
+      classId,
+      lite: "1",
+      fast: "1",
+      viewerDeviceId: deviceId,
+    });
 
-  if (!deviceId || !classId) {
-    return { ok: false, error: "missing_ids" };
+    const res = await fetch(`/api/session/status?${qs.toString()}`, {
+      cache: "no-store",
+    });
+    const json = await readJsonSafe(res);
+    if (!res.ok || !json?.ok) return null;
+
+    const members = Array.isArray(json.members) ? json.members : [];
+    const selfIn =
+      members.some(
+        (member: { device_id?: string }) =>
+          String(member.device_id ?? "").trim() === deviceId
+      ) || json.viewerState?.inSessionMembers === true;
+
+    if (!selfIn || members.length < 1) return null;
+
+    const sessionStatus = String(json.session?.status ?? "")
+      .trim()
+      .toLowerCase();
+    if (
+      sessionStatus === "closed" ||
+      sessionStatus === "expired" ||
+      sessionStatus === "ended"
+    ) {
+      return null;
+    }
+
+    storeHomeClassSessionHint(classId, hintSessionId, sessionStatus);
+    return buildRoomPath(classId, hintSessionId, withDev);
+  } catch {
+    return null;
+  }
+}
+
+function resolveOpenClassError(json: Record<string, unknown>): string {
+  const code = String(json?.error ?? "").trim();
+  if (!code) return "クラスに入れませんでした。もう一度お試しください。";
+
+  if (code === "class_slots_limit") {
+    return `クラス参加上限に達しています。現在のプランでは最大 ${
+      json?.classSlots ?? "指定"
+    } クラスまで参加できます。`;
   }
 
-  const body = buildMatchJoinRequestBody({
+  if (
+    code === "match_deadline_passed" ||
+    code === "recruitment_closed" ||
+    code === "session_closed"
+  ) {
+    return (
+      (typeof json?.message === "string" && json.message) ||
+      (code === "session_closed"
+        ? "このセッションは終了しています"
+        : "このクラスは現在募集していません")
+    );
+  }
+
+  if (code === "membership_left") {
+    return "このクラスからは退出済みです。もう一度参加してください。";
+  }
+
+  if (code === "admission_closed") {
+    return (
+      (typeof json?.message === "string" && json.message) ||
+      "現在は入校受付時間外です。"
+    );
+  }
+
+  return resolveMatchJoinUserMessage(code);
+}
+
+/**
+ * Web 版 Home の openClass と同系統の復帰処理。
+ * sessionId を match-join-v2 で解決してから /room へ遷移する。
+ */
+export async function openJoinedClassFromSnapshot(options: {
+  deviceId: string;
+  current: CurrentClassSnapshot;
+  withDev: (path: string) => string;
+}): Promise<OpenJoinedClassResult> {
+  const { deviceId, current, withDev } = options;
+  const classId = String(current.classId ?? "").trim();
+  if (!classId) {
+    return {
+      ok: false,
+      message: "今のクラスが見つかりません。もう一度参加してください。",
+    };
+  }
+
+  if (!deviceId) {
+    return {
+      ok: false,
+      message: "端末情報を取得できませんでした。",
+    };
+  }
+
+  let hintSessionId =
+    String(current.sessionId ?? "").trim() ||
+    readHomeClassSessionHint(classId) ||
+    "";
+
+  if (hintSessionId) {
+    const roomPath = await tryOpenWithHintSession({
+      deviceId,
+      classId,
+      hintSessionId,
+      withDev,
+    });
+    if (roomPath) {
+      return { ok: true, roomPath };
+    }
+  }
+
+  const openBody = buildMatchJoinRequestBody({
     deviceId,
     openJoinedClassId: classId,
-    sessionId: params.current.sessionId,
-    topicKey: params.current.topicKey,
-    worldKey: params.current.worldKey ?? "default",
+    sessionId: hintSessionId || null,
+    topicKey: current.topicKey,
+    worldKey: current.worldKey ?? "default",
     capacity: 5,
   });
 
   const res = await fetch("/api/class/match-join-v2", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+      ...(await buildDeviceAuthHeaders(deviceId)),
+    },
+    body: JSON.stringify(openBody),
     cache: "no-store",
   });
 
-  const json = await res.json().catch(() => null);
+  const json = await readJsonSafe(res);
   if (!res.ok || !json?.ok) {
     return {
       ok: false,
-      error: String(json?.error ?? "match_join_failed"),
-      message: resolveMatchJoinUserMessage(
-        String(json?.error ?? "server_error")
-      ),
+      message: resolveOpenClassError(json),
     };
   }
 
-  const sessionId = String(json.sessionId ?? json.session_id ?? "").trim();
-  if (!sessionId) {
-    return { ok: false, error: "match_join_missing_session" };
+  const row = Array.isArray(json?.data) ? json.data[0] : json;
+  const resolvedClassId = String(
+    json?.classId ?? json?.class_id ?? row?.classId ?? row?.class_id ?? ""
+  ).trim();
+  const sessionId = String(
+    json?.sessionId ??
+      json?.session_id ??
+      row?.sessionId ??
+      row?.session_id ??
+      ""
+  ).trim();
+
+  if (!resolvedClassId || !sessionId) {
+    return {
+      ok: false,
+      message: "今のクラスが見つかりません。もう一度参加してください。",
+    };
   }
 
-  markAutoCallOnce(sessionId, deviceId);
+  const resolvedStatus = String(
+    json?.sessionStatus ?? json?.session_status ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    resolvedStatus === "closed" ||
+    resolvedStatus === "expired" ||
+    resolvedStatus === "ended"
+  ) {
+    return {
+      ok: false,
+      message: "このセッションは終了しています。もう一度参加してください。",
+    };
+  }
 
-  const devQuery = String(params.devQuery ?? "").trim();
-  const roomUrl =
-    `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-    `&sessionId=${encodeURIComponent(sessionId)}` +
-    `&openJoinedClass=1` +
-    (devQuery ? `&${devQuery}` : "");
-
-  return { ok: true, classId, sessionId, roomUrl };
+  storeHomeClassSessionHint(resolvedClassId, sessionId, resolvedStatus);
+  return {
+    ok: true,
+    roomPath: buildRoomPath(resolvedClassId, sessionId, withDev),
+  };
 }

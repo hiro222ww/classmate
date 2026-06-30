@@ -23,6 +23,138 @@ export const APP_SHELL_LAYOUT_CSS = `
       padding-top: max(32px, env(safe-area-inset-top, 0px));
       gap: 24px;
     }
+
+    .app-shell-inner--wide {
+      width: min(100%, 960px);
+    }
+  }
+
+  .app-shell-inner--with-tab {
+    padding-bottom: max(88px, calc(28px + env(safe-area-inset-bottom, 0px)));
+  }
+
+  .app-shell-home-layout {
+    display: grid;
+    gap: 20px;
+  }
+
+  @media (min-width: 768px) {
+    .app-shell-home-layout {
+      grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.25fr);
+      align-items: start;
+      gap: 24px;
+    }
+  }
+
+  .app-shell-settings-grid {
+    display: grid;
+    gap: 20px;
+  }
+
+  @media (min-width: 768px) {
+    .app-shell-settings-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+      align-items: start;
+    }
+
+    .app-shell-settings-grid > .app-shell-card--full {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .app-shell-stat-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  @media (min-width: 480px) {
+    .app-shell-stat-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .app-shell-stat {
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 12px 14px;
+    background: #f8fafc;
+  }
+
+  .app-shell-stat-label {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .app-shell-stat-value {
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.5;
+  }
+
+  .app-shell-bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding:
+      8px max(16px, env(safe-area-inset-right, 0px))
+      max(10px, env(safe-area-inset-bottom, 0px))
+      max(10px, env(safe-area-inset-left, 0px));
+    background: rgba(255, 255, 255, 0.96);
+    border-top: 1px solid #e2e8f0;
+    backdrop-filter: blur(10px);
+  }
+
+  @media (min-width: 768px) {
+    .app-shell-bottom-nav {
+      width: min(100%, 420px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 1px solid #e2e8f0;
+      border-radius: 18px 18px 0 0;
+    }
+  }
+
+  .app-shell-bottom-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border-radius: 12px;
+    color: #64748b;
+    font-size: 15px;
+    font-weight: 800;
+    text-decoration: none;
+  }
+
+  .app-shell-bottom-nav-item--active {
+    background: #0f172a;
+    color: #fff;
+  }
+
+  .app-shell-info-box {
+    border-radius: 14px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 14px 16px;
+  }
+
+  .app-shell-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 800;
   }
 
   .app-shell-title {

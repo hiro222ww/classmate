@@ -6,6 +6,7 @@ import {
   isNativeAuthCallbackUrl,
   navigateToWebAuthCallback,
 } from "@/lib/capacitorClient";
+import { markAppShellContext } from "@/lib/appShellContext";
 
 /**
  * iOS/Capacitor: Google OAuth 後の classmate://auth/callback を受け取り、
@@ -17,6 +18,8 @@ export default function CapacitorAuthReturnBoot() {
 
   useEffect(() => {
     if (!isCapacitorNativeApp()) return;
+
+    markAppShellContext();
 
     let removeListener: (() => void) | undefined;
 

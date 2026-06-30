@@ -64,10 +64,8 @@ final class RootContainerViewController: UIViewController {
     }
 
     @objc private func openSettings() {
-        let settings = AppSettingsViewController()
-        let nav = UINavigationController(rootViewController: settings)
-        nav.modalPresentationStyle = .pageSheet
-        present(nav, animated: true)
+        guard let webView = bridgeViewController?.webView else { return }
+        webView.load(URLRequest(url: ClassmateURLs.appSettings))
     }
 
     // MARK: - Settings gear visibility (iOS only, driven by WebView URL)

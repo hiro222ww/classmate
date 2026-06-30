@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { signInWithGoogle } from "@/lib/authClient";
@@ -8,6 +8,7 @@ import { sanitizeReturnTo } from "@/lib/authAccount";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { APP_HOME } from "@/lib/appShell";
 import { withDev } from "@/lib/withDev";
+import AppShellPage from "@/components/app-shell/AppShellPage";
 
 export default function AppLoginClient() {
   const searchParams = useSearchParams();
@@ -36,11 +37,11 @@ export default function AppLoginClient() {
   }
 
   return (
-    <main className="app-shell-inner">
+    <AppShellPage showBottomNav={false}>
       <header>
         <h1 className="app-shell-title">ログイン</h1>
         <p className="app-shell-subtitle">
-          Google アカウントで Classmate を続けます
+          Google または Apple アカウントで Classmate を続けます
         </p>
       </header>
 
@@ -90,7 +91,7 @@ export default function AppLoginClient() {
               flexShrink: 0,
             }}
           >
-            
+            
           </span>
           Apple で続ける（準備中）
         </button>
@@ -100,11 +101,7 @@ export default function AppLoginClient() {
 
       <p className="app-shell-muted" style={{ margin: 0, fontSize: 13 }}>
         <Link href={withDev(APP_HOME)}>ホームへ戻る</Link>
-        {" · "}
-        <Link href={withDev(`/login?returnTo=${encodeURIComponent(returnTo)}`)}>
-          メールでログイン
-        </Link>
       </p>
-    </main>
+    </AppShellPage>
   );
 }

@@ -9,13 +9,14 @@ import {
   fetchAuthStatus,
 } from "@/lib/authClient";
 import { accountStatusLabel, isLoggedInAccount } from "@/lib/authAccount";
-import { APP_LOGIN, APP_SETTINGS, buildAppLoginUrl } from "@/lib/appShell";
+import { APP_LOGIN, buildAppLoginUrl } from "@/lib/appShell";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import { fetchSelfProfile } from "@/lib/fetchCurrentClass";
-import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
-import { PushNotificationBell } from "@/components/PushNotificationBell";
+import { openJoinedClassFromSnapshot } from "@/lib/openJoinedClassClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { withDev } from "@/lib/withDev";
+import AppShellPage from "@/components/app-shell/AppShellPage";
+import AppShellSection from "@/components/app-shell/AppShellSection";
 
 export default function AppHomeClient() {
   const router = useRouter();
@@ -24,19 +25,15 @@ export default function AppHomeClient() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [hasProfile, setHasProfile] = useState(false);
   const [ready, setReady] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState("");
 
   const {
     loading: currentClassLoading,
     current: currentClass,
     hasMembership,
+    refresh: refreshCurrentClass,
   } = useCurrentClass(deviceId);
-
-  const {
-    enabled: notificationsEnabled,
-    toggle: toggleNotifications,
-    busy: notificationsBusy,
-    feedback: notificationsFeedback,
-  } = useWebPushNotifications(deviceId, "app-home");
 
   useEffect(() => {
     const id = getDeviceId();
@@ -72,20 +69,37 @@ export default function AppHomeClient() {
 
   const returnPath = "/app/home";
 
-  const enterClassHref = useMemo(() => {
-    if (!currentClass?.classId) return null;
-    const params = new URLSearchParams({
-      autojoin: "1",
-      classId: currentClass.classId,
-    });
-    if (currentClass.sessionId) {
-      params.set("sessionId", currentClass.sessionId);
+  async function onEnterClass() {
+    if (!currentClass || opening) return;
+
+    setOpening(true);
+    setOpenError("");
+
+    const id = String(deviceId || getDeviceId()).trim();
+    if (!id) {
+      setOpenError("端末情報を取得できませんでした。");
+      setOpening(false);
+      return;
     }
-    return withDev(`/room?${params.toString()}`);
-  }, [currentClass]);
+
+    const result = await openJoinedClassFromSnapshot({
+      deviceId: id,
+      current: currentClass,
+      withDev,
+    });
+
+    if (result.ok) {
+      router.push(result.roomPath);
+      return;
+    }
+
+    setOpenError(result.message);
+    void refreshCurrentClass();
+    setOpening(false);
+  }
 
   return (
-    <main className="app-shell-inner">
+    <AppShellPage>
       <header>
         <h1 className="app-shell-title">Classmate</h1>
         <p className="app-shell-subtitle">
@@ -94,9 +108,9 @@ export default function AppHomeClient() {
       </header>
 
       {!loggedIn && ready ? (
-        <section className="app-shell-card">
+        <AppShellSection title="アカウント">
           <p className="app-shell-muted" style={{ margin: "0 0 12px" }}>
-            アカウントを連携すると、クラスや通知を端末間で引き継げます。
+            アカウントを連携すると、クラスや設定を端末間で引き継げます。
           </p>
           <Link
             href={withDev(buildAppLoginUrl(returnPath))}
@@ -105,19 +119,18 @@ export default function AppHomeClient() {
           >
             Google でログイン
           </Link>
-        </section>
+        </AppShellSection>
       ) : null}
 
-      <section className="app-shell-card">
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontWeight: 900, fontSize: 18 }}>今のクラス</div>
+      <div className="app-shell-home-layout">
+        <AppShellSection title="今のクラス">
           {currentClassLoading ? (
             <p className="app-shell-muted" style={{ margin: 0 }}>
               読み込み中…
             </p>
           ) : hasMembership && currentClass ? (
-            <>
-              <p style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>
+            <div style={{ display: "grid", gap: 12 }}>
+              <p style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>
                 {currentClass.name || "参加中のクラス"}
               </p>
               {currentClass.topicTitle ? (
@@ -133,16 +146,19 @@ export default function AppHomeClient() {
               <button
                 type="button"
                 className="app-shell-btn app-shell-btn--primary"
-                disabled={!enterClassHref}
-                onClick={() => {
-                  if (enterClassHref) router.push(enterClassHref);
-                }}
+                disabled={opening}
+                onClick={() => void onEnterClass()}
               >
-                クラスに戻る
+                {opening ? "入室中…" : "クラスに戻る"}
               </button>
-            </>
+              {openError ? (
+                <p className="app-shell-error" style={{ margin: 0 }}>
+                  {openError}
+                </p>
+              ) : null}
+            </div>
           ) : (
-            <>
+            <div style={{ display: "grid", gap: 12 }}>
               <p className="app-shell-muted" style={{ margin: 0 }}>
                 まだクラスに参加していません。新しいクラスを探してみましょう。
               </p>
@@ -153,64 +169,35 @@ export default function AppHomeClient() {
               >
                 新しく参加する
               </button>
-            </>
-          )}
-        </div>
-      </section>
-
-      <section className="app-shell-actions app-shell-actions--grid">
-        {hasMembership ? (
-          <button
-            type="button"
-            className="app-shell-btn"
-            onClick={() => router.push(withDev("/class/select"))}
-          >
-            新しく参加する
-          </button>
-        ) : null}
-
-        <div
-          className="app-shell-card"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            padding: "14px 16px",
-            boxShadow: "none",
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 800 }}>通知</div>
-            <div className="app-shell-muted" style={{ fontSize: 13 }}>
-              {notificationsFeedback ?? "通話・メッセージのお知らせ"}
             </div>
-          </div>
-          <PushNotificationBell
-            enabled={notificationsEnabled}
-            busy={notificationsBusy}
-            feedback={null}
-            onToggle={() => void toggleNotifications()}
-          />
-        </div>
+          )}
+        </AppShellSection>
 
-        <Link
-          href={withDev(buildProfileEditPath(returnPath))}
-          className="app-shell-btn"
-        >
-          {hasProfile ? "プロフィール" : "プロフィール登録"}
-        </Link>
+        <section className="app-shell-actions app-shell-actions--grid">
+          {hasMembership ? (
+            <button
+              type="button"
+              className="app-shell-btn"
+              onClick={() => router.push(withDev("/class/select"))}
+            >
+              新しく参加する
+            </button>
+          ) : null}
 
-        <Link href={withDev(APP_SETTINGS)} className="app-shell-btn">
-          設定
-        </Link>
-      </section>
+          <Link
+            href={withDev(buildProfileEditPath(returnPath))}
+            className="app-shell-btn"
+          >
+            {hasProfile ? "プロフィール" : "プロフィール登録"}
+          </Link>
 
-      {!loggedIn ? (
-        <p className="app-shell-muted" style={{ margin: 0, fontSize: 13 }}>
-          <Link href={withDev(APP_LOGIN)}>ログイン画面へ</Link>
-        </p>
-      ) : null}
-    </main>
+          {!loggedIn ? (
+            <Link href={withDev(APP_LOGIN)} className="app-shell-btn">
+              ログイン
+            </Link>
+          ) : null}
+        </section>
+      </div>
+    </AppShellPage>
   );
 }

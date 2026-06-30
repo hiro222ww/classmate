@@ -2,6 +2,10 @@
 
 import { sanitizeReturnTo } from "@/lib/authAccount";
 import {
+  defaultAuthCallbackReturnTo,
+  resolveAppShellReturnTo,
+} from "@/lib/appShellContext";
+import {
   isOAuthCodeConsumed,
   readOAuthCodeFromLocation,
 } from "@/lib/oauthCallbackDedupe";
@@ -43,23 +47,25 @@ export function redirectOAuthCodeFromRootIfNeeded(): boolean {
 
 export function resolveAuthCallbackReturnTo(
   searchParams: Pick<URLSearchParams, "get">,
-  fallback = "/home"
+  fallback = defaultAuthCallbackReturnTo()
 ): string {
   const fromQuery =
     searchParams.get("returnTo") ?? searchParams.get("redirect");
-  if (fromQuery) return sanitizeReturnTo(fromQuery);
+  if (fromQuery) return resolveAppShellReturnTo(fromQuery);
 
-  if (typeof window === "undefined") return sanitizeReturnTo(fallback);
+  if (typeof window === "undefined") {
+    return sanitizeReturnTo(fallback, fallback);
+  }
 
   try {
     const stored = window.sessionStorage.getItem("classmate_oauth_return_to");
     if (stored) {
       window.sessionStorage.removeItem("classmate_oauth_return_to");
-      return sanitizeReturnTo(stored);
+      return resolveAppShellReturnTo(stored);
     }
   } catch {
     // ignore
   }
 
-  return sanitizeReturnTo(fallback);
+  return resolveAppShellReturnTo(fallback);
 }

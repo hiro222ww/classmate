@@ -2,12 +2,30 @@ import Foundation
 
 /// iOS ネイティブの ⚙️ 表示方針。Web 本番には一切手を入れない。
 enum SettingsGearVisibilityPolicy {
-    /// Call / Room / App shell では Web 右上操作と重なりやすいため非表示。
-    private static let hiddenPathPrefixes = ["/call", "/room", "/app"]
+    /// アプリ設定は /app/settings に集約。通話・ルーム等では UI を邪魔しない。
+    private static let hiddenPathPrefixes = [
+        "/app",
+        "/call",
+        "/room",
+        "/profile",
+        "/class",
+        "/billing",
+        "/premium",
+        "/auth",
+        "/login",
+        "/settings",
+        "/terms",
+        "/privacy",
+        "/guidelines",
+        "/legal",
+        "/about",
+        "/home",
+    ]
 
     static func shouldShowSettingsGear(for url: URL?) -> Bool {
-        guard let url else { return true }
+        guard let url else { return false }
         let path = url.path.lowercased()
+        if path == "/" { return false }
         return !hiddenPathPrefixes.contains { prefix in
             path == prefix || path.hasPrefix("\(prefix)/")
         }

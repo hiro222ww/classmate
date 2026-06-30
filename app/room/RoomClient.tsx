@@ -31,6 +31,7 @@ import {
 import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
@@ -1314,7 +1315,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     const cid = String(classId ?? "").trim();
 
     logNavigationIntent("return_home", "RoomClient.goHome");
-    logRouteChange(getCurrentPath(), withDev("/"), "return_home");
+    logRouteChange(getCurrentPath(), withDev(resolveShellDashboardPath()), "return_home");
 
     if (cid) {
       clearLocallyHiddenClass(cid);
@@ -1347,7 +1348,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         });
     }
 
-    router.push(withDev("/"));
+    router.push(withDev(resolveShellDashboardPath()));
   }, [bumpRoomAsync, cancelJoinRecoveryTimers, classId, deviceId, router, sessionId]);
 
   useEffect(() => {
@@ -2155,8 +2156,8 @@ if (!res.ok || !json?.ok) {
           }
           setErr("このクラスから退出済みです。");
           logNavigationIntent("removed_from_session", "RoomClient.fetchMembers");
-          logRouteChange(getCurrentPath(), "/", "removed_from_session");
-          router.replace(withDev("/"));
+          logRouteChange(getCurrentPath(), resolveShellDashboardPath(), "removed_from_session");
+          router.replace(withDev(resolveShellDashboardPath()));
           return;
         }
 

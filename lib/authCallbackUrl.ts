@@ -1,4 +1,5 @@
 import { sanitizeReturnTo } from "@/lib/authAccount";
+import { resolveAppShellReturnTo } from "@/lib/appShellContext";
 import { getAppOrigin, resolveAppOrigin } from "@/lib/appOrigin";
 import {
   isCapacitorNativeApp,
@@ -13,7 +14,7 @@ export function stashOAuthReturnTo(returnTo?: string): void {
   try {
     window.sessionStorage.setItem(
       OAUTH_RETURN_TO_KEY,
-      sanitizeReturnTo(returnTo ?? "/home")
+      resolveAppShellReturnTo(returnTo ?? "/home")
     );
   } catch {
     // ignore
@@ -22,15 +23,17 @@ export function stashOAuthReturnTo(returnTo?: string): void {
 
 /** /auth/callback で returnTo クエリが無いときに使う */
 export function consumeOAuthReturnTo(fallback = "/home"): string {
-  if (typeof window === "undefined") return sanitizeReturnTo(fallback);
+  if (typeof window === "undefined") {
+    return resolveAppShellReturnTo(fallback, fallback);
+  }
   try {
     const stored = window.sessionStorage.getItem(OAUTH_RETURN_TO_KEY);
     window.sessionStorage.removeItem(OAUTH_RETURN_TO_KEY);
-    if (stored) return sanitizeReturnTo(stored);
+    if (stored) return resolveAppShellReturnTo(stored);
   } catch {
     // ignore
   }
-  return sanitizeReturnTo(fallback);
+  return resolveAppShellReturnTo(fallback, fallback);
 }
 
 /**

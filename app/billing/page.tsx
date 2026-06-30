@@ -9,7 +9,7 @@ import { HelpTip } from "@/components/HelpTip";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
-import { buildLoginUrl } from "@/lib/authAccount";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { withDev } from "@/lib/withDev";
 import { useRequireAccount } from "@/components/useRequireAccount";
 import { useRouter } from "next/navigation";
@@ -50,7 +50,7 @@ function BillingPageInner() {
         const errMsg = String(j?.error ?? `billing_portal_failed:${r.status}`);
 
         if (errMsg === "auth_required" || j?.redirectTo) {
-          router.push(withDev(j?.redirectTo ?? buildLoginUrl("/billing")));
+          router.push(withDev(j?.redirectTo ?? buildShellAwareLoginUrl("/billing")));
           return;
         }
 

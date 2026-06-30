@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { completeAuthCallback } from "@/lib/authClient";
 import { resolveAuthCallbackReturnTo } from "@/lib/oauthRootRedirect";
+import { defaultAuthCallbackReturnTo } from "@/lib/appShellContext";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { markAuthCallbackActive } from "@/lib/oauthCallbackDedupe";
 import { withDev } from "@/lib/withDev";
@@ -13,7 +14,7 @@ import { withDev } from "@/lib/withDev";
 export default function AuthCallbackClient() {
   const searchParams = useSearchParams();
   const returnTo = useMemo(() => {
-    return resolveAuthCallbackReturnTo(searchParams, "/home");
+    return resolveAuthCallbackReturnTo(searchParams, defaultAuthCallbackReturnTo());
   }, [searchParams]);
 
   const oauthError = useMemo(

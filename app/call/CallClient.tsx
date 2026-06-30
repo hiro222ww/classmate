@@ -27,6 +27,7 @@ import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
@@ -1160,9 +1161,9 @@ export default function CallClient() {
 
         if (redirectRemoved) {
           logNavigationIntent("removed_from_session", "CallClient.fetchMembers");
-          logRouteChange(getCurrentPath(), "/", "removed_from_session");
+          logRouteChange(getCurrentPath(), resolveShellDashboardPath(), "removed_from_session");
           releaseSessionMic("removed_from_session", sessionId);
-          router.replace(withDev("/"));
+          router.replace(withDev(resolveShellDashboardPath()));
           return;
         }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isCapacitorNativeApp } from "@/lib/capacitorClient";
+import { markAppShellContext } from "@/lib/appShellContext";
 
 type Props = {
   children: React.ReactNode;
@@ -18,6 +19,7 @@ export default function AppShellGate({ children }: Props) {
 
   useEffect(() => {
     if (isCapacitorNativeApp()) {
+      markAppShellContext();
       setAllowed(true);
       return;
     }

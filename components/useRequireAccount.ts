@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { fetchAuthStatus } from "@/lib/authClient";
-import { buildLoginUrl, isLoggedInAccount } from "@/lib/authAccount";
+import { isLoggedInAccount } from "@/lib/authAccount";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { withDev } from "@/lib/withDev";
 
 export function useRequireAccount(returnTo: string) {
@@ -21,7 +22,7 @@ export function useRequireAccount(returnTo: string) {
         if (!deviceId) {
           if (!cancelled) {
             setLoggedIn(false);
-            router.replace(withDev(buildLoginUrl(returnTo)));
+            router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
             setReady(true);
           }
           return;
@@ -32,14 +33,14 @@ export function useRequireAccount(returnTo: string) {
         if (!cancelled) {
           setLoggedIn(ok);
           if (!ok) {
-            router.replace(withDev(buildLoginUrl(returnTo)));
+            router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
           }
           setReady(true);
         }
       } catch {
         if (!cancelled) {
           setLoggedIn(false);
-          router.replace(withDev(buildLoginUrl(returnTo)));
+          router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
           setReady(true);
         }
       }

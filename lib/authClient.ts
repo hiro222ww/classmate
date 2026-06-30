@@ -26,7 +26,12 @@ import {
   isEmailRateLimitError,
   markAuthEmailSent,
 } from "@/lib/authEmailErrors";
-import { sanitizeReturnTo, buildLoginUrl } from "@/lib/authAccount";
+import { sanitizeReturnTo } from "@/lib/authAccount";
+import {
+  defaultAuthCallbackReturnTo,
+  resolveAppShellReturnTo,
+} from "@/lib/appShellContext";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { formatAuthProviderError } from "@/lib/authProviderErrors";
 
 export type AuthSessionPostResult =
@@ -470,7 +475,7 @@ export async function completeAuthCallback(
           action: result.action ?? null,
           redirectTo: needsProfile
             ? `/profile?returnTo=${encodeURIComponent(sanitizeReturnTo(redirectTo))}`
-            : result.redirectTo ?? buildLoginUrl(redirectTo),
+            : result.redirectTo ?? buildShellAwareLoginUrl(redirectTo),
         };
       }
 
@@ -489,7 +494,7 @@ export async function completeAuthCallback(
 
       if (typeof window !== "undefined") {
         stripOAuthParamsFromBrowserUrl();
-        window.location.replace(redirectTo);
+        window.location.replace(resolveAppShellReturnTo(redirectTo));
       }
 
       return { ok: true as const };
@@ -516,7 +521,7 @@ export async function signInWithGoogle(returnTo?: string) {
     return { ok: false as const, error: "not_in_browser" };
   }
 
-  const returnPath = sanitizeReturnTo(returnTo ?? "/home");
+  const returnPath = resolveAppShellReturnTo(returnTo ?? defaultAuthCallbackReturnTo());
   stashOAuthReturnTo(returnPath);
   const redirectTo = buildOAuthRedirectUrl();
 
@@ -595,7 +600,7 @@ export async function sendAccountMagicLink(email: string, returnTo?: string) {
     };
   }
 
-  const returnPath = sanitizeReturnTo(returnTo ?? "/home");
+  const returnPath = resolveAppShellReturnTo(returnTo ?? defaultAuthCallbackReturnTo());
   const callback = buildAuthCallbackUrl(returnPath);
 
   const session = (await supabaseAuthClient.auth.getSession()).data.session;

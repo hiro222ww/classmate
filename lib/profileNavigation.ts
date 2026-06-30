@@ -1,4 +1,12 @@
-const ALLOWED_RETURN_PREFIXES = ["/", "/class/select", "/room", "/call"] as const;
+const ALLOWED_RETURN_PREFIXES = [
+  "/",
+  "/class/select",
+  "/room",
+  "/call",
+  "/app/home",
+  "/app/settings",
+  "/app/login",
+] as const;
 
 export function sanitizeReturnTo(raw: unknown): string {
   const value = String(raw ?? "").trim();
@@ -26,6 +34,9 @@ export function sanitizeReturnTo(raw: unknown): string {
 
   const allowed = ALLOWED_RETURN_PREFIXES.some((prefix) => {
     if (prefix === "/") return path === "/";
+    if (prefix === "/app/home") {
+      return path === "/app/home" || path.startsWith("/app/home?");
+    }
     return path === prefix || path.startsWith(`${prefix}?`) || path.startsWith(`${prefix}/`);
   });
 

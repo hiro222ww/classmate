@@ -28,6 +28,7 @@ import { isJoinAllowedDeviceId, isLegacyStoredDeviceId } from "@/lib/deviceIdVal
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
 import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
 import { DashboardStatusBar } from "@/components/dashboard/DashboardStatusBar";
@@ -379,7 +380,7 @@ export default function SelectClient() {
   function handleResetDeviceAndReload() {
     if (!window.confirm(DEVICE_RESET_CONFIRM_MESSAGE)) return;
     resetClassmateDeviceState();
-    window.location.href = withDev("/");
+    window.location.href = withDev(resolveShellDashboardPath());
   }
 
   function showEntryFailure(code: string, message?: string) {
@@ -1153,7 +1154,7 @@ export default function SelectClient() {
           {joinLimitMessage}
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Link
-              href={withDev("/")}
+              href={withDev(resolveShellDashboardPath())}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -1189,7 +1190,7 @@ export default function SelectClient() {
           <ReturnClassCard
             className="home-dash-return"
             loading={joinedClassesLoading && joinedClassCount === 0}
-            listHref={withDev("/")}
+            listHref={withDev(resolveShellDashboardPath())}
             listLabel="ホームで選ぶ"
           />
         ) : null}
