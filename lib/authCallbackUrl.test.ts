@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   buildAuthCallbackUrl,
+  buildOAuthRedirectUrl,
   isLocalAuthOrigin,
+  readRedirectToFromOAuthAuthorizeUrl,
 } from "@/lib/authCallbackUrl";
 import {
   isNativeAuthCallbackUrl,
@@ -40,15 +42,24 @@ describe("authCallbackUrl", () => {
     );
   });
 
-  it("uses native scheme in Capacitor app", () => {
+  it("buildOAuthRedirectUrl uses clean path without returnTo query", () => {
+    process.env.NEXT_PUBLIC_APP_ORIGIN = "https://classmate-room.com";
+    vi.stubGlobal("window", {
+      location: { origin: "https://classmate-room.com" },
+    });
+
+    expect(buildOAuthRedirectUrl()).toBe(
+      "https://classmate-room.com/auth/callback"
+    );
+  });
+
+  it("buildOAuthRedirectUrl uses native scheme in Capacitor app", () => {
     vi.stubGlobal("window", {
       location: { origin: "https://classmate-room.com" },
       Capacitor: { isNativePlatform: () => true },
     });
 
-    expect(buildAuthCallbackUrl("/home")).toBe(
-      `${NATIVE_AUTH_CALLBACK_BASE}?returnTo=%2Fhome`
-    );
+    expect(buildOAuthRedirectUrl()).toBe(NATIVE_AUTH_CALLBACK_BASE);
   });
 
   it("detects localhost callback URLs", () => {
@@ -56,6 +67,14 @@ describe("authCallbackUrl", () => {
     expect(
       isLocalAuthOrigin("https://classmate-room.com/auth/callback")
     ).toBe(false);
+  });
+
+  it("reads redirect_to from Supabase authorize URL", () => {
+    const url =
+      "https://example.supabase.co/auth/v1/authorize?redirect_to=https%3A%2F%2Fclassmate-room.com%2Fauth%2Fcallback";
+    expect(readRedirectToFromOAuthAuthorizeUrl(url)).toBe(
+      "https://classmate-room.com/auth/callback"
+    );
   });
 });
 

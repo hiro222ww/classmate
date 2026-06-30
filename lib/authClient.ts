@@ -4,7 +4,8 @@ import { createClient, type EmailOtpType, type Session, type SupabaseClient } fr
 import { USER_ID_CACHE_KEY } from "@/lib/userIdentity";
 import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
-import { buildAuthCallbackUrl } from "@/lib/authCallbackUrl";
+import { buildAuthCallbackUrl, buildOAuthRedirectUrl, readRedirectToFromOAuthAuthorizeUrl, stashOAuthReturnTo } from "@/lib/authCallbackUrl";
+import { isCapacitorNativeApp } from "@/lib/capacitorClient";
 import {
   authEmailResendCooldownMessage,
   checkAuthEmailResendCooldown,
@@ -134,6 +135,15 @@ export function isAuthCallbackInProgress(): boolean {
     hash.includes("refresh_token=") ||
     search.includes("code=") ||
     search.includes("token_hash=")
+  ) {
+    return true;
+  }
+
+  if (
+    path === "/" &&
+    (search.includes("code=") ||
+      search.includes("token_hash=") ||
+      hash.includes("access_token="))
   ) {
     return true;
   }
@@ -390,7 +400,16 @@ export async function signInWithGoogle(returnTo?: string) {
   }
 
   const returnPath = sanitizeReturnTo(returnTo ?? "/home");
-  const redirectTo = buildAuthCallbackUrl(returnPath);
+  stashOAuthReturnTo(returnPath);
+  const redirectTo = buildOAuthRedirectUrl();
+
+  console.info(
+    "[oauth-start]",
+    `isCapacitorNativeApp=${isCapacitorNativeApp()}`,
+    `href=${window.location.href}`,
+    `redirectTo=${redirectTo}`,
+    `returnTo=${returnPath}`
+  );
 
   const session = (await supabaseAuthClient.auth.getSession()).data.session;
   const isAnonymous = session?.user?.is_anonymous === true;
@@ -422,6 +441,13 @@ export async function signInWithGoogle(returnTo?: string) {
   }
 
   if (result.data?.url) {
+    const authorizeRedirectTo = readRedirectToFromOAuthAuthorizeUrl(
+      result.data.url
+    );
+    console.info(
+      "[oauth-start]",
+      `authorizeUrlRedirectTo=${authorizeRedirectTo ?? "(missing)"}`
+    );
     window.location.assign(result.data.url);
   }
 

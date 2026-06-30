@@ -1,5 +1,6 @@
 "use client";
 
+import { Capacitor } from "@capacitor/core";
 import { getAppOrigin } from "@/lib/appOrigin";
 
 export const NATIVE_AUTH_CALLBACK_SCHEME = "classmate";
@@ -8,14 +9,27 @@ export const NATIVE_AUTH_CALLBACK_BASE = `${NATIVE_AUTH_CALLBACK_SCHEME}://auth/
 type CapacitorWindow = Window & {
   Capacitor?: {
     isNativePlatform?: () => boolean;
+    getPlatform?: () => string;
   };
 };
 
 /** Capacitor ネイティブ殻（iOS/Android）で動作中か。通常 Web ブラウザでは false。 */
 export function isCapacitorNativeApp(): boolean {
   if (typeof window === "undefined") return false;
+
+  try {
+    if (Capacitor.isNativePlatform()) return true;
+  } catch {
+    // @capacitor/core unavailable
+  }
+
   const cap = (window as CapacitorWindow).Capacitor;
-  return Boolean(cap?.isNativePlatform?.());
+  if (cap?.isNativePlatform?.()) return true;
+
+  const platform = cap?.getPlatform?.();
+  if (platform === "ios" || platform === "android") return true;
+
+  return false;
 }
 
 /** `classmate://auth/callback?...` かどうか */

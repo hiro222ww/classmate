@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import AppLifecycleBoot from "@/components/AppLifecycleBoot";
 import AuthBoot from "@/components/AuthBoot";
 import CapacitorAuthReturnBoot from "@/components/CapacitorAuthReturnBoot";
+import OAuthRootCodeRedirectBoot from "@/components/OAuthRootCodeRedirectBoot";
 import AppAccountNav from "@/components/AppAccountNav";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
@@ -45,6 +46,7 @@ export default function RootLayout({
         }}
       >
         <AppLifecycleBoot />
+        <OAuthRootCodeRedirectBoot />
         <CapacitorAuthReturnBoot />
         <AuthBoot />
         <Suspense fallback={null}>

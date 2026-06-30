@@ -5,16 +5,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { completeAuthCallback } from "@/lib/authClient";
-import { sanitizeReturnTo } from "@/lib/authAccount";
+import { resolveAuthCallbackReturnTo } from "@/lib/oauthRootRedirect";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { withDev } from "@/lib/withDev";
 
 export default function AuthCallbackClient() {
   const searchParams = useSearchParams();
   const returnTo = useMemo(() => {
-    const raw =
-      searchParams.get("returnTo") ?? searchParams.get("redirect") ?? "/home";
-    return sanitizeReturnTo(raw);
+    return resolveAuthCallbackReturnTo(searchParams, "/home");
   }, [searchParams]);
 
   const [error, setError] = useState("");
