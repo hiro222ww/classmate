@@ -17,7 +17,7 @@ export function formatAuthProviderError(message: string): string {
     return (
       "Google ログインがまだ有効になっていません。管理者は Supabase の " +
       "Authentication → Providers → Google を ON にし、Client ID / Secret と " +
-      "リダイレクト URL（https://classmate-room.com/auth/callback**）を設定してください。"
+      "リダイレクト URL（https://classmate-room.com/auth/callback**、iOS アプリ用 classmate://auth/callback）を設定してください。"
     );
   }
 

@@ -3,6 +3,11 @@ import {
   buildAuthCallbackUrl,
   isLocalAuthOrigin,
 } from "@/lib/authCallbackUrl";
+import {
+  isNativeAuthCallbackUrl,
+  nativeAuthCallbackToWebUrl,
+  NATIVE_AUTH_CALLBACK_BASE,
+} from "@/lib/capacitorClient";
 
 describe("authCallbackUrl", () => {
   const env = process.env;
@@ -35,10 +40,54 @@ describe("authCallbackUrl", () => {
     );
   });
 
+  it("uses native scheme in Capacitor app", () => {
+    vi.stubGlobal("window", {
+      location: { origin: "https://classmate-room.com" },
+      Capacitor: { isNativePlatform: () => true },
+    });
+
+    expect(buildAuthCallbackUrl("/home")).toBe(
+      `${NATIVE_AUTH_CALLBACK_BASE}?returnTo=%2Fhome`
+    );
+  });
+
   it("detects localhost callback URLs", () => {
     expect(isLocalAuthOrigin("http://localhost:3000/auth/callback")).toBe(true);
     expect(
       isLocalAuthOrigin("https://classmate-room.com/auth/callback")
     ).toBe(false);
+  });
+});
+
+describe("capacitorClient native auth return", () => {
+  it("detects classmate auth callback URLs", () => {
+    expect(
+      isNativeAuthCallbackUrl(
+        "classmate://auth/callback?code=abc&returnTo=%2Fhome"
+      )
+    ).toBe(true);
+    expect(isNativeAuthCallbackUrl("https://classmate-room.com/auth/callback")).toBe(
+      false
+    );
+  });
+
+  it("converts native callback to web URL preserving query", () => {
+    expect(
+      nativeAuthCallbackToWebUrl(
+        "classmate://auth/callback?code=pkce123&returnTo=%2Fhome",
+        "https://classmate-room.com"
+      )
+    ).toBe(
+      "https://classmate-room.com/auth/callback?code=pkce123&returnTo=%2Fhome"
+    );
+  });
+
+  it("preserves hash fragments", () => {
+    expect(
+      nativeAuthCallbackToWebUrl(
+        "classmate://auth/callback#access_token=xyz",
+        "https://classmate-room.com"
+      )
+    ).toBe("https://classmate-room.com/auth/callback#access_token=xyz");
   });
 });

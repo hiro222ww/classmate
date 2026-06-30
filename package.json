@@ -21,9 +21,13 @@
     "test:e2e:entitlements": "node scripts/e2e-entitlements.mjs",
     "test:e2e:webrtc": "node scripts/e2e-webrtc-call.mjs",
     "test:turn-provider": "node scripts/verify-turn-provider.mjs",
-    "build:learning-docx": "node scripts/build-learning-docx.mjs"
+    "build:learning-docx": "node scripts/build-learning-docx.mjs",
+    "cap:copy": "npx cap copy ios",
+    "cap:sync": "npx cap sync ios",
+    "cap:open:ios": "npx cap open ios"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.0",
     "@supabase/supabase-js": "^2.93.1",
     "next": "16.1.5",
     "react": "19.2.3",
@@ -32,6 +36,9 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
     "@playwright/test": "^1.52.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

@@ -35,6 +35,18 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## iOS / iPadOS（Capacitor・Web 非変更）
+
+Web 版（classmate-room.com）の UI は変えず、iOS アプリを別レイヤーで構築します。
+
+- 手順: [docs/IOS_SETUP.md](docs/IOS_SETUP.md)
+- 設計: [docs/IOS_NATIVE_SHELL.md](docs/IOS_NATIVE_SHELL.md)
+
+```bash
+npm run cap:sync
+npm run cap:open:ios
+```
+
 ## Vercel 本番 / 開発
 
 本番（`classmate` / `main`）と開発（`classmate-8inw` / `develop`）の分離手順・環境変数一覧は [docs/VERCEL_PROD_DEV.md](docs/VERCEL_PROD_DEV.md) を参照。

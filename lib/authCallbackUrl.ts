@@ -1,13 +1,24 @@
 import { sanitizeReturnTo } from "@/lib/authAccount";
 import { getAppOrigin, resolveAppOrigin } from "@/lib/appOrigin";
+import {
+  isCapacitorNativeApp,
+  NATIVE_AUTH_CALLBACK_BASE,
+} from "@/lib/capacitorClient";
 
 /**
- * メール内リンク用のコールバック URL。
- * スマホのメールアプリから開けるよう、NEXT_PUBLIC_APP_ORIGIN を優先する。
+ * OAuth / メールリンクのコールバック URL。
+ * 通常 Web: https://.../auth/callback
+ * Capacitor iOS アプリ: classmate://auth/callback（Custom URL Scheme）
  */
 export function buildAuthCallbackUrl(returnTo?: string): string {
   const returnPath = sanitizeReturnTo(returnTo ?? "/home");
-  const callbackPath = `/auth/callback?returnTo=${encodeURIComponent(returnPath)}`;
+  const callbackQuery = `returnTo=${encodeURIComponent(returnPath)}`;
+
+  if (typeof window !== "undefined" && isCapacitorNativeApp()) {
+    return `${NATIVE_AUTH_CALLBACK_BASE}?${callbackQuery}`;
+  }
+
+  const callbackPath = `/auth/callback?${callbackQuery}`;
 
   if (typeof window !== "undefined") {
     const envOrigin = String(
