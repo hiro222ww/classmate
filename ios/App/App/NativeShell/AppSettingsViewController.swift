@@ -64,9 +64,9 @@ final class AppSettingsViewController: UITableViewController {
             SettingsSection(title: "アカウント", rows: [
                 SettingsRow(
                     title: "アカウント設定・ログアウト",
-                    subtitle: "Web 版の設定画面を開きます"
+                    subtitle: "アプリ専用の設定画面を開きます"
                 ) { [weak self] in
-                    self?.openWeb(ClassmateURLs.settings)
+                    self?.openWeb(ClassmateURLs.appSettings)
                 },
                 SettingsRow(
                     title: "アカウント削除のご依頼",

@@ -21,8 +21,8 @@ Classmate の **Web 版（classmate-room.com）の UI・導線・余白は変更
 │  └───────────────────────────────┘  │
 │  ┌───────────────────────────────┐  │
 │  │  CAPBridgeViewController       │  │
-│  │  → https://classmate-room.com │  │
-│  │    （既存 Web UI・そのまま）    │  │
+│  │  → https://classmate-room.com/app │
+│  │    （アプリ専用 UI → Room/Call は既存 Web）│
 │  └───────────────────────────────┘  │
 └─────────────────────────────────────┘
          │ 初回起動
@@ -37,15 +37,55 @@ Classmate の **Web 版（classmate-room.com）の UI・導線・余白は変更
 └─────────────────────────┘
 ```
 
-### なぜ Web に専用 route を足さないか
+### なぜ Web に専用 route を足すのか（2025 段階導入）
 
-- 通常 Web 導線から見える `/app-only/...` は、URL 共有・SEO・既存ユーザー体験に影響しうる
-- App Store 審査で「ネイティブ機能」として見せるには **Swift 側の画面** の方が明確
-- 法務文書は Web に既にある（`/terms`, `/privacy`, `/guidelines`）→ **SFSafariViewController で参照** し、二重管理を避ける
+以前は「Swift だけでネイティブ画面を持つ」方針だったが、**入口・ホーム・設定** については App Store 向けに **アプリ専用 Web UI**（`/app/*`）を段階導入する。
 
-### Web 専用 route を使う場合の将来案（今回は未採用）
+| 層 | 役割 |
+|----|------|
+| **通常 Web**（`/`, `/home`, `/login`, `/settings` 等） | 変更しない。SEO・既存ユーザー・Stripe 導線は現状維持 |
+| **アプリ専用 Web**（`/app`, `/app/home`, `/app/login`, `/app/settings`） | Capacitor ネイティブ殻からだけ開く。通常 Web 導線からはリンクしない |
+| **Swift ネイティブ**（`NativeShell/`） | 法務シート・マイク primer・起動 URL。WebView の外側 |
 
-`?native=1` や `X-Classmate-Client: ios` ヘッダー付きの非公開 route は、ネイティブからだけ開く選択肢として残せる。現状は不要。
+### Web 版とアプリ版 UI の分離方針
+
+```
+Capacitor 起動
+  → https://classmate-room.com/app
+  → /app/home（アプリ専用ホーム）
+
+通常ブラウザで /app/* を開いた場合
+  → AppShellGate が / へリダイレクト（noindex）
+
+Room / Call / Profile
+  → 既存 Web 版をそのまま利用（通話安定性優先）
+```
+
+| ルート | Web ブラウザ | iOS アプリ |
+|--------|-------------|-----------|
+| `/`, `/home`, `/login`, `/settings` | ✅ そのまま | 使わない（直リンクは可） |
+| `/app/home`, `/app/login`, `/app/settings` | ❌ `/` へ戻す | ✅ 専用 UI |
+| `/room`, `/call`, `/profile` | ✅ そのまま | ✅ 既存 Web を流用 |
+
+**実装の要点**
+
+- `lib/appShell.ts` — パス定数・`isAppShellPath()`
+- `components/app-shell/AppShellGate.tsx` — `isCapacitorNativeApp()` でガード
+- `components/app-shell/AppShellChrome.tsx` — safe-area 余白・ルート footer 非表示
+- `capacitor.config.ts` — `server.url: https://classmate-room.com/app`
+- `AppAccountNav` — `/app/*` では非表示
+- `SettingsGearVisibilityPolicy` — `/app/*` ではネイティブ ⚙️ も非表示（アプリ内設定と重複しない）
+
+OAuth の `returnTo` は `/app/home` を指定可能。`/auth/callback` は共通のまま。
+
+### 以前の方針（Swift のみ）との関係
+
+- 法務文書は Web に既にある（`/terms`, `/privacy`, `/guidelines`）→ **アプリ設定からも同 URL を参照** し、二重管理を避ける
+- マイク primer・審査用の Swift 画面は引き続き `NativeShell/` で維持
+
+### 将来案
+
+`X-Classmate-Client: ios` ヘッダー付きのサーバー側ガードは、必要になったら追加可能。現状はクライアントの `AppShellGate` のみ。
 
 ## ⚙️ 表示制御（iOS のみ・Web 変更なし）
 
@@ -54,7 +94,7 @@ Classmate の **Web 版（classmate-room.com）の UI・導線・余白は変更
 | `SettingsGearVisibilityPolicy.swift` | WebView の `url.path` から ⚙️ 表示可否を判定 |
 | `SettingsGearLayout` | 位置定数（`topInset` / `trailingInset` / `size`）。制約を変えるだけで移動可能 |
 
-- **現状**: `/call`・`/room`（クエリ付き含む）では ⚙️ を非表示
+- **現状**: `/call`・`/room`・`/app`（クエリ付き含む）では ⚙️ を非表示
 - **監視**: `RootContainerViewController` が `bridgeViewController.webView` の `url` を KVO 監視（Capacitor 公開 API のみ。Web 側コード不要）
 - **拡張**: `hiddenPathPrefixes` にパスを足す、または `SettingsGearLayout` の定数を変えて位置だけずらす
 
@@ -79,9 +119,9 @@ enum MicPermissionPrimerPlacement {
 | 機能 | 現状 | 配置 | App Store 上の位置づけ |
 |------|------|------|------------------------|
 | 起動画面 | ✅ `LaunchScreen.storyboard` + Splash assets | iOS | 必須 |
-| メイン UI | ✅ 本番 WebView | Capacitor | コア体験 |
+| メイン UI | ✅ 本番 WebView `/app/*` | Capacitor | コア体験（段階的にアプリ専用 UI） |
 | マイク許可前説明 | ✅ 骨組み | `MicPermissionPrimerViewController` | 審査・UX |
-| 設定画面 | ✅ 骨組み | `AppSettingsViewController` | 審査でよく見られる |
+| アプリ設定 | ✅ `/app/settings` + ネイティブ ⚙️ | Web + `AppSettingsViewController` | 審査でよく見られる |
 | 利用規約 | ✅ Web リンク | ネイティブ設定 → Safari VC | 必須 |
 | プライバシー | ✅ Web リンク | 同上 | 必須 |
 | ガイドライン | ✅ Web リンク | 同上 | UGC 向け |

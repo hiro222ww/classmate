@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
   appName: "Classmate",
   webDir: "public",
   server: {
-    url: "https://classmate-room.com",
+    url: "https://classmate-room.com/app",
     cleartext: false,
     androidScheme: "https",
   },

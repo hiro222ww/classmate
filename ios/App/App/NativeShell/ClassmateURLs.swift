@@ -6,11 +6,14 @@ enum ClassmateURLs {
     static let productionBase = "https://classmate-room.com"
     static let nativeAuthScheme = "classmate"
 
+    static let appHome = URL(string: "\(productionBase)/app/home")!
+    static let appSettings = URL(string: "\(productionBase)/app/settings")!
+
     static let terms = URL(string: "\(productionBase)/terms")!
     static let privacy = URL(string: "\(productionBase)/privacy")!
     static let guidelines = URL(string: "\(productionBase)/guidelines")!
     static let about = URL(string: "\(productionBase)/about")!
-    static let settings = URL(string: "\(productionBase)/settings")!
+    static let settings = appSettings
 
     static let supportEmail = "classmate.app.team@gmail.com"
     static var supportMailto: URL {
