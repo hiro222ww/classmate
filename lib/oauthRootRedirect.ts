@@ -1,6 +1,10 @@
 "use client";
 
 import { sanitizeReturnTo } from "@/lib/authAccount";
+import {
+  isOAuthCodeConsumed,
+  readOAuthCodeFromLocation,
+} from "@/lib/oauthCallbackDedupe";
 
 function hasOAuthCallbackParams(search: string, hash: string): boolean {
   if (hash.includes("access_token=") || hash.includes("refresh_token=")) {
@@ -28,6 +32,9 @@ export function redirectOAuthCodeFromRootIfNeeded(): boolean {
   const { pathname, search, hash } = window.location;
   if (pathname !== "/") return false;
   if (!hasOAuthCallbackParams(search, hash)) return false;
+
+  const code = readOAuthCodeFromLocation(search, hash);
+  if (code && isOAuthCodeConsumed(code)) return false;
 
   const target = `/auth/callback${search}${hash}`;
   window.location.replace(target);

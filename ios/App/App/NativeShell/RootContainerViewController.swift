@@ -11,12 +11,6 @@ final class RootContainerViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleNativeAuthReturn(_:)),
-            name: .classmateNativeAuthReturn,
-            object: nil
-        )
         embedBridge()
         configureSettingsButton()
     }
@@ -28,14 +22,7 @@ final class RootContainerViewController: UIViewController {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
         webURLObservation?.invalidate()
-    }
-
-    @objc private func handleNativeAuthReturn(_ notification: Notification) {
-        guard let webURL = notification.object as? URL else { return }
-        guard let webView = bridgeViewController?.webView else { return }
-        webView.load(URLRequest(url: webURL))
     }
 
     private func embedBridge() {

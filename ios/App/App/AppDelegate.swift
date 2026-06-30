@@ -34,7 +34,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        NativeAuthReturnURL.postWebCallbackIfNeeded(from: url)
+        // OAuth 戻りは Capacitor App API (appUrlOpen) → JS のみで処理（WebView.load 二重遷移を防ぐ）
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
     }
 

@@ -2,6 +2,12 @@
 
 import { Capacitor } from "@capacitor/core";
 import { getAppOrigin } from "@/lib/appOrigin";
+import {
+  isOAuthCodeConsumed,
+  isSameAuthCallbackHref,
+  readOAuthCodeFromLocation,
+  shouldHandleNativeAuthReturnUrl,
+} from "@/lib/oauthCallbackDedupe";
 
 export const NATIVE_AUTH_CALLBACK_SCHEME = "classmate";
 export const NATIVE_AUTH_CALLBACK_BASE = `${NATIVE_AUTH_CALLBACK_SCHEME}://auth/callback`;
@@ -67,11 +73,33 @@ export function nativeAuthCallbackToWebUrl(
   return `${origin}/auth/callback${parsed.search}${parsed.hash}`;
 }
 
-/** appUrlOpen / getLaunchUrl から受け取った URL で WebView を本番 callback へ遷移 */
+/** appUrlOpen / getLaunchUrl から受け取った URL で WebView を本番 callback へ遷移（1回のみ） */
 export function navigateToWebAuthCallback(nativeUrl: string): boolean {
   if (typeof window === "undefined") return false;
+  if (!isNativeAuthCallbackUrl(nativeUrl)) return false;
+  if (!shouldHandleNativeAuthReturnUrl(nativeUrl)) {
+    console.info("[oauth-return] skip duplicate native url", nativeUrl);
+    return false;
+  }
+
   const webUrl = nativeAuthCallbackToWebUrl(nativeUrl);
   if (!webUrl) return false;
+
+  if (isSameAuthCallbackHref(window.location.href, webUrl)) {
+    console.info("[oauth-return] already on callback url");
+    return false;
+  }
+
+  const code = readOAuthCodeFromLocation(
+    new URL(webUrl).search,
+    new URL(webUrl).hash
+  );
+  if (code && isOAuthCodeConsumed(code)) {
+    console.info("[oauth-return] skip consumed code");
+    return false;
+  }
+
+  console.info("[oauth-return] navigate", webUrl);
   window.location.replace(webUrl);
   return true;
 }

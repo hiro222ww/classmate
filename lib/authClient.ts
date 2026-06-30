@@ -7,6 +7,18 @@ import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
 import { buildAuthCallbackUrl, buildOAuthRedirectUrl, readRedirectToFromOAuthAuthorizeUrl, stashOAuthReturnTo } from "@/lib/authCallbackUrl";
 import { isCapacitorNativeApp } from "@/lib/capacitorClient";
 import {
+  claimOAuthCallbackProcessing,
+  clearAuthCallbackActive,
+  isAuthCallbackActive,
+  isOAuthCallbackProcessing,
+  isOAuthCodeConsumed,
+  markAuthCallbackActive,
+  markOAuthCodeConsumed,
+  readOAuthCodeFromLocation,
+  releaseOAuthCallbackProcessing,
+  stripOAuthParamsFromBrowserUrl,
+} from "@/lib/oauthCallbackDedupe";
+import {
   authEmailResendCooldownMessage,
   checkAuthEmailResendCooldown,
   formatAuthEmailError,
@@ -110,7 +122,7 @@ export const supabaseAuthClient =
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
       flowType: "pkce",
       storageKey: "classmate_supabase_auth",
     },
@@ -122,6 +134,10 @@ if (process.env.NODE_ENV !== "production") {
 
 export function isAuthCallbackInProgress(): boolean {
   if (typeof window === "undefined") return false;
+
+  if (isAuthCallbackActive() || isOAuthCallbackProcessing()) {
+    return true;
+  }
 
   const path = window.location.pathname;
   if (path === "/login" || path.startsWith("/auth/callback")) {
@@ -274,14 +290,63 @@ export async function establishSessionFromAuthCallbackUrl(): Promise<{
   }
 
   const searchParams = new URLSearchParams(window.location.search);
-  const code = searchParams.get("code");
+  const code = readOAuthCodeFromLocation(
+    window.location.search,
+    window.location.hash
+  );
 
   if (code) {
-    const { error } = await supabaseAuthClient.auth.exchangeCodeForSession(code);
-    if (!error) {
-      return { ok: true };
+    if (isOAuthCodeConsumed(code)) {
+      const { data } = await supabaseAuthClient.auth.getSession();
+      if (data.session?.access_token) {
+        cacheUserId(data.session.user.id);
+        return { ok: true };
+      }
+      return { ok: false, error: "code_already_used" };
     }
-    console.warn("[auth] exchangeCodeForSession failed", error.message);
+
+    if (!claimOAuthCallbackProcessing(code)) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await wait(100);
+        if (isOAuthCodeConsumed(code)) {
+          const { data } = await supabaseAuthClient.auth.getSession();
+          if (data.session?.access_token) {
+            cacheUserId(data.session.user.id);
+            return { ok: true };
+          }
+        }
+      }
+      return { ok: false, error: "callback_in_progress" };
+    }
+
+    try {
+      const { error } =
+        await supabaseAuthClient.auth.exchangeCodeForSession(code);
+      if (error) {
+        console.error(
+          "[auth] exchangeCodeForSession failed",
+          error.message,
+          error
+        );
+        const { data } = await supabaseAuthClient.auth.getSession();
+        if (data.session?.access_token) {
+          markOAuthCodeConsumed(code);
+          stripOAuthParamsFromBrowserUrl();
+          cacheUserId(data.session.user.id);
+          return { ok: true };
+        }
+        releaseOAuthCallbackProcessing(code);
+        return { ok: false, error: error.message };
+      }
+
+      markOAuthCodeConsumed(code);
+      stripOAuthParamsFromBrowserUrl();
+      return { ok: true };
+    } catch (exchangeError) {
+      console.error("[auth] exchangeCodeForSession threw", exchangeError);
+      releaseOAuthCallbackProcessing(code);
+      return { ok: false, error: "exchange_failed" };
+    }
   }
 
   const tokenHash = searchParams.get("token_hash");
@@ -312,86 +377,138 @@ export async function establishSessionFromAuthCallbackUrl(): Promise<{
   return { ok: false, error: "session_missing" };
 }
 
-export async function completeAuthCallback(deviceId: string, redirectTo: string) {
-  const established = await establishSessionFromAuthCallbackUrl();
-  if (!established.ok) {
-    return {
-      ok: false as const,
-      error: established.error ?? "session_missing",
-      message:
-        "ログインに失敗しました。もう一度 Google でログインしてください。",
+type CompleteAuthCallbackResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      message?: string | null;
+      action?: string | null;
+      redirectTo?: string | null;
     };
-  }
 
-  const { data, error } = await supabaseAuthClient.auth.getSession();
-  if (error || !data.session?.access_token) {
-    return {
-      ok: false as const,
-      error: error?.message ?? "session_missing",
-    };
-  }
+let completeAuthCallbackInflight: Promise<CompleteAuthCallbackResult> | null =
+  null;
+let completeAuthCallbackInflightKey: string | null = null;
 
-  logClientAuthRestore({
-    phase: "callback_start",
-    deviceId,
-    userId: data.session.user.id,
-    email: data.session.user.email ?? null,
-    anonymous: data.session.user.is_anonymous ?? null,
-    redirectTo,
-  });
-
-  let result = await postAuthSession(deviceId, data.session.access_token);
+export async function completeAuthCallback(
+  deviceId: string,
+  redirectTo: string
+): Promise<CompleteAuthCallbackResult> {
+  const callbackKey =
+    typeof window !== "undefined"
+      ? readOAuthCodeFromLocation() ??
+        new URLSearchParams(window.location.search).get("token_hash") ??
+        window.location.href
+      : redirectTo;
 
   if (
-    !result.ok &&
-    result.action === "reregister_device" &&
-    (result.error === "device_secret_required" ||
-      result.error === "device_secret_mismatch")
+    completeAuthCallbackInflight &&
+    completeAuthCallbackInflightKey === callbackKey
   ) {
-    logClientAuthRestore({
-      phase: "callback_reregister_device",
-      deviceId,
-      userId: data.session.user.id,
-    });
-    result = await postAuthSession(deviceId, data.session.access_token, {
-      reregisterDevice: true,
-    });
+    return completeAuthCallbackInflight;
   }
 
-  if (!result.ok) {
-    handleAuthSessionFailure(deviceId, result);
-    const needsProfile =
-      result.error === "profile_device_conflict" ||
-      result.error === "profile_user_mismatch";
-    return {
-      ok: false as const,
-      error: result.error,
-      message: result.message ?? null,
-      action: result.action ?? null,
-      redirectTo: needsProfile
-        ? `/profile?returnTo=${encodeURIComponent(sanitizeReturnTo(redirectTo))}`
-        : result.redirectTo ?? buildLoginUrl(redirectTo),
-    };
+  const run = async (): Promise<CompleteAuthCallbackResult> => {
+    markAuthCallbackActive();
+
+    try {
+      const established = await establishSessionFromAuthCallbackUrl();
+      if (!established.ok) {
+        return {
+          ok: false as const,
+          error: established.error ?? "session_missing",
+          message:
+            "ログインに失敗しました。もう一度 Google でログインしてください。",
+        };
+      }
+
+      const { data, error } = await supabaseAuthClient.auth.getSession();
+      if (error || !data.session?.access_token) {
+        return {
+          ok: false as const,
+          error: error?.message ?? "session_missing",
+        };
+      }
+
+      logClientAuthRestore({
+        phase: "callback_start",
+        deviceId,
+        userId: data.session.user.id,
+        email: data.session.user.email ?? null,
+        anonymous: data.session.user.is_anonymous ?? null,
+        redirectTo,
+      });
+
+      let result = await postAuthSession(deviceId, data.session.access_token);
+
+      if (
+        !result.ok &&
+        result.action === "reregister_device" &&
+        (result.error === "device_secret_required" ||
+          result.error === "device_secret_mismatch")
+      ) {
+        logClientAuthRestore({
+          phase: "callback_reregister_device",
+          deviceId,
+          userId: data.session.user.id,
+        });
+        result = await postAuthSession(deviceId, data.session.access_token, {
+          reregisterDevice: true,
+        });
+      }
+
+      if (!result.ok) {
+        handleAuthSessionFailure(deviceId, result);
+        const needsProfile =
+          result.error === "profile_device_conflict" ||
+          result.error === "profile_user_mismatch";
+        return {
+          ok: false as const,
+          error: result.error,
+          message: result.message ?? null,
+          action: result.action ?? null,
+          redirectTo: needsProfile
+            ? `/profile?returnTo=${encodeURIComponent(sanitizeReturnTo(redirectTo))}`
+            : result.redirectTo ?? buildLoginUrl(redirectTo),
+        };
+      }
+
+      logClientAuthRestore({
+        phase: "callback_bootstrapped",
+        deviceId,
+        userId: String(result.status.userId ?? data.session.user.id ?? ""),
+        email: data.session.user.email ?? null,
+        linked: result.status.hasLinkedEmail ?? null,
+        anonymous: result.status.isAnonymous ?? null,
+        profileMigrated: result.status.profileMigrated ?? null,
+        redirectTo,
+      });
+
+      cacheUserId(String(result.status.userId ?? data.session.user.id ?? ""));
+
+      if (typeof window !== "undefined") {
+        stripOAuthParamsFromBrowserUrl();
+        window.location.replace(redirectTo);
+      }
+
+      return { ok: true as const };
+    } finally {
+      clearAuthCallbackActive();
+    }
+  };
+
+  completeAuthCallbackInflightKey = callbackKey;
+  completeAuthCallbackInflight = run();
+
+  try {
+    return await completeAuthCallbackInflight;
+  } finally {
+    if (completeAuthCallbackInflightKey === callbackKey) {
+      completeAuthCallbackInflight = null;
+      completeAuthCallbackInflightKey = null;
+    }
   }
-
-  logClientAuthRestore({
-    phase: "callback_bootstrapped",
-    deviceId,
-    userId: String(result.status.userId ?? data.session.user.id ?? ""),
-    email: data.session.user.email ?? null,
-    linked: result.status.hasLinkedEmail ?? null,
-    anonymous: result.status.isAnonymous ?? null,
-    profileMigrated: result.status.profileMigrated ?? null,
-    redirectTo,
-  });
-
-  cacheUserId(String(result.status.userId ?? data.session.user.id ?? ""));
-
-  if (typeof window !== "undefined") {
-    window.location.replace(redirectTo);
-  }
-
-  return { ok: true as const };
 }
 
 export async function signInWithGoogle(returnTo?: string) {

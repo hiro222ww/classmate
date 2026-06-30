@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { completeAuthCallback } from "@/lib/authClient";
 import { resolveAuthCallbackReturnTo } from "@/lib/oauthRootRedirect";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
+import { markAuthCallbackActive } from "@/lib/oauthCallbackDedupe";
 import { withDev } from "@/lib/withDev";
 
 export default function AuthCallbackClient() {
@@ -15,13 +16,30 @@ export default function AuthCallbackClient() {
     return resolveAuthCallbackReturnTo(searchParams, "/home");
   }, [searchParams]);
 
+  const oauthError = useMemo(
+    () => readOAuthCallbackError(searchParams),
+    [searchParams]
+  );
+
+  const callbackKey = useMemo(() => {
+    return (
+      searchParams.get("code") ??
+      searchParams.get("token_hash") ??
+      oauthError ??
+      "pending"
+    );
+  }, [oauthError, searchParams]);
+
+  const startedKeyRef = useRef<string | null>(null);
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
 
   useEffect(() => {
+    if (startedKeyRef.current === callbackKey) return;
+    startedKeyRef.current = callbackKey;
+
     let cancelled = false;
 
-    const oauthError = readOAuthCallbackError(searchParams);
     if (oauthError) {
       setError(oauthError);
       return () => {
@@ -29,7 +47,9 @@ export default function AuthCallbackClient() {
       };
     }
 
-    (async () => {
+    markAuthCallbackActive();
+
+    void (async () => {
       const deviceId = getDeviceId();
       if (!deviceId) {
         if (!cancelled) setError("端末情報を取得できませんでした。");
@@ -58,7 +78,7 @@ export default function AuthCallbackClient() {
     return () => {
       cancelled = true;
     };
-  }, [returnTo, searchParams]);
+  }, [callbackKey, oauthError, returnTo]);
 
   return (
     <main style={{ maxWidth: 520, margin: "0 auto", padding: 24 }}>
