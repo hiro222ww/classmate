@@ -23,7 +23,7 @@
     "test:turn-provider": "node scripts/verify-turn-provider.mjs",
     "build:learning-docx": "node scripts/build-learning-docx.mjs",
     "cap:copy": "npx cap copy ios",
-    "cap:sync": "npx cap sync ios",
+    "cap:sync": "npx cap sync ios && node scripts/patch-ios-capacitor-config.mjs",
     "cap:open:ios": "npx cap open ios"
   },
   "dependencies": {

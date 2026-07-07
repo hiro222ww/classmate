@@ -23,6 +23,7 @@
 		CMNS00010000000000000006 /* SettingsGearVisibilityPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = CMNS00020000000000000006 /* SettingsGearVisibilityPolicy.swift */; };
 		CMNS00010000000000000007 /* MicPermissionPrimerCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CMNS00020000000000000007 /* MicPermissionPrimerCoordinator.swift */; };
 		CMNS00010000000000000008 /* NativeAuthReturnURL.swift in Sources */ = {isa = PBXBuildFile; fileRef = CMNS00020000000000000008 /* NativeAuthReturnURL.swift */; };
+		CMNS00010000000000000009 /* ClassmateOAuthPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = CMNS00020000000000000009 /* ClassmateOAuthPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +45,7 @@
 		CMNS00020000000000000006 /* SettingsGearVisibilityPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsGearVisibilityPolicy.swift; sourceTree = "<group>"; };
 		CMNS00020000000000000007 /* MicPermissionPrimerCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicPermissionPrimerCoordinator.swift; sourceTree = "<group>"; };
 		CMNS00020000000000000008 /* NativeAuthReturnURL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthReturnURL.swift; sourceTree = "<group>"; };
+		CMNS00020000000000000009 /* ClassmateOAuthPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassmateOAuthPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +104,7 @@
 				CMNS00020000000000000006 /* SettingsGearVisibilityPolicy.swift */,
 				CMNS00020000000000000007 /* MicPermissionPrimerCoordinator.swift */,
 				CMNS00020000000000000008 /* NativeAuthReturnURL.swift */,
+				CMNS00020000000000000009 /* ClassmateOAuthPlugin.swift */,
 			);
 			path = NativeShell;
 			sourceTree = "<group>";
@@ -196,6 +199,7 @@
 				CMNS00010000000000000006 /* SettingsGearVisibilityPolicy.swift in Sources */,
 				CMNS00010000000000000007 /* MicPermissionPrimerCoordinator.swift in Sources */,
 				CMNS00010000000000000008 /* NativeAuthReturnURL.swift in Sources */,
+				CMNS00010000000000000009 /* ClassmateOAuthPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
