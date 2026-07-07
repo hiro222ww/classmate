@@ -23,6 +23,7 @@ import {
   isCapacitorNativeApp,
   retryPendingNativeAuthReturn,
 } from "@/lib/capacitorClient";
+import { closeCapacitorOAuthBrowser } from "@/lib/capacitorOAuthBrowser";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
@@ -96,6 +97,7 @@ export default function UserLoginClient() {
       setBusy(false);
 
       if (isCapacitorNativeApp()) {
+        await closeCapacitorOAuthBrowser();
         retryPendingNativeAuthReturn();
       }
 

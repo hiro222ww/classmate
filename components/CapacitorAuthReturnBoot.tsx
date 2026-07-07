@@ -7,6 +7,7 @@ import {
   navigateToWebAuthCallback,
   retryPendingNativeAuthReturn,
 } from "@/lib/capacitorClient";
+import { closeCapacitorOAuthBrowser } from "@/lib/capacitorOAuthBrowser";
 import { markAppShellContext } from "@/lib/appShellContext";
 
 /**
@@ -27,6 +28,7 @@ export default function CapacitorAuthReturnBoot() {
     const handleReturnUrl = (url: string, source: string) => {
       if (!isNativeAuthCallbackUrl(url)) return;
       console.info("[oauth-return] received", source, url);
+      void closeCapacitorOAuthBrowser();
       navigateToWebAuthCallback(url);
     };
 

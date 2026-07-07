@@ -550,6 +550,7 @@ export async function signInWithGoogle(returnTo?: string) {
 
   const oauthOptions = {
     redirectTo,
+    skipBrowserRedirect: isCapacitorNativeApp(),
     queryParams: {
       prompt: "select_account",
     },
@@ -582,7 +583,22 @@ export async function signInWithGoogle(returnTo?: string) {
       "[oauth-start]",
       `authorizeUrlRedirectTo=${authorizeRedirectTo ?? "(missing)"}`
     );
-    window.location.assign(result.data.url);
+
+    if (isCapacitorNativeApp()) {
+      const { openCapacitorOAuthBrowser } = await import(
+        "@/lib/capacitorOAuthBrowser"
+      );
+      const opened = await openCapacitorOAuthBrowser(result.data.url);
+      if (!opened) {
+        return {
+          ok: false as const,
+          error: "oauth_browser_failed",
+          message: "認証画面を開けませんでした。",
+        };
+      }
+    } else {
+      window.location.assign(result.data.url);
+    }
   }
 
   return {
