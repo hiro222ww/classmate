@@ -54,9 +54,14 @@ export default function CapacitorAuthReturnBoot() {
       });
 
       const stateListener = await App.addListener("appStateChange", (state) => {
-        if (state.isActive) {
-          retryPendingReturn("appStateChange");
-        }
+        if (!state.isActive) return;
+        void import("@/lib/capacitorOAuthBrowser").then(
+          ({ isCapacitorOAuthBrowserOpen }) => {
+            if (!isCapacitorOAuthBrowserOpen()) {
+              retryPendingReturn("appStateChange");
+            }
+          }
+        );
       });
 
       removeListener = () => {

@@ -6,6 +6,7 @@ import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
 import { buildAuthCallbackUrl, buildOAuthRedirectUrl, readRedirectToFromOAuthAuthorizeUrl, stashOAuthReturnTo } from "@/lib/authCallbackUrl";
 import { isCapacitorNativeApp } from "@/lib/capacitorClient";
+import { isCapacitorOAuthBrowserOpen } from "@/lib/capacitorOAuthBrowser";
 import {
   claimOAuthCallbackProcessing,
   clearAuthCallbackActive,
@@ -183,7 +184,7 @@ export function isAuthCallbackInProgress(): boolean {
 }
 
 export async function ensureAnonymousAuthSession(): Promise<Session | null> {
-  if (isAuthCallbackInProgress()) {
+  if (isAuthCallbackInProgress() || isCapacitorOAuthBrowserOpen()) {
     const pending = (await supabaseAuthClient.auth.getSession()).data.session;
     if (pending?.access_token) {
       cacheUserId(pending.user.id);
@@ -200,7 +201,11 @@ export async function ensureAnonymousAuthSession(): Promise<Session | null> {
 
   const { data, error } = await supabaseAuthClient.auth.signInAnonymously();
   if (error) {
-    console.error("[auth] anonymous sign-in failed", error.message);
+    if (error.message.includes("Anonymous sign-ins are disabled")) {
+      console.info("[auth] anonymous sign-in skipped (disabled in Supabase)");
+    } else {
+      console.error("[auth] anonymous sign-in failed", error.message);
+    }
     return null;
   }
 

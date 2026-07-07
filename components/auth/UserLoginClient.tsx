@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   bootstrapAuthSession,
   fetchAuthStatus,
+  getAuthAccessToken,
   signInWithGoogle,
 } from "@/lib/authClient";
 import { isLoggedInAccount, sanitizeReturnTo } from "@/lib/authAccount";
@@ -23,7 +24,7 @@ import {
   isCapacitorNativeApp,
   retryPendingNativeAuthReturn,
 } from "@/lib/capacitorClient";
-import { closeCapacitorOAuthBrowser } from "@/lib/capacitorOAuthBrowser";
+import { isCapacitorOAuthBrowserOpen } from "@/lib/capacitorOAuthBrowser";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
@@ -94,15 +95,23 @@ export default function UserLoginClient() {
     let cancelled = false;
 
     const recoverAfterOAuthReturn = async () => {
+      if (isCapacitorOAuthBrowserOpen()) {
+        return;
+      }
+
       setBusy(false);
 
       if (isCapacitorNativeApp()) {
-        await closeCapacitorOAuthBrowser();
-        retryPendingNativeAuthReturn();
+        if (retryPendingNativeAuthReturn()) {
+          return;
+        }
       }
 
       const deviceId = getDeviceId();
       if (!deviceId) return;
+
+      const token = await getAuthAccessToken();
+      if (!token) return;
 
       await bootstrapAuthSession(deviceId);
       const status = await fetchAuthStatus(deviceId);
@@ -115,8 +124,14 @@ export default function UserLoginClient() {
 
     void recoverAfterOAuthReturn();
 
+    const onBrowserFinished = () => {
+      setBusy(false);
+      void recoverAfterOAuthReturn();
+    };
+    window.addEventListener("classmate-oauth-browser-finished", onBrowserFinished);
+
     const onVisible = () => {
-      if (!document.hidden) {
+      if (!document.hidden && !isCapacitorOAuthBrowserOpen()) {
         void recoverAfterOAuthReturn();
       }
     };
@@ -126,7 +141,7 @@ export default function UserLoginClient() {
     if (isCapacitorNativeApp()) {
       void import("@capacitor/app").then(({ App }) => {
         void App.addListener("appStateChange", (state) => {
-          if (state.isActive) {
+          if (state.isActive && !isCapacitorOAuthBrowserOpen()) {
             void recoverAfterOAuthReturn();
           }
         }).then((listener) => {
@@ -139,6 +154,10 @@ export default function UserLoginClient() {
 
     return () => {
       cancelled = true;
+      window.removeEventListener(
+        "classmate-oauth-browser-finished",
+        onBrowserFinished
+      );
       document.removeEventListener("visibilitychange", onVisible);
       removeStateListener?.();
     };
