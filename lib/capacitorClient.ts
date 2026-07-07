@@ -6,7 +6,9 @@ import {
   isOAuthCodeConsumed,
   isSameAuthCallbackHref,
   readOAuthCodeFromLocation,
+  readPendingNativeOAuthUrl,
   shouldHandleNativeAuthReturnUrl,
+  stashPendingNativeOAuthUrl,
 } from "@/lib/oauthCallbackDedupe";
 
 export const NATIVE_AUTH_CALLBACK_SCHEME = "classmate";
@@ -73,10 +75,13 @@ export function nativeAuthCallbackToWebUrl(
   return `${origin}/auth/callback${parsed.search}${parsed.hash}`;
 }
 
-/** appUrlOpen / getLaunchUrl から受け取った URL で WebView を本番 callback へ遷移（1回のみ） */
+/** appUrlOpen / getLaunchUrl から受け取った URL で WebView を本番 callback へ遷移 */
 export function navigateToWebAuthCallback(nativeUrl: string): boolean {
   if (typeof window === "undefined") return false;
   if (!isNativeAuthCallbackUrl(nativeUrl)) return false;
+
+  stashPendingNativeOAuthUrl(nativeUrl);
+
   if (!shouldHandleNativeAuthReturnUrl(nativeUrl)) {
     console.info("[oauth-return] skip duplicate native url", nativeUrl);
     return false;
@@ -102,4 +107,17 @@ export function navigateToWebAuthCallback(nativeUrl: string): boolean {
   console.info("[oauth-return] navigate", webUrl);
   window.location.replace(webUrl);
   return true;
+}
+
+/** アプリ復帰時に OAuth 戻り URL の橋渡しを再試行 */
+export function retryPendingNativeAuthReturn(): boolean {
+  const pending = readPendingNativeOAuthUrl();
+  if (!pending || !isNativeAuthCallbackUrl(pending)) return false;
+
+  const path = window.location.pathname;
+  if (path === "/auth/callback" || path.startsWith("/auth/callback")) {
+    return false;
+  }
+
+  return navigateToWebAuthCallback(pending);
 }

@@ -9,7 +9,8 @@ import {
   fetchAuthStatus,
 } from "@/lib/authClient";
 import { accountStatusLabel, isLoggedInAccount } from "@/lib/authAccount";
-import { APP_LOGIN, buildAppLoginUrl } from "@/lib/appShell";
+import { APP_HOME } from "@/lib/appShell";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import { fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { openJoinedClassFromSnapshot } from "@/lib/openJoinedClassClient";
@@ -113,7 +114,7 @@ export default function AppHomeClient() {
             アカウントを連携すると、クラスや設定を端末間で引き継げます。
           </p>
           <Link
-            href={withDev(buildAppLoginUrl(returnPath))}
+            href={withDev(buildShellAwareLoginUrl(returnPath))}
             className="app-shell-btn app-shell-btn--primary"
             style={{ width: "100%" }}
           >
@@ -192,7 +193,10 @@ export default function AppHomeClient() {
           </Link>
 
           {!loggedIn ? (
-            <Link href={withDev(APP_LOGIN)} className="app-shell-btn">
+            <Link
+              href={withDev(buildShellAwareLoginUrl(returnPath))}
+              className="app-shell-btn"
+            >
               ログイン
             </Link>
           ) : null}

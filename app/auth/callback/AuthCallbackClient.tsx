@@ -7,6 +7,7 @@ import { getDeviceId } from "@/lib/device";
 import { completeAuthCallback } from "@/lib/authClient";
 import { resolveAuthCallbackReturnTo } from "@/lib/oauthRootRedirect";
 import { defaultAuthCallbackReturnTo } from "@/lib/appShellContext";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { markAuthCallbackActive } from "@/lib/oauthCallbackDedupe";
 import { withDev } from "@/lib/withDev";
@@ -93,7 +94,7 @@ export default function AuthCallbackClient() {
           ) : null}
           <p style={{ color: "#b91c1c", lineHeight: 1.65 }}>{error}</p>
           <p style={{ fontSize: 13 }}>
-            <Link href={withDev(`/login?returnTo=${encodeURIComponent(returnTo)}`)}>
+            <Link href={withDev(buildShellAwareLoginUrl(returnTo))}>
               ログイン画面へ戻る
             </Link>
             {hint ? (

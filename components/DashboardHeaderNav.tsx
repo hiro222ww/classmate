@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { buildLoginUrl } from "@/lib/authAccount";
+import { buildShellAwareLoginUrl, buildShellAwareSettingsUrl } from "@/lib/appShellNavigation";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
@@ -32,8 +32,8 @@ export function DashboardHeaderNav({
     useDashboardAccountStatus(deviceId);
 
   const accountHref = loggedIn
-    ? withDev("/settings")
-    : withDev(buildLoginUrl(returnPath));
+    ? withDev(buildShellAwareSettingsUrl())
+    : withDev(buildShellAwareLoginUrl(returnPath));
 
   return (
     <div

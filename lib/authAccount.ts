@@ -9,6 +9,7 @@ export function sanitizeReturnTo(value: unknown, fallback = "/home"): string {
   return raw;
 }
 
+/** Web ブラウザ向けログイン URL。クライアント UI では buildShellAwareLoginUrl を使う。 */
 export function buildLoginUrl(returnTo?: string): string {
   const path = sanitizeReturnTo(returnTo ?? "/home");
   return `/login?returnTo=${encodeURIComponent(path)}`;

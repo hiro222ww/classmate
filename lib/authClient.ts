@@ -17,6 +17,8 @@ import {
   readOAuthCodeFromLocation,
   releaseOAuthCallbackProcessing,
   stripOAuthParamsFromBrowserUrl,
+  clearPendingNativeOAuthUrl,
+  clearHandledNativeAuthReturnUrl,
 } from "@/lib/oauthCallbackDedupe";
 import {
   authEmailResendCooldownMessage,
@@ -107,7 +109,11 @@ function handleAuthSessionFailure(
 
   if (result.action === "restore_login" && typeof window !== "undefined") {
     const path = window.location.pathname;
-    if (path !== "/login" && !path.startsWith("/auth/callback")) {
+    if (
+      path !== "/login" &&
+      path !== "/app/login" &&
+      !path.startsWith("/auth/callback")
+    ) {
       console.warn("[auth] login required to restore account on this device");
     }
   }
@@ -145,7 +151,11 @@ export function isAuthCallbackInProgress(): boolean {
   }
 
   const path = window.location.pathname;
-  if (path === "/login" || path.startsWith("/auth/callback")) {
+  if (
+    path === "/login" ||
+    path === "/app/login" ||
+    path.startsWith("/auth/callback")
+  ) {
     return true;
   }
 
@@ -494,6 +504,8 @@ export async function completeAuthCallback(
 
       if (typeof window !== "undefined") {
         stripOAuthParamsFromBrowserUrl();
+        clearPendingNativeOAuthUrl();
+        clearHandledNativeAuthReturnUrl();
         window.location.replace(resolveAppShellReturnTo(redirectTo));
       }
 

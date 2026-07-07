@@ -1,15 +1,9 @@
 import Link from "next/link";
+import LegalPageShell from "@/components/legal/LegalPageShell";
 
 export default function PrivacyPage() {
   return (
-    <main
-      style={{
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: "40px 20px",
-        lineHeight: 1.8,
-      }}
-    >
+    <LegalPageShell>
       <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 24 }}>
         プライバシーポリシー
       </h1>
@@ -97,7 +91,7 @@ export default function PrivacyPage() {
         <Link href="/terms"> 利用規約</Link> /
         <Link href="/guidelines"> コミュニティガイドライン</Link>
       </p>
-    </main>
+    </LegalPageShell>
   );
 }
 

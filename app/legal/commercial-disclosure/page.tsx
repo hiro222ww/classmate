@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import LegalPageShell from "@/components/legal/LegalPageShell";
 
 export const metadata: Metadata = {
   title: "Commercial disclosure",
@@ -35,17 +36,7 @@ export default function CommercialDisclosurePage() {
   };
 
   return (
-    <main
-      style={{
-        maxWidth: 680,
-        margin: "0 auto",
-        padding: "24px 16px 56px",
-        fontSize: 13,
-        lineHeight: 1.9,
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <LegalPageShell>
       <h1
         style={{
           fontSize: 22,
@@ -79,9 +70,7 @@ export default function CommercialDisclosurePage() {
         <section style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>支払方法</dt>
-            <dd style={ddStyle}>
-              クレジットカード決済（Stripe）
-            </dd>
+            <dd style={ddStyle}>クレジットカード決済（Stripe）</dd>
           </div>
         </section>
 
@@ -115,40 +104,31 @@ export default function CommercialDisclosurePage() {
         <section style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>メールアドレス</dt>
-            <dd style={ddStyle}>
-              classmate.app.team@gmail.com
-            </dd>
+            <dd style={ddStyle}>classmate.app.team@gmail.com</dd>
           </div>
         </section>
 
         <section style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>所在地</dt>
-            <dd style={ddStyle}>
-              請求があった場合、遅滞なく開示します。
-            </dd>
+            <dd style={ddStyle}>請求があった場合、遅滞なく開示します。</dd>
           </div>
         </section>
 
         <section style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>電話番号</dt>
-            <dd style={ddStyle}>
-              請求があった場合、遅滞なく開示します。
-            </dd>
+            <dd style={ddStyle}>請求があった場合、遅滞なく開示します。</dd>
           </div>
         </section>
 
-        {/* ▼ 一番下に名前（目立たない） */}
         <section style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>販売事業者</dt>
-            <dd style={ddStyle}>
-              吉川 弘晃
-            </dd>
+            <dd style={ddStyle}>吉川 弘晃</dd>
           </div>
         </section>
       </div>
-    </main>
+    </LegalPageShell>
   );
 }

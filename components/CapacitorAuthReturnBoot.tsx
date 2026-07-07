@@ -5,6 +5,7 @@ import {
   isCapacitorNativeApp,
   isNativeAuthCallbackUrl,
   navigateToWebAuthCallback,
+  retryPendingNativeAuthReturn,
 } from "@/lib/capacitorClient";
 import { markAppShellContext } from "@/lib/appShellContext";
 
@@ -29,6 +30,12 @@ export default function CapacitorAuthReturnBoot() {
       navigateToWebAuthCallback(url);
     };
 
+    const retryPendingReturn = (source: string) => {
+      if (retryPendingNativeAuthReturn()) {
+        console.info("[oauth-return] retried pending url", source);
+      }
+    };
+
     void (async () => {
       const { App } = await import("@capacitor/app");
 
@@ -36,13 +43,23 @@ export default function CapacitorAuthReturnBoot() {
       if (launch?.url && !handledLaunchRef.current) {
         handledLaunchRef.current = true;
         handleReturnUrl(launch.url, "getLaunchUrl");
+      } else {
+        retryPendingReturn("mount");
       }
 
       const listener = await App.addListener("appUrlOpen", (event) => {
         handleReturnUrl(event.url, "appUrlOpen");
       });
+
+      const stateListener = await App.addListener("appStateChange", (state) => {
+        if (state.isActive) {
+          retryPendingReturn("appStateChange");
+        }
+      });
+
       removeListener = () => {
         void listener.remove();
+        void stateListener.remove();
       };
     })();
 

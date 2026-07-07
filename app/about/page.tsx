@@ -2,17 +2,11 @@ import {
   CLASS_SLOT_MONTHLY_YEN,
   formatTopicPlanLine,
 } from "@/lib/planTiers";
+import LegalPageShell from "@/components/legal/LegalPageShell";
 
 export default function AboutPage() {
   return (
-    <main
-      style={{
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: "40px 20px",
-        lineHeight: 1.7,
-      }}
-    >
+    <LegalPageShell>
       <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 16 }}>
         classmate について
       </h1>
@@ -105,6 +99,6 @@ export default function AboutPage() {
           classmate.app.team@gmail.com
         </a>
       </p>
-    </main>
+    </LegalPageShell>
   );
 }

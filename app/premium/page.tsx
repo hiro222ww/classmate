@@ -18,7 +18,7 @@ import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useRequireAccount } from "@/components/useRequireAccount";
-import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
+import { resolveAuthRedirectTo } from "@/lib/appShellNavigation";
 
 type Entitlements = {
   class_slots?: number;
@@ -176,7 +176,7 @@ export default function PremiumPage() {
       const j = await r.json().catch(() => null);
 
       if (!r.ok && (j?.error === "auth_required" || j?.redirectTo)) {
-        router.push(withDev(j?.redirectTo ?? buildShellAwareLoginUrl("/premium")));
+        router.push(withDev(resolveAuthRedirectTo(j?.redirectTo, "/premium")));
         return;
       }
 
@@ -226,7 +226,7 @@ export default function PremiumPage() {
       const j = await r.json().catch(() => null);
 
       if (!r.ok && (j?.error === "auth_required" || j?.redirectTo)) {
-        router.push(withDev(j?.redirectTo ?? buildShellAwareLoginUrl("/premium")));
+        router.push(withDev(resolveAuthRedirectTo(j?.redirectTo, "/premium")));
         return;
       }
 

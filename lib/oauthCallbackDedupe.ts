@@ -3,6 +3,7 @@
 const PROCESSING_CODE_KEY = "classmate_oauth_callback_processing_code";
 const CONSUMED_CODE_PREFIX = "classmate_oauth_code_consumed:";
 const HANDLED_NATIVE_URL_KEY = "classmate_oauth_handled_native_url";
+const PENDING_NATIVE_OAUTH_URL_KEY = "classmate_oauth_pending_native_url";
 const CALLBACK_ACTIVE_KEY = "classmate_oauth_callback_active";
 
 export function readOAuthCodeFromLocation(
@@ -103,16 +104,60 @@ export function isAuthCallbackActive(): boolean {
   }
 }
 
-/** classmate://... を JS 側で一度だけ Web へ橋渡しする */
+/** classmate://... を JS 側で Web へ橋渡しする（login 画面では再試行を許可） */
 export function shouldHandleNativeAuthReturnUrl(nativeUrl: string): boolean {
   if (typeof window === "undefined") return true;
   try {
+    const path = window.location.pathname;
+    if (path === "/app/login" || path.startsWith("/app/login")) {
+      return true;
+    }
+    if (path === "/auth/callback" || path.startsWith("/auth/callback")) {
+      const last = sessionStorage.getItem(HANDLED_NATIVE_URL_KEY);
+      return last !== nativeUrl;
+    }
     const last = sessionStorage.getItem(HANDLED_NATIVE_URL_KEY);
     if (last === nativeUrl) return false;
     sessionStorage.setItem(HANDLED_NATIVE_URL_KEY, nativeUrl);
     return true;
   } catch {
     return true;
+  }
+}
+
+export function stashPendingNativeOAuthUrl(nativeUrl: string): void {
+  if (!nativeUrl || typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(PENDING_NATIVE_OAUTH_URL_KEY, nativeUrl);
+  } catch {
+    // ignore
+  }
+}
+
+export function readPendingNativeOAuthUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return sessionStorage.getItem(PENDING_NATIVE_OAUTH_URL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingNativeOAuthUrl(): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(PENDING_NATIVE_OAUTH_URL_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function clearHandledNativeAuthReturnUrl(): void {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(HANDLED_NATIVE_URL_KEY);
+  } catch {
+    // ignore
   }
 }
 

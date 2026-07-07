@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   accountStatusLabel,
-  buildLoginUrl,
   isLoggedInAccount,
   sanitizeReturnTo,
 } from "@/lib/authAccount";
@@ -13,9 +12,22 @@ import { bootstrapAuthSession, fetchAuthStatus } from "@/lib/authClient";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { getDeviceId } from "@/lib/device";
 import { isAppShellPath } from "@/lib/appShell";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 import { withDev } from "@/lib/withDev";
 
-const HIDDEN_PREFIXES = ["/admin", "/login", "/auth/callback"];
+const HIDDEN_PREFIXES = [
+  "/admin",
+  "/login",
+  "/auth/callback",
+  "/privacy",
+  "/terms",
+  "/guidelines",
+  "/about",
+  "/legal",
+];
 const DASHBOARD_HEADER_PATHS = new Set(["/", "/class/select"]);
 
 function shouldHideNav(pathname: string) {
@@ -95,8 +107,8 @@ export default function AppAccountNav() {
   if (hidden) return null;
 
   const href = loggedIn
-    ? withDev("/settings")
-    : withDev(buildLoginUrl(returnTo));
+    ? withDev(buildShellAwareSettingsUrl())
+    : withDev(buildShellAwareLoginUrl(returnTo));
 
   return (
     <header

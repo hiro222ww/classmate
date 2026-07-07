@@ -11,9 +11,9 @@ import {
 import { withDev } from "@/lib/withDev";
 import {
   accountStatusLabel,
-  buildLoginUrl,
   isLoggedInAccount,
 } from "@/lib/authAccount";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { SectionTitle } from "@/components/FormFieldLabel";
 import { HelpTip } from "@/components/HelpTip";
@@ -169,7 +169,7 @@ export default function SettingsClient() {
           </>
         ) : (
           <Link
-            href={withDev(buildLoginUrl("/settings"))}
+            href={withDev(buildShellAwareLoginUrl("/settings"))}
             style={{
               display: "inline-block",
               width: "fit-content",

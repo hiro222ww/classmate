@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Suspense } from "react";
 import AppLifecycleBoot from "@/components/AppLifecycleBoot";
 import AuthBoot from "@/components/AuthBoot";
@@ -7,6 +6,7 @@ import CapacitorAuthReturnBoot from "@/components/CapacitorAuthReturnBoot";
 import AppShellContextBoot from "@/components/AppShellContextBoot";
 import OAuthRootCodeRedirectBoot from "@/components/OAuthRootCodeRedirectBoot";
 import AppAccountNav from "@/components/AppAccountNav";
+import SiteFooter from "@/components/SiteFooter";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
 
@@ -57,38 +57,7 @@ export default function RootLayout({
         {/* ▼ メインコンテンツ */}
         <div style={{ minHeight: "100vh" }}>{children}</div>
 
-        {/* ▼ フッター（控えめ・Stripe対策OK） */}
-        <footer
-          style={{
-            padding: "24px 16px",
-            borderTop: "1px solid #e5e7eb",
-            fontSize: 12,
-            color: "#6b7280",
-            textAlign: "center",
-            background: "#fff",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              justifyContent: "center",
-              flexWrap: "wrap",
-            }}
-          >
-            <Link href="/about">About</Link>
-            <Link href="/terms">Terms</Link>
-            <Link href="/privacy">Privacy</Link>
-            <Link href="/guidelines">Guidelines</Link>
-            <Link href="/legal/commercial-disclosure">
-              Legal
-            </Link>
-          </div>
-
-          <div style={{ marginTop: 8 }}>
-            © {new Date().getFullYear()} classmate
-          </div>
-        </footer>
+        <SiteFooter />
       </body>
     </html>
   );

@@ -12,7 +12,8 @@ import {
   accountStatusLabel,
   isLoggedInAccount,
 } from "@/lib/authAccount";
-import { APP_HOME, buildAppLoginUrl } from "@/lib/appShell";
+import { APP_HOME } from "@/lib/appShell";
+import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import {
   summarizeAppEntitlements,
   type AppEntitlements,
@@ -190,7 +191,7 @@ export default function AppSettingsClient() {
                 {accountStatusLabel(status)}
               </p>
               <Link
-                href={withDev(buildAppLoginUrl(returnPath))}
+                href={withDev(buildShellAwareLoginUrl(returnPath))}
                 className="app-shell-btn app-shell-btn--primary"
               >
                 Google でログイン

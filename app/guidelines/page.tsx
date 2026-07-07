@@ -1,15 +1,9 @@
 import Link from "next/link";
+import LegalPageShell from "@/components/legal/LegalPageShell";
 
 export default function GuidelinesPage() {
   return (
-    <main
-      style={{
-        maxWidth: 720,
-        margin: "0 auto",
-        padding: "40px 20px",
-        lineHeight: 1.8,
-      }}
-    >
+    <LegalPageShell>
       <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 24 }}>
         コミュニティガイドライン
       </h1>
@@ -56,7 +50,7 @@ export default function GuidelinesPage() {
         お問い合わせ：
         <a href="mailto:classmate.app.team@gmail.com">classmate.app.team@gmail.com</a>
       </p>
-    </main>
+    </LegalPageShell>
   );
 }
 
