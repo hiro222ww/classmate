@@ -109,15 +109,17 @@ export function shouldHandleNativeAuthReturnUrl(nativeUrl: string): boolean {
   if (typeof window === "undefined") return true;
   try {
     const path = window.location.pathname;
+    const last = sessionStorage.getItem(HANDLED_NATIVE_URL_KEY);
+    if (last === nativeUrl) return false;
+
     if (path === "/app/login" || path.startsWith("/app/login")) {
+      sessionStorage.setItem(HANDLED_NATIVE_URL_KEY, nativeUrl);
       return true;
     }
     if (path === "/auth/callback" || path.startsWith("/auth/callback")) {
-      const last = sessionStorage.getItem(HANDLED_NATIVE_URL_KEY);
-      return last !== nativeUrl;
+      sessionStorage.setItem(HANDLED_NATIVE_URL_KEY, nativeUrl);
+      return true;
     }
-    const last = sessionStorage.getItem(HANDLED_NATIVE_URL_KEY);
-    if (last === nativeUrl) return false;
     sessionStorage.setItem(HANDLED_NATIVE_URL_KEY, nativeUrl);
     return true;
   } catch {

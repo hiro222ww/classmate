@@ -3,6 +3,8 @@
 import { Capacitor } from "@capacitor/core";
 import { getAppOrigin } from "@/lib/appOrigin";
 import {
+  clearHandledNativeAuthReturnUrl,
+  clearPendingNativeOAuthUrl,
   isOAuthCodeConsumed,
   isSameAuthCallbackHref,
   readOAuthCodeFromLocation,
@@ -10,6 +12,13 @@ import {
   shouldHandleNativeAuthReturnUrl,
   stashPendingNativeOAuthUrl,
 } from "@/lib/oauthCallbackDedupe";
+import { consumeOAuthReturnTo } from "@/lib/authCallbackUrl";
+import {
+  defaultAuthCallbackReturnTo,
+  resolveAppShellReturnTo,
+} from "@/lib/appShellContext";
+import { getDeviceId } from "@/lib/device";
+import { withDev } from "@/lib/withDev";
 
 export const NATIVE_AUTH_CALLBACK_SCHEME = "classmate";
 export const NATIVE_AUTH_CALLBACK_BASE = `${NATIVE_AUTH_CALLBACK_SCHEME}://auth/callback`;
@@ -75,17 +84,95 @@ export function nativeAuthCallbackToWebUrl(
   return `${origin}/auth/callback${parsed.search}${parsed.hash}`;
 }
 
-/** appUrlOpen / getLaunchUrl から受け取った URL で WebView を本番 callback へ遷移 */
-export function navigateToWebAuthCallback(nativeUrl: string): boolean {
+let nativeOAuthCompleteInflight: Promise<boolean> | null = null;
+let nativeOAuthCompleteInflightUrl: string | null = null;
+
+/**
+ * classmate://auth/callback?code=... を受け取り、WebView 遷移なしで
+ * exchangeCodeForSession → postAuthSession まで完了する。
+ */
+export async function completeNativeOAuthReturn(
+  nativeUrl: string
+): Promise<boolean> {
   if (typeof window === "undefined") return false;
   if (!isNativeAuthCallbackUrl(nativeUrl)) return false;
 
-  stashPendingNativeOAuthUrl(nativeUrl);
-
-  if (!shouldHandleNativeAuthReturnUrl(nativeUrl)) {
-    console.info("[oauth-return] skip duplicate native url", nativeUrl);
-    return false;
+  if (
+    nativeOAuthCompleteInflight &&
+    nativeOAuthCompleteInflightUrl === nativeUrl
+  ) {
+    return nativeOAuthCompleteInflight;
   }
+
+  const run = async (): Promise<boolean> => {
+    stashPendingNativeOAuthUrl(nativeUrl);
+
+    if (!shouldHandleNativeAuthReturnUrl(nativeUrl)) {
+      console.info("[oauth-return] skip duplicate native url", nativeUrl);
+      return false;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(nativeUrl);
+    } catch {
+      return false;
+    }
+
+    const code = readOAuthCodeFromLocation(parsed.search, parsed.hash);
+    if (!code) {
+      console.warn("[oauth-return] native callback missing code", nativeUrl);
+      return false;
+    }
+
+    if (isOAuthCodeConsumed(code)) {
+      console.info("[oauth-return] skip consumed code");
+      return false;
+    }
+
+    const deviceId = getDeviceId();
+    if (!deviceId) {
+      console.warn("[oauth-return] missing deviceId");
+      return false;
+    }
+
+    const returnTo = resolveAppShellReturnTo(
+      consumeOAuthReturnTo(defaultAuthCallbackReturnTo())
+    );
+
+    console.info("[oauth-return] complete inline", { code: code.slice(0, 8) });
+
+    const { completeAuthCallback } = await import("@/lib/authClient");
+    const result = await completeAuthCallback(deviceId, withDev(returnTo), {
+      oauthCode: code,
+    });
+
+    clearPendingNativeOAuthUrl();
+    clearHandledNativeAuthReturnUrl();
+
+    if (!result.ok) {
+      console.error("[oauth-return] complete failed", result.error, result.message);
+      return false;
+    }
+
+    return true;
+  };
+
+  nativeOAuthCompleteInflight = run();
+  nativeOAuthCompleteInflightUrl = nativeUrl;
+
+  try {
+    return await nativeOAuthCompleteInflight;
+  } finally {
+    nativeOAuthCompleteInflight = null;
+    nativeOAuthCompleteInflightUrl = null;
+  }
+}
+
+/** appUrlOpen / getLaunchUrl から受け取った URL で OAuth を完了 */
+export function navigateToWebAuthCallback(nativeUrl: string): boolean {
+  if (typeof window === "undefined") return false;
+  if (!isNativeAuthCallbackUrl(nativeUrl)) return false;
 
   const webUrl = nativeAuthCallbackToWebUrl(nativeUrl);
   if (!webUrl) return false;
@@ -95,17 +182,13 @@ export function navigateToWebAuthCallback(nativeUrl: string): boolean {
     return false;
   }
 
-  const code = readOAuthCodeFromLocation(
-    new URL(webUrl).search,
-    new URL(webUrl).hash
-  );
-  if (code && isOAuthCodeConsumed(code)) {
-    console.info("[oauth-return] skip consumed code");
-    return false;
-  }
+  void completeNativeOAuthReturn(nativeUrl).then((ok) => {
+    if (!ok) {
+      console.info("[oauth-return] fallback navigate", webUrl);
+      window.location.replace(webUrl);
+    }
+  });
 
-  console.info("[oauth-return] navigate", webUrl);
-  window.location.replace(webUrl);
   return true;
 }
 
@@ -119,5 +202,6 @@ export function retryPendingNativeAuthReturn(): boolean {
     return false;
   }
 
-  return navigateToWebAuthCallback(pending);
+  void completeNativeOAuthReturn(pending);
+  return true;
 }

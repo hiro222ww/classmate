@@ -6,7 +6,7 @@ import { getOrCreateDeviceSecret } from "@/lib/deviceSecretClient";
 import { DEVICE_SECRET_HEADER } from "@/lib/deviceSecret";
 import { buildAuthCallbackUrl, buildOAuthRedirectUrl, readRedirectToFromOAuthAuthorizeUrl, stashOAuthReturnTo } from "@/lib/authCallbackUrl";
 import { isCapacitorNativeApp } from "@/lib/capacitorClient";
-import { isCapacitorOAuthBrowserOpen } from "@/lib/capacitorOAuthBrowser";
+import { isCapacitorOAuthBrowserOpen, openCapacitorOAuthBrowser } from "@/lib/capacitorOAuthBrowser";
 import {
   claimOAuthCallbackProcessing,
   clearAuthCallbackActive,
@@ -300,6 +300,67 @@ async function wait(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** PKCE code から Supabase セッションを確立（Capacitor ネイティブ戻り用） */
+async function establishSessionFromOAuthCode(
+  code: string,
+  options?: { skipUrlStrip?: boolean }
+): Promise<{ ok: boolean; error?: string }> {
+  if (isOAuthCodeConsumed(code)) {
+    const { data } = await supabaseAuthClient.auth.getSession();
+    if (data.session?.access_token) {
+      cacheUserId(data.session.user.id);
+      return { ok: true };
+    }
+    return { ok: false, error: "code_already_used" };
+  }
+
+  if (!claimOAuthCallbackProcessing(code)) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await wait(100);
+      if (isOAuthCodeConsumed(code)) {
+        const { data } = await supabaseAuthClient.auth.getSession();
+        if (data.session?.access_token) {
+          cacheUserId(data.session.user.id);
+          return { ok: true };
+        }
+      }
+    }
+    return { ok: false, error: "callback_in_progress" };
+  }
+
+  try {
+    const { error } = await supabaseAuthClient.auth.exchangeCodeForSession(code);
+    if (error) {
+      console.error(
+        "[auth] exchangeCodeForSession failed",
+        error.message,
+        error
+      );
+      const { data } = await supabaseAuthClient.auth.getSession();
+      if (data.session?.access_token) {
+        markOAuthCodeConsumed(code);
+        if (!options?.skipUrlStrip) {
+          stripOAuthParamsFromBrowserUrl();
+        }
+        cacheUserId(data.session.user.id);
+        return { ok: true };
+      }
+      releaseOAuthCallbackProcessing(code);
+      return { ok: false, error: error.message };
+    }
+
+    markOAuthCodeConsumed(code);
+    if (!options?.skipUrlStrip) {
+      stripOAuthParamsFromBrowserUrl();
+    }
+    return { ok: true };
+  } catch (exchangeError) {
+    console.error("[auth] exchangeCodeForSession threw", exchangeError);
+    releaseOAuthCallbackProcessing(code);
+    return { ok: false, error: "exchange_failed" };
+  }
+}
+
 /** メールリンク（PKCE / token_hash / implicit hash）からセッションを確立 */
 export async function establishSessionFromAuthCallbackUrl(): Promise<{
   ok: boolean;
@@ -316,57 +377,7 @@ export async function establishSessionFromAuthCallbackUrl(): Promise<{
   );
 
   if (code) {
-    if (isOAuthCodeConsumed(code)) {
-      const { data } = await supabaseAuthClient.auth.getSession();
-      if (data.session?.access_token) {
-        cacheUserId(data.session.user.id);
-        return { ok: true };
-      }
-      return { ok: false, error: "code_already_used" };
-    }
-
-    if (!claimOAuthCallbackProcessing(code)) {
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await wait(100);
-        if (isOAuthCodeConsumed(code)) {
-          const { data } = await supabaseAuthClient.auth.getSession();
-          if (data.session?.access_token) {
-            cacheUserId(data.session.user.id);
-            return { ok: true };
-          }
-        }
-      }
-      return { ok: false, error: "callback_in_progress" };
-    }
-
-    try {
-      const { error } =
-        await supabaseAuthClient.auth.exchangeCodeForSession(code);
-      if (error) {
-        console.error(
-          "[auth] exchangeCodeForSession failed",
-          error.message,
-          error
-        );
-        const { data } = await supabaseAuthClient.auth.getSession();
-        if (data.session?.access_token) {
-          markOAuthCodeConsumed(code);
-          stripOAuthParamsFromBrowserUrl();
-          cacheUserId(data.session.user.id);
-          return { ok: true };
-        }
-        releaseOAuthCallbackProcessing(code);
-        return { ok: false, error: error.message };
-      }
-
-      markOAuthCodeConsumed(code);
-      stripOAuthParamsFromBrowserUrl();
-      return { ok: true };
-    } catch (exchangeError) {
-      console.error("[auth] exchangeCodeForSession threw", exchangeError);
-      releaseOAuthCallbackProcessing(code);
-      return { ok: false, error: "exchange_failed" };
-    }
+    return establishSessionFromOAuthCode(code);
   }
 
   const tokenHash = searchParams.get("token_hash");
@@ -413,14 +424,16 @@ let completeAuthCallbackInflightKey: string | null = null;
 
 export async function completeAuthCallback(
   deviceId: string,
-  redirectTo: string
+  redirectTo: string,
+  options?: { oauthCode?: string }
 ): Promise<CompleteAuthCallbackResult> {
   const callbackKey =
-    typeof window !== "undefined"
+    options?.oauthCode ??
+    (typeof window !== "undefined"
       ? readOAuthCodeFromLocation() ??
         new URLSearchParams(window.location.search).get("token_hash") ??
         window.location.href
-      : redirectTo;
+      : redirectTo);
 
   if (
     completeAuthCallbackInflight &&
@@ -433,7 +446,11 @@ export async function completeAuthCallback(
     markAuthCallbackActive();
 
     try {
-      const established = await establishSessionFromAuthCallbackUrl();
+      const established = options?.oauthCode
+        ? await establishSessionFromOAuthCode(options.oauthCode, {
+            skipUrlStrip: true,
+          })
+        : await establishSessionFromAuthCallbackUrl();
       if (!established.ok) {
         return {
           ok: false as const,
@@ -590,16 +607,18 @@ export async function signInWithGoogle(returnTo?: string) {
     );
 
     if (isCapacitorNativeApp()) {
-      const { openCapacitorOAuthBrowser } = await import(
-        "@/lib/capacitorOAuthBrowser"
-      );
-      const opened = await openCapacitorOAuthBrowser(result.data.url);
-      if (!opened) {
+      const browserResult = await openCapacitorOAuthBrowser(result.data.url);
+      if (!browserResult.ok) {
         return {
           ok: false as const,
-          error: "oauth_browser_failed",
-          message: "認証画面を開けませんでした。",
+          error: "oauth_callback_failed",
+          message:
+            browserResult.message ??
+            "ログイン処理に失敗しました。もう一度お試しください。",
         };
+      }
+      if (browserResult.cancelled) {
+        return { ok: true as const, mode: isAnonymous ? ("link" as const) : ("oauth" as const) };
       }
     } else {
       window.location.assign(result.data.url);

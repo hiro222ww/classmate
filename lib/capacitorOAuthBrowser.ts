@@ -2,13 +2,19 @@
 
 import { Capacitor } from "@capacitor/core";
 import {
+  completeNativeOAuthReturn,
   isCapacitorNativeApp,
-  navigateToWebAuthCallback,
 } from "@/lib/capacitorClient";
 import { ClassmateOAuth } from "@/lib/classmateOAuthNative";
 
 let oauthBrowserOpen = false;
 let browserFinishedListenerAttached = false;
+
+export type CapacitorOAuthBrowserResult = {
+  ok: boolean;
+  cancelled?: boolean;
+  message?: string;
+};
 
 function finishOAuthBrowserFlow() {
   oauthBrowserOpen = false;
@@ -27,17 +33,21 @@ function attachBrowserFinishedListener() {
   });
 }
 
-async function openOAuthWithBrowserPlugin(url: string): Promise<boolean> {
+async function openOAuthWithBrowserPlugin(
+  url: string
+): Promise<CapacitorOAuthBrowserResult> {
   const { Browser } = await import("@capacitor/browser");
   attachBrowserFinishedListener();
 
   oauthBrowserOpen = true;
   console.info("[oauth-start] open Capacitor Browser", url);
   await Browser.open({ url });
-  return true;
+  return { ok: true };
 }
 
-async function openOAuthWithNativeSession(url: string): Promise<boolean> {
+async function openOAuthWithNativeSession(
+  url: string
+): Promise<CapacitorOAuthBrowserResult> {
   oauthBrowserOpen = true;
   console.info("[oauth-start] open ASWebAuthenticationSession", url);
 
@@ -47,19 +57,30 @@ async function openOAuthWithNativeSession(url: string): Promise<boolean> {
     if (result.cancelled) {
       console.info("[oauth-return] oauth cancelled by user");
       finishOAuthBrowserFlow();
-      return true;
+      return { ok: true, cancelled: true };
     }
 
     const callbackUrl = String(result.callbackUrl ?? "").trim();
     if (!callbackUrl) {
       finishOAuthBrowserFlow();
-      return false;
+      return {
+        ok: false,
+        message: "認証結果を受け取れませんでした。",
+      };
     }
 
     console.info("[oauth-return] native session callback", callbackUrl);
-    navigateToWebAuthCallback(callbackUrl);
+    const completed = await completeNativeOAuthReturn(callbackUrl);
     finishOAuthBrowserFlow();
-    return true;
+
+    if (!completed) {
+      return {
+        ok: false,
+        message: "ログイン処理に失敗しました。もう一度お試しください。",
+      };
+    }
+
+    return { ok: true };
   } catch (error) {
     finishOAuthBrowserFlow();
     console.error("[oauth-start] native oauth session failed", error);
@@ -68,12 +89,14 @@ async function openOAuthWithNativeSession(url: string): Promise<boolean> {
 }
 
 /** Capacitor 上で Google OAuth を開く（iOS: ASWebAuthenticationSession） */
-export async function openCapacitorOAuthBrowser(url: string): Promise<boolean> {
-  if (!isCapacitorNativeApp()) return false;
+export async function openCapacitorOAuthBrowser(
+  url: string
+): Promise<CapacitorOAuthBrowserResult> {
+  if (!isCapacitorNativeApp()) return { ok: false };
 
   if (oauthBrowserOpen) {
     console.info("[oauth-start] oauth flow already in progress");
-    return true;
+    return { ok: true };
   }
 
   if (Capacitor.getPlatform() === "ios") {

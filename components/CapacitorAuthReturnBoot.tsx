@@ -2,9 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import {
+  completeNativeOAuthReturn,
   isCapacitorNativeApp,
   isNativeAuthCallbackUrl,
-  navigateToWebAuthCallback,
   retryPendingNativeAuthReturn,
 } from "@/lib/capacitorClient";
 import { closeCapacitorOAuthBrowser } from "@/lib/capacitorOAuthBrowser";
@@ -29,7 +29,7 @@ export default function CapacitorAuthReturnBoot() {
       if (!isNativeAuthCallbackUrl(url)) return;
       console.info("[oauth-return] received", source, url);
       void closeCapacitorOAuthBrowser();
-      navigateToWebAuthCallback(url);
+      void completeNativeOAuthReturn(url);
     };
 
     const retryPendingReturn = (source: string) => {
