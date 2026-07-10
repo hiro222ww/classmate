@@ -15,7 +15,14 @@ import {
   normalizeProfileAge,
 } from "@/lib/profileClient";
 import { resolveRequestIdentity } from "@/lib/requestIdentity";
-import { bootstrapUserIdentity } from "@/lib/userIdentityMigration";
+import {
+  bootstrapUserIdentity,
+  resolveUserIdForDevice,
+} from "@/lib/userIdentityMigration";
+import {
+  persistUserProfileRow,
+  resolveProfileConfirmFilter,
+} from "@/lib/userProfilePersistence";
 import { enforceProfileSaveAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 import { getEffectiveAgeMode, getMinorsEnabled } from "@/lib/agePolicy";
 import {
@@ -244,10 +251,19 @@ export async function GET(req: Request) {
 
   if (isSelf) {
     const identity = await resolveRequestIdentity({ req, deviceId: device_id });
-    if (identity.ok && identity.identity.userId) {
+    let userId =
+      identity.ok && identity.identity.userId
+        ? identity.identity.userId
+        : "";
+
+    if (!userId) {
+      userId = (await resolveUserIdForDevice(device_id)) ?? "";
+    }
+
+    if (userId) {
       const byUser = await fetchProfileRowByFilter({
         column: "user_id",
-        value: identity.identity.userId,
+        value: userId,
       });
 
       if (byUser.error) {
@@ -670,64 +686,27 @@ export async function POST(req: Request) {
     ...consentFields,
   };
 
-  const { error: upsertError } = await supabaseAdmin
-    .from("user_profiles")
-    .upsert(payload, { onConflict: "device_id" });
+  const { error: upsertError, writeMode } = await persistUserProfileRow({
+    deviceId: device_id,
+    linkedUserId,
+    existingProfile,
+    payload,
+  });
 
-  if (upsertError && isMissingProfileColumnError(upsertError.message)) {
-    console.warn("[profile][POST] legal columns missing; upserting base fields only", {
-      device_id,
-      message: upsertError.message,
-    });
-
-    const {
-      terms_agreed_at: _t,
-      privacy_agreed_at: _p,
-      guidelines_agreed_at: _g,
-      legal_consent_version: _l,
-      terms_version: _v,
-      ...basePayload
-    } = payload;
-
-    const { error: baseUpsertError } = await supabaseAdmin
-      .from("user_profiles")
-      .upsert(basePayload, { onConflict: "device_id" });
-
-    if (baseUpsertError) {
-      console.log("[profile][POST] base upsert ng", {
-        device_id,
-        message: baseUpsertError.message,
-      });
-
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "profile_upsert_failed",
-          message: baseUpsertError.message,
-        },
-        {
-          status: 500,
-          headers: {
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-          },
-        }
-      );
-    }
-  } else if (upsertError) {
+  if (upsertError) {
     console.log("[profile][POST] upsert ng", {
       device_id,
+      linkedUserId,
+      writeMode,
       payload,
-      message: upsertError.message,
-      details: (upsertError as any)?.details ?? null,
-      hint: (upsertError as any)?.hint ?? null,
-      code: (upsertError as any)?.code ?? null,
+      message: upsertError,
     });
 
     return NextResponse.json(
       {
         ok: false,
         error: "profile_upsert_failed",
-        message: upsertError.message,
+        message: upsertError,
       },
       {
         status: 500,
@@ -738,10 +717,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const confirmResult = await fetchProfileRowByFilter({
-    column: "device_id",
-    value: device_id,
+  const confirmFilter = resolveProfileConfirmFilter({
+    deviceId: device_id,
+    linkedUserId,
+    writeMode,
   });
+  const confirmResult = await fetchProfileRowByFilter(confirmFilter);
   const confirmData = confirmResult.data;
   const confirmError = confirmResult.error;
 

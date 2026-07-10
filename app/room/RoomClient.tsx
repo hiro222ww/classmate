@@ -32,6 +32,7 @@ import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
@@ -1578,7 +1579,10 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       try {
         const res = await fetch(
           `/api/profile?device_id=${encodeURIComponent(deviceId)}`,
-          { cache: "no-store" }
+          {
+            cache: "no-store",
+            headers: await buildDeviceAuthHeaders(deviceId),
+          }
         );
 
         const rawText = await res.text().catch(() => "");

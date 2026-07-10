@@ -316,6 +316,7 @@ export default function SelectClient() {
       const r = await fetch(`/api/profile?device_id=${encodeURIComponent(id)}`, {
         method: "GET",
         cache: "no-store",
+        headers: await buildDeviceAuthHeaders(id),
       });
 
       const rawText = await r.text().catch(() => "");
