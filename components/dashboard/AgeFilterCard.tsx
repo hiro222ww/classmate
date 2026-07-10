@@ -18,6 +18,7 @@ import {
   type MatchPrefs,
 } from "@/components/dashboard/ageFilterConstants";
 import { normalizePrefsAge } from "@/lib/agePolicyRules";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import { CHIP, DASH_CARD } from "@/components/dashboard/dashboardStyles";
 
 type AgeFilterCardProps = {
@@ -73,7 +74,10 @@ export function AgeFilterCard({
       try {
         const r = await fetch("/api/user/match-prefs", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(await buildDeviceAuthHeaders(deviceId)),
+          },
           body: JSON.stringify({
             deviceId,
             minAge: payload.min_age,
@@ -174,7 +178,10 @@ export function AgeFilterCard({
       try {
         const pr = await fetch("/api/user/match-prefs", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(await buildDeviceAuthHeaders(deviceId)),
+          },
           body: JSON.stringify({ deviceId, mode: "get" }),
           cache: "no-store",
         });

@@ -111,6 +111,31 @@ export async function readMatchPrefs(
   return readMatchPrefsForActor(sb, { userId: null, deviceId });
 }
 
+export function resolveMatchPrefsWriteMode(params: {
+  deviceId: string;
+  userId: string | null;
+  existing: MatchPrefsRow | null;
+}):
+  | { type: "device_upsert"; deviceId: string }
+  | { type: "user_update"; userId: string } {
+  const deviceId = String(params.deviceId ?? "").trim();
+  const userId = String(params.userId ?? "").trim();
+  const existingUserId = String(params.existing?.user_id ?? "").trim();
+  const existingDeviceId = String(params.existing?.device_id ?? "").trim();
+
+  if (
+    userId &&
+    isValidUuid(userId) &&
+    existingUserId === userId &&
+    existingDeviceId &&
+    existingDeviceId !== deviceId
+  ) {
+    return { type: "user_update", userId };
+  }
+
+  return { type: "device_upsert", deviceId };
+}
+
 export async function ensureMatchPrefsForActor(
   sb: SupabaseClient,
   actor: ActorLookup,
@@ -119,10 +144,43 @@ export async function ensureMatchPrefsForActor(
   const deviceId = String(actor.deviceId ?? "").trim();
   const userId = String(actor.userId ?? "").trim();
 
+  const min_age = prefs?.min_age ?? MATCH_PREFS_DEFAULT_MIN_AGE;
+  const max_age = prefs?.max_age ?? MATCH_PREFS_DEFAULT_MAX_AGE;
+
+  const existing = await readMatchPrefsForActor(sb, actor);
+  const writeMode = resolveMatchPrefsWriteMode({
+    deviceId,
+    userId: userId || null,
+    existing,
+  });
+
+  if (writeMode.type === "user_update") {
+    const { data, error } = await sb
+      .from("user_match_prefs")
+      .update({
+        min_age,
+        max_age,
+      })
+      .eq("user_id", writeMode.userId)
+      .select("device_id,user_id,min_age,max_age")
+      .single();
+
+    if (error) throw error;
+
+    return {
+      device_id: String(
+        data.device_id ?? existing?.device_id ?? deviceId
+      ),
+      user_id: data.user_id ?? writeMode.userId,
+      min_age: Number(data.min_age ?? min_age),
+      max_age: Number(data.max_age ?? max_age),
+    };
+  }
+
   const payload: Record<string, unknown> = {
     device_id: deviceId,
-    min_age: prefs?.min_age ?? MATCH_PREFS_DEFAULT_MIN_AGE,
-    max_age: prefs?.max_age ?? MATCH_PREFS_DEFAULT_MAX_AGE,
+    min_age,
+    max_age,
   };
 
   if (userId && isValidUuid(userId)) {
@@ -140,8 +198,8 @@ export async function ensureMatchPrefsForActor(
   return {
     device_id: String(data.device_id ?? deviceId),
     user_id: data.user_id ?? (userId || null),
-    min_age: Number(data.min_age ?? MATCH_PREFS_DEFAULT_MIN_AGE),
-    max_age: Number(data.max_age ?? MATCH_PREFS_DEFAULT_MAX_AGE),
+    min_age: Number(data.min_age ?? min_age),
+    max_age: Number(data.max_age ?? max_age),
   };
 }
 
