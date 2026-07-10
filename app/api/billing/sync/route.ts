@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { resolveApiActor } from "@/lib/actorIdentity";
 import { lookupEntitlements } from "@/lib/userIdentityMigration";
 import { resolveBillingCustomer, syncEntitlementsForStripeCustomer } from "@/lib/billingIdentity";
 
@@ -22,12 +22,23 @@ export async function POST(req: Request) {
       );
     }
 
-    const resolvedIdentity = await resolveRequestIdentity({ req, deviceId });
-    const userId = resolvedIdentity.ok ? resolvedIdentity.identity.userId : null;
+    const actorResult = await resolveApiActor({ req, deviceId });
+    if (!actorResult.ok) {
+      return NextResponse.json(
+        { ok: false, error: actorResult.error, message: actorResult.message },
+        { status: actorResult.status }
+      );
+    }
+
+    const userId = actorResult.actor.userId || null;
+    const actorDeviceId = actorResult.actor.deviceId;
 
     let currentEnt = null;
     try {
-      currentEnt = await lookupEntitlements({ userId, deviceId });
+      currentEnt = await lookupEntitlements({
+        userId,
+        deviceId: actorDeviceId,
+      });
     } catch (lookupError: any) {
       return NextResponse.json(
         { ok: false, error: "db_error", detail: lookupError.message },
@@ -52,7 +63,7 @@ export async function POST(req: Request) {
 
     const customer = await resolveBillingCustomer({
       userId,
-      deviceId,
+      deviceId: actorDeviceId,
     });
     const customerId = customer?.stripe_customer_id ?? null;
 
@@ -71,11 +82,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const ent = await lookupEntitlements({ userId, deviceId });
+    const ent = await lookupEntitlements({
+      userId,
+      deviceId: actorDeviceId,
+    });
 
     return NextResponse.json({
       ok: true,
-      deviceId,
+      deviceId: actorDeviceId,
       userId,
       customerId,
       entitlements: ent,

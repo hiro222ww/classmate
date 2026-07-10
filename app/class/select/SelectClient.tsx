@@ -27,6 +27,7 @@ import {
 import { isJoinAllowedDeviceId, isLegacyStoredDeviceId } from "@/lib/deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
+import { bootstrapAuthSession } from "@/lib/authClient";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
 import { HelpTip } from "@/components/HelpTip";
@@ -393,7 +394,7 @@ export default function SelectClient() {
   async function fetchEntitlements(id: string) {
     const er = await fetch("/api/user/entitlements", {
       method: "GET",
-      headers: { "x-device-id": id },
+      headers: await buildDeviceAuthHeaders(id),
       cache: "no-store",
     });
     const ej = await readJsonOrThrow(er, "entitlements");
@@ -427,7 +428,7 @@ export default function SelectClient() {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-device-id": id,
+        ...(await buildDeviceAuthHeaders(id)),
       },
       body: JSON.stringify({ deviceId: id }),
       cache: "no-store",
@@ -458,7 +459,10 @@ export default function SelectClient() {
     try {
       const r = await fetch(
         `/api/class/mine?deviceId=${encodeURIComponent(normalized)}&lite=1`,
-        { cache: "no-store" }
+        {
+          cache: "no-store",
+          headers: await buildDeviceAuthHeaders(normalized),
+        }
       );
       const j = await r.json().catch(() => null);
       if (r.ok && j?.ok && Array.isArray(j.classes)) {
@@ -478,7 +482,7 @@ export default function SelectClient() {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-device-id": id,
+        ...(await buildDeviceAuthHeaders(id)),
       },
       body: JSON.stringify({ session_id: sessionId, deviceId: id }),
       cache: "no-store",
@@ -542,6 +546,10 @@ export default function SelectClient() {
           deviceId: id,
           dev,
         });
+
+        if (deviceValid) {
+          await bootstrapAuthSession(id);
+        }
 
         await fetchProfile(id);
         if (!alive) return;

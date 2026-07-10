@@ -1,6 +1,6 @@
 // app/api/user/entitlements/route.ts
 import { NextResponse } from "next/server";
-import { resolveRequestIdentity } from "@/lib/requestIdentity";
+import { resolveApiActor } from "@/lib/actorIdentity";
 import { lookupEntitlements } from "@/lib/userIdentityMigration";
 import { pickDeviceIdFromRequest } from "@/lib/userIdentity";
 
@@ -11,15 +11,25 @@ async function handle(req: Request, bodyDeviceId?: string) {
     return NextResponse.json({ error: "device_id_missing" }, { status: 400 });
   }
 
-  const resolved = await resolveRequestIdentity({ req, deviceId });
-  const userId = resolved.ok ? resolved.identity.userId : "";
+  const actorResult = await resolveApiActor({ req, deviceId });
+  if (!actorResult.ok) {
+    return NextResponse.json(
+      { error: actorResult.error, message: actorResult.message },
+      { status: actorResult.status }
+    );
+  }
+
+  const { userId, deviceId: actorDeviceId } = actorResult.actor;
 
   try {
-    const data = await lookupEntitlements({ userId, deviceId });
+    const data = await lookupEntitlements({
+      userId,
+      deviceId: actorDeviceId,
+    });
 
     if (!data) {
       return NextResponse.json({
-        device_id: deviceId,
+        device_id: actorDeviceId,
         user_id: userId || null,
         plan: "free",
         class_slots: 1,
