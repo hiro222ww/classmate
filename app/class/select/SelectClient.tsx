@@ -28,7 +28,7 @@ import { isJoinAllowedDeviceId, isLegacyStoredDeviceId } from "@/lib/deviceIdVal
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
-import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
 import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
 import { DashboardStatusBar } from "@/components/dashboard/DashboardStatusBar";
@@ -1046,9 +1046,17 @@ export default function SelectClient() {
   const debugDisplayName = profile?.display_name ?? "-";
   const showJoinedClassesCard =
     joinedClassesLoading || joinedClassCount > 0;
+  const isApp = isAppShellContext();
 
   return (
-    <main style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }}>
+    <main
+      className={isApp ? "app-immersive-inner" : undefined}
+      style={
+        isApp
+          ? { color: "#111" }
+          : { padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }
+      }
+    >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
       <DashboardPageHeader>
         <DashboardHeaderNav

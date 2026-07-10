@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import React from "react";
+import { isAppShellContext, resolveShellDashboardPath } from "@/lib/appShellContext";
+import { withDev } from "@/lib/withDev";
 
 type Props = {
   title: string;
@@ -19,6 +21,19 @@ type Props = {
   returnTo?: string;
 };
 
+const WEB_GHOST_BTN: React.CSSProperties = {
+  display: "inline-block",
+  padding: "8px 10px",
+  borderRadius: 10,
+  background: "#f2f2f2",
+  color: "#111",
+  textDecoration: "none",
+  fontWeight: 900,
+  fontSize: 13,
+  border: "none",
+  cursor: "pointer",
+};
+
 export function ChalkboardRoomShell({
   title,
   subtitle,
@@ -31,39 +46,48 @@ export function ChalkboardRoomShell({
   startDisabled = false,
   startLabel = "通話を開始",
 }: Props) {
+  const isApp = isAppShellContext();
   const subtitleText = String(subtitle ?? "").trim();
   const boardTitle = subtitleText ? `${title} (${subtitleText})` : title;
 
-  const moveHref = "/class/select";
-  const homeHref = "/";
+  const moveHref = withDev("/class/select");
+  const homeHref = withDev(
+    isApp ? resolveShellDashboardPath() : "/"
+  );
+  const ghostBtnClass = "app-shell-btn app-shell-btn--ghost";
+  const primaryBtnClass = "app-shell-btn app-shell-btn--primary";
 
   return (
-    <main style={{ padding: 16, maxWidth: 980, margin: "0 auto" }}>
+    <main
+      className={
+        isApp ? "app-immersive-inner app-immersive-inner--wide" : undefined
+      }
+      style={
+        isApp
+          ? undefined
+          : { padding: 16, maxWidth: 980, margin: "0 auto" }
+      }
+    >
       <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          gap: 10,
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
+        className={isApp ? "app-immersive-toolbar" : undefined}
+        style={
+          isApp
+            ? undefined
+            : {
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }
+        }
       >
         {onBack ? (
           <button
             type="button"
             onClick={onBack}
-            style={{
-              display: "inline-block",
-              padding: "8px 10px",
-              borderRadius: 10,
-              background: "#f2f2f2",
-              color: "#111",
-              textDecoration: "none",
-              fontWeight: 900,
-              fontSize: 13,
-              border: "none",
-              cursor: "pointer",
-            }}
+            className={isApp ? ghostBtnClass : undefined}
+            style={isApp ? undefined : WEB_GHOST_BTN}
           >
             戻る
           </button>
@@ -74,19 +98,18 @@ export function ChalkboardRoomShell({
             type="button"
             onClick={onStartCall}
             disabled={startDisabled}
-            style={{
-              display: "inline-block",
-              padding: "8px 10px",
-              borderRadius: 10,
-              background: startDisabled ? "#d1d5db" : "#2563eb",
-              color: "#fff",
-              textDecoration: "none",
-              fontWeight: 900,
-              fontSize: 13,
-              border: "none",
-              cursor: startDisabled ? "not-allowed" : "pointer",
-              opacity: startDisabled ? 0.7 : 1,
-            }}
+            className={isApp ? primaryBtnClass : undefined}
+            style={
+              isApp
+                ? undefined
+                : {
+                    ...WEB_GHOST_BTN,
+                    background: startDisabled ? "#d1d5db" : "#2563eb",
+                    color: "#fff",
+                    cursor: startDisabled ? "not-allowed" : "pointer",
+                    opacity: startDisabled ? 0.7 : 1,
+                  }
+            }
           >
             {startLabel}
           </button>
@@ -94,16 +117,8 @@ export function ChalkboardRoomShell({
 
         <Link
           href={moveHref}
-          style={{
-            display: "inline-block",
-            padding: "8px 10px",
-            borderRadius: 10,
-            background: "#f2f2f2",
-            color: "#111",
-            textDecoration: "none",
-            fontWeight: 900,
-            fontSize: 13,
-          }}
+          className={isApp ? ghostBtnClass : undefined}
+          style={isApp ? undefined : WEB_GHOST_BTN}
         >
           移動
         </Link>
@@ -112,34 +127,16 @@ export function ChalkboardRoomShell({
           <button
             type="button"
             onClick={onHome}
-            style={{
-              display: "inline-block",
-              padding: "8px 10px",
-              borderRadius: 10,
-              background: "#f2f2f2",
-              color: "#111",
-              textDecoration: "none",
-              fontWeight: 900,
-              fontSize: 13,
-              border: "none",
-              cursor: "pointer",
-            }}
+            className={isApp ? ghostBtnClass : undefined}
+            style={isApp ? undefined : WEB_GHOST_BTN}
           >
             ホーム
           </button>
         ) : (
           <Link
             href={homeHref}
-            style={{
-              display: "inline-block",
-              padding: "8px 10px",
-              borderRadius: 10,
-              background: "#f2f2f2",
-              color: "#111",
-              textDecoration: "none",
-              fontWeight: 900,
-              fontSize: 13,
-            }}
+            className={isApp ? ghostBtnClass : undefined}
+            style={isApp ? undefined : WEB_GHOST_BTN}
           >
             ホーム
           </Link>
@@ -150,15 +147,20 @@ export function ChalkboardRoomShell({
 
       <div style={{ marginTop: 8 }}>
         <div
-          style={{
-            borderRadius: 18,
-            padding: "14px 18px",
-            background: "#0f2b1d",
-            color: "#e9fff2",
-            border: "1px solid rgba(255,255,255,0.12)",
-            boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
-            width: "100%",
-          }}
+          className={isApp ? "app-immersive-board" : undefined}
+          style={
+            isApp
+              ? undefined
+              : {
+                  borderRadius: 18,
+                  padding: "14px 18px",
+                  background: "#0f2b1d",
+                  color: "#e9fff2",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+                  width: "100%",
+                }
+          }
         >
           <div
             style={{
@@ -169,17 +171,24 @@ export function ChalkboardRoomShell({
             }}
           >
             <div
-              style={{
-                fontSize: 18,
-                fontWeight: 900,
-                letterSpacing: 0.2,
-                lineHeight: 1.3,
-              }}
+              className={isApp ? "app-immersive-board-title" : undefined}
+              style={
+                isApp
+                  ? undefined
+                  : {
+                      fontSize: 18,
+                      fontWeight: 900,
+                      letterSpacing: 0.2,
+                      lineHeight: 1.3,
+                    }
+              }
             >
               {boardTitle}
             </div>
 
-            <div style={{ fontSize: 11, opacity: 0.8 }}>board</div>
+            {!isApp ? (
+              <div style={{ fontSize: 11, opacity: 0.8 }}>board</div>
+            ) : null}
           </div>
 
           <div style={{ marginTop: 10, display: "grid", gap: 6 }}>

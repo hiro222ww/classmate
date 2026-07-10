@@ -5,6 +5,7 @@ import {
   detectInAppBrowser,
   IN_APP_BROWSER_NOTICE_SHORT,
 } from "@/lib/inAppBrowser";
+import { isCapacitorNativeApp } from "@/lib/capacitorClient";
 import { HelpTip } from "@/components/HelpTip";
 
 type InAppBrowserNoticeProps = {
@@ -13,8 +14,9 @@ type InAppBrowserNoticeProps = {
 
 export function InAppBrowserNotice({ compact = false }: InAppBrowserNoticeProps) {
   const detection = useMemo(() => detectInAppBrowser(), []);
+  const isNativeApp = isCapacitorNativeApp();
 
-  if (!detection.detected || detection.platform === "desktop") {
+  if (isNativeApp || !detection.detected || detection.platform === "desktop") {
     return null;
   }
 

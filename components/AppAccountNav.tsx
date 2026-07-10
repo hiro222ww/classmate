@@ -12,6 +12,8 @@ import { bootstrapAuthSession, fetchAuthStatus } from "@/lib/authClient";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { getDeviceId } from "@/lib/device";
 import { isAppShellPath } from "@/lib/appShell";
+import { isAppShellContext } from "@/lib/appShellContext";
+import { isImmersiveShellPath } from "@/lib/immersiveShellPaths";
 import {
   buildShellAwareLoginUrl,
   buildShellAwareSettingsUrl,
@@ -32,6 +34,7 @@ const DASHBOARD_HEADER_PATHS = new Set(["/", "/class/select"]);
 
 function shouldHideNav(pathname: string) {
   if (isAppShellPath(pathname)) return true;
+  if (isAppShellContext() && isImmersiveShellPath(pathname)) return true;
   if (HIDDEN_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
     return true;
   }

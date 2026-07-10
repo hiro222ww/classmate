@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { buildShellAwareLoginUrl, buildShellAwareSettingsUrl } from "@/lib/appShellNavigation";
+import { isAppShellContext } from "@/lib/appShellContext";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
@@ -30,6 +31,7 @@ export function DashboardHeaderNav({
 }: Props) {
   const { ready, loggedIn, accountLabel, adminAuthenticated } =
     useDashboardAccountStatus(deviceId);
+  const hideWebPush = isAppShellContext();
 
   const accountHref = loggedIn
     ? withDev(buildShellAwareSettingsUrl())
@@ -45,7 +47,7 @@ export function DashboardHeaderNav({
         justifyContent: "flex-end",
       }}
     >
-      {onToggleNotifications ? (
+      {onToggleNotifications && !hideWebPush ? (
         <PushNotificationBell
           enabled={notificationsEnabled}
           busy={notificationsBusy}

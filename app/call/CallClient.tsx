@@ -27,7 +27,7 @@ import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
-import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
@@ -2817,7 +2817,18 @@ export default function CallClient() {
   ]);
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+    <main
+      className={
+        isAppShellContext()
+          ? "app-immersive-inner app-immersive-inner--wide"
+          : undefined
+      }
+      style={
+        isAppShellContext()
+          ? undefined
+          : { maxWidth: 1100, margin: "0 auto", padding: 16 }
+      }
+    >
       {voiceLayerActive ? (
         <CallVoiceLayer
           sessionId={sessionId}
@@ -2865,19 +2876,40 @@ export default function CallClient() {
       ) : null}
 
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
+        className={
+          isAppShellContext() ? "app-immersive-call-header" : undefined
+        }
+        style={
+          isAppShellContext()
+            ? undefined
+            : {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+              }
+        }
       >
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>
+          <h1
+            className={isAppShellContext() ? "app-shell-title" : undefined}
+            style={
+              isAppShellContext()
+                ? undefined
+                : { fontSize: 24, fontWeight: 900, margin: 0 }
+            }
+          >
             通話ルーム
           </h1>
-          <div style={{ marginTop: 6, fontSize: 13, color: "#666" }}>
+          <div
+            className={isAppShellContext() ? "app-shell-subtitle" : undefined}
+            style={
+              isAppShellContext()
+                ? undefined
+                : { marginTop: 6, fontSize: 13, color: "#666" }
+            }
+          >
             参加人数 {filled}/{capacity}
           </div>
           {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
@@ -2915,25 +2947,44 @@ export default function CallClient() {
           ) : null}
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div
+          className={
+            isAppShellContext() ? "app-immersive-call-actions" : undefined
+          }
+          style={
+            isAppShellContext()
+              ? undefined
+              : { display: "flex", gap: 8, flexWrap: "wrap" }
+          }
+        >
           <button
             type="button"
             onClick={() => router.push(profileEditHref)}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: "#fff",
-              color: "#374151",
-              fontWeight: 900,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
+            className={
+              isAppShellContext() ? "app-shell-btn app-shell-btn--ghost" : undefined
+            }
+            style={
+              isAppShellContext()
+                ? undefined
+                : {
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #d1d5db",
+                    background: "#fff",
+                    color: "#374151",
+                    fontWeight: 900,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }
+            }
           >
             プロフィール編集
           </button>
 
           <button
+            className={
+              isAppShellContext() ? "app-shell-btn app-shell-btn--primary" : undefined
+            }
             onClick={async () => {
               if (!sessionId || !classId) {
                 alert("まだ招待リンクを作れません。");
@@ -2955,32 +3006,57 @@ export default function CallClient() {
                 );
               }
             }}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid #111827",
-              background: "#111827",
-              color: "#fff",
-              fontWeight: 900,
-              fontSize: 13,
-              cursor: "pointer",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-            }}
+            style={
+              isAppShellContext()
+                ? undefined
+                : {
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #111827",
+                    background: "#111827",
+                    color: "#fff",
+                    fontWeight: 900,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                  }
+            }
           >
             友達を招待
           </button>
 
+          {isAppShellContext() ? (
+            <button
+              type="button"
+              className="app-shell-btn app-shell-btn--ghost"
+              onClick={() => {
+                logNavigationIntent("return_home", "CallClient.home_button");
+                router.push(withDev(resolveShellDashboardPath()));
+              }}
+            >
+              ホーム
+            </button>
+          ) : null}
+
           <button
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid #e5e7eb",
-              background: "#fff",
-              color: "#374151",
-              fontWeight: 900,
-              fontSize: 13,
-              cursor: "pointer",
-            }}
+            type="button"
+            className={
+              isAppShellContext() ? "app-shell-btn app-shell-btn--danger" : undefined
+            }
+            style={
+              isAppShellContext()
+                ? undefined
+                : {
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    border: "1px solid #e5e7eb",
+                    background: "#fff",
+                    color: "#374151",
+                    fontWeight: 900,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }
+            }
             onClick={() => {
               const roomHref = withDev(
                 `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +

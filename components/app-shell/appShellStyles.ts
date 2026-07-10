@@ -288,3 +288,140 @@ export const APP_SHELL_LAYOUT_CSS = `
     line-height: 1.6;
   }
 `;
+
+/** /room・/call など Capacitor アプリ内の没入 UI */
+export const APP_IMMERSIVE_LAYOUT_CSS = `
+  body > footer {
+    display: none !important;
+  }
+
+  .app-immersive {
+    min-height: 100dvh;
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 38%);
+    color: #0f172a;
+  }
+
+  .app-immersive-inner {
+    width: min(100%, 720px);
+    margin: 0 auto;
+    padding:
+      max(10px, env(safe-area-inset-top, 0px))
+      max(14px, env(safe-area-inset-right, 0px))
+      max(20px, env(safe-area-inset-bottom, 0px))
+      max(14px, env(safe-area-inset-left, 0px));
+  }
+
+  .app-immersive-inner--wide {
+    width: min(100%, 980px);
+  }
+
+  .app-immersive-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+
+  .app-immersive-board {
+    border-radius: 20px;
+    padding: 16px 18px;
+    background: #0f2b1d;
+    color: #e9fff2;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  .app-immersive-board-title {
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    line-height: 1.35;
+  }
+
+  .app-immersive-call-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+
+  .app-immersive-call-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .app-shell-title {
+    margin: 0;
+    font-size: clamp(24px, 5vw, 30px);
+    font-weight: 900;
+    letter-spacing: -0.02em;
+  }
+
+  .app-shell-subtitle {
+    margin: 6px 0 0;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .app-shell-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 52px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 800;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .app-shell-btn:active:not(:disabled) {
+    background: #f1f5f9;
+  }
+
+  .app-shell-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .app-shell-btn--primary {
+    background: #0f172a;
+    border-color: #0f172a;
+    color: #fff;
+  }
+
+  .app-shell-btn--primary:active:not(:disabled) {
+    background: #1e293b;
+  }
+
+  .app-shell-btn--ghost {
+    background: #f8fafc;
+  }
+
+  .app-shell-btn--danger {
+    border-color: #fecaca;
+    background: #fff;
+    color: #b91c1c;
+  }
+
+  .app-immersive .app-immersive-toolbar .app-shell-btn,
+  .app-immersive .app-immersive-call-actions .app-shell-btn {
+    min-height: 40px;
+    padding: 8px 12px;
+    font-size: 14px;
+    border-radius: 12px;
+  }
+`;

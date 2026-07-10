@@ -31,7 +31,7 @@ import {
 import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
-import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
@@ -3964,7 +3964,12 @@ const name = rawName === "You" ? "参加者" : rawName;
                       ? ["通話を開始できます。"]
                       : []
           }
-          onBack={() => router.push(withDev("/class/select"))}
+          onBack={() => {
+            const backPath = isAppShellContext()
+              ? resolveShellDashboardPath()
+              : "/class/select";
+            router.push(withDev(backPath));
+          }}
           onHome={goHome}
           onStartCall={() => {
             const blockReason = isCallStartBlocked();
