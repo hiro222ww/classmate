@@ -9,15 +9,38 @@ import {
   fetchAuthStatus,
 } from "@/lib/authClient";
 import { accountStatusLabel, isLoggedInAccount } from "@/lib/authAccount";
-import { APP_HOME } from "@/lib/appShell";
 import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
-import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
-import { fetchSelfProfile } from "@/lib/fetchCurrentClass";
+import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { openJoinedClassFromSnapshot } from "@/lib/openJoinedClassClient";
+import type { CurrentClassSnapshot } from "@/lib/currentClassTypes";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { withDev } from "@/lib/withDev";
 import AppShellPage from "@/components/app-shell/AppShellPage";
 import AppShellSection from "@/components/app-shell/AppShellSection";
+
+type JoinedClassRow = {
+  classId: string;
+  name: string;
+  topicKey: string | null;
+  worldKey: string | null;
+  topicTitle: string | null;
+  statusLabel: string;
+  sessionId: string | null;
+  joinedAt: string | null;
+};
+
+function toSnapshot(row: JoinedClassRow): CurrentClassSnapshot {
+  return {
+    classId: row.classId,
+    name: row.name,
+    topicKey: row.topicKey,
+    worldKey: row.worldKey,
+    topicTitle: row.topicTitle,
+    statusLabel: row.statusLabel,
+    sessionId: row.sessionId,
+    joinedAt: row.joinedAt,
+  };
+}
 
 export default function AppHomeClient() {
   const router = useRouter();
@@ -26,23 +49,60 @@ export default function AppHomeClient() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [hasProfile, setHasProfile] = useState(false);
   const [ready, setReady] = useState(false);
-  const [opening, setOpening] = useState(false);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [joinedClasses, setJoinedClasses] = useState<JoinedClassRow[]>([]);
+  const [openingClassId, setOpeningClassId] = useState("");
   const [openError, setOpenError] = useState("");
 
-  const {
-    loading: currentClassLoading,
-    current: currentClass,
-    hasMembership,
-    refresh: refreshCurrentClass,
-  } = useCurrentClass(deviceId);
+  async function loadJoinedClasses(id: string) {
+    setClassesLoading(true);
+    setOpenError("");
+    try {
+      const qs = new URLSearchParams({ deviceId: id, lite: "1" });
+      const res = await fetch(`/api/class/mine?${qs.toString()}`, {
+        cache: "no-store",
+        headers: await buildDeviceAuthHeaders(id),
+      });
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || !json?.ok || !Array.isArray(json.classes)) {
+        setJoinedClasses([]);
+        return;
+      }
+
+      const next: JoinedClassRow[] = json.classes
+        .map((row: Record<string, unknown>) => {
+          const classId = String(row.class_id ?? row.id ?? "").trim();
+          if (!classId) return null;
+          return {
+            classId,
+            name: String(row.name ?? "").trim() || "所属クラス",
+            topicKey: String(row.topic_key ?? "").trim() || null,
+            worldKey: String(row.world_key ?? "").trim() || null,
+            topicTitle: String(row.topic_title ?? "").trim() || null,
+            statusLabel: String(row.status_label ?? "").trim() || "所属中",
+            sessionId: String(row.session_id ?? "").trim() || null,
+            joinedAt: null,
+          } satisfies JoinedClassRow;
+        })
+        .filter(Boolean) as JoinedClassRow[];
+
+      setJoinedClasses(next);
+    } catch {
+      setJoinedClasses([]);
+    } finally {
+      setClassesLoading(false);
+    }
+  }
 
   useEffect(() => {
-    const id = getDeviceId();
-    setDeviceId(id);
-
     void (async () => {
+      const id = getDeviceId();
+      setDeviceId(id);
+
       if (!id) {
         setReady(true);
+        setClassesLoading(false);
         return;
       }
 
@@ -65,27 +125,29 @@ export default function AppHomeClient() {
       const name = String(profile.profile?.display_name ?? "").trim();
       setHasProfile(Boolean(name));
       setReady(true);
+      await loadJoinedClasses(id);
     })();
   }, []);
 
   const returnPath = "/app/home";
+  const hasMembership = joinedClasses.length > 0;
 
-  async function onEnterClass() {
-    if (!currentClass || opening) return;
+  async function onEnterClass(row: JoinedClassRow) {
+    if (openingClassId) return;
 
-    setOpening(true);
+    setOpeningClassId(row.classId);
     setOpenError("");
 
     const id = String(deviceId || getDeviceId()).trim();
     if (!id) {
       setOpenError("端末情報を取得できませんでした。");
-      setOpening(false);
+      setOpeningClassId("");
       return;
     }
 
     const result = await openJoinedClassFromSnapshot({
       deviceId: id,
-      current: currentClass,
+      current: toSnapshot(row),
       withDev,
     });
 
@@ -95,8 +157,8 @@ export default function AppHomeClient() {
     }
 
     setOpenError(result.message);
-    void refreshCurrentClass();
-    setOpening(false);
+    void loadJoinedClasses(id);
+    setOpeningClassId("");
   }
 
   return (
@@ -124,34 +186,47 @@ export default function AppHomeClient() {
       ) : null}
 
       <div className="app-shell-home-layout">
-        <AppShellSection title="今のクラス">
-          {currentClassLoading ? (
+        <AppShellSection title="所属クラス">
+          {classesLoading ? (
             <p className="app-shell-muted" style={{ margin: 0 }}>
               読み込み中…
             </p>
-          ) : hasMembership && currentClass ? (
+          ) : hasMembership ? (
             <div style={{ display: "grid", gap: 12 }}>
-              <p style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>
-                {currentClass.name || "参加中のクラス"}
-              </p>
-              {currentClass.topicTitle ? (
-                <p className="app-shell-muted" style={{ margin: 0 }}>
-                  {currentClass.topicTitle}
-                </p>
-              ) : null}
-              {currentClass.statusLabel ? (
-                <p className="app-shell-muted" style={{ margin: 0 }}>
-                  {currentClass.statusLabel}
-                </p>
-              ) : null}
-              <button
-                type="button"
-                className="app-shell-btn app-shell-btn--primary"
-                disabled={opening}
-                onClick={() => void onEnterClass()}
-              >
-                {opening ? "入室中…" : "クラスに戻る"}
-              </button>
+              {joinedClasses.map((row) => {
+                const opening = openingClassId === row.classId;
+                return (
+                  <div
+                    key={row.classId}
+                    className="app-shell-info-box"
+                    style={{ display: "grid", gap: 10 }}
+                  >
+                    <div>
+                      <p style={{ margin: 0, fontSize: 20, fontWeight: 900 }}>
+                        {row.name}
+                      </p>
+                      {row.topicTitle ? (
+                        <p className="app-shell-muted" style={{ margin: "6px 0 0" }}>
+                          {row.topicTitle}
+                        </p>
+                      ) : null}
+                      {row.statusLabel ? (
+                        <p className="app-shell-muted" style={{ margin: "4px 0 0" }}>
+                          {row.statusLabel}
+                        </p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="app-shell-btn app-shell-btn--primary"
+                      disabled={Boolean(openingClassId)}
+                      onClick={() => void onEnterClass(row)}
+                    >
+                      {opening ? "入室中…" : "クラスに戻る"}
+                    </button>
+                  </div>
+                );
+              })}
               {openError ? (
                 <p className="app-shell-error" style={{ margin: 0 }}>
                   {openError}

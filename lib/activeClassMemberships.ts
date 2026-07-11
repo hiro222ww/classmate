@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isBillableClassName, isLegacyEntryClassName } from "@/lib/legacyClassNames";
 import type { ActorLookup } from "@/lib/actorIdentity";
-import { membershipFilterForActor } from "@/lib/actorIdentity";
 import { isValidUuid } from "@/lib/userIdentity";
 
 export type ActiveClassMembershipRow = {
@@ -79,35 +78,82 @@ export async function fetchActiveClassMembershipsForActor(
   | { ok: true; rows: ActiveClassMembershipRow[] }
   | { ok: false; error: string }
 > {
-  const filter = membershipFilterForActor(actor);
   const normalizedDeviceId = String(actor.deviceId ?? "").trim();
+  const userId = String(actor.userId ?? "").trim();
 
-  if (!filter.value) {
+  if (!normalizedDeviceId && !(userId && isValidUuid(userId))) {
     return { ok: false, error: "device_id_missing" };
   }
 
-  let query = sb.from("class_memberships").select("class_id, joined_at");
+  type MembershipLite = { class_id?: unknown; joined_at?: unknown };
+  const membershipRows: MembershipLite[] = [];
+  const seenClassIds = new Set<string>();
 
-  if (filter.column === "user_id") {
-    query = query.eq("user_id", filter.value);
-  } else {
-    query = query.eq("device_id", filter.value);
+  const appendRows = (rows: MembershipLite[] | null | undefined) => {
+    for (const row of rows ?? []) {
+      const classId = String(row.class_id ?? "").trim();
+      if (!classId || seenClassIds.has(classId)) continue;
+      seenClassIds.add(classId);
+      membershipRows.push(row);
+    }
+  };
+
+  if (userId && isValidUuid(userId)) {
+    const { data, error } = await sb
+      .from("class_memberships")
+      .select("class_id, joined_at")
+      .eq("user_id", userId);
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    appendRows(data as MembershipLite[] | null);
+
+    const { data: linkedDevices, error: linkedError } = await sb
+      .from("user_devices")
+      .select("device_id")
+      .eq("user_id", userId);
+
+    if (linkedError) {
+      return { ok: false, error: linkedError.message };
+    }
+
+    const linkedDeviceIds = Array.from(
+      new Set(
+        [
+          normalizedDeviceId,
+          ...(linkedDevices ?? []).map((row) =>
+            String((row as { device_id?: unknown }).device_id ?? "").trim()
+          ),
+        ].filter(Boolean)
+      )
+    );
+
+    if (linkedDeviceIds.length > 0) {
+      const { data: byDevices, error: byDevicesError } = await sb
+        .from("class_memberships")
+        .select("class_id, joined_at")
+        .in("device_id", linkedDeviceIds)
+        .is("user_id", null);
+
+      if (byDevicesError) {
+        return { ok: false, error: byDevicesError.message };
+      }
+      appendRows(byDevices as MembershipLite[] | null);
+    }
+  } else if (normalizedDeviceId) {
+    const { data, error } = await sb
+      .from("class_memberships")
+      .select("class_id, joined_at")
+      .eq("device_id", normalizedDeviceId);
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    appendRows(data as MembershipLite[] | null);
   }
 
-  const { data, error } = await query;
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
-  const membershipRows = data ?? [];
-  const classIds = Array.from(
-    new Set(
-      membershipRows
-        .map((row) => String((row as { class_id?: unknown }).class_id ?? "").trim())
-        .filter(Boolean)
-    )
-  );
+  const classIds = Array.from(seenClassIds);
 
   if (classIds.length === 0) {
     return { ok: true, rows: [] };
@@ -133,11 +179,11 @@ export async function fetchActiveClassMembershipsForActor(
 
   const joinedAtByClass = new Map<string, string | null>();
   for (const row of membershipRows) {
-    const classId = String((row as { class_id?: unknown }).class_id ?? "").trim();
+    const classId = String(row.class_id ?? "").trim();
     if (!classId) continue;
     joinedAtByClass.set(
       classId,
-      String((row as { joined_at?: unknown }).joined_at ?? "").trim() || null
+      String(row.joined_at ?? "").trim() || null
     );
   }
 
