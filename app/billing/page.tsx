@@ -5,15 +5,18 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { BillingSupportSection } from "@/components/BillingSupportSection";
 import { BillingNoticeTip } from "@/components/BillingNoticeTip";
+import BillingPageShell from "@/components/billing/BillingPageShell";
 import { HelpTip } from "@/components/HelpTip";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { resolveAuthRedirectTo } from "@/lib/appShellNavigation";
+import { isAppShellContext } from "@/lib/appShellContext";
 import { withDev } from "@/lib/withDev";
 import { useRequireAccount } from "@/components/useRequireAccount";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import AppShellSection from "@/components/app-shell/AppShellSection";
 
 type PortalAction =
   | "update_theme"
@@ -26,8 +29,13 @@ function BillingPageInner() {
   const searchParams = useSearchParams();
   const dev = (searchParams.get("dev") ?? "").trim();
   const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
+  const returnTo = searchParams.get("returnTo");
+  const returnQuery = returnTo
+    ? `${devQuery ? `${devQuery}&` : "?"}returnTo=${encodeURIComponent(returnTo)}`
+    : devQuery;
   const { ready, loggedIn } = useRequireAccount("/billing");
   const { copy } = useBillingCopy();
+  const isApp = isAppShellContext();
 
   const [loadingKey, setLoadingKey] = useState("");
 
@@ -58,7 +66,7 @@ function BillingPageInner() {
 
         if (errMsg === "customer_not_found") {
           alert("まだ契約がありません。プランを選択してください。");
-          window.location.href = `/premium${devQuery}`;
+          window.location.href = withDev(`/premium${returnQuery}`);
           return;
         }
 
@@ -104,6 +112,35 @@ function BillingPageInner() {
     updateLabel: string;
     cancelLabel: string;
   }) {
+    if (isApp) {
+      return (
+        <AppShellSection title={params.title}>
+          <div style={{ display: "grid", gap: 10 }}>
+            <button
+              type="button"
+              disabled={loading}
+              className="app-shell-btn app-shell-btn--primary"
+              onClick={() => void openBillingPortal(params.updateAction)}
+            >
+              {loadingKey === params.updateAction
+                ? "開いています…"
+                : params.updateLabel}
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              className="app-shell-btn app-shell-btn--danger"
+              onClick={() => void openBillingPortal(params.cancelAction)}
+            >
+              {loadingKey === params.cancelAction
+                ? "開いています…"
+                : params.cancelLabel}
+            </button>
+          </div>
+        </AppShellSection>
+      );
+    }
+
     return (
       <section
         style={{
@@ -163,67 +200,45 @@ function BillingPageInner() {
   }
 
   if (!ready || !loggedIn) {
-    return <main style={{ padding: 24 }}>読み込み中…</main>;
+    return (
+      <main
+        className={isApp ? "app-immersive-inner" : undefined}
+        style={isApp ? undefined : { padding: 24 }}
+      >
+        読み込み中…
+      </main>
+    );
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 760,
-        margin: "0 auto",
-        padding: "32px 16px",
-        color: "#111",
-        display: "grid",
-        gap: 18,
-      }}
-    >
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          alignItems: "flex-start",
-          flexWrap: "wrap",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <h1 style={{ margin: "0", fontSize: 28, fontWeight: 900 }}>
-              お支払い管理
-            </h1>
-            <HelpTip
-              label={copy.billingPage.titleHelpLabel}
-              content={copy.billingPage.titleHelp}
-            />
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <BillingNoticeTip />
-          </div>
-        </div>
-
+    <BillingPageShell
+      title="お支払い管理"
+      titleAside={
+        <HelpTip
+          label={copy.billingPage.titleHelpLabel}
+          content={copy.billingPage.titleHelp}
+        />
+      }
+      notice={<BillingNoticeTip />}
+      footer={
         <Link
-          href={`/class/select${devQuery}`}
-          style={{
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #d1d5db",
-            background: "#fff",
-            color: "#111",
-            fontWeight: 900,
-            textDecoration: "none",
-          }}
+          href={withDev(`/premium${returnQuery}`)}
+          className={isApp ? "app-shell-btn app-shell-btn--ghost" : undefined}
+          style={
+            isApp
+              ? { width: "100%", textAlign: "center" }
+              : {
+                  color: "#111",
+                  fontWeight: 900,
+                  textDecoration: "underline",
+                  textUnderlineOffset: 3,
+                }
+          }
         >
-          戻る
+          プランを見る
         </Link>
-      </header>
-
+      }
+    >
       {renderPlanSection({
         title: "クラス枠",
         updateAction: "update_slots",
@@ -241,19 +256,7 @@ function BillingPageInner() {
       })}
 
       <BillingSupportSection showPortalLogin={false} showBetaNotice={false} />
-
-      <Link
-        href={`/premium${devQuery}`}
-        style={{
-          color: "#111",
-          fontWeight: 900,
-          textDecoration: "underline",
-          textUnderlineOffset: 3,
-        }}
-      >
-        プランを見る
-      </Link>
-    </main>
+    </BillingPageShell>
   );
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
@@ -191,15 +191,6 @@ export default function AppHomeClient() {
           >
             {hasProfile ? "プロフィール" : "プロフィール登録"}
           </Link>
-
-          {!loggedIn ? (
-            <Link
-              href={withDev(buildShellAwareLoginUrl(returnPath))}
-              className="app-shell-btn"
-            >
-              ログイン
-            </Link>
-          ) : null}
         </section>
       </div>
     </AppShellPage>

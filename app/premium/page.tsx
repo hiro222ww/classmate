@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { topicSupportRankFromPlan } from "@/lib/billingCatalog";
 import {
@@ -15,10 +15,13 @@ import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
 import { BillingNoticeTip } from "@/components/BillingNoticeTip";
 import { ThemePlanTopicsSection } from "@/components/ThemePlanTopicsSection";
+import BillingPageShell from "@/components/billing/BillingPageShell";
+import AppShellSection from "@/components/app-shell/AppShellSection";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useRequireAccount } from "@/components/useRequireAccount";
 import { resolveAuthRedirectTo } from "@/lib/appShellNavigation";
+import { isAppShellContext } from "@/lib/appShellContext";
 
 type Entitlements = {
   class_slots?: number;
@@ -30,7 +33,17 @@ type Entitlements = {
 const TOPIC_PLANS = [400, 800, 1200] as const;
 const SLOT_PLANS = [3, 5] as const;
 
-function SoftCard({ children }: { children: React.ReactNode }) {
+function SoftCard({
+  children,
+  isApp,
+}: {
+  children: React.ReactNode;
+  isApp: boolean;
+}) {
+  if (isApp) {
+    return <section className="app-shell-card">{children}</section>;
+  }
+
   return (
     <section
       style={{
@@ -53,6 +66,7 @@ function PlanCard({
   busy,
   buttonLabel,
   onClick,
+  isApp,
 }: {
   name: string;
   priceLine: string;
@@ -61,16 +75,22 @@ function PlanCard({
   busy?: boolean;
   buttonLabel: string;
   onClick: () => void;
+  isApp: boolean;
 }) {
   return (
     <div
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 16,
-        padding: 14,
-        display: "grid",
-        gap: 10,
-      }}
+      className={isApp ? "app-shell-info-box" : undefined}
+      style={
+        isApp
+          ? { display: "grid", gap: 10 }
+          : {
+              border: "1px solid #e5e7eb",
+              borderRadius: 16,
+              padding: 14,
+              display: "grid",
+              gap: 10,
+            }
+      }
     >
       <div>
         <div style={{ fontWeight: 900, fontSize: 16 }}>{name}</div>
@@ -79,13 +99,18 @@ function PlanCard({
 
       {active ? (
         <div
-          style={{
-            background: "#f3f4f6",
-            padding: 10,
-            borderRadius: 10,
-            fontWeight: 900,
-            fontSize: 13,
-          }}
+          className={isApp ? "app-shell-badge" : undefined}
+          style={
+            isApp
+              ? { alignSelf: "flex-start" }
+              : {
+                  background: "#f3f4f6",
+                  padding: 10,
+                  borderRadius: 10,
+                  fontWeight: 900,
+                  fontSize: 13,
+                }
+          }
         >
           利用中
         </div>
@@ -94,16 +119,23 @@ function PlanCard({
           type="button"
           onClick={onClick}
           disabled={disabled}
-          style={{
-            padding: "12px",
-            borderRadius: 10,
-            border: "1px solid #d1d5db",
-            background: "#fff",
-            color: "#111",
-            fontWeight: 900,
-            cursor: disabled ? "not-allowed" : "pointer",
-            opacity: disabled ? 0.55 : 1,
-          }}
+          className={
+            isApp ? "app-shell-btn app-shell-btn--primary" : undefined
+          }
+          style={
+            isApp
+              ? undefined
+              : {
+                  padding: "12px",
+                  borderRadius: 10,
+                  border: "1px solid #d1d5db",
+                  background: "#fff",
+                  color: "#111",
+                  fontWeight: 900,
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  opacity: disabled ? 0.55 : 1,
+                }
+          }
         >
           {busy ? "開いています…" : buttonLabel}
         </button>
@@ -112,10 +144,20 @@ function PlanCard({
   );
 }
 
-export default function PremiumPage() {
+function PremiumPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const dev = (searchParams.get("dev") ?? "").trim();
+  const returnTo = searchParams.get("returnTo");
+  const devQuery = dev ? `?dev=${encodeURIComponent(dev)}` : "";
+  const returnQuery = returnTo
+    ? `${devQuery ? `${devQuery}&` : "?"}returnTo=${encodeURIComponent(returnTo)}`
+    : devQuery;
+  const billingHref = withDev(`/billing${returnQuery}`);
+
   const { ready, loggedIn } = useRequireAccount("/premium");
   const { copy } = useBillingCopy();
+  const isApp = isAppShellContext();
   const [deviceId, setDeviceId] = useState("");
   const [ent, setEnt] = useState<Entitlements | null>(null);
   const [busyKey, setBusyKey] = useState("");
@@ -161,11 +203,6 @@ export default function PremiumPage() {
     try {
       setBusyKey(action);
 
-      const dev =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("dev") ?? ""
-          : "";
-
       const r = await authenticatedFetch("/api/billing/create-portal-session", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -196,11 +233,6 @@ export default function PremiumPage() {
   async function start(body: Record<string, unknown>) {
     try {
       setBusyKey(JSON.stringify(body));
-
-      const dev =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("dev") ?? ""
-          : "";
 
       const usePortalForTopic =
         body.kind === "topic_plan" && hasThemePass;
@@ -250,116 +282,185 @@ export default function PremiumPage() {
   }
 
   if (!ready || !loggedIn) {
-    return <main style={{ padding: 24 }}>読み込み中…</main>;
+    return (
+      <main
+        className={isApp ? "app-immersive-inner" : undefined}
+        style={isApp ? undefined : { padding: 24 }}
+      >
+        読み込み中…
+      </main>
+    );
   }
 
-  return (
-    <main
-      style={{
-        maxWidth: 900,
-        margin: "0 auto",
-        padding: 16,
-        display: "grid",
-        gap: 16,
-      }}
-    >
-      <header
+  const currentPlanSection = (
+    <SoftCard isApp={isApp}>
+      <div className={isApp ? "app-shell-muted" : undefined} style={isApp ? undefined : { fontSize: 14, color: "#666" }}>
+        現在のテーマプラン
+      </div>
+      <div style={{ marginTop: 8, fontWeight: 900, fontSize: 18 }}>
+        {hasThemePass
+          ? formatTopicPlanLine(currentTopicSupport || 400)
+          : "無料"}
+      </div>
+
+      <div
+        className={isApp ? "app-shell-muted" : undefined}
+        style={isApp ? { marginTop: 16 } : { fontSize: 14, color: "#666", marginTop: 16 }}
+      >
+        現在のクラス枠
+      </div>
+      <div style={{ marginTop: 8, fontWeight: 900 }}>
+        {formatClassSlotPlanLine(currentSlots)}
+      </div>
+    </SoftCard>
+  );
+
+  const topicPlanSection = isApp ? (
+    <AppShellSection title={copy.premium.topicPlanSectionTitle}>
+      <HelpTip
+        label={copy.premium.topicPlanHelpLabel}
+        content={copy.premium.topicPlanHelp}
+      >
+        <p className="app-shell-muted" style={{ margin: "0 0 12px" }}>
+          テーマプランの説明
+        </p>
+      </HelpTip>
+      <div style={{ display: "grid", gap: 10 }}>
+        {TOPIC_PLANS.map((p) => {
+          const isCurrentSupport = hasThemePass && currentTopicSupport === p;
+          return (
+            <PlanCard
+              key={p}
+              isApp={isApp}
+              name={topicSupportPlanName(p)}
+              priceLine={`¥${p}/月`}
+              active={isCurrentSupport}
+              disabled={!canClick || isCurrentSupport}
+              busy={busyKey.includes(String(p))}
+              buttonLabel={hasThemePass ? "支援額を変更" : "この支援額で始める"}
+              onClick={() => start({ kind: "topic_plan", amount: p })}
+            />
+          );
+        })}
+      </div>
+    </AppShellSection>
+  ) : (
+    <SoftCard isApp={isApp}>
+      <HelpTip
+        label={copy.premium.topicPlanHelpLabel}
+        content={copy.premium.topicPlanHelp}
+      >
+        <div style={{ fontWeight: 900 }}>{copy.premium.topicPlanSectionTitle}</div>
+      </HelpTip>
+
+      <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+        {TOPIC_PLANS.map((p) => {
+          const isCurrentSupport = hasThemePass && currentTopicSupport === p;
+          return (
+            <PlanCard
+              key={p}
+              isApp={isApp}
+              name={topicSupportPlanName(p)}
+              priceLine={`¥${p}/月`}
+              active={isCurrentSupport}
+              disabled={!canClick || isCurrentSupport}
+              busy={busyKey.includes(String(p))}
+              buttonLabel={hasThemePass ? "支援額を変更" : "この支援額で始める"}
+              onClick={() => start({ kind: "topic_plan", amount: p })}
+            />
+          );
+        })}
+      </div>
+    </SoftCard>
+  );
+
+  const slotPlanSection = isApp ? (
+    <AppShellSection title={copy.premium.classSlotSectionTitle}>
+      <HelpTip
+        label={copy.premium.classSlotHelpLabel}
+        content={copy.premium.classSlotHelp}
+      >
+        <p className="app-shell-muted" style={{ margin: "0 0 12px" }}>
+          クラス枠の説明
+        </p>
+      </HelpTip>
+      <div style={{ display: "grid", gap: 10 }}>
+        {SLOT_PLANS.map((s) => (
+          <PlanCard
+            key={s}
+            isApp={isApp}
+            name={`${s}クラス`}
+            priceLine={formatClassSlotPrice(s)}
+            active={currentSlots === s}
+            disabled={!canClick || currentSlots >= s}
+            busy={busyKey.includes(String(s))}
+            buttonLabel="増やす"
+            onClick={() => start({ kind: "slots", slotsTotal: s })}
+          />
+        ))}
+      </div>
+    </AppShellSection>
+  ) : (
+    <SoftCard isApp={isApp}>
+      <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 12,
+          alignItems: "center",
+          gap: 6,
           flexWrap: "wrap",
         }}
       >
-        <div>
-          <h1 style={{ fontSize: 28, fontWeight: 900, margin: 0 }}>プラン</h1>
-          <div style={{ marginTop: 8 }}>
-            <BillingNoticeTip />
-          </div>
-        </div>
-        <Link href={withDev("/billing")} style={{ fontWeight: 900 }}>
+        <div style={{ fontWeight: 900 }}>{copy.premium.classSlotSectionTitle}</div>
+        <HelpTip
+          label={copy.premium.classSlotHelpLabel}
+          content={copy.premium.classSlotHelp}
+        />
+      </div>
+
+      <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+        {SLOT_PLANS.map((s) => (
+          <PlanCard
+            key={s}
+            isApp={isApp}
+            name={`${s}クラス`}
+            priceLine={formatClassSlotPrice(s)}
+            active={currentSlots === s}
+            disabled={!canClick || currentSlots >= s}
+            busy={busyKey.includes(String(s))}
+            buttonLabel="増やす"
+            onClick={() => start({ kind: "slots", slotsTotal: s })}
+          />
+        ))}
+      </div>
+    </SoftCard>
+  );
+
+  return (
+    <BillingPageShell
+      title="プラン"
+      notice={<BillingNoticeTip />}
+      headerAction={
+        <Link
+          href={billingHref}
+          className={isApp ? "app-shell-btn app-shell-btn--ghost" : undefined}
+          style={isApp ? undefined : { fontWeight: 900 }}
+        >
           支払い管理
         </Link>
-      </header>
-
-      <SoftCard>
-        <div style={{ fontSize: 14, color: "#666" }}>現在のテーマプラン</div>
-        <div style={{ marginTop: 8, fontWeight: 900, fontSize: 18 }}>
-          {hasThemePass
-            ? formatTopicPlanLine(currentTopicSupport || 400)
-            : "無料"}
-        </div>
-
-        <div style={{ fontSize: 14, color: "#666", marginTop: 16 }}>
-          現在のクラス枠
-        </div>
-        <div style={{ marginTop: 8, fontWeight: 900 }}>
-          {formatClassSlotPlanLine(currentSlots)}
-        </div>
-      </SoftCard>
-
+      }
+    >
+      {currentPlanSection}
       <ThemePlanTopicsSection />
+      {topicPlanSection}
+      {slotPlanSection}
+    </BillingPageShell>
+  );
+}
 
-      <SoftCard>
-        <HelpTip
-          label={copy.premium.topicPlanHelpLabel}
-          content={copy.premium.topicPlanHelp}
-        >
-          <div style={{ fontWeight: 900 }}>{copy.premium.topicPlanSectionTitle}</div>
-        </HelpTip>
-
-        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-          {TOPIC_PLANS.map((p) => {
-            const isCurrentSupport = hasThemePass && currentTopicSupport === p;
-
-            return (
-              <PlanCard
-                key={p}
-                name={topicSupportPlanName(p)}
-                priceLine={`¥${p}/月`}
-                active={isCurrentSupport}
-                disabled={!canClick || isCurrentSupport}
-                busy={busyKey.includes(String(p))}
-                buttonLabel={hasThemePass ? "支援額を変更" : "この支援額で始める"}
-                onClick={() => start({ kind: "topic_plan", amount: p })}
-              />
-            );
-          })}
-        </div>
-      </SoftCard>
-
-      <SoftCard>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ fontWeight: 900 }}>{copy.premium.classSlotSectionTitle}</div>
-          <HelpTip
-            label={copy.premium.classSlotHelpLabel}
-            content={copy.premium.classSlotHelp}
-          />
-        </div>
-
-        <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-          {SLOT_PLANS.map((s) => (
-            <PlanCard
-              key={s}
-              name={`${s}クラス`}
-              priceLine={formatClassSlotPrice(s)}
-              active={currentSlots === s}
-              disabled={!canClick || currentSlots >= s}
-              busy={busyKey.includes(String(s))}
-              buttonLabel="増やす"
-              onClick={() => start({ kind: "slots", slotsTotal: s })}
-            />
-          ))}
-        </div>
-      </SoftCard>
-    </main>
+export default function PremiumPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 24 }}>読み込み中...</main>}>
+      <PremiumPageInner />
+    </Suspense>
   );
 }

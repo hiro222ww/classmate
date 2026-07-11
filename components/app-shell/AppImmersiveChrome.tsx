@@ -3,7 +3,10 @@
 import { usePathname } from "next/navigation";
 import { isAppShellContext } from "@/lib/appShellContext";
 import { isImmersiveShellPath } from "@/lib/immersiveShellPaths";
-import { APP_IMMERSIVE_LAYOUT_CSS } from "@/components/app-shell/appShellStyles";
+import {
+  APP_IMMERSIVE_LAYOUT_CSS,
+  APP_SHELL_LAYOUT_CSS,
+} from "@/components/app-shell/appShellStyles";
 
 export default function AppImmersiveChrome({
   children,
@@ -21,10 +24,10 @@ export default function AppImmersiveChrome({
     <>
       <style
         dangerouslySetInnerHTML={{
-          __html: APP_IMMERSIVE_LAYOUT_CSS,
+          __html: `${APP_SHELL_LAYOUT_CSS}\n${APP_IMMERSIVE_LAYOUT_CSS}`,
         }}
       />
-      <div className="app-immersive">{children}</div>
+      <div className="app-shell app-immersive">{children}</div>
     </>
   );
 }
