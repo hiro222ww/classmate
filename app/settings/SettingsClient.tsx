@@ -17,6 +17,7 @@ import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { SectionTitle } from "@/components/FormFieldLabel";
 import { HelpTip } from "@/components/HelpTip";
+import EmailNotificationPrefsSection from "@/components/EmailNotificationPrefsSection";
 
 type AuthStatus = {
   userId: string;
@@ -184,6 +185,21 @@ export default function SettingsClient() {
             Google でログイン
           </Link>
         )}
+      </section>
+
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 18,
+          padding: 16,
+          display: "grid",
+          gap: 10,
+        }}
+      >
+        <EmailNotificationPrefsSection
+          canConfigure={loggedIn}
+          email={status?.email}
+        />
       </section>
 
       <section

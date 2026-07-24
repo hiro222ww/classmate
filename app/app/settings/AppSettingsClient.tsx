@@ -24,6 +24,7 @@ import { withDev } from "@/lib/withDev";
 import AppShellPage from "@/components/app-shell/AppShellPage";
 import AppShellSection from "@/components/app-shell/AppShellSection";
 import AppShellListLink from "@/components/app-shell/AppShellListLink";
+import EmailNotificationPrefsSection from "@/components/EmailNotificationPrefsSection";
 
 const SUPPORT_EMAIL = "classmate.app.team@gmail.com";
 
@@ -248,9 +249,16 @@ export default function AppSettingsClient() {
 
         <AppShellSection
           title="通知・通話"
-          subtitle="iOS アプリ通知は将来 APNs で実装予定です"
+          subtitle="メール通知と通話まわりの設定"
         >
           <div style={{ display: "grid", gap: 12 }}>
+            <div className="app-shell-info-box">
+              <EmailNotificationPrefsSection
+                canConfigure={loggedIn}
+                email={status?.email}
+                compact
+              />
+            </div>
             <div className="app-shell-info-box">
               <div
                 style={{

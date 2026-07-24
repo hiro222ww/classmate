@@ -14,6 +14,7 @@ import {
 } from "@/lib/meetingPlan";
 import { emitMeetingPlanEvent } from "@/lib/notificationEvents";
 import { dispatchNotificationWebPush } from "@/lib/webPushServer";
+import { dispatchNotificationEmail } from "@/lib/emailNotifications";
 
 export const dynamic = "force-dynamic";
 
@@ -191,6 +192,7 @@ export async function POST(req: Request) {
 
     if (eventRes.ok && eventRes.id) {
       await dispatchNotificationWebPush(eventRes.id);
+      await dispatchNotificationEmail(eventRes.id);
     }
 
     return NextResponse.json({

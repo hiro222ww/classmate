@@ -14,6 +14,7 @@ import {
 } from "@/lib/callRequest";
 import { emitCallRequestCreatedEvent } from "@/lib/notificationEvents";
 import { dispatchNotificationWebPush } from "@/lib/webPushServer";
+import { dispatchNotificationEmail } from "@/lib/emailNotifications";
 import { resolveDisplayName } from "@/lib/resolveDisplayName";
 
 export const dynamic = "force-dynamic";
@@ -196,6 +197,7 @@ export async function POST(req: Request) {
 
     if (eventRes.ok && eventRes.id) {
       await dispatchNotificationWebPush(eventRes.id);
+      await dispatchNotificationEmail(eventRes.id);
     }
 
     return NextResponse.json({
