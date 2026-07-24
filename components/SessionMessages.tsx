@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { renderMessageTextWithLinks } from "@/lib/messageLinkify";
+import {
+  MESSAGE_HISTORY_LIMIT,
+  MESSAGE_MAX_LENGTH,
+  validateMessageText,
+} from "@/lib/messageLimits";
 
 type RoomMessage = {
   id: string;
@@ -187,30 +193,38 @@ export default function SessionMessages({
     deletedMessageIdsRef.current.clear();
 
     async function loadMessages() {
-      const { data, error } = await supabase
-        .from("room_messages")
-        .select(
-          "id, session_id, device_id, display_name, message, image_path, message_type, deleted_at, created_at"
-        )
-        .eq("session_id", sessionId)
-        .order("created_at", { ascending: true })
-        .limit(200);
-
-      if (cancelled) return;
-
-      if (error) {
-        console.warn("[messages] load failed", error);
-        setErr("メッセージの取得に失敗しました");
+      if (!deviceId) {
+        setErr("メッセージを表示できません");
         return;
       }
 
-      for (const m of data ?? []) {
-        if ((m as RoomMessage).id && (m as RoomMessage).deleted_at) {
-          deletedMessageIdsRef.current.add((m as RoomMessage).id);
+      const res = await fetch(
+        `/api/session/messages?sessionId=${encodeURIComponent(sessionId)}&deviceId=${encodeURIComponent(deviceId)}&limit=${MESSAGE_HISTORY_LIMIT}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json().catch(() => null);
+
+      if (cancelled) return;
+
+      if (!res.ok || !json?.ok) {
+        console.warn("[messages] load failed", json);
+        setErr(
+          json?.error === "forbidden"
+            ? "このルームのメッセージを閲覧する権限がありません"
+            : "メッセージの取得に失敗しました"
+        );
+        return;
+      }
+
+      const data = (json.messages ?? []) as RoomMessage[];
+
+      for (const m of data) {
+        if (m?.id && m.deleted_at) {
+          deletedMessageIdsRef.current.add(m.id);
         }
       }
 
-      setMessages(dedupeMessages((data ?? []) as RoomMessage[]));
+      setMessages(dedupeMessages(data));
       setErr("");
       scrollToBottomNextFrame("auto");
     }
@@ -257,11 +271,13 @@ export default function SessionMessages({
               message_type: wasDeleted ? "text" : row.message_type,
             });
 
-            return Array.from(map.values()).sort((a, b) => {
-              const at = new Date(a.created_at ?? 0).getTime();
-              const bt = new Date(b.created_at ?? 0).getTime();
-              return at - bt;
-            });
+            return Array.from(map.values())
+              .sort((a, b) => {
+                const at = new Date(a.created_at ?? 0).getTime();
+                const bt = new Date(b.created_at ?? 0).getTime();
+                return at - bt;
+              })
+              .slice(-MESSAGE_HISTORY_LIMIT);
           });
 
           scrollToBottomNextFrame("smooth");
@@ -273,7 +289,7 @@ export default function SessionMessages({
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [sessionId]);
+  }, [sessionId, deviceId]);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -289,9 +305,14 @@ export default function SessionMessages({
   }, [show]);
 
   async function sendText() {
-    const text = draft.trim();
-    if (!text || !sessionId || !deviceId || sending) return;
+    const validation = validateMessageText(draft);
+    if (!validation.ok) {
+      setErr(validation.message);
+      return;
+    }
+    if (!sessionId || !deviceId || sending) return;
 
+    const text = validation.text;
     const name = displayName && displayName !== "You" ? displayName : "参加者";
 
     const tempId = `temp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -308,41 +329,47 @@ export default function SessionMessages({
 
     setDraft("");
     setShowEmojiPicker(false);
+    setErr("");
+    setSending(true);
     setMessages((prev) => dedupeMessages([...prev, temp]));
     scrollToBottomNextFrame("smooth");
 
-    const { data, error } = await supabase
-      .from("room_messages")
-      .insert({
-        session_id: sessionId,
-        device_id: deviceId,
-        display_name: name,
-        message: text,
-        message_type: "text",
-      })
-      .select(
-        "id, session_id, device_id, display_name, message, image_path, message_type, deleted_at, created_at"
-      )
-      .single();
+    try {
+      const res = await fetch("/api/session/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          deviceId,
+          displayName: name,
+          message: text,
+        }),
+      });
+      const json = await res.json().catch(() => null);
 
-    if (error) {
-      console.warn("[messages] send text failed", error);
-      setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      setDraft(text);
-      setErr("送信に失敗しました");
-      return;
+      if (!res.ok || !json?.ok) {
+        console.warn("[messages] send text failed", json);
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        setDraft(text);
+        setErr(
+          String(json?.message ?? "").trim() || "送信に失敗しました"
+        );
+        return;
+      }
+
+      if (json.message?.id) {
+        setMessages((prev) =>
+          dedupeMessages([
+            ...prev.filter((m) => m.id !== tempId),
+            json.message as RoomMessage,
+          ])
+        );
+      }
+
+      scrollToBottomNextFrame("smooth");
+    } finally {
+      setSending(false);
     }
-
-    if (data?.id) {
-      setMessages((prev) =>
-        dedupeMessages([
-          ...prev.filter((m) => m.id !== tempId),
-          data as RoomMessage,
-        ])
-      );
-    }
-
-    scrollToBottomNextFrame("smooth");
   }
 
   async function sendImage(file: File) {
@@ -576,7 +603,7 @@ export default function SessionMessages({
                         }}
                       />
                     ) : (
-                      m.message
+                      renderMessageTextWithLinks(m.message)
                     )}
                   </div>
 
@@ -808,7 +835,8 @@ export default function SessionMessages({
           <input
             ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => setDraft(e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+            maxLength={MESSAGE_MAX_LENGTH}
             onCompositionStart={() => setIsComposing(true)}
             onCompositionEnd={() => {
               window.setTimeout(() => setIsComposing(false), 0);

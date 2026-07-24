@@ -101,5 +101,11 @@ export function useWebPushNotifications(
     }
   }, [busy, deviceId, enabled]);
 
-  return { enabled, toggle, busy, feedback, mounted };
+  const markEnabled = useCallback((next: boolean) => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem("notifications_enabled", next ? "true" : "false");
+    setEnabled(next);
+  }, []);
+
+  return { enabled, toggle, busy, feedback, mounted, markEnabled };
 }

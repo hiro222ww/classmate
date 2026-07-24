@@ -181,10 +181,14 @@ import {
   CALL_DEPARTED_LABEL_MS,
   evaluateCallParticipationPriority,
   logCallStatusPriority,
-  mapParticipationToStatusChoice,
   resolveFinalStatusChoice,
-  shouldHideDepartedMemberFromGrid,
 } from "@/lib/callStatusPriority";
+import {
+  diffCallPresenceToasts,
+  pruneRecentPresenceKeys,
+  shouldIncludeMemberInCallGrid,
+  type CallPresenceToast,
+} from "@/lib/callPresenceToasts";
 
 type Member = {
   device_id: string;
@@ -386,6 +390,10 @@ export default function CallClient() {
   }, []);
 
   const [members, setMembers] = useState<Member[]>([]);
+  const [presenceToasts, setPresenceToasts] = useState<CallPresenceToast[]>([]);
+  const presencePrimedRef = useRef(false);
+  const previousInCallIdsRef = useRef<Set<string>>(new Set());
+  const recentPresenceKeysRef = useRef<Set<string>>(new Set());
   const userMutedRef = useRef(true);
   const [userMuted, setUserMuted] = useState(true);
   const localTrackEnabledRef = useRef<boolean | null>(null);
@@ -2233,7 +2241,7 @@ export default function CallClient() {
         lastInCallAtMs: memberLastInCallAtRef.current.get(memberId) ?? null,
         screen: member.screen,
       });
-      return !shouldHideDepartedMemberFromGrid({
+      return shouldIncludeMemberInCallGrid({
         priority: participation.priority,
         recentlyDepartedUntilMs:
           recentlyDepartedUntilRef.current.get(memberId) ?? null,
@@ -2241,6 +2249,57 @@ export default function CallClient() {
       });
     });
   }, [sortedMembers, nowMs, membersSyncRevision, sessionId]);
+
+  useEffect(() => {
+    const nextIds = new Set<string>();
+    const nameById = new Map<string, string>();
+    for (const member of visibleMembers) {
+      const id = String(member.device_id ?? "").trim();
+      if (!id) continue;
+      const localExitedCall =
+        localExitedPeersRef.current.has(id) || hasLocalLeftCall(sessionId, id);
+      const participation = evaluateCallParticipationPriority({
+        nowMs,
+        explicitLeft: localExitedCall,
+        inApiSessionMembers: apiSessionMemberIdsRef.current.has(id),
+        absentSinceMs: memberAbsentSinceRef.current.get(id) ?? null,
+        isInCall: member.is_in_call === true && !localExitedCall,
+        lastSeenAt: member.last_seen_at,
+        lastInCallAtMs: memberLastInCallAtRef.current.get(id) ?? null,
+        screen: member.screen,
+      });
+      if (participation.priority !== "in_call") continue;
+      nextIds.add(id);
+      nameById.set(id, member.display_name || "参加者");
+    }
+
+    const result = diffCallPresenceToasts({
+      previousIds: previousInCallIdsRef.current,
+      nextIds,
+      primed: presencePrimedRef.current,
+      selfDeviceId: deviceId,
+      nameById,
+      recentKeys: recentPresenceKeysRef.current,
+    });
+
+    presencePrimedRef.current = result.primed;
+    previousInCallIdsRef.current = result.nextPreviousIds;
+    recentPresenceKeysRef.current = pruneRecentPresenceKeys(
+      result.nextRecentKeys
+    );
+
+    if (result.toasts.length > 0) {
+      setPresenceToasts((prev) => [...prev, ...result.toasts].slice(-6));
+    }
+  }, [visibleMembers, deviceId, nowMs, sessionId]);
+
+  useEffect(() => {
+    if (presenceToasts.length === 0) return;
+    const timer = window.setTimeout(() => {
+      setPresenceToasts((prev) => prev.slice(1));
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [presenceToasts]);
 
   const handleMicReadyChange = useCallback((ready: boolean) => {
     setMicReady(ready);
@@ -2390,15 +2449,18 @@ export default function CallClient() {
 
   const voiceSelfReconnecting = useMemo(() => {
     if (!voiceLayerActive || voiceJoinFatalError) return false;
+    const states = Object.values(peerStates);
+    const anyConnected = states.some((state) => state === "connected");
     const peerReconnecting = Object.values(peerDiagnostics).some(
       (diag) =>
         diag?.autoHardResetInProgress === true ||
         diag?.voicePeerRepairInProgress === true
     );
-    const peerConnecting = Object.values(peerStates).some(
-      (state) => state === "connecting"
-    );
-    return peerReconnecting || peerConnecting;
+    if (peerReconnecting && !anyConnected) return true;
+    const peerConnecting = states.some((state) => state === "connecting");
+    // Avoid sticky "再接続中" while at least one peer is already connected.
+    if (anyConnected) return false;
+    return peerConnecting;
   }, [peerDiagnostics, peerStates, voiceJoinFatalError, voiceLayerActive]);
 
   useEffect(() => {
@@ -2829,6 +2891,40 @@ export default function CallClient() {
           : { maxWidth: 1100, margin: "0 auto", padding: 16 }
       }
     >
+      {presenceToasts.length > 0 ? (
+        <div
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            left: "50%",
+            top: 16,
+            transform: "translateX(-50%)",
+            zIndex: 11000,
+            display: "grid",
+            gap: 8,
+            width: "min(420px, calc(100vw - 24px))",
+          }}
+        >
+          {presenceToasts.map((toast) => (
+            <div
+              key={toast.id}
+              style={{
+                borderRadius: 12,
+                padding: "10px 14px",
+                background: "#111827",
+                color: "#fff",
+                fontSize: 13,
+                fontWeight: 800,
+                textAlign: "center",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+              }}
+            >
+              {toast.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {voiceLayerActive ? (
         <CallVoiceLayer
           sessionId={sessionId}

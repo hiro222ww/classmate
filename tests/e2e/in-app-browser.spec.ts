@@ -27,9 +27,16 @@ test.describe("アプリ内ブラウザ UA 模擬", () => {
         )
       );
 
-      await expect(page.getByText("アプリ内ブラウザのご注意")).toBeVisible({
-        timeout: 20_000,
-      });
+      if (key === "line") {
+        await expect(
+          page.getByText("LINE内のブラウザでは通話機能を利用できません")
+        ).toBeVisible({ timeout: 20_000 });
+        await expect(page.getByText("招待URLをコピー")).toBeVisible();
+      } else {
+        await expect(page.getByText("アプリ内ブラウザのご注意")).toBeVisible({
+          timeout: 20_000,
+        });
+      }
 
       const body = await page.locator("body").innerText();
       expect(body).not.toMatch(/500|Internal Server Error/);

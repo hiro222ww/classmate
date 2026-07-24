@@ -20,6 +20,11 @@ export function InAppBrowserNotice({ compact = false }: InAppBrowserNoticeProps)
     return null;
   }
 
+  // LINE is handled by the hard gate screen.
+  if (detection.uaHint === "LINE") {
+    return null;
+  }
+
   const detail = `${IN_APP_BROWSER_NOTICE_SHORT} ${detection.openHint}`;
 
   if (compact) {

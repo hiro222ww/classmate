@@ -7,6 +7,7 @@ import AppShellContextBoot from "@/components/AppShellContextBoot";
 import OAuthRootCodeRedirectBoot from "@/components/OAuthRootCodeRedirectBoot";
 import AppAccountNav from "@/components/AppAccountNav";
 import SiteFooter from "@/components/SiteFooter";
+import LineInAppBrowserGate from "@/components/LineInAppBrowserGate";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
 
@@ -46,18 +47,20 @@ export default function RootLayout({
             "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
         }}
       >
-        <AppLifecycleBoot />
-        <OAuthRootCodeRedirectBoot />
-        <CapacitorAuthReturnBoot />
-        <AppShellContextBoot />
-        <AuthBoot />
-        <Suspense fallback={null}>
-          <AppAccountNav />
-        </Suspense>
-        {/* ▼ メインコンテンツ */}
-        <div style={{ minHeight: "100vh" }}>{children}</div>
+        <LineInAppBrowserGate>
+          <AppLifecycleBoot />
+          <OAuthRootCodeRedirectBoot />
+          <CapacitorAuthReturnBoot />
+          <AppShellContextBoot />
+          <AuthBoot />
+          <Suspense fallback={null}>
+            <AppAccountNav />
+          </Suspense>
+          {/* ▼ メインコンテンツ */}
+          <div style={{ minHeight: "100vh" }}>{children}</div>
 
-        <SiteFooter />
+          <SiteFooter />
+        </LineInAppBrowserGate>
       </body>
     </html>
   );

@@ -40,6 +40,8 @@ import {
 } from "@/lib/memberProfileView";
 import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
+import ClassMessages from "@/components/ClassMessages";
+import NotificationPermissionPrompt from "@/components/NotificationPermissionPrompt";
 import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
@@ -394,6 +396,7 @@ export default function HomeClient() {
     toggle: toggleNotifications,
     busy: notificationsBusy,
     feedback: notificationsFeedback,
+    markEnabled: markNotificationsEnabled,
   } = useWebPushNotifications(deviceId, "home");
   const {
     loading: currentClassLoading,
@@ -1542,6 +1545,7 @@ return () => {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({
                 classId: c.id,
+                deviceId,
                 limit: 20,
               }),
               cache: "no-store",
@@ -2716,6 +2720,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     }}
                   />
 
+                  <ClassMessages classId={c.id} deviceId={deviceId} />
+
                   <div style={{ marginTop: 14, display: "flex" }}>
                     <button
                       type="button"
@@ -2916,6 +2922,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       ) : null}
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
+
+      <NotificationPermissionPrompt
+        deviceId={deviceId}
+        enabled={notificationsEnabled}
+        onEnabledChange={markNotificationsEnabled}
+      />
 
       <InAppToastStack
         toasts={inAppToasts}
