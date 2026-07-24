@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
-import { isCapacitorNativeApp } from "@/lib/capacitorClient";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildAndroidChromeIntentUrl,
   detectLineInAppBrowser,
@@ -11,60 +10,87 @@ type Props = {
   children: React.ReactNode;
 };
 
-const EMPTY_SUBSCRIBE = () => () => {};
-
-function getLineSnapshot() {
-  if (isCapacitorNativeApp()) {
-    return {
-      isLine: false,
-      platform: "unknown" as const,
-      href: "",
-    };
+function isNativeAppClient(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const cap = (
+      window as Window & {
+        Capacitor?: {
+          isNativePlatform?: () => boolean;
+          getPlatform?: () => string;
+        };
+      }
+    ).Capacitor;
+    if (cap?.isNativePlatform?.()) return true;
+    const platform = cap?.getPlatform?.();
+    return platform === "ios" || platform === "android";
+  } catch {
+    return false;
   }
-  const detection = detectLineInAppBrowser();
-  return {
-    isLine: detection.isLine,
-    platform: detection.platform,
-    href: typeof window !== "undefined" ? window.location.href : "",
-  };
 }
 
-function getServerSnapshot() {
-  return {
-    isLine: false,
-    platform: "unknown" as const,
-    href: "",
-  };
-}
-
+/**
+ * LINE in-app browser hard gate.
+ * Detection runs only after mount (useEffect) to avoid SSR / hydration crashes.
+ * Does not import Capacitor core (keeps root layout light and safe).
+ */
 export default function LineInAppBrowserGate({ children }: Props) {
-  const detection = useSyncExternalStore(
-    EMPTY_SUBSCRIBE,
-    getLineSnapshot,
-    getServerSnapshot
-  );
+  const [checked, setChecked] = useState(false);
+  const [isLine, setIsLine] = useState(false);
+  const [platform, setPlatform] = useState<
+    "ios" | "android" | "desktop" | "unknown"
+  >("unknown");
+  const [currentUrl, setCurrentUrl] = useState("");
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    try {
+      if (isNativeAppClient()) {
+        setIsLine(false);
+        setChecked(true);
+        return;
+      }
+      const detection = detectLineInAppBrowser(
+        typeof navigator !== "undefined" ? navigator.userAgent : ""
+      );
+      setIsLine(detection.isLine);
+      setPlatform(detection.platform);
+      setCurrentUrl(
+        typeof window !== "undefined" ? window.location.href : ""
+      );
+    } catch (e) {
+      console.warn("[LineInAppBrowserGate] detection failed", e);
+      setIsLine(false);
+    } finally {
+      setChecked(true);
+    }
+  }, []);
+
   const androidIntentUrl = useMemo(() => {
-    if (detection.platform !== "android" || !detection.href) return null;
-    return buildAndroidChromeIntentUrl(detection.href);
-  }, [detection.href, detection.platform]);
+    if (platform !== "android" || !currentUrl) return null;
+    return buildAndroidChromeIntentUrl(currentUrl);
+  }, [currentUrl, platform]);
 
   const copyUrl = useCallback(async () => {
-    const url =
-      detection.href ||
-      (typeof window !== "undefined" ? window.location.href : "");
-    if (!url) return;
+    if (typeof window === "undefined") return;
+    const url = currentUrl || window.location.href;
     try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+        return;
+      }
     } catch {
-      window.prompt("このURLをコピーしてください", url);
+      // fall through
     }
-  }, [detection.href]);
+    window.prompt("このURLをコピーしてください", url);
+  }, [currentUrl]);
 
-  if (!detection.isLine) return <>{children}</>;
+  // Until client check finishes, always render children (no flash block for normal browsers).
+  if (!checked || !isLine) {
+    return <>{children}</>;
+  }
 
   return (
     <div
@@ -169,7 +195,7 @@ export default function LineInAppBrowserGate({ children }: Props) {
             wordBreak: "break-all",
           }}
         >
-          {detection.href}
+          {currentUrl}
         </div>
       </div>
     </div>

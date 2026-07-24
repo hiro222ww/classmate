@@ -18,39 +18,58 @@ export type NotificationPromptStoredState = {
 };
 
 export function getNotificationPermissionState(): NotificationPermissionState {
-  if (typeof window === "undefined") return "unsupported";
-  if (typeof Notification === "undefined") return "unsupported";
-  const permission = Notification.permission;
-  if (permission === "granted") return "granted";
-  if (permission === "denied") return "denied";
-  return "default";
+  try {
+    if (typeof window === "undefined") return "unsupported";
+    if (typeof Notification === "undefined") return "unsupported";
+    if (!("permission" in Notification)) return "unsupported";
+    const permission = Notification.permission;
+    if (permission === "granted") return "granted";
+    if (permission === "denied") return "denied";
+    return "default";
+  } catch {
+    return "unsupported";
+  }
 }
 
 export function isIosSafari(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  const iOS = /iPhone|iPad|iPod/i.test(ua);
-  const webkit = /WebKit/i.test(ua);
-  const notChrome = !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
-  return iOS && webkit && notChrome;
+  try {
+    if (typeof navigator === "undefined") return false;
+    const ua = String(navigator.userAgent ?? "");
+    const iOS = /iPhone|iPad|iPod/i.test(ua);
+    const webkit = /WebKit/i.test(ua);
+    const notChrome = !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+    return iOS && webkit && notChrome;
+  } catch {
+    return false;
+  }
 }
 
 export function isStandaloneDisplayMode(): boolean {
-  if (typeof window === "undefined") return false;
-  const media = window.matchMedia?.("(display-mode: standalone)");
-  if (media?.matches) return true;
-  const nav = window.navigator as Navigator & { standalone?: boolean };
-  return nav.standalone === true;
+  try {
+    if (typeof window === "undefined") return false;
+    const media = window.matchMedia?.("(display-mode: standalone)");
+    if (media?.matches) return true;
+    const nav = window.navigator as Navigator & { standalone?: boolean };
+    return nav.standalone === true;
+  } catch {
+    return false;
+  }
 }
 
 /** iOS Web Push requires home-screen / standalone install. */
 export function canUseWebPushOnThisClient(): boolean {
-  if (typeof window === "undefined") return false;
-  if (!("Notification" in window)) return false;
-  if (!("serviceWorker" in navigator)) return false;
-  if (!("PushManager" in window)) return false;
-  if (isIosSafari() && !isStandaloneDisplayMode()) return false;
-  return true;
+  try {
+    if (typeof window === "undefined") return false;
+    if (typeof navigator === "undefined") return false;
+    if (typeof Notification === "undefined") return false;
+    if (!("Notification" in window)) return false;
+    if (!("serviceWorker" in navigator)) return false;
+    if (!("PushManager" in window)) return false;
+    if (isIosSafari() && !isStandaloneDisplayMode()) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function readNotificationPromptState(): NotificationPromptStoredState {

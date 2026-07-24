@@ -13,27 +13,36 @@ function detectPlatform(ua: string): LineInAppBrowserDetection["platform"] {
 
 /**
  * Detect LINE in-app browser from User-Agent.
- * SSR-safe: pass ua explicitly, or call only on the client.
+ * SSR-safe: never throws; returns isLine=false when navigator is unavailable.
  */
 export function detectLineInAppBrowser(
   userAgent?: string | null
 ): LineInAppBrowserDetection {
-  const ua =
-    userAgent != null
-      ? String(userAgent)
-      : typeof navigator !== "undefined"
-        ? String(navigator.userAgent ?? "")
-        : "";
+  try {
+    let ua = "";
+    if (userAgent != null) {
+      ua = String(userAgent);
+    } else if (typeof navigator !== "undefined") {
+      ua = String(navigator.userAgent ?? "");
+    }
 
-  return {
-    isLine: /\bLine\//i.test(ua),
-    platform: detectPlatform(ua),
-    userAgent: ua,
-  };
+    return {
+      isLine: /\bLine\//i.test(ua),
+      platform: detectPlatform(ua),
+      userAgent: ua,
+    };
+  } catch {
+    return {
+      isLine: false,
+      platform: "unknown",
+      userAgent: "",
+    };
+  }
 }
 
 export function buildAndroidChromeIntentUrl(href: string): string | null {
   try {
+    if (!href || typeof href !== "string") return null;
     const url = new URL(href);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     const hostAndPath = `${url.host}${url.pathname}${url.search}${url.hash}`;

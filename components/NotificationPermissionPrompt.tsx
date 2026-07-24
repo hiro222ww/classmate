@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isCapacitorNativeApp } from "@/lib/capacitorClient";
 import { detectLineInAppBrowser } from "@/lib/lineInAppBrowser";
 import {
   canUseWebPushOnThisClient,
@@ -19,6 +18,25 @@ type Props = {
   onEnabledChange: (enabled: boolean) => void;
 };
 
+function isNativeAppClient(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const cap = (
+      window as Window & {
+        Capacitor?: {
+          isNativePlatform?: () => boolean;
+          getPlatform?: () => string;
+        };
+      }
+    ).Capacitor;
+    if (cap?.isNativePlatform?.()) return true;
+    const platform = cap?.getPlatform?.();
+    return platform === "ios" || platform === "android";
+  } catch {
+    return false;
+  }
+}
+
 export default function NotificationPermissionPrompt({
   deviceId,
   enabled,
@@ -32,25 +50,36 @@ export default function NotificationPermissionPrompt({
     if (!deviceId) return;
 
     const timer = window.setTimeout(() => {
-      const isLine = detectLineInAppBrowser().isLine;
-      const isNative = isCapacitorNativeApp();
-      const permission = getNotificationPermissionState();
-      const stored = readNotificationPromptState();
-      const show = shouldShowNotificationSoftAsk({
-        isLineInAppBrowser: isLine,
-        isNativeApp: isNative,
-        permission,
-        canUsePush: canUseWebPushOnThisClient(),
-        deferredUntil: stored.deferredUntil ?? null,
-      });
-      setVisible(show);
+      try {
+        const isLine = detectLineInAppBrowser(
+          typeof navigator !== "undefined" ? navigator.userAgent : ""
+        ).isLine;
+        const isNative = isNativeAppClient();
+        const permission = getNotificationPermissionState();
+        const stored = readNotificationPromptState();
+        const show = shouldShowNotificationSoftAsk({
+          isLineInAppBrowser: isLine,
+          isNativeApp: isNative,
+          permission,
+          canUsePush: canUseWebPushOnThisClient(),
+          deferredUntil: stored.deferredUntil ?? null,
+        });
+        setVisible(show);
+      } catch (e) {
+        console.warn("[NotificationPermissionPrompt] soft-ask check failed", e);
+        setVisible(false);
+      }
     }, 1200);
 
     return () => window.clearTimeout(timer);
   }, [deviceId]);
 
   const dismiss = useCallback(() => {
-    markNotificationPromptDeferred();
+    try {
+      markNotificationPromptDeferred();
+    } catch {
+      // ignore
+    }
     setVisible(false);
   }, []);
 
@@ -59,14 +88,18 @@ export default function NotificationPermissionPrompt({
     setBusy(true);
     try {
       const permission = getNotificationPermissionState();
-      if (permission === "denied") {
+      if (permission === "denied" || permission === "unsupported") {
         setVisible(false);
         return;
       }
 
       const result = await subscribeWebPush(deviceId);
       if (result.ok) {
-        localStorage.setItem("notifications_enabled", "true");
+        try {
+          localStorage.setItem("notifications_enabled", "true");
+        } catch {
+          // ignore
+        }
         onEnabledChange(true);
         writeNotificationPromptState({
           ...readNotificationPromptState(),
@@ -81,8 +114,10 @@ export default function NotificationPermissionPrompt({
         return;
       }
 
-      // Keep prompt closed after attempt; user can use bell later.
       markNotificationPromptDeferred();
+      setVisible(false);
+    } catch (e) {
+      console.warn("[NotificationPermissionPrompt] enable failed", e);
       setVisible(false);
     } finally {
       setBusy(false);
@@ -93,19 +128,40 @@ export default function NotificationPermissionPrompt({
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!deviceId) return;
-    if (detectLineInAppBrowser().isLine) return;
-    if (isCapacitorNativeApp()) return;
-    if (!canUseWebPushOnThisClient()) return;
 
-    const permission = getNotificationPermissionState();
-    if (permission !== "granted") return;
+    try {
+      if (
+        detectLineInAppBrowser(
+          typeof navigator !== "undefined" ? navigator.userAgent : ""
+        ).isLine
+      ) {
+        return;
+      }
+      if (isNativeAppClient()) return;
+      if (!canUseWebPushOnThisClient()) return;
 
-    if (!enabled || localStorage.getItem("notifications_enabled") !== "true") {
-      localStorage.setItem("notifications_enabled", "true");
-      onEnabledChange(true);
+      const permission = getNotificationPermissionState();
+      if (permission !== "granted") return;
+
+      let shouldMarkEnabled = false;
+      try {
+        shouldMarkEnabled =
+          !enabled || localStorage.getItem("notifications_enabled") !== "true";
+        if (shouldMarkEnabled) {
+          localStorage.setItem("notifications_enabled", "true");
+        }
+      } catch {
+        shouldMarkEnabled = !enabled;
+      }
+
+      if (shouldMarkEnabled) {
+        onEnabledChange(true);
+      }
+
+      void subscribeWebPush(deviceId).catch(() => null);
+    } catch (e) {
+      console.warn("[NotificationPermissionPrompt] resubscribe failed", e);
     }
-
-    void subscribeWebPush(deviceId).catch(() => null);
   }, [deviceId, enabled, onEnabledChange]);
 
   if (!visible) return null;

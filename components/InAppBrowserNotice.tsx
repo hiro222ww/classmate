@@ -1,29 +1,59 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import {
   detectInAppBrowser,
   IN_APP_BROWSER_NOTICE_SHORT,
+  type InAppBrowserDetection,
 } from "@/lib/inAppBrowser";
-import { isCapacitorNativeApp } from "@/lib/capacitorClient";
 import { HelpTip } from "@/components/HelpTip";
 
 type InAppBrowserNoticeProps = {
   compact?: boolean;
 };
 
+function isNativeAppClient(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const cap = (
+      window as Window & {
+        Capacitor?: {
+          isNativePlatform?: () => boolean;
+          getPlatform?: () => string;
+        };
+      }
+    ).Capacitor;
+    if (cap?.isNativePlatform?.()) return true;
+    const platform = cap?.getPlatform?.();
+    return platform === "ios" || platform === "android";
+  } catch {
+    return false;
+  }
+}
+
 export function InAppBrowserNotice({ compact = false }: InAppBrowserNoticeProps) {
-  const detection = useMemo(() => detectInAppBrowser(), []);
-  const isNativeApp = isCapacitorNativeApp();
+  const [detection, setDetection] = useState<InAppBrowserDetection | null>(null);
 
-  if (isNativeApp || !detection.detected || detection.platform === "desktop") {
-    return null;
-  }
+  useEffect(() => {
+    try {
+      if (isNativeAppClient()) {
+        setDetection(null);
+        return;
+      }
+      const next = detectInAppBrowser(
+        typeof navigator !== "undefined" ? navigator.userAgent : ""
+      );
+      if (!next.detected || next.platform === "desktop" || next.uaHint === "LINE") {
+        setDetection(null);
+        return;
+      }
+      setDetection(next);
+    } catch {
+      setDetection(null);
+    }
+  }, []);
 
-  // LINE is handled by the hard gate screen.
-  if (detection.uaHint === "LINE") {
-    return null;
-  }
+  if (!detection) return null;
 
   const detail = `${IN_APP_BROWSER_NOTICE_SHORT} ${detection.openHint}`;
 
