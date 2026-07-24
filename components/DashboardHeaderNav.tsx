@@ -6,6 +6,8 @@ import { isAppShellContext } from "@/lib/appShellContext";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useAuth } from "@/components/AuthProvider";
+import { AuthLoadingBanner } from "@/components/AuthLoadingUI";
 import { PushNotificationBell } from "@/components/PushNotificationBell";
 
 type Props = {
@@ -31,6 +33,7 @@ export function DashboardHeaderNav({
 }: Props) {
   const { ready, loggedIn, accountLabel, adminAuthenticated } =
     useDashboardAccountStatus(deviceId);
+  const { status, slow, error } = useAuth();
   const hideWebPush = isAppShellContext();
 
   const accountHref = loggedIn
@@ -56,110 +59,125 @@ export function DashboardHeaderNav({
         />
       ) : null}
 
-      <Link
-        href={withDev(buildProfileEditPath(returnPath))}
-        style={{
-          padding: "8px 12px",
-          borderRadius: 12,
-          border: hasProfile ? "1px solid #e5e7eb" : "1px solid #111827",
-          background: hasProfile ? "#fff" : "#111827",
-          fontWeight: 800,
-          fontSize: 13,
-          color: hasProfile ? "#374151" : "#fff",
-          textDecoration: "none",
-        }}
-      >
-        {hasProfile ? "プロフィール編集" : "プロフィール登録"}
-      </Link>
+      {status === "loading" ? (
+        <div style={{ minWidth: 200, maxWidth: 280 }}>
+          <AuthLoadingBanner
+            compact
+            slow={slow}
+            error={error}
+            onReload={() => {
+              window.location.reload();
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          <Link
+            href={withDev(buildProfileEditPath(returnPath))}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 12,
+              border: hasProfile ? "1px solid #e5e7eb" : "1px solid #111827",
+              background: hasProfile ? "#fff" : "#111827",
+              fontWeight: 800,
+              fontSize: 13,
+              color: hasProfile ? "#374151" : "#fff",
+              textDecoration: "none",
+            }}
+          >
+            {hasProfile ? "プロフィール編集" : "プロフィール登録"}
+          </Link>
 
-      <Link
-        href={withDev("/premium")}
-        style={{
-          padding: "8px 10px",
-          borderRadius: 12,
-          border: "1px solid #ccc",
-          background: "#fff",
-          fontWeight: 900,
-          fontSize: 13,
-          color: "#111",
-          textDecoration: "none",
-        }}
-      >
-        プランを見る
-      </Link>
+          <Link
+            href={withDev("/premium")}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              fontSize: 13,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            プランを見る
+          </Link>
 
-      <Link
-        href={withDev("/billing")}
-        style={{
-          padding: "8px 10px",
-          borderRadius: 12,
-          border: "1px solid #ccc",
-          background: "#fff",
-          fontWeight: 900,
-          fontSize: 13,
-          color: "#111",
-          textDecoration: "none",
-        }}
-      >
-        お支払い・解約
-      </Link>
+          <Link
+            href={withDev("/billing")}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: "1px solid #ccc",
+              background: "#fff",
+              fontWeight: 900,
+              fontSize: 13,
+              color: "#111",
+              textDecoration: "none",
+            }}
+          >
+            お支払い・解約
+          </Link>
 
-      <Link
-        href={accountHref}
-        style={{
-          padding: "8px 10px",
-          borderRadius: 12,
-          border: loggedIn ? "1px solid #dbeafe" : "1px solid #e5e7eb",
-          background: loggedIn ? "#eff6ff" : "#fff",
-          fontWeight: 800,
-          fontSize: 12,
-          color: "#111827",
-          textDecoration: "none",
-          opacity: ready ? 1 : 0.65,
-          maxWidth: 200,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {accountLabel}
-      </Link>
+          <Link
+            href={accountHref}
+            style={{
+              padding: "8px 10px",
+              borderRadius: 12,
+              border: loggedIn ? "1px solid #dbeafe" : "1px solid #e5e7eb",
+              background: loggedIn ? "#eff6ff" : "#fff",
+              fontWeight: 800,
+              fontSize: 12,
+              color: "#111827",
+              textDecoration: "none",
+              opacity: ready ? 1 : 0.65,
+              maxWidth: 200,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {accountLabel}
+          </Link>
 
-      {adminAuthenticated ? (
-        <Link
-          href={withDev("/admin")}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 12,
-            border: "1px solid #c4b5fd",
-            background: "#f5f3ff",
-            fontWeight: 900,
-            fontSize: 13,
-            color: "#5b21b6",
-            textDecoration: "none",
-          }}
-        >
-          管理
-        </Link>
-      ) : null}
+          {adminAuthenticated ? (
+            <Link
+              href={withDev("/admin")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: "1px solid #c4b5fd",
+                background: "#f5f3ff",
+                fontWeight: 900,
+                fontSize: 13,
+                color: "#5b21b6",
+                textDecoration: "none",
+              }}
+            >
+              管理
+            </Link>
+          ) : null}
 
-      {isDevFeatureEnabled() ? (
-        <Link
-          href={withDev("/dev/console")}
-          style={{
-            padding: "8px 10px",
-            borderRadius: 12,
-            border: "1px solid #f59e0b",
-            background: "#fffbeb",
-            fontWeight: 900,
-            fontSize: 13,
-            color: "#92400e",
-            textDecoration: "none",
-          }}
-        >
-          🧪 開発コンソール
-        </Link>
-      ) : null}
+          {isDevFeatureEnabled() ? (
+            <Link
+              href={withDev("/dev/console")}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: "1px solid #f59e0b",
+                background: "#fffbeb",
+                fontWeight: 900,
+                fontSize: 13,
+                color: "#92400e",
+                textDecoration: "none",
+              }}
+            >
+              🧪 開発コンソール
+            </Link>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

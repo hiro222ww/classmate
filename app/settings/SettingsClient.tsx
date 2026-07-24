@@ -1,84 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { getDeviceId } from "@/lib/device";
-import {
-  bootstrapAuthSession,
-  fetchAuthStatus,
-  signOutAccount,
-} from "@/lib/authClient";
+import { bootstrapAuthSession, signOutAccount } from "@/lib/authClient";
+import { useAuth } from "@/components/AuthProvider";
+import { AuthLoadingBanner } from "@/components/AuthLoadingUI";
 import { withDev } from "@/lib/withDev";
-import {
-  accountStatusLabel,
-  isLoggedInAccount,
-} from "@/lib/authAccount";
+import { accountStatusLabel } from "@/lib/authAccount";
 import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { SectionTitle } from "@/components/FormFieldLabel";
 import { HelpTip } from "@/components/HelpTip";
 import EmailNotificationPrefsSection from "@/components/EmailNotificationPrefsSection";
 
-type AuthStatus = {
-  userId: string;
-  deviceId: string;
-  isAnonymous: boolean;
-  hasLinkedEmail: boolean;
-  email: string | null;
-  entitlements: {
-    plan: string;
-    class_slots: number;
-    can_create_classes: boolean;
-    topic_plan: number;
-    theme_pass: boolean;
-  } | null;
-};
-
 export default function SettingsClient() {
-  const [loading, setLoading] = useState(true);
+  const {
+    status: authStatus,
+    loggedIn,
+    account,
+    slow,
+    error: authError,
+    refresh,
+  } = useAuth();
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<AuthStatus | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-
-  async function refreshStatus() {
-    setLoading(true);
-    setError("");
-    try {
-      const deviceId = getDeviceId();
-      if (!deviceId) {
-        setStatus(null);
-        setError("端末情報を取得できませんでした。");
-        return;
-      }
-
-      await bootstrapAuthSession(deviceId);
-      const json = await fetchAuthStatus(deviceId);
-
-      if (!json) {
-        setStatus(null);
-        return;
-      }
-
-      setStatus({
-        userId: String(json.userId ?? ""),
-        deviceId,
-        isAnonymous: Boolean(json.isAnonymous),
-        hasLinkedEmail: Boolean(json.hasLinkedEmail),
-        email: json.email ?? null,
-        entitlements: json.entitlements ?? null,
-      });
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "読み込みに失敗しました。");
-      setStatus(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void refreshStatus();
-  }, []);
 
   async function onLogout() {
     setBusy(true);
@@ -91,8 +38,7 @@ export default function SettingsClient() {
         await bootstrapAuthSession(deviceId);
       }
       setMessage("ログアウトしました。");
-      setStatus(null);
-      await refreshStatus();
+      await refresh({ soft: false });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "ログアウトに失敗しました。");
     } finally {
@@ -100,7 +46,7 @@ export default function SettingsClient() {
     }
   }
 
-  const loggedIn = isLoggedInAccount(status);
+  const loading = authStatus === "loading";
 
   return (
     <main
@@ -117,8 +63,6 @@ export default function SettingsClient() {
         helpLabel="アカウント設定について"
         helpContent="ログイン状態の確認、ログアウト、課金管理への導線です。"
       />
-
-      {loading ? <p>読み込み中…</p> : null}
 
       <section
         style={{
@@ -138,18 +82,26 @@ export default function SettingsClient() {
           }}
         >
           <div style={{ fontWeight: 900, fontSize: 16 }}>アカウント</div>
-          {!loggedIn ? (
+          {!loading && !loggedIn ? (
             <HelpTip
               label="ログイン状態について"
-              content={`現在: ${accountStatusLabel(status)}`}
+              content={`現在: ${accountStatusLabel(account)}`}
             />
           ) : null}
         </div>
 
-        {loggedIn ? (
+        {loading ? (
+          <AuthLoadingBanner
+            slow={slow}
+            error={authError}
+            onReload={() => {
+              window.location.reload();
+            }}
+          />
+        ) : loggedIn ? (
           <>
             <p style={{ margin: 0, fontSize: 14, color: "#111827", fontWeight: 800 }}>
-              {status?.email ?? accountStatusLabel(status)}
+              {account?.email ?? accountStatusLabel(account)}
             </p>
             <button
               type="button"
@@ -198,7 +150,7 @@ export default function SettingsClient() {
       >
         <EmailNotificationPrefsSection
           canConfigure={loggedIn}
-          email={status?.email}
+          email={account?.email}
         />
       </section>
 
@@ -255,7 +207,7 @@ export default function SettingsClient() {
         </div>
       </section>
 
-      {isDevFeatureEnabled() && status ? (
+      {isDevFeatureEnabled() && account ? (
         <section
           style={{
             border: "1px solid #e5e7eb",
@@ -268,8 +220,8 @@ export default function SettingsClient() {
           <div style={{ fontWeight: 900, color: "#111827", marginBottom: 8 }}>
             開発者向け
           </div>
-          <div>userId: {status.userId || "-"}</div>
-          <div>deviceId: {status.deviceId || "-"}</div>
+          <div>userId: {account.userId || "-"}</div>
+          <div>deviceId: {account.deviceId || "-"}</div>
         </section>
       ) : null}
 

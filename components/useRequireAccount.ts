@@ -1,55 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getDeviceId } from "@/lib/device";
-import { fetchAuthStatus } from "@/lib/authClient";
-import { isLoggedInAccount } from "@/lib/authAccount";
+import { useAuth } from "@/components/AuthProvider";
 import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { withDev } from "@/lib/withDev";
 
 export function useRequireAccount(returnTo: string) {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
-  const [loggedIn, setLoggedIn] = useState(false);
+  const { ready, loggedIn, status } = useAuth();
 
   useEffect(() => {
-    let cancelled = false;
+    if (status === "loading") return;
+    if (!loggedIn) {
+      router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
+    }
+  }, [status, loggedIn, returnTo, router]);
 
-    (async () => {
-      try {
-        const deviceId = getDeviceId();
-        if (!deviceId) {
-          if (!cancelled) {
-            setLoggedIn(false);
-            router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
-            setReady(true);
-          }
-          return;
-        }
-
-        const status = await fetchAuthStatus(deviceId);
-        const ok = isLoggedInAccount(status);
-        if (!cancelled) {
-          setLoggedIn(ok);
-          if (!ok) {
-            router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
-          }
-          setReady(true);
-        }
-      } catch {
-        if (!cancelled) {
-          setLoggedIn(false);
-          router.replace(withDev(buildShellAwareLoginUrl(returnTo)));
-          setReady(true);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [returnTo, router]);
-
-  return { ready, loggedIn };
+  return { ready, loggedIn, status };
 }

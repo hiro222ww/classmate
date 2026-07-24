@@ -46,6 +46,8 @@ import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
 import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { useAuth } from "@/components/AuthProvider";
+import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
@@ -374,6 +376,7 @@ export default function HomeClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { status: authStatus, slow: authSlow, error: authError } = useAuth();
 
   const dev = (searchParams.get("dev") ?? "").trim();
 
@@ -1803,7 +1806,13 @@ return () => {
     return arr;
   }, [classes]);
 
-  const welcomeName = String(profile?.display_name ?? "").trim() || "ゲスト";
+  const profileName = String(profile?.display_name ?? "").trim();
+  const authLoading = authStatus === "loading";
+  const welcomeName =
+    profileName ||
+    (authLoading || (authStatus === "authenticated" && !profile)
+      ? ""
+      : "ゲスト");
   const profileComplete = isUserProfileComplete(profile);
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
 
@@ -1906,6 +1915,7 @@ return () => {
   }
 
   async function openClass(target: MineClass) {
+    if (authStatus === "loading") return;
     const openStartMs = Date.now();
     let hintSessionMs = 0;
     let matchJoinMs = 0;
@@ -2430,8 +2440,28 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
       <div>
         <p style={{ margin: 0, fontSize: 15, color: "#374151" }}>
-          ようこそ、<b>{welcomeName}</b> さん
+          {authLoading || (authStatus === "authenticated" && !profileName) ? (
+            <>
+              ようこそ、<AuthTextSkeleton width={96} /> さん
+            </>
+          ) : (
+            <>
+              ようこそ、<b>{welcomeName}</b> さん
+            </>
+          )}
         </p>
+        {authLoading ? (
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+            {authSlow
+              ? "読み込みに時間がかかっています"
+              : "アカウント情報を確認しています…"}
+            {authError ? `（${authError}）` : ""}
+          </p>
+        ) : authStatus === "authenticated" && !profileName ? (
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+            アカウント情報を読み込んでいます
+          </p>
+        ) : null}
         {joinWindowText ? (
           <div
             style={{
@@ -2477,9 +2507,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         <JoinNewCard
           className="home-dash-join"
           quickJoinBusy={quickBusy}
-          quickJoinDisabled={!joinWindowOpen}
+          quickJoinDisabled={!joinWindowOpen || authLoading}
           onQuickJoin={quickJoinFreeAndOpen}
-          onPickPlace={() => router.push(withDev("/class/select"))}
+          onPickPlace={() => {
+            if (authLoading) return;
+            router.push(withDev("/class/select"));
+          }}
         />
       </div>
 
@@ -2726,14 +2759,14 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     <button
                       type="button"
                       onClick={() => void openClass(c)}
-                      disabled={opening}
+                      disabled={opening || authLoading}
                       style={{
                         ...CLASS_ENTER_BTN,
-                        opacity: opening ? 0.75 : 1,
-                        cursor: opening ? "default" : "pointer",
+                        opacity: opening || authLoading ? 0.75 : 1,
+                        cursor: opening || authLoading ? "default" : "pointer",
                       }}
                     >
-                      {joinedClassEnterLabel(opening)}
+                      {authLoading ? "確認中…" : joinedClassEnterLabel(opening)}
                     </button>
                   </div>
 

@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
+import { useAuth } from "@/components/AuthProvider";
 import {
-  bootstrapAuthSession,
-  fetchAuthStatus,
-} from "@/lib/authClient";
-import { accountStatusLabel, isLoggedInAccount } from "@/lib/authAccount";
+  AuthCardSkeleton,
+  AuthLoadingBanner,
+  AuthTextSkeleton,
+} from "@/components/AuthLoadingUI";
 import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { openJoinedClassFromSnapshot } from "@/lib/openJoinedClassClient";
@@ -44,11 +45,10 @@ function toSnapshot(row: JoinedClassRow): CurrentClassSnapshot {
 
 export default function AppHomeClient() {
   const router = useRouter();
+  const { status, loggedIn, accountLabel, slow, error: authError } = useAuth();
   const [deviceId, setDeviceId] = useState("");
-  const [accountLabel, setAccountLabel] = useState("未ログイン");
-  const [loggedIn, setLoggedIn] = useState(false);
   const [hasProfile, setHasProfile] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(true);
   const [classesLoading, setClassesLoading] = useState(true);
   const [joinedClasses, setJoinedClasses] = useState<JoinedClassRow[]>([]);
   const [openingClassId, setOpeningClassId] = useState("");
@@ -101,39 +101,27 @@ export default function AppHomeClient() {
       setDeviceId(id);
 
       if (!id) {
-        setReady(true);
+        setProfileLoading(false);
         setClassesLoading(false);
         return;
       }
 
-      await bootstrapAuthSession(id);
-      const [status, profile] = await Promise.all([
-        fetchAuthStatus(id),
-        fetchSelfProfile(id),
-      ]);
-
-      if (status) {
-        const account = {
-          isAnonymous: Boolean(status.isAnonymous),
-          hasLinkedEmail: Boolean(status.hasLinkedEmail),
-          email: status.email ?? null,
-        };
-        setLoggedIn(isLoggedInAccount(account));
-        setAccountLabel(accountStatusLabel(account));
-      }
-
+      setProfileLoading(true);
+      const profile = await fetchSelfProfile(id);
       const name = String(profile.profile?.display_name ?? "").trim();
       setHasProfile(Boolean(name));
-      setReady(true);
+      setProfileLoading(false);
       await loadJoinedClasses(id);
     })();
   }, []);
 
   const returnPath = "/app/home";
   const hasMembership = joinedClasses.length > 0;
+  const authLoading = status === "loading";
+  const actionsLocked = authLoading;
 
   async function onEnterClass(row: JoinedClassRow) {
-    if (openingClassId) return;
+    if (openingClassId || actionsLocked) return;
 
     setOpeningClassId(row.classId);
     setOpenError("");
@@ -166,11 +154,33 @@ export default function AppHomeClient() {
       <header>
         <h1 className="app-shell-title">Classmate</h1>
         <p className="app-shell-subtitle">
-          {loggedIn ? accountLabel : "Google でログインしてクラスに参加できます"}
+          {authLoading ? (
+            <AuthTextSkeleton width={180} />
+          ) : loggedIn ? (
+            profileLoading ? (
+              "アカウント情報を読み込んでいます"
+            ) : (
+              accountLabel
+            )
+          ) : (
+            "Google でログインしてクラスに参加できます"
+          )}
         </p>
       </header>
 
-      {!loggedIn && ready ? (
+      {authLoading ? (
+        <AppShellSection title="アカウント">
+          <AuthLoadingBanner
+            slow={slow}
+            error={authError}
+            onReload={() => {
+              window.location.reload();
+            }}
+          />
+        </AppShellSection>
+      ) : null}
+
+      {!loggedIn && !authLoading ? (
         <AppShellSection title="アカウント">
           <p className="app-shell-muted" style={{ margin: "0 0 12px" }}>
             アカウントを連携すると、クラスや設定を端末間で引き継げます。
@@ -187,10 +197,8 @@ export default function AppHomeClient() {
 
       <div className="app-shell-home-layout">
         <AppShellSection title="所属クラス">
-          {classesLoading ? (
-            <p className="app-shell-muted" style={{ margin: 0 }}>
-              読み込み中…
-            </p>
+          {authLoading || classesLoading ? (
+            <AuthCardSkeleton />
           ) : hasMembership ? (
             <div style={{ display: "grid", gap: 12 }}>
               {joinedClasses.map((row) => {
@@ -219,7 +227,7 @@ export default function AppHomeClient() {
                     <button
                       type="button"
                       className="app-shell-btn app-shell-btn--primary"
-                      disabled={Boolean(openingClassId)}
+                      disabled={Boolean(openingClassId) || actionsLocked}
                       onClick={() => void onEnterClass(row)}
                     >
                       {opening ? "入室中…" : "クラスに戻る"}
@@ -241,6 +249,7 @@ export default function AppHomeClient() {
               <button
                 type="button"
                 className="app-shell-btn app-shell-btn--primary"
+                disabled={actionsLocked}
                 onClick={() => router.push(withDev("/class/select"))}
               >
                 新しく参加する
@@ -250,22 +259,29 @@ export default function AppHomeClient() {
         </AppShellSection>
 
         <section className="app-shell-actions app-shell-actions--grid">
-          {hasMembership ? (
-            <button
-              type="button"
-              className="app-shell-btn"
-              onClick={() => router.push(withDev("/class/select"))}
-            >
-              新しく参加する
-            </button>
-          ) : null}
+          {authLoading || profileLoading ? (
+            <AuthCardSkeleton />
+          ) : (
+            <>
+              {hasMembership ? (
+                <button
+                  type="button"
+                  className="app-shell-btn"
+                  disabled={actionsLocked}
+                  onClick={() => router.push(withDev("/class/select"))}
+                >
+                  新しく参加する
+                </button>
+              ) : null}
 
-          <Link
-            href={withDev(buildProfileEditPath(returnPath))}
-            className="app-shell-btn"
-          >
-            {hasProfile ? "プロフィール" : "プロフィール登録"}
-          </Link>
+              <Link
+                href={withDev(buildProfileEditPath(returnPath))}
+                className="app-shell-btn"
+              >
+                {hasProfile ? "プロフィール" : "プロフィール登録"}
+              </Link>
+            </>
+          )}
         </section>
       </div>
     </AppShellPage>

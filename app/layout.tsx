@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import AppLifecycleBoot from "@/components/AppLifecycleBoot";
 import AuthBoot from "@/components/AuthBoot";
+import { AuthProvider } from "@/components/AuthProvider";
 import CapacitorAuthReturnBoot from "@/components/CapacitorAuthReturnBoot";
 import AppShellContextBoot from "@/components/AppShellContextBoot";
 import OAuthRootCodeRedirectBoot from "@/components/OAuthRootCodeRedirectBoot";
@@ -48,18 +49,20 @@ export default function RootLayout({
         }}
       >
         <LineInAppBrowserGate>
-          <AppLifecycleBoot />
-          <OAuthRootCodeRedirectBoot />
-          <CapacitorAuthReturnBoot />
-          <AppShellContextBoot />
-          <AuthBoot />
-          <Suspense fallback={null}>
-            <AppAccountNav />
-          </Suspense>
-          {/* ▼ メインコンテンツ */}
-          <div style={{ minHeight: "100vh" }}>{children}</div>
+          <AuthProvider>
+            <AppLifecycleBoot />
+            <OAuthRootCodeRedirectBoot />
+            <CapacitorAuthReturnBoot />
+            <AppShellContextBoot />
+            <AuthBoot />
+            <Suspense fallback={null}>
+              <AppAccountNav />
+            </Suspense>
+            {/* ▼ メインコンテンツ */}
+            <div style={{ minHeight: "100vh" }}>{children}</div>
 
-          <SiteFooter />
+            <SiteFooter />
+          </AuthProvider>
         </LineInAppBrowserGate>
       </body>
     </html>
