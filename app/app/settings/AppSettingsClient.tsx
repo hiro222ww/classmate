@@ -3,15 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { getDeviceId } from "@/lib/device";
-import {
-  bootstrapAuthSession,
-  fetchAuthStatus,
-  signOutAccount,
-} from "@/lib/authClient";
-import {
-  accountStatusLabel,
-  isLoggedInAccount,
-} from "@/lib/authAccount";
+import { bootstrapAuthSession, signOutAccount } from "@/lib/authClient";
+import { useAuth } from "@/components/AuthProvider";
+import { AuthLoadingBanner } from "@/components/AuthLoadingUI";
+import { accountStatusLabel } from "@/lib/authAccount";
 import { APP_HOME } from "@/lib/appShell";
 import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import {
@@ -29,76 +24,45 @@ import EmailNotificationPrefsSection from "@/components/EmailNotificationPrefsSe
 const SUPPORT_EMAIL = "classmate.app.team@gmail.com";
 
 export default function AppSettingsClient() {
-  const [loading, setLoading] = useState(true);
+  const {
+    status: authStatus,
+    loggedIn,
+    account,
+    slow,
+    error: authError,
+    refresh,
+  } = useAuth();
   const [busy, setBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const [deviceId, setDeviceId] = useState("");
   const [entitlements, setEntitlements] = useState<AppEntitlements | null>(
     null
   );
-  const [status, setStatus] = useState<{
-    email: string | null;
-    isAnonymous: boolean;
-    hasLinkedEmail: boolean;
-  } | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   const returnPath = "/app/settings";
   const billingReturn = encodeURIComponent(returnPath);
-
-  async function refreshStatus() {
-    setLoading(true);
-    setError("");
-    try {
-      const id = getDeviceId();
-      setDeviceId(id);
-      if (!id) {
-        setStatus(null);
-        setEntitlements(null);
-        setError("端末情報を取得できませんでした。");
-        return;
-      }
-
-      await bootstrapAuthSession(id);
-      const json = await fetchAuthStatus(id);
-      if (!json) {
-        setStatus(null);
-        setEntitlements(null);
-        return;
-      }
-
-      setStatus({
-        email: json.email ?? null,
-        isAnonymous: Boolean(json.isAnonymous),
-        hasLinkedEmail: Boolean(json.hasLinkedEmail),
-      });
-
-      if (json.entitlements) {
-        setEntitlements({
-          plan: String(json.entitlements.plan ?? "free"),
-          class_slots: Number(json.entitlements.class_slots ?? 1),
-          can_create_classes: Boolean(json.entitlements.can_create_classes),
-          topic_plan: Number(json.entitlements.topic_plan ?? 0),
-          theme_pass: Boolean(json.entitlements.theme_pass),
-        });
-      } else {
-        setEntitlements(null);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "読み込みに失敗しました。");
-      setStatus(null);
-      setEntitlements(null);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const loading = authStatus === "loading";
 
   useEffect(() => {
-    void refreshStatus();
+    setDeviceId(getDeviceId());
   }, []);
 
-  const loggedIn = isLoggedInAccount(status);
+  useEffect(() => {
+    if (!account?.entitlements) {
+      setEntitlements(null);
+      return;
+    }
+    setEntitlements({
+      plan: String(account.entitlements.plan ?? "free"),
+      class_slots: Number(account.entitlements.class_slots ?? 1),
+      can_create_classes: Boolean(account.entitlements.can_create_classes),
+      topic_plan: Number(account.entitlements.topic_plan ?? 0),
+      theme_pass: Boolean(account.entitlements.theme_pass),
+    });
+  }, [account]);
+
   const summary = useMemo(
     () => summarizeAppEntitlements(entitlements),
     [entitlements]
@@ -115,7 +79,7 @@ export default function AppSettingsClient() {
         await bootstrapAuthSession(id);
       }
       setMessage("ログアウトしました。");
-      await refreshStatus();
+      await refresh({ soft: false });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "ログアウトに失敗しました。");
     } finally {
@@ -141,7 +105,7 @@ export default function AppSettingsClient() {
         return;
       }
       setMessage("権限を再同期しました。");
-      await refreshStatus();
+      await refresh({ soft: true });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "権限の再同期に失敗しました。");
     } finally {
@@ -156,14 +120,20 @@ export default function AppSettingsClient() {
         <p className="app-shell-subtitle">アカウント、課金、通知、安全</p>
       </header>
 
-      {loading ? <p className="app-shell-muted">読み込み中…</p> : null}
-
       <div className="app-shell-settings-grid">
         <AppShellSection title="アカウント">
-          {loggedIn ? (
+          {loading ? (
+            <AuthLoadingBanner
+              slow={slow}
+              error={authError}
+              onReload={() => {
+                window.location.reload();
+              }}
+            />
+          ) : loggedIn ? (
             <div style={{ display: "grid", gap: 12 }}>
               <p style={{ margin: 0, fontWeight: 800 }}>
-                {status?.email ?? accountStatusLabel(status)}
+                {account?.email ?? accountStatusLabel(account)}
               </p>
               <Link
                 href={withDev(buildProfileEditPath(returnPath))}
@@ -189,7 +159,7 @@ export default function AppSettingsClient() {
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
               <p className="app-shell-muted" style={{ margin: 0 }}>
-                {accountStatusLabel(status)}
+                {accountStatusLabel(account)}
               </p>
               <Link
                 href={withDev(buildShellAwareLoginUrl(returnPath))}
@@ -239,7 +209,7 @@ export default function AppSettingsClient() {
             <button
               type="button"
               className="app-shell-btn app-shell-btn--ghost"
-              disabled={syncBusy || !loggedIn}
+              disabled={syncBusy || !loggedIn || loading}
               onClick={() => void onSyncEntitlements()}
             >
               {syncBusy ? "再同期中…" : "権限を再同期"}
@@ -255,7 +225,7 @@ export default function AppSettingsClient() {
             <div className="app-shell-info-box">
               <EmailNotificationPrefsSection
                 canConfigure={loggedIn}
-                email={status?.email}
+                email={account?.email}
                 compact
               />
             </div>
