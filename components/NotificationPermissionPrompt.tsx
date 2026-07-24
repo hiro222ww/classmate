@@ -124,10 +124,13 @@ export default function NotificationPermissionPrompt({
     }
   }, [busy, deviceId, onEnabledChange]);
 
-  // If permission already granted but app flag/subscription drifted, quietly resubscribe.
+  // Only repair Push subscription when the user already opted in (app flag ON).
+  // Do NOT force-enable just because Notification.permission === "granted"
+  // (browser permission can remain granted after the user turns Classmate Push OFF).
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!deviceId) return;
+    if (!enabled) return;
 
     try {
       if (
@@ -143,26 +146,19 @@ export default function NotificationPermissionPrompt({
       const permission = getNotificationPermissionState();
       if (permission !== "granted") return;
 
-      let shouldMarkEnabled = false;
+      let optedIn = false;
       try {
-        shouldMarkEnabled =
-          !enabled || localStorage.getItem("notifications_enabled") !== "true";
-        if (shouldMarkEnabled) {
-          localStorage.setItem("notifications_enabled", "true");
-        }
+        optedIn = localStorage.getItem("notifications_enabled") === "true";
       } catch {
-        shouldMarkEnabled = !enabled;
+        optedIn = enabled;
       }
-
-      if (shouldMarkEnabled) {
-        onEnabledChange(true);
-      }
+      if (!optedIn) return;
 
       void subscribeWebPush(deviceId).catch(() => null);
     } catch (e) {
       console.warn("[NotificationPermissionPrompt] resubscribe failed", e);
     }
-  }, [deviceId, enabled, onEnabledChange]);
+  }, [deviceId, enabled]);
 
   if (!visible) return null;
 
