@@ -58,39 +58,45 @@ export default function ClassMessages({
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open || !classId || !deviceId) return;
     let cancelled = false;
+    setInitialLoadDone(false);
 
     async function load() {
-      const res = await fetch("/api/class/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          classId,
-          deviceId,
-          limit: MESSAGE_HISTORY_LIMIT,
-        }),
-        cache: "no-store",
-      });
-      const json = await res.json().catch(() => null);
-      if (cancelled) return;
-      if (!res.ok) {
-        setErr(
-          json?.error === "forbidden" || json?.error === "not_a_member"
-            ? "このクラスのメッセージを閲覧する権限がありません"
-            : "メッセージの取得に失敗しました"
-        );
-        return;
+      try {
+        const res = await fetch("/api/class/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            classId,
+            deviceId,
+            limit: MESSAGE_HISTORY_LIMIT,
+          }),
+          cache: "no-store",
+        });
+        const json = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (!res.ok) {
+          setErr(
+            json?.error === "forbidden" || json?.error === "not_a_member"
+              ? "このクラスのメッセージを閲覧する権限がありません"
+              : "メッセージの取得に失敗しました"
+          );
+          return;
+        }
+        setMessages(dedupe((json?.messages ?? []) as ClassMessage[]));
+        setErr("");
+        requestAnimationFrame(() => {
+          const box = boxRef.current;
+          if (box) box.scrollTop = box.scrollHeight;
+        });
+      } finally {
+        if (!cancelled) setInitialLoadDone(true);
       }
-      setMessages(dedupe((json?.messages ?? []) as ClassMessage[]));
-      setErr("");
-      requestAnimationFrame(() => {
-        const box = boxRef.current;
-        if (box) box.scrollTop = box.scrollHeight;
-      });
     }
 
     void load();
@@ -214,7 +220,13 @@ export default function ClassMessages({
               marginBottom: 10,
             }}
           >
-            {messages.length === 0 ? (
+            {!initialLoadDone ? (
+              <div style={{ color: "#6b7280", fontSize: 12 }}>
+                メッセージを確認しています…
+              </div>
+            ) : err && messages.length === 0 ? (
+              <div style={{ color: "#b91c1c", fontSize: 12 }}>{err}</div>
+            ) : messages.length === 0 ? (
               <div style={{ color: "#6b7280", fontSize: 12 }}>
                 まだメッセージはありません
               </div>

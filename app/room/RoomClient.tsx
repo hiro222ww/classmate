@@ -47,6 +47,25 @@ import {
 import SessionMessages from "@/components/SessionMessages";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
 import MemberProfileModal from "@/components/MemberProfileModal";
+import InviteJoinProgress, {
+  type InvitePrepStageId,
+} from "@/components/InviteJoinProgress";
+import MemberJoinBanner from "@/components/MemberJoinBanner";
+import {
+  MembersLoadingPanel,
+  LoadErrorPanel,
+  softUpdatingBadgeStyle,
+  LoadSpinner,
+} from "@/components/LoadStateUI";
+import {
+  formatMemberCountLabel,
+  resolveListLoadState,
+} from "@/lib/loadState";
+import {
+  diffMemberJoinEvents,
+  pruneRecentJoinKeys,
+  type MemberJoinEvent,
+} from "@/lib/memberJoinNotify";
 import {
   LIST_MEMBER_AVATAR_PX,
   normalizeMemberDeviceId,
@@ -821,6 +840,25 @@ export default function RoomClient() {
   const [sessionResolving, setSessionResolving] = useState(false);
   const [membersListInitialFetchDone, setMembersListInitialFetchDone] =
     useState(false);
+  const membersListInitialFetchDoneRef = useRef(false);
+  const [membersListRefreshing, setMembersListRefreshing] = useState(false);
+  const [membersListFetchError, setMembersListFetchError] = useState<string | null>(
+    null
+  );
+  const [invitePrepStage, setInvitePrepStage] = useState<
+    InvitePrepStageId | "idle" | "done" | "error"
+  >("idle");
+  const [invitePrepSlow, setInvitePrepSlow] = useState(false);
+  const [invitePrepVerySlow, setInvitePrepVerySlow] = useState(false);
+  const [joinBanner, setJoinBanner] = useState<MemberJoinEvent | null>(null);
+  const [highlightMemberIds, setHighlightMemberIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const memberJoinPrimedRef = useRef(false);
+  const memberJoinPreviousIdsRef = useRef<Set<string>>(new Set());
+  const memberJoinRecentKeysRef = useRef<Set<string>>(new Set());
+  const memberJoinSoftResyncRef = useRef(false);
+  const documentTitleBaseRef = useRef("");
   const [callBlockTick, setCallBlockTick] = useState(0);
   const roomLifecycleReadyRef = useRef(false);
   const sessionResolvingRef = useRef(false);
@@ -1260,6 +1298,18 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     inviteJoinDoneKeyRef.current = null;
     inviteJoinTraceRef.current = createEmptyInviteJoinApiTrace();
     setMembersListInitialFetchDone(false);
+    membersListInitialFetchDoneRef.current = false;
+    setMembersListRefreshing(false);
+    setMembersListFetchError(null);
+    setInvitePrepStage("idle");
+    setInvitePrepSlow(false);
+    setInvitePrepVerySlow(false);
+    setJoinBanner(null);
+    setHighlightMemberIds(new Set());
+    memberJoinPrimedRef.current = false;
+    memberJoinPreviousIdsRef.current = new Set();
+    memberJoinRecentKeysRef.current = new Set();
+    memberJoinSoftResyncRef.current = false;
     setLifecycleReady(false);
     setResolving(false);
     cancelAutoCallTimer("session_changed");
@@ -1960,6 +2010,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
       const fetchStatusStartMs = Date.now();
       const opGen = roomOpGenRef.current;
+      if (membersListInitialFetchDoneRef.current) {
+        setMembersListRefreshing(true);
+      }
 
       const rejoinOk = await selfRejoinSessionIfMissing();
       if (!shouldApplyRoomFetchResult(opGen, classId, sessionId, "fetchStatus_after_rejoin")) {
@@ -2205,10 +2258,16 @@ if (!res.ok || !json?.ok) {
           incomingMembers
         );
         clearSoftConnectionError("status");
+        setMembersListFetchError(null);
       } catch (e: any) {
-        if (e?.name !== "AbortError") setSoftConnectionError("status");
+        if (e?.name !== "AbortError") {
+          setSoftConnectionError("status");
+          setMembersListFetchError("参加メンバーを取得できませんでした");
+        }
       } finally {
         setMembersListInitialFetchDone(true);
+        membersListInitialFetchDoneRef.current = true;
+        setMembersListRefreshing(false);
         roomLog(
           `[room-perf] fetchStatus ms=${Date.now() - fetchStatusStartMs} reason=${fetchReason}`
         );
@@ -2573,9 +2632,20 @@ if (!res.ok || !json?.ok) {
     if (pathname !== "/room") return;
     if (!sessionResolving) {
       roomResolvingSinceRef.current = null;
+      setInvitePrepSlow(false);
+      setInvitePrepVerySlow(false);
+      if (invite && invitePrepStage !== "idle" && invitePrepStage !== "error") {
+        setInvitePrepStage("done");
+      }
       return;
     }
     roomResolvingSinceRef.current = roomResolvingSinceRef.current ?? Date.now();
+    const slowTimer = window.setTimeout(() => {
+      if (sessionResolvingRef.current) setInvitePrepSlow(true);
+    }, 8_000);
+    const verySlowTimer = window.setTimeout(() => {
+      if (sessionResolvingRef.current) setInvitePrepVerySlow(true);
+    }, 20_000);
     const stuckTimer = window.setTimeout(() => {
       if (!sessionResolvingRef.current) return;
       const elapsedMs = Date.now() - (roomResolvingSinceRef.current ?? Date.now());
@@ -2591,11 +2661,15 @@ if (!res.ok || !json?.ok) {
           `elapsedMs=${elapsedMs} resolving=1 ready=${roomLifecycleReadyRef.current ? 1 : 0}`
       );
     }, 3000);
-    return () => window.clearTimeout(stuckTimer);
-  }, [sessionResolving, sessionId, isBlockedClosedSession]);
+    return () => {
+      window.clearTimeout(stuckTimer);
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(verySlowTimer);
+    };
+  }, [sessionResolving, sessionId, isBlockedClosedSession, invite, invitePrepStage, pathname]);
 
   useEffect(() => {
-  if (pathname !== "/room") return;
+    if (pathname !== "/room") return;
 
   if (!sessionId || !deviceId) {
   joinedSessionKeyRef.current = null;
@@ -2892,10 +2966,13 @@ const name = rawName === "You" ? "参加者" : rawName;
   let joinResultError = "";
   const joinStartMs = Date.now();
 
-  if (invite) {
-    inviteJoinTraceRef.current = createEmptyInviteJoinApiTrace();
-    clearInviteRoomError("join_start");
-  }
+    if (invite) {
+      inviteJoinTraceRef.current = createEmptyInviteJoinApiTrace();
+      clearInviteRoomError("join_start");
+      setInvitePrepStage("invite_link");
+      setInvitePrepSlow(false);
+      setInvitePrepVerySlow(false);
+    }
 
   try {
     if (!roomLifecycleReadyRef.current) {
@@ -2942,6 +3019,7 @@ const name = rawName === "You" ? "参加者" : rawName;
 
     if (invite) {
       logInviteRoute("join-start", { classId, sessionId, invite: true });
+      setInvitePrepStage("account");
 
       if (inviteJoinAbortRef.current) {
         inviteJoinAbortRef.current.abort();
@@ -2955,6 +3033,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         deviceId,
         signal: abortController.signal,
         onAuthReady: () => {
+          setInvitePrepStage("joining");
           logInviteJoinClient("step", {
             classId,
             sessionId,
@@ -2963,6 +3042,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           });
         },
         onRequestStart: () => {
+          setInvitePrepStage("joining");
           logInviteJoinClient("step", {
             classId,
             sessionId,
@@ -3119,6 +3199,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       markJoinedClassesStale(classId);
       markAutoCallOnce(resolvedSessionId, deviceId);
       inviteJoinDoneKeyRef.current = joinKey;
+      setInvitePrepStage("opening");
       roomLog(
         "[room-join] invite-join-done fast_path=apply " +
           `class=${classId.slice(-6)} session=${resolvedSessionId.slice(-6)} ` +
@@ -3459,6 +3540,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         joinedSessionKeyRef.current = null;
         setLifecycleReady(false);
         setResolving(false);
+        setInvitePrepStage("error");
         setErr(message);
         return;
       }
@@ -3689,10 +3771,15 @@ const name = rawName === "You" ? "参加者" : rawName;
         },
         async () => {
           if (window.location.pathname !== "/room") return;
-          await fetchStatus({ force: true });
+          await fetchStatus({ force: true, reason: "session_members_realtime" });
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED" && memberJoinPrimedRef.current) {
+          memberJoinSoftResyncRef.current = true;
+          void fetchStatus({ force: true, reason: "session_members_resubscribe" });
+        }
+      });
 
     return () => {
       void supabase.removeChannel(channel);
@@ -3913,15 +4000,123 @@ const name = rawName === "You" ? "参加者" : rawName;
     };
   }, []);
 
-  const subtitle = `${Math.min(Math.max(memberCount, 0), capacity)}/${capacity}人`;
+  useEffect(() => {
+    if (
+      sessionResolving ||
+      !roomSessionReady ||
+      !membersListInitialFetchDone ||
+      pathname !== "/room"
+    ) {
+      return;
+    }
+
+    const nextIds = new Set<string>();
+    const nameById = new Map<string, string>();
+    for (const member of visibleMembers) {
+      const id = String(member.device_id ?? "").trim();
+      if (!id) continue;
+      nextIds.add(id);
+      nameById.set(id, formatMemberDisplayName(member));
+    }
+
+    const softResync = memberJoinSoftResyncRef.current;
+    memberJoinSoftResyncRef.current = false;
+
+    const result = diffMemberJoinEvents({
+      previousIds: memberJoinPreviousIdsRef.current,
+      nextIds,
+      primed: memberJoinPrimedRef.current,
+      selfDeviceId: deviceId,
+      nameById,
+      recentKeys: memberJoinRecentKeysRef.current,
+      softResync,
+    });
+
+    memberJoinPrimedRef.current = result.primed;
+    memberJoinPreviousIdsRef.current = result.nextPreviousIds;
+    memberJoinRecentKeysRef.current = pruneRecentJoinKeys(result.nextRecentKeys);
+
+    if (result.events.length === 0) return;
+
+    const latest = result.events[result.events.length - 1];
+    setJoinBanner(latest);
+    setHighlightMemberIds((prev) => {
+      const next = new Set(prev);
+      for (const event of result.events) next.add(event.deviceId);
+      return next;
+    });
+
+    if (typeof document !== "undefined") {
+      if (!documentTitleBaseRef.current) {
+        documentTitleBaseRef.current = document.title || "classmate";
+      }
+      document.title = `【参加】${latest.displayName}さん — ${documentTitleBaseRef.current}`;
+    }
+
+    const clearHighlight = window.setTimeout(() => {
+      setHighlightMemberIds((prev) => {
+        const next = new Set(prev);
+        for (const event of result.events) next.delete(event.deviceId);
+        return next;
+      });
+      if (typeof document !== "undefined" && documentTitleBaseRef.current) {
+        document.title = documentTitleBaseRef.current;
+      }
+    }, 8000);
+
+    return () => window.clearTimeout(clearHighlight);
+  }, [
+    visibleMembers,
+    membersListInitialFetchDone,
+    roomSessionReady,
+    sessionResolving,
+    deviceId,
+    pathname,
+  ]);
+
+  const membersLoadState = resolveListLoadState({
+    hasFetched: membersListInitialFetchDone,
+    loading:
+      sessionResolving ||
+      !roomSessionReady ||
+      !membersListInitialFetchDone,
+    error: membersListFetchError,
+    count: visibleMembers.length,
+  });
+  const subtitle = formatMemberCountLabel({
+    state: membersLoadState,
+    count: Math.max(memberCount, visibleMembers.length),
+    capacity,
+  });
 
   const shellTitle = topicTitle || "ルーム";
   const shellSubtitle = classLabel
     ? `${classLabel} / ${subtitle}`
     : subtitle;
 
-    return (
+  const roomInviteUrl = useMemo(
+    () =>
+      buildInviteRoomUrl({
+        classId,
+        sessionId,
+        inviter: displayName || undefined,
+      }),
+    [classId, sessionId, displayName]
+  );
+
+  return (
     <>
+      {joinBanner ? (
+        <MemberJoinBanner
+          displayName={joinBanner.displayName}
+          photoPath={
+            visibleMembers.find(
+              (m) => String(m.device_id ?? "").trim() === joinBanner.deviceId
+            )?.photo_path ?? null
+          }
+          onClose={() => setJoinBanner(null)}
+        />
+      ) : null}
       {showDevBanner && (
         <div
           style={{
@@ -3951,6 +4146,8 @@ const name = rawName === "You" ? "参加者" : rawName;
           lines={
             err
               ? [err]
+              : sessionResolving && invite
+                ? []
               : sessionResolving
                 ? ["ルームを準備しています…"]
                 : invite
@@ -4001,6 +4198,48 @@ const name = rawName === "You" ? "参加者" : rawName;
         >
           <div style={{ display: "grid", gap: 12 }}>
             <InAppBrowserNotice compact />
+            {invite &&
+            (sessionResolving ||
+              invitePrepStage === "error" ||
+              invitePrepVerySlow) ? (
+              <InviteJoinProgress
+                stage={
+                  invitePrepStage === "idle" ? "invite_link" : invitePrepStage
+                }
+                classLabel={classLabel || topicTitle}
+                inviterName={inviter || null}
+                slow={invitePrepSlow}
+                verySlow={invitePrepVerySlow}
+                errorMessage={err || null}
+                inviteUrl={roomInviteUrl}
+                onRetry={() => {
+                  setInvitePrepStage("invite_link");
+                  setInvitePrepSlow(false);
+                  setInvitePrepVerySlow(false);
+                  setErr("");
+                  joinedSessionKeyRef.current = null;
+                  void (async () => {
+                    setResolving(true);
+                    // Re-trigger join by clearing done key and remounting effect via setLifecycle
+                    inviteJoinDoneKeyRef.current = null;
+                    setLifecycleReady(false);
+                    window.location.reload();
+                  })();
+                }}
+                onCopyInvite={async () => {
+                  try {
+                    await navigator.clipboard.writeText(roomInviteUrl);
+                    alert("招待リンクをコピーしました");
+                  } catch {
+                    window.prompt(
+                      "コピーできませんでした。下のリンクをコピーしてください。",
+                      roomInviteUrl
+                    );
+                  }
+                }}
+                onHome={goHome}
+              />
+            ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
@@ -4110,19 +4349,60 @@ const name = rawName === "You" ? "参加者" : rawName;
                 background: "#fff",
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>
-                参加メンバー
+              <div
+                style={{
+                  fontWeight: 900,
+                  marginBottom: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span>参加メンバー</span>
+                <span style={{ color: "#6b7280", fontWeight: 800, fontSize: 12 }}>
+                  {subtitle}
+                </span>
+                {membersListRefreshing && membersListInitialFetchDone ? (
+                  <span style={softUpdatingBadgeStyle}>
+                    <LoadSpinner size={10} />
+                    更新中
+                  </span>
+                ) : null}
               </div>
 
-              {sessionResolving || !roomSessionReady || !membersListInitialFetchDone ? (
-                <div style={{ color: "#6b7280" }}>メンバーを読み込み中…</div>
-              ) : visibleMembers.length === 0 ? (
+              {membersLoadState === "loading" && visibleMembers.length === 0 ? (
+                <MembersLoadingPanel />
+              ) : membersLoadState === "error" && visibleMembers.length === 0 ? (
+                <LoadErrorPanel
+                  message={
+                    membersListFetchError ||
+                    "参加メンバーを取得できませんでした"
+                  }
+                  onRetry={() => {
+                    void fetchStatus({ force: true, reason: "members_retry" });
+                  }}
+                />
+              ) : membersLoadState === "empty" ? (
                 <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
+                  {membersLoadState === "loading" || membersListRefreshing ? (
+                    <div
+                      style={{
+                        ...softUpdatingBadgeStyle,
+                        width: "fit-content",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <LoadSpinner size={10} />
+                      参加状況を更新中
+                    </div>
+                  ) : null}
                   {visibleMembers.map((m) => {
                     const did = String(m.device_id ?? "").trim();
                     const isMe = did === String(deviceId ?? "").trim();
+                    const highlighted = highlightMemberIds.has(did);
 
                     const label = isMe
                       ? resolveDisplayName({
@@ -4153,8 +4433,14 @@ const name = rawName === "You" ? "参加者" : rawName;
                           gap: 10,
                           padding: "10px 12px",
                           borderRadius: 12,
-                          border: "1px solid #e5e7eb",
-                          background: "#fafafa",
+                          border: highlighted
+                            ? "2px solid #34d399"
+                            : "1px solid #e5e7eb",
+                          background: highlighted ? "#ecfdf5" : "#fafafa",
+                          boxShadow: highlighted
+                            ? "0 0 0 3px rgba(52, 211, 153, 0.25)"
+                            : undefined,
+                          transition: "border-color 0.2s ease, background 0.2s ease",
                         }}
                       >
                         <button

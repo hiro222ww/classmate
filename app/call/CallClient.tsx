@@ -3119,7 +3119,10 @@ export default function CallClient() {
                 : { marginTop: 6, fontSize: 13, color: "#666" }
             }
           >
-            参加人数 {filled}/{capacity}
+            参加人数{" "}
+            {membersSyncRevision > 0
+              ? `${filled}/${capacity}`
+              : `--/${capacity}`}
           </div>
           {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
             <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -3300,7 +3303,7 @@ export default function CallClient() {
         </div>
       )}
 
-      {!hasOtherMember && (
+      {!hasOtherMember && membersSyncRevision > 0 && members.length > 0 ? (
         <div
           style={{
             marginTop: 12,
@@ -3315,7 +3318,7 @@ export default function CallClient() {
         >
           他の参加者の参加を待っています。
         </div>
-      )}
+      ) : null}
 
       <section
         style={{

@@ -150,6 +150,7 @@ export default function SessionMessages({
   const [sending, setSending] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   const boxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -191,42 +192,48 @@ export default function SessionMessages({
 
     let cancelled = false;
     deletedMessageIdsRef.current.clear();
+    setInitialLoadDone(false);
 
     async function loadMessages() {
       if (!deviceId) {
         setErr("メッセージを表示できません");
+        setInitialLoadDone(true);
         return;
       }
 
-      const res = await fetch(
-        `/api/session/messages?sessionId=${encodeURIComponent(sessionId)}&deviceId=${encodeURIComponent(deviceId)}&limit=${MESSAGE_HISTORY_LIMIT}`,
-        { cache: "no-store" }
-      );
-      const json = await res.json().catch(() => null);
-
-      if (cancelled) return;
-
-      if (!res.ok || !json?.ok) {
-        console.warn("[messages] load failed", json);
-        setErr(
-          json?.error === "forbidden"
-            ? "このルームのメッセージを閲覧する権限がありません"
-            : "メッセージの取得に失敗しました"
+      try {
+        const res = await fetch(
+          `/api/session/messages?sessionId=${encodeURIComponent(sessionId)}&deviceId=${encodeURIComponent(deviceId)}&limit=${MESSAGE_HISTORY_LIMIT}`,
+          { cache: "no-store" }
         );
-        return;
-      }
+        const json = await res.json().catch(() => null);
 
-      const data = (json.messages ?? []) as RoomMessage[];
+        if (cancelled) return;
 
-      for (const m of data) {
-        if (m?.id && m.deleted_at) {
-          deletedMessageIdsRef.current.add(m.id);
+        if (!res.ok || !json?.ok) {
+          console.warn("[messages] load failed", json);
+          setErr(
+            json?.error === "forbidden"
+              ? "このルームのメッセージを閲覧する権限がありません"
+              : "メッセージの取得に失敗しました"
+          );
+          return;
         }
-      }
 
-      setMessages(dedupeMessages(data));
-      setErr("");
-      scrollToBottomNextFrame("auto");
+        const data = (json.messages ?? []) as RoomMessage[];
+
+        for (const m of data) {
+          if (m?.id && m.deleted_at) {
+            deletedMessageIdsRef.current.add(m.id);
+          }
+        }
+
+        setMessages(dedupeMessages(data));
+        setErr("");
+        scrollToBottomNextFrame("auto");
+      } finally {
+        if (!cancelled) setInitialLoadDone(true);
+      }
     }
 
     void loadMessages();
@@ -538,7 +545,13 @@ export default function SessionMessages({
             WebkitUserSelect: "none",
           }}
         >
-          {messages.length === 0 ? (
+          {!initialLoadDone ? (
+            <div style={{ color: "#666", fontSize: 13 }}>
+              メッセージを確認しています…
+            </div>
+          ) : err && messages.length === 0 ? (
+            <div style={{ color: "#b91c1c", fontSize: 13 }}>{err}</div>
+          ) : messages.length === 0 ? (
             <div style={{ color: "#666", fontSize: 13 }}>
               まだメッセージはありません
             </div>

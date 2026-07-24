@@ -54,6 +54,7 @@ import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { supabaseAuthClient } from "@/lib/authClient";
+import { supabase } from "@/lib/supabaseClient";
 import { markAutoCallOnce } from "@/lib/autoCallOnce";
 import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import {
@@ -1522,11 +1523,40 @@ document.addEventListener("visibilitychange", onVisible);
 
 const timer = window.setInterval(loadMembersAndPresence, 20000);
 
+const watchedClassIds = classes.map((c) => c.id).filter(Boolean);
+const channels = watchedClassIds
+  .map((classId) => {
+    if (!classId) return null;
+    let debounce: number | null = null;
+    return supabase
+      .channel(`home-class-members-${classId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "class_memberships",
+          filter: `class_id=eq.${classId}`,
+        },
+        () => {
+          if (debounce) window.clearTimeout(debounce);
+          debounce = window.setTimeout(() => {
+            void loadMembersAndPresence();
+          }, 400);
+        }
+      )
+      .subscribe();
+  })
+  .filter(Boolean);
+
 return () => {
   cancelled = true;
   window.clearTimeout(initialTimer);
   window.clearInterval(timer);
   document.removeEventListener("visibilitychange", onVisible);
+  for (const channel of channels) {
+    if (channel) void supabase.removeChannel(channel);
+  }
 };
   }, [classes, deviceId, fetchJoinedClasses, notificationsEnabled]);
 
@@ -2534,7 +2564,10 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                 leavingClassId === c.id || leavingClassIdsRef.current.has(c.id);
               const opening = openingClassId === c.id;
               const members = membersByClass[c.id] ?? [];
-              const membersLoading = membersLoadingByClass[c.id] === true;
+              const membersLoading =
+                membersLoadingByClass[c.id] === true ||
+                (membersLoadingByClass[c.id] !== false &&
+                  !membersInitialLoadedRef.current.has(c.id));
               const presenceMap = presenceByClass[c.id] ?? {};
               const prevStatuses = prevMemberStatusRef.current[c.id] ?? {};
               const lastInSessionAtMap =
@@ -2792,7 +2825,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                           marginTop: 8,
                         }}
                       >
-                        メンバーを読み込み中…
+                        参加メンバーを確認しています…
                       </div>
                     ) : members.length === 0 ? (
                       <div
