@@ -87,6 +87,7 @@ type CallVoiceLayerProps = {
   listenOnly?: boolean;
   autoAcquireOnMount?: boolean;
   presenceMembers?: Member[];
+  onExplicitRemoteLeave?: (remoteId: string) => void;
 };
 
 export default function CallVoiceLayer({
@@ -115,6 +116,7 @@ export default function CallVoiceLayer({
   listenOnly = false,
   autoAcquireOnMount = true,
   presenceMembers,
+  onExplicitRemoteLeave,
 }: CallVoiceLayerProps) {
   const instanceRef = useRef(createVoiceLayerInstanceId());
   const instanceId = instanceRef.current;
@@ -176,6 +178,7 @@ export default function CallVoiceLayer({
     onReadinessSnapshot,
     onSoftResetExhausted,
     voiceLayerInstanceId: instanceId,
+    onExplicitRemoteLeave,
   });
 
   useEffect(() => {

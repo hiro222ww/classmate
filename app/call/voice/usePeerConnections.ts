@@ -503,6 +503,7 @@ type UsePeerConnectionsArgs = {
   listenOnly?: boolean;
   /** Raw session members for call-screen presence (defaults to `members`). */
   presenceMembers?: Member[];
+  onExplicitRemoteLeave?: (remoteId: string) => void;
 };
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [
@@ -1126,6 +1127,7 @@ export function usePeerConnections({
   voiceLayerInstanceId = "-",
   listenOnly = false,
   presenceMembers,
+  onExplicitRemoteLeave,
 }: UsePeerConnectionsArgs) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef(deviceId);
@@ -1134,6 +1136,8 @@ export function usePeerConnections({
   membersRef.current = members;
   const presenceMembersRef = useRef(members);
   presenceMembersRef.current = presenceMembers ?? members;
+  const onExplicitRemoteLeaveRef = useRef(onExplicitRemoteLeave);
+  onExplicitRemoteLeaveRef.current = onExplicitRemoteLeave;
   const remotePeerGraceRefsRef = useRef(createRemotePeerGraceRefs());
   const voiceSessionMemberIdsRef = useRef<Set<string>>(new Set());
   const voiceSessionMemberAbsentSinceRef = useRef<Map<string, number>>(new Map());
@@ -12011,6 +12015,7 @@ export function usePeerConnections({
       if (row.signal_type === "leave") {
         markRemotePeerExplicitRemoved(remotePeerGraceRefsRef.current, remoteId);
         voiceSessionMemberIdsRef.current.delete(remoteId);
+        onExplicitRemoteLeaveRef.current?.(remoteId);
         closePeer(remoteId, { clearConnectionId: true, reason: "leave_signal" });
         return;
       }

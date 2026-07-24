@@ -126,7 +126,7 @@ import {
   shouldStartCallMemberInCallHysteresis,
 } from "@/lib/callMemberInCallHysteresis";
 import "@/lib/voiceConnectionDiagnostics";
-import { isStableVoiceJoinMode } from "@/lib/stableVoiceJoin";
+import { isStableVoiceJoinMode, shouldUseFastSessionStatus } from "@/lib/stableVoiceJoin";
 import { buildVoiceConnectionMembers } from "@/lib/voiceSessionMembers";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
@@ -372,6 +372,7 @@ export default function CallClient() {
     if (deviceId) {
       clearLocalLeftCall(sessionId, deviceId);
       localExitedPeersRef.current.delete(deviceId);
+      selfLeftCallRef.current = false;
     }
   }, [sessionId, deviceId]);
 
@@ -431,11 +432,14 @@ export default function CallClient() {
     (remoteId: string) => void | Promise<void>
   >(() => {});
   const localExitedPeersRef = useRef<Set<string>>(new Set());
+  /** Blocks presence heartbeat from re-marking screen=call after explicit leave. */
+  const selfLeftCallRef = useRef(false);
   const membersSyncRevisionRef = useRef(0);
   const memberEmptyStreakRef = useRef(0);
   const memberDropStreakRef = useRef(0);
   const firstFastMembersAtRef = useRef<number | null>(null);
   const memberLastInCallAtRef = useRef<Map<string, number>>(new Map());
+  const memberLastInListAtRef = useRef<Map<string, number>>(new Map());
   const apiSessionMemberIdsRef = useRef<Set<string>>(new Set());
   const memberAbsentSinceRef = useRef<Map<string, number>>(new Map());
   const memberJoinTransitionSinceRef = useRef<Map<string, number>>(new Map());
@@ -795,10 +799,12 @@ export default function CallClient() {
     });
   }, [sessionId, classId, deviceId, applyLocalLeftCallOverride]);
 
-  /** Leave the call and return to Room — keeps session_members; updates presence only. */
+  /** Leave the call and return to Room — keeps session_members row; clears in-call state. */
   const markSelfLeftCall = useCallback(() => {
     const did = String(deviceId ?? "").trim();
     if (!did || !sessionId) return;
+    if (selfLeftCallRef.current) return;
+    selfLeftCallRef.current = true;
 
     logNavigationIntent("left_call_return_room", "CallClient.markSelfLeftCall");
     markLocalLeftCall(sessionId, did, LOCAL_LEFT_CALL_EXPLICIT_REASON);
@@ -825,6 +831,35 @@ export default function CallClient() {
           : member
       )
     );
+    membersSyncRevisionRef.current += 1;
+    setMembersSyncRevision(membersSyncRevisionRef.current);
+
+    // Broadcast explicit leave so remotes hide this peer immediately.
+    void supabase
+      .from("call_signals")
+      .insert({
+        session_id: sessionId,
+        from_device_id: did,
+        to_device_id: null,
+        signal_type: "leave",
+        payload: { reason: "explicit_leave" },
+      })
+      .then(({ error }) => {
+        if (error) {
+          console.warn("[call] leave signal insert failed", error);
+        }
+      });
+
+    void supabase
+      .from("session_members")
+      .update({ is_in_call: false })
+      .eq("session_id", sessionId)
+      .eq("device_id", did)
+      .then(({ error }) => {
+        if (error) {
+          console.warn("[call] session_members is_in_call=false failed", error);
+        }
+      });
 
     if (classId) {
       void fetch("/api/class/presence", {
@@ -842,6 +877,27 @@ export default function CallClient() {
       });
     }
   }, [classId, deviceId, sessionId, members]);
+
+  const handleExplicitRemoteLeave = useCallback(
+    (remoteId: string) => {
+      const id = String(remoteId ?? "").trim();
+      if (!id || id === String(deviceId ?? "").trim()) return;
+      localExitedPeersRef.current.add(id);
+      recentlyDepartedUntilRef.current.delete(id);
+      memberLastInCallAtRef.current.delete(id);
+      memberJoinTransitionSinceRef.current.delete(id);
+      setMembers((prev) =>
+        prev.map((member) =>
+          String(member.device_id ?? "").trim() === id
+            ? { ...member, is_in_call: false, screen: "room" }
+            : member
+        )
+      );
+      membersSyncRevisionRef.current += 1;
+      setMembersSyncRevision(membersSyncRevisionRef.current);
+    },
+    [deviceId]
+  );
 
   const clearRetryTimer = useCallback(() => {
     if (retryTimerRef.current) {
@@ -862,15 +918,17 @@ export default function CallClient() {
       }
 
       fetchingRef.current = true;
-      const useFast = true;
+      const useFast = shouldUseFastSessionStatus({ fast: opts?.fast });
 
       try {
         const qs = new URLSearchParams({
           sessionId,
           classId,
           lite: "1",
-          fast: "1",
         });
+        if (useFast) {
+          qs.set("fast", "1");
+        }
         if (deviceId) {
           qs.set("viewerDeviceId", deviceId);
         }
@@ -1024,6 +1082,18 @@ export default function CallClient() {
             `session=${String(sessionId).slice(-6)} fast=${useFast}`
         );
 
+        // Rejoin clears explicit-leave hold for remotes that are back on call.
+        for (const m of nextMembers) {
+          const id = String(m.device_id ?? "").trim();
+          if (!id) continue;
+          if (
+            m.is_in_call === true &&
+            String(m.screen ?? "").trim() === "call"
+          ) {
+            localExitedPeersRef.current.delete(id);
+          }
+        }
+
         let redirectRemoved = false;
         let membersChanged = false;
 
@@ -1044,7 +1114,7 @@ export default function CallClient() {
               sessionId,
               context: "call",
               explicitLeftIds: localExitedPeersRef.current,
-              memberLastInListAt: memberLastInCallAtRef.current,
+              memberLastInListAt: memberLastInListAtRef.current,
               preserveGraceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
             }
           );
@@ -1329,6 +1399,7 @@ export default function CallClient() {
 
     async function sendPresence() {
       if (typeof document !== "undefined" && document.hidden) return;
+      if (selfLeftCallRef.current) return;
       await fetch("/api/class/presence", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1344,6 +1415,18 @@ export default function CallClient() {
           message: e instanceof Error ? e.message : String(e),
         });
       });
+      void supabase
+        .from("session_members")
+        .update({ is_in_call: true })
+        .eq("session_id", sessionId)
+        .eq("device_id", deviceId)
+        .then(({ error }) => {
+          if (error) {
+            debugVoiceRetryable("call:presence", "session_members_in_call_failed", {
+              message: error.message,
+            });
+          }
+        });
     }
 
     void sendPresence();
@@ -1426,6 +1509,36 @@ export default function CallClient() {
       void supabase.removeChannel(channel);
     };
   }, [sessionId, fetchMembers]);
+
+  useEffect(() => {
+    if (!classId) return;
+
+    const channel = supabase
+      .channel(`call-presence-${classId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "class_presence",
+          filter: `class_id=eq.${classId}`,
+        },
+        () => {
+          if (realtimeFetchDebounceRef.current) {
+            window.clearTimeout(realtimeFetchDebounceRef.current);
+          }
+          realtimeFetchDebounceRef.current = window.setTimeout(() => {
+            realtimeFetchDebounceRef.current = null;
+            void fetchMembers("class_presence_realtime");
+          }, CALL_REALTIME_FETCH_DEBOUNCE_MS);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [classId, fetchMembers]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -2231,12 +2344,15 @@ export default function CallClient() {
       const localExitedCall =
         localExitedPeersRef.current.has(memberId) ||
         hasLocalLeftCall(sessionId, memberId);
+      const isInCall = member.is_in_call === true && !localExitedCall;
       const participation = evaluateCallParticipationPriority({
         nowMs,
         explicitLeft: localExitedCall,
         inApiSessionMembers: apiSessionMemberIdsRef.current.has(memberId),
         absentSinceMs: memberAbsentSinceRef.current.get(memberId) ?? null,
-        isInCall: member.is_in_call === true && !localExitedCall,
+        joinTransitionSinceMs:
+          memberJoinTransitionSinceRef.current.get(memberId) ?? null,
+        isInCall,
         lastSeenAt: member.last_seen_at,
         lastInCallAtMs: memberLastInCallAtRef.current.get(memberId) ?? null,
         screen: member.screen,
@@ -2246,6 +2362,7 @@ export default function CallClient() {
         recentlyDepartedUntilMs:
           recentlyDepartedUntilRef.current.get(memberId) ?? null,
         nowMs,
+        isInCall,
       });
     });
   }, [sortedMembers, nowMs, membersSyncRevision, sessionId]);
@@ -2258,17 +2375,12 @@ export default function CallClient() {
       if (!id) continue;
       const localExitedCall =
         localExitedPeersRef.current.has(id) || hasLocalLeftCall(sessionId, id);
-      const participation = evaluateCallParticipationPriority({
-        nowMs,
-        explicitLeft: localExitedCall,
-        inApiSessionMembers: apiSessionMemberIdsRef.current.has(id),
-        absentSinceMs: memberAbsentSinceRef.current.get(id) ?? null,
-        isInCall: member.is_in_call === true && !localExitedCall,
-        lastSeenAt: member.last_seen_at,
-        lastInCallAtMs: memberLastInCallAtRef.current.get(id) ?? null,
-        screen: member.screen,
-      });
-      if (participation.priority !== "in_call") continue;
+      if (localExitedCall) continue;
+      if (member.is_in_call !== true) continue;
+      const screen = String(member.screen ?? "").trim();
+      if (screen === "room" || screen === "home" || screen === "offline") {
+        continue;
+      }
       nextIds.add(id);
       nameById.set(id, member.display_name || "参加者");
     }
@@ -2952,6 +3064,7 @@ export default function CallClient() {
           onReadinessSnapshot={handleVoiceReadinessSnapshot}
           onVoiceLayerMountedChange={handleVoiceLayerMountedChange}
           onSoftResetExhausted={handleSoftResetExhausted}
+          onExplicitRemoteLeave={handleExplicitRemoteLeave}
         />
       ) : null}
 

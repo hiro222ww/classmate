@@ -155,6 +155,17 @@ export function mergeSessionMembersPreservingRemoved<T extends MemberRow>(
       continue;
     }
 
+    // Do not preserve members who already left the call (presence / is_in_call).
+    const existingScreen = String(existing.screen ?? "").trim();
+    if (
+      existing.is_in_call === false ||
+      existingScreen === "room" ||
+      existingScreen === "home" ||
+      existingScreen === "offline"
+    ) {
+      continue;
+    }
+
     const graceMs = opts.preserveGraceMs ?? SESSION_MEMBER_PRESERVE_MS;
     const lastAt = opts.memberLastInListAt.get(did);
     if (lastAt == null || now - lastAt >= graceMs) {

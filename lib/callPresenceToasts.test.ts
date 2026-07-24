@@ -78,7 +78,23 @@ describe("callPresenceToasts", () => {
         recentlyDepartedUntilMs: 50,
         nowMs: 40,
       })
+    ).toBe(false);
+    expect(
+      shouldIncludeMemberInCallGrid({
+        priority: "presence_stale_grace",
+        recentlyDepartedUntilMs: null,
+        nowMs: 1,
+        isInCall: true,
+      })
     ).toBe(true);
+    expect(
+      shouldIncludeMemberInCallGrid({
+        priority: "presence_stale_grace",
+        recentlyDepartedUntilMs: null,
+        nowMs: 1,
+        isInCall: false,
+      })
+    ).toBe(false);
   });
 });
 

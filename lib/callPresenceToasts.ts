@@ -51,6 +51,7 @@ export function diffCallPresenceToasts(params: {
     const key = `join:${id}`;
     if (nextRecentKeys.has(key)) continue;
     nextRecentKeys.add(key);
+    nextRecentKeys.delete(`leave:${id}`);
     const name = params.nameById.get(id) || "参加者";
     toasts.push({
       id: `${key}:${now}`,
@@ -68,6 +69,7 @@ export function diffCallPresenceToasts(params: {
     const key = `leave:${id}`;
     if (nextRecentKeys.has(key)) continue;
     nextRecentKeys.add(key);
+    nextRecentKeys.delete(`join:${id}`);
     const name = params.nameById.get(id) || "参加者";
     toasts.push({
       id: `${key}:${now}`,
@@ -106,15 +108,33 @@ export function shouldIncludeMemberInCallGrid(params: {
     | "in_call";
   recentlyDepartedUntilMs: number | null;
   nowMs: number;
+  /** When false, presence_stale_grace is treated as left (no grid hold). */
+  isInCall?: boolean;
 }): boolean {
+  // Explicit leave / expired never stay via departed-label grace.
   if (
+    params.priority === "explicit_left" ||
+    params.priority === "absent_expired" ||
+    params.priority === "presence_stale_expired"
+  ) {
+    return false;
+  }
+
+  if (params.priority === "in_call") return true;
+
+  // Short reconnect hold only while still actually in call.
+  if (params.priority === "presence_stale_grace") {
+    return params.isInCall === true;
+  }
+
+  // Absent-from-session brief label window (network drop), not explicit leave.
+  if (
+    params.priority === "absent_grace" &&
     params.recentlyDepartedUntilMs != null &&
     params.nowMs <= params.recentlyDepartedUntilMs
   ) {
     return true;
   }
-  return (
-    params.priority === "in_call" ||
-    params.priority === "presence_stale_grace"
-  );
+
+  return false;
 }

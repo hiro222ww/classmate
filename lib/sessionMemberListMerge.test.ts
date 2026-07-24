@@ -59,4 +59,34 @@ describe("mergeSessionMembersPreservingRemoved", () => {
     expect(merged.map((m) => m.device_id).sort()).toEqual(["peer1", "self"]);
     expect(preservedIds).toEqual(["peer1"]);
   });
+
+  it("does not preserve explicit left or left-call members", () => {
+    const prev = [
+      { device_id: "self", is_in_call: true, screen: "call" },
+      { device_id: "left", is_in_call: false, screen: "room" },
+      { device_id: "exited", is_in_call: true, screen: "call" },
+    ];
+    const incoming = [{ device_id: "self", is_in_call: true, screen: "call" }];
+    const memberLastInListAt = new Map([
+      ["self", now],
+      ["left", now - 1_000],
+      ["exited", now - 1_000],
+    ]);
+
+    const { merged, preservedIds } = mergeSessionMembersPreservingRemoved(
+      prev,
+      incoming,
+      {
+        sessionId,
+        context: "call",
+        explicitLeftIds: new Set(["exited"]),
+        memberLastInListAt,
+        preserveGraceMs: CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
+        nowMs: now,
+      }
+    );
+
+    expect(merged.map((m) => m.device_id)).toEqual(["self"]);
+    expect(preservedIds).toEqual([]);
+  });
 });

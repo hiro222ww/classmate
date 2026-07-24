@@ -10,14 +10,14 @@ describe("applyCallMemberInCallHysteresis", () => {
   const remote = "peer1";
   const startedAt = 1_000_000;
 
-  it("preserves remote in_call during hysteresis when presence says false", () => {
+  it("preserves remote in_call during hysteresis when presence says false on call screen", () => {
     const prev = [
-      { device_id: viewer, is_in_call: true },
-      { device_id: remote, is_in_call: true },
+      { device_id: viewer, is_in_call: true, screen: "call" },
+      { device_id: remote, is_in_call: true, screen: "call" },
     ];
     const incoming = [
-      { device_id: viewer, is_in_call: true },
-      { device_id: remote, is_in_call: false },
+      { device_id: viewer, is_in_call: true, screen: "call" },
+      { device_id: remote, is_in_call: false, screen: "call" },
     ];
 
     const out = applyCallMemberInCallHysteresis(prev, incoming, {
@@ -31,6 +31,29 @@ describe("applyCallMemberInCallHysteresis", () => {
     });
 
     expect(out.find((m) => m.device_id === remote)?.is_in_call).toBe(true);
+  });
+
+  it("does not preserve remote who left to room screen", () => {
+    const prev = [
+      { device_id: viewer, is_in_call: true, screen: "call" },
+      { device_id: remote, is_in_call: true, screen: "call" },
+    ];
+    const incoming = [
+      { device_id: viewer, is_in_call: true, screen: "call" },
+      { device_id: remote, is_in_call: false, screen: "room" },
+    ];
+
+    const out = applyCallMemberInCallHysteresis(prev, incoming, {
+      sessionId,
+      viewerDeviceId: viewer,
+      firstFastMembersAt: startedAt,
+      localExitedPeers: new Set(),
+      memberLastInCallAt: new Map([[remote, startedAt]]),
+      fetchReason: "presence_sync",
+      nowMs: startedAt + 1500,
+    });
+
+    expect(out.find((m) => m.device_id === remote)?.is_in_call).toBe(false);
   });
 
   it("preserves missing remote during grace after fast hysteresis window", () => {

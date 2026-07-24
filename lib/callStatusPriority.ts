@@ -75,16 +75,39 @@ export function evaluateCallParticipationPriority(params: {
   const freshMs = getPresenceFreshMsForContext("call");
   const presenceFresh = isPresenceFresh(params.lastSeenAt, freshMs);
   const screen = String(params.screen ?? "").trim();
-  const participationDown =
-    params.isInCall !== true ||
-    screen === "room" ||
-    screen === "home" ||
-    screen === "offline";
+  const leftCallScreen =
+    screen === "room" || screen === "home" || screen === "offline";
+  const notInCall = params.isInCall !== true;
 
-  if (!presenceFresh || participationDown) {
+  // Explicit leave / not on call: hide immediately (no long leave grace).
+  // Brief join lag is only allowed while screen is already "call".
+  if (notInCall || leftCallScreen) {
+    if (screen === "call" && notInCall) {
+      const transitionAnchor =
+        params.joinTransitionSinceMs ??
+        params.lastInCallAtMs ??
+        params.nowMs;
+      const transitionElapsed = params.nowMs - transitionAnchor;
+      if (transitionElapsed < CALL_JOIN_TRANSITION_GRACE_MS) {
+        return {
+          priority: "presence_stale_grace",
+          reason: "join_transition",
+          peerStillInCall: params.inApiSessionMembers,
+        };
+      }
+    }
+
+    return {
+      priority: "presence_stale_expired",
+      reason: leftCallScreen ? "left_call_screen" : "not_in_call",
+      peerStillInCall: false,
+    };
+  }
+
+  // Still in call but presence heartbeat is stale: short reconnect hold.
+  if (!presenceFresh) {
     const lastSeenMs = parseTimestampMs(params.lastSeenAt);
     if (
-      !presenceFresh &&
       lastSeenMs != null &&
       params.nowMs - lastSeenMs >= CALL_PRESENCE_STALE_GRACE_MS
     ) {
@@ -101,26 +124,18 @@ export function evaluateCallParticipationPriority(params: {
       lastSeenMs ??
       params.nowMs;
     const transitionElapsed = params.nowMs - transitionAnchor;
-    const transitionGraceMs = participationDown
-      ? CALL_JOIN_TRANSITION_GRACE_MS
-      : CALL_PRESENCE_STALE_GRACE_MS;
-
-    if (transitionElapsed >= transitionGraceMs) {
+    if (transitionElapsed >= CALL_PRESENCE_STALE_GRACE_MS) {
       return {
         priority: "presence_stale_expired",
-        reason: participationDown ? "in_call_false_expired" : "presence_stale_expired",
+        reason: "presence_stale_expired",
         peerStillInCall: false,
       };
     }
 
     return {
       priority: "presence_stale_grace",
-      reason: participationDown
-        ? screen === "room"
-          ? "join_transition"
-          : "in_call_false_grace"
-        : "presence_stale_grace",
-      peerStillInCall: params.inApiSessionMembers,
+      reason: "presence_stale_grace",
+      peerStillInCall: true,
     };
   }
 

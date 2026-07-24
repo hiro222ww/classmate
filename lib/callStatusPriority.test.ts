@@ -9,7 +9,6 @@ import {
   shouldShowVoiceUnstableStatus,
 } from "./callStatusPriority";
 import { CALL_LIVE_MEMBER_ABSENT_GRACE_MS } from "./callMembersSync";
-import { CALL_JOIN_TRANSITION_GRACE_MS } from "./callPresenceGrace";
 
 describe("callStatusPriority", () => {
   const nowMs = 100_000;
@@ -49,8 +48,41 @@ describe("callStatusPriority", () => {
     expect(expired.peerStillInCall).toBe(false);
   });
 
-  it("presence stale grace then expired", () => {
+  it("presence stale grace then expired while still on call", () => {
     const grace = evaluateCallParticipationPriority({
+      nowMs,
+      explicitLeft: false,
+      inApiSessionMembers: true,
+      absentSinceMs: null,
+      isInCall: true,
+      lastSeenAt: new Date(nowMs - 2_000).toISOString(),
+      lastInCallAtMs: nowMs - 2_000,
+      joinTransitionSinceMs: nowMs - 2_000,
+      screen: "call",
+    });
+    expect(grace.priority).toBe("presence_stale_grace");
+    expect(grace.peerStillInCall).toBe(true);
+    expect(grace.reason).toBe("presence_stale_grace");
+
+    const expired = evaluateCallParticipationPriority({
+      nowMs,
+      explicitLeft: false,
+      inApiSessionMembers: true,
+      absentSinceMs: null,
+      isInCall: true,
+      lastSeenAt: new Date(
+        nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1
+      ).toISOString(),
+      lastInCallAtMs: nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1,
+      joinTransitionSinceMs: nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1,
+      screen: "call",
+    });
+    expect(expired.priority).toBe("presence_stale_expired");
+    expect(expired.peerStillInCall).toBe(false);
+  });
+
+  it("hides immediately when left call screen or not in call", () => {
+    const leftScreen = evaluateCallParticipationPriority({
       nowMs,
       explicitLeft: false,
       inApiSessionMembers: true,
@@ -60,22 +92,22 @@ describe("callStatusPriority", () => {
       joinTransitionSinceMs: nowMs - 2_000,
       screen: "room",
     });
-    expect(grace.priority).toBe("presence_stale_grace");
-    expect(grace.peerStillInCall).toBe(true);
-    expect(grace.reason).toBe("join_transition");
+    expect(leftScreen.priority).toBe("presence_stale_expired");
+    expect(leftScreen.reason).toBe("left_call_screen");
+    expect(leftScreen.peerStillInCall).toBe(false);
 
-    const expired = evaluateCallParticipationPriority({
+    const joinLag = evaluateCallParticipationPriority({
       nowMs,
       explicitLeft: false,
       inApiSessionMembers: true,
       absentSinceMs: null,
       isInCall: false,
-      lastInCallAtMs: nowMs - CALL_JOIN_TRANSITION_GRACE_MS - 1,
-      joinTransitionSinceMs: nowMs - CALL_JOIN_TRANSITION_GRACE_MS - 1,
-      screen: "room",
+      lastInCallAtMs: nowMs - 2_000,
+      joinTransitionSinceMs: nowMs - 2_000,
+      screen: "call",
     });
-    expect(expired.priority).toBe("presence_stale_expired");
-    expect(expired.peerStillInCall).toBe(false);
+    expect(joinLag.priority).toBe("presence_stale_grace");
+    expect(joinLag.reason).toBe("join_transition");
   });
 
   it("does not allow unstable status when peer is not in call", () => {

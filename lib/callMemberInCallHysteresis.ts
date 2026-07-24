@@ -64,6 +64,17 @@ function shouldPreserveRemoteInCall(
     return false;
   }
 
+  // Presence says they left the call screen — never preserve as in-call.
+  const screen = String(member.screen ?? "").trim();
+  if (
+    screen === "room" ||
+    screen === "home" ||
+    screen === "offline" ||
+    (member.is_in_call === false && screen !== "call")
+  ) {
+    return false;
+  }
+
   if (!existing || existing.is_in_call !== true) {
     return false;
   }

@@ -61,8 +61,9 @@ export function getSessionMemberRemoteDeviceIds(
 }
 
 /**
- * Voice connection member list — stable mode ignores presence is_in_call=false.
- * UI display should use raw members; CallVoiceLayer should use this.
+ * Voice connection member list for CallVoiceLayer.
+ * Stable mode tolerates brief is_in_call=false while still on the call screen
+ * (join / presence lag), but never overrides explicit leave or left-call screens.
  */
 export function buildVoiceConnectionMembers<T extends VoiceMemberRow>(
   members: T[],
@@ -84,15 +85,19 @@ export function buildVoiceConnectionMembers<T extends VoiceMemberRow>(
 
     const explicitlyLeft =
       explicit?.has(did) === true || hasLocalLeftCall(sessionId, did);
+    const screen = String(member.screen ?? "").trim();
+    const leftCallScreen =
+      screen === "room" || screen === "home" || screen === "offline";
 
-    if (explicitlyLeft) {
+    if (explicitlyLeft || leftCallScreen) {
       return {
         ...member,
         is_in_call: false,
-        screen: member.screen ?? "room",
+        screen: leftCallScreen ? screen : member.screen ?? "room",
       };
     }
 
+    // Still on call screen: keep voice target during brief presence lag.
     return {
       ...member,
       is_in_call: true,
