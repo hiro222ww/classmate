@@ -44,10 +44,17 @@ export async function GET(req: Request) {
     });
   }
 
-  const prefs = await getOrCreateNotificationPrefs(userId);
-  if (!prefs) {
+  const prefsResult = await getOrCreateNotificationPrefs(userId);
+  if (!prefsResult.ok) {
     return NextResponse.json(
-      { error: "prefs_lookup_failed" },
+      {
+        error: prefsResult.error,
+        message:
+          prefsResult.error === "migration_required"
+            ? "メール通知のDB準備が未完了です。migration を適用してください。"
+            : "通知設定の取得に失敗しました。",
+        detail: prefsResult.detail,
+      },
       { status: 500 }
     );
   }
@@ -56,7 +63,7 @@ export async function GET(req: Request) {
     ok: true,
     configured: isTransactionalEmailConfigured(),
     hasLinkedAccount: true,
-    prefs: toPublicPrefs(prefs),
+    prefs: toPublicPrefs(prefsResult.prefs),
   });
 }
 
@@ -112,14 +119,24 @@ export async function POST(req: Request) {
         : undefined,
   });
 
-  if (!updated) {
-    return NextResponse.json({ error: "prefs_update_failed" }, { status: 500 });
+  if (!updated.ok) {
+    return NextResponse.json(
+      {
+        error: updated.error,
+        message:
+          updated.error === "migration_required"
+            ? "メール通知のDB準備が未完了です。migration を適用してください。"
+            : "通知設定の保存に失敗しました。",
+        detail: updated.detail,
+      },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({
     ok: true,
     configured: isTransactionalEmailConfigured(),
     hasLinkedAccount: true,
-    prefs: toPublicPrefs(updated),
+    prefs: toPublicPrefs(updated.prefs),
   });
 }

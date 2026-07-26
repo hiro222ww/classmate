@@ -109,8 +109,10 @@ export async function loadEmailRecipientsForClass(params: {
     if (!isValidUuid(userId) || seenUsers.has(userId)) continue;
     seenUsers.add(userId);
 
-    const prefs = await getOrCreateNotificationPrefs(userId);
-    if (!prefs || !prefsAllowEvent(prefs, params.eventType)) continue;
+    const prefsResult = await getOrCreateNotificationPrefs(userId);
+    if (!prefsResult.ok || !prefsAllowEvent(prefsResult.prefs, params.eventType)) {
+      continue;
+    }
 
     const email = await loadAuthEmail(userId);
     if (!email || seenEmails.has(email)) continue;
@@ -119,7 +121,7 @@ export async function loadEmailRecipientsForClass(params: {
     recipients.push({
       userId,
       email,
-      unsubscribeToken: prefs.unsubscribe_token,
+      unsubscribeToken: prefsResult.prefs.unsubscribe_token,
     });
   }
 

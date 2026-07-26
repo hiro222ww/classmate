@@ -28,11 +28,32 @@ function newUnsubscribeToken() {
   return randomBytes(24).toString("hex");
 }
 
+export type NotificationPrefsResult =
+  | { ok: true; prefs: UserNotificationPrefs }
+  | { ok: false; error: string; detail: string };
+
+function prefsFailure(error: string, detail: string): NotificationPrefsResult {
+  console.warn(`[emailPrefs] ${error}`, detail);
+  return { ok: false, error, detail };
+}
+
+function isMissingRelationError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("user_notification_prefs") &&
+    (m.includes("schema cache") ||
+      m.includes("does not exist") ||
+      m.includes("could not find the table"))
+  );
+}
+
 export async function getOrCreateNotificationPrefs(
   userId: string
-): Promise<UserNotificationPrefs | null> {
+): Promise<NotificationPrefsResult> {
   const normalized = String(userId ?? "").trim();
-  if (!normalized) return null;
+  if (!normalized) {
+    return prefsFailure("invalid_user_id", "user_id_missing");
+  }
 
   const { data: existing, error: readErr } = await supabaseAdmin
     .from("user_notification_prefs")
@@ -43,12 +64,17 @@ export async function getOrCreateNotificationPrefs(
     .maybeSingle();
 
   if (readErr) {
-    console.warn("[emailPrefs] read failed", readErr.message);
-    return null;
+    if (isMissingRelationError(readErr.message)) {
+      return prefsFailure(
+        "migration_required",
+        "user_notification_prefs table is missing. Apply supabase/migrations/20260724140000_email_notification_prefs.sql"
+      );
+    }
+    return prefsFailure("prefs_lookup_failed", readErr.message);
   }
 
   if (existing) {
-    return existing as UserNotificationPrefs;
+    return { ok: true, prefs: existing as UserNotificationPrefs };
   }
 
   const token = newUnsubscribeToken();
@@ -68,17 +94,29 @@ export async function getOrCreateNotificationPrefs(
 
   if (insertErr) {
     // Race: another request inserted
-    const { data: again } = await supabaseAdmin
+    const { data: again, error: againErr } = await supabaseAdmin
       .from("user_notification_prefs")
       .select(
         "user_id, email_enabled, email_call_request, email_meeting_plan, unsubscribe_token, updated_at, created_at"
       )
       .eq("user_id", normalized)
       .maybeSingle();
-    return (again as UserNotificationPrefs | null) ?? null;
+    if (again) {
+      return { ok: true, prefs: again as UserNotificationPrefs };
+    }
+    if (isMissingRelationError(insertErr.message)) {
+      return prefsFailure(
+        "migration_required",
+        "user_notification_prefs table is missing. Apply supabase/migrations/20260724140000_email_notification_prefs.sql"
+      );
+    }
+    return prefsFailure(
+      "prefs_create_failed",
+      againErr?.message || insertErr.message
+    );
   }
 
-  return inserted as UserNotificationPrefs;
+  return { ok: true, prefs: inserted as UserNotificationPrefs };
 }
 
 export async function updateNotificationPrefs(input: {
@@ -86,9 +124,9 @@ export async function updateNotificationPrefs(input: {
   emailEnabled?: boolean;
   emailCallRequest?: boolean;
   emailMeetingPlan?: boolean;
-}): Promise<UserNotificationPrefs | null> {
+}): Promise<NotificationPrefsResult> {
   const current = await getOrCreateNotificationPrefs(input.userId);
-  if (!current) return null;
+  if (!current.ok) return current;
 
   const patch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -113,11 +151,16 @@ export async function updateNotificationPrefs(input: {
     .single();
 
   if (error) {
-    console.warn("[emailPrefs] update failed", error.message);
-    return null;
+    if (isMissingRelationError(error.message)) {
+      return prefsFailure(
+        "migration_required",
+        "user_notification_prefs table is missing. Apply supabase/migrations/20260724140000_email_notification_prefs.sql"
+      );
+    }
+    return prefsFailure("prefs_update_failed", error.message);
   }
 
-  return data as UserNotificationPrefs;
+  return { ok: true, prefs: data as UserNotificationPrefs };
 }
 
 export async function disableEmailByUnsubscribeToken(
