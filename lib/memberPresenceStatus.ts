@@ -1648,7 +1648,12 @@ function buildUiMemberStatusInput(params: {
     isMe = false,
   } = params;
 
-  const uiSource = sanitizePresenceForUi(source, freshMs);
+  const uiSource = sanitizePresenceForUi(source, freshMs, {
+    preserveSessionCall:
+      inSessionMembers === true &&
+      source.is_in_call === true &&
+      localExitedCall !== true,
+  });
 
   return {
     context,
@@ -1721,11 +1726,13 @@ export function participationStatusLabel(
   if (internal) {
     if (internal === "in_voice") return "通話中";
     if (internal === "connecting_voice") {
-      return context === "room" ? "待機ルーム内" : "接続中";
+      return context === "room" || context === "home" ? "オンライン" : "接続中";
     }
-    if (internal === "in_room") return "待機ルーム内";
+    if (internal === "in_room") {
+      return context === "room" || context === "home" ? "オンライン" : "待機ルーム内";
+    }
     if (internal === "in_session") {
-      return context === "room" ? "待機ルーム内" : "入室中";
+      return context === "room" || context === "home" ? "オンライン" : "入室中";
     }
     if (internal === "member_only") return "所属中";
     return "オフライン";
@@ -1733,17 +1740,19 @@ export function participationStatusLabel(
   if (unified) {
     if (unified === "in_call") return "通話中";
     if (unified === "connecting") {
-      return context === "room" ? "待機ルーム内" : "接続中";
+      return context === "room" || context === "home" ? "オンライン" : "接続中";
     }
-    if (unified === "in_room") return "待機ルーム内";
+    if (unified === "in_room") {
+      return context === "room" || context === "home" ? "オンライン" : "待機ルーム内";
+    }
     if (unified === "in_session") {
-      return context === "room" ? "待機ルーム内" : "入室中";
+      return context === "room" || context === "home" ? "オンライン" : "入室中";
     }
     if (unified === "member_only") return "所属中";
     return "オフライン";
   }
   if (status === "in_call") return "通話中";
-  if (status === "waiting") return "待機ルーム内";
+  if (status === "waiting") return "オンライン";
   return "オフライン";
 }
 

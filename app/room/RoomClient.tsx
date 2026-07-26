@@ -577,7 +577,7 @@ function resolveRoomMemberDisplay(
   if (localExitedCall) {
     return {
       status: "waiting" as const,
-      label: "待機ルーム内",
+      label: "オンライン",
       internal: "in_room" as const,
       used: "local_exited_call",
       reason: "localExitedCall",
@@ -4412,6 +4412,9 @@ const name = rawName === "You" ? "参加者" : rawName;
                       : formatMemberDisplayName(m);
 
                     const prevStatuses = prevMemberStatusRef.current;
+                    // visibleMembers are current-session members; pass true so
+                    // call participants are not treated as offline when room
+                    // presence briefly drops during room→call handoff.
                     const memberDisplay = resolveRoomMemberDisplay(
                       m,
                       presenceMap[did],
@@ -4420,7 +4423,8 @@ const name = rawName === "You" ? "参加者" : rawName;
                       isMe,
                       deviceId,
                       lastInSessionAtRef.current[did] ?? Date.now(),
-                      prevMemberInternalRef.current[did] ?? null
+                      prevMemberInternalRef.current[did] ?? null,
+                      true
                     );
                     const pill = participationStatusStyle(memberDisplay.status);
 

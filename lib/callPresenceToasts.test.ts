@@ -57,6 +57,31 @@ describe("callPresenceToasts", () => {
     ]);
   });
 
+  it("resolves leave name from cache when current map lacks the leaver", () => {
+    const nameCache = new Map([
+      [
+        "a",
+        { displayName: "Alice", userId: "a", memberId: "a" },
+      ],
+    ]);
+    const left = diffCallPresenceToasts({
+      previousIds: new Set(["a"]),
+      nextIds: new Set(),
+      primed: true,
+      selfDeviceId: "me",
+      nameById: new Map(),
+      nameCache,
+      recentKeys: new Set(),
+      now: 3000,
+      leaveReason: "left_in_call_set",
+      pruneNameCacheOnLeave: true,
+    });
+    expect(left.toasts.map((t) => t.message)).toEqual([
+      "Aliceさんが通話から退出しました",
+    ]);
+    expect(nameCache.has("a")).toBe(false);
+  });
+
   it("keeps only in-call / grace members in grid", () => {
     expect(
       shouldIncludeMemberInCallGrid({

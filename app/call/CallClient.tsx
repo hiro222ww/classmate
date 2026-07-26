@@ -189,6 +189,10 @@ import {
   shouldIncludeMemberInCallGrid,
   type CallPresenceToast,
 } from "@/lib/callPresenceToasts";
+import {
+  setMemberNameCache,
+  type MemberNameCache,
+} from "@/lib/memberNameCache";
 
 type Member = {
   device_id: string;
@@ -395,6 +399,7 @@ export default function CallClient() {
   const presencePrimedRef = useRef(false);
   const previousInCallIdsRef = useRef<Set<string>>(new Set());
   const recentPresenceKeysRef = useRef<Set<string>>(new Set());
+  const memberNameCacheRef = useRef<MemberNameCache>(new Map());
   const userMutedRef = useRef(true);
   const [userMuted, setUserMuted] = useState(true);
   const localTrackEnabledRef = useRef<boolean | null>(null);
@@ -1317,6 +1322,10 @@ export default function CallClient() {
     memberAbsentSinceRef.current = new Map();
     memberJoinTransitionSinceRef.current = new Map();
     recentlyDepartedUntilRef.current = new Map();
+    memberNameCacheRef.current = new Map();
+    presencePrimedRef.current = false;
+    previousInCallIdsRef.current = new Set();
+    recentPresenceKeysRef.current = new Set();
     callMountAtRef.current = Date.now();
     renderCountRef.current = 0;
     lastFetchAtRef.current = null;
@@ -2368,6 +2377,19 @@ export default function CallClient() {
   }, [sortedMembers, nowMs, membersSyncRevision, sessionId]);
 
   useEffect(() => {
+    const nameCache = memberNameCacheRef.current;
+    // Remember names while members are still known (before leave removes them).
+    for (const member of sortedMembers) {
+      const id = String(member.device_id ?? "").trim();
+      if (!id) continue;
+      setMemberNameCache(nameCache, {
+        userId: id,
+        memberId: id,
+        deviceId: id,
+        displayName: member.display_name,
+      });
+    }
+
     const nextIds = new Set<string>();
     const nameById = new Map<string, string>();
     for (const member of visibleMembers) {
@@ -2382,7 +2404,21 @@ export default function CallClient() {
         continue;
       }
       nextIds.add(id);
-      nameById.set(id, member.display_name || "参加者");
+      const displayName = String(member.display_name ?? "").trim() || "参加者";
+      nameById.set(id, displayName);
+      setMemberNameCache(nameCache, {
+        userId: id,
+        memberId: id,
+        deviceId: id,
+        displayName,
+      });
+    }
+
+    // Seed leave lookups from cache before nextIds drops the leaver.
+    for (const id of previousInCallIdsRef.current) {
+      if (nameById.has(id)) continue;
+      const cached = nameCache.get(id);
+      if (cached?.displayName) nameById.set(id, cached.displayName);
     }
 
     const result = diffCallPresenceToasts({
@@ -2391,7 +2427,10 @@ export default function CallClient() {
       primed: presencePrimedRef.current,
       selfDeviceId: deviceId,
       nameById,
+      nameCache,
       recentKeys: recentPresenceKeysRef.current,
+      leaveReason: "left_in_call_set",
+      pruneNameCacheOnLeave: true,
     });
 
     presencePrimedRef.current = result.primed;
@@ -2403,7 +2442,7 @@ export default function CallClient() {
     if (result.toasts.length > 0) {
       setPresenceToasts((prev) => [...prev, ...result.toasts].slice(-6));
     }
-  }, [visibleMembers, deviceId, nowMs, sessionId]);
+  }, [visibleMembers, sortedMembers, deviceId, nowMs, sessionId]);
 
   useEffect(() => {
     if (presenceToasts.length === 0) return;

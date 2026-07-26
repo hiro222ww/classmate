@@ -317,7 +317,7 @@ function getClassStatusStyle(label: string) {
     };
   }
 
-  if (label === "待機中" || label === "待機ルーム内") {
+  if (label === "待機中" || label === "待機ルーム内" || label === "オンライン") {
     return {
       background: "#fef3c7",
       color: "#92400e",

@@ -93,9 +93,27 @@ export function sanitizePresenceForUi<T extends {
   last_seen_at?: string | null;
   effective_status?: string | null;
   status?: string | null;
-}>(source: T, freshMs: number): T {
+}>(
+  source: T,
+  freshMs: number,
+  opts?: {
+    /** Keep session_members call flags when waiting-room presence goes stale. */
+    preserveSessionCall?: boolean;
+  }
+): T {
   if (isPresenceFresh(source.last_seen_at, freshMs)) {
     return source;
+  }
+  if (opts?.preserveSessionCall && source.is_in_call === true) {
+    const screen = String(source.screen ?? "").trim();
+    return {
+      ...source,
+      // Keep call membership; drop only stale waiting-room effective flags.
+      is_in_call: true,
+      screen: screen === "call" || screen === "room" ? screen : "call",
+      effective_status: null,
+      status: null,
+    };
   }
   return {
     ...source,
@@ -186,6 +204,13 @@ function hasConnectingEvidence(input: ResolveMemberStatusInput): boolean {
   );
 }
 
+function presenceSessionAligned(input: ResolveMemberStatusInput): boolean {
+  const current = String(input.currentSessionId ?? "").trim();
+  const presence = String(input.presenceSessionId ?? "").trim();
+  if (!current || !presence) return true;
+  return current === presence;
+}
+
 function shouldPreserveVoiceUiStatus(
   previous: InternalMemberStatus,
   input: ResolveMemberStatusInput,
@@ -265,11 +290,22 @@ export function resolveInternalMemberStatus(
     return { internal: "in_room", reason: "self_in_room", evidence };
   }
 
+  // Fresh waiting-room presence wins over a lagged is_in_call flag.
   if (fresh && freshScreen === "room") {
     return { internal: "in_room", reason: "fresh_presence_room", evidence };
   }
 
-  if (fresh && freshScreen === "call") {
+  // Active call member from current session_members — never show offline.
+  if (
+    input.inSessionMembers &&
+    input.is_in_call === true &&
+    !input.explicitLeaveSeen &&
+    !input.localExitedCall
+  ) {
+    return { internal: "in_voice", reason: "active_call_member", evidence };
+  }
+
+  if (fresh && freshScreen === "call" && presenceSessionAligned(input)) {
     if (input.context === "call") {
       return {
         internal: "connecting_voice",
@@ -279,11 +315,25 @@ export function resolveInternalMemberStatus(
     }
     if (input.inSessionMembers) {
       return {
-        internal: "in_session",
-        reason: "fresh_call_screen_auxiliary",
+        internal: "in_voice",
+        reason: "fresh_call_screen_in_call",
         evidence,
       };
     }
+  }
+
+  const effective = String(input.effective_status ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    input.inSessionMembers &&
+    fresh &&
+    presenceSessionAligned(input) &&
+    (effective === "calling" || effective === "call") &&
+    !input.explicitLeaveSeen &&
+    !input.localExitedCall
+  ) {
+    return { internal: "in_voice", reason: "fresh_effective_calling", evidence };
   }
 
   if (input.inSessionMembers) {
@@ -303,6 +353,30 @@ export function resolveInternalMemberStatus(
   return { internal: "offline", reason: "offline", evidence };
 }
 
+export type MemberPresenceStatus = "in_call" | "online" | "offline";
+
+export function toMemberPresenceStatus(
+  internal: InternalMemberStatus
+): MemberPresenceStatus {
+  if (internal === "in_voice") return "in_call";
+  if (
+    internal === "connecting_voice" ||
+    internal === "in_room" ||
+    internal === "in_session"
+  ) {
+    return "online";
+  }
+  return "offline";
+}
+
+export function memberPresenceStatusLabel(
+  status: MemberPresenceStatus
+): string {
+  if (status === "in_call") return "通話中";
+  if (status === "online") return "オンライン";
+  return "オフライン";
+}
+
 export function getMemberStatusLabel(
   internal: InternalMemberStatus,
   context: MemberStatusContext,
@@ -310,13 +384,14 @@ export function getMemberStatusLabel(
 ): string {
   if (internal === "in_voice") return "通話中";
   if (internal === "connecting_voice") {
+    if (context === "room") return "オンライン";
     return context === "call" ? "接続処理中" : "接続中";
   }
   if (internal === "in_room") {
-    return "待機ルーム内";
+    return context === "room" || context === "home" ? "オンライン" : "待機ルーム内";
   }
   if (internal === "in_session") {
-    if (context === "room") return "待機ルーム内";
+    if (context === "room" || context === "home") return "オンライン";
     if (context === "call") return "接続準備中";
     return "入室中";
   }
@@ -375,7 +450,8 @@ export function resolveMemberParticipationForUi(
     if (input.context === "call") {
       label = "接続不安定";
     } else if (input.context === "room") {
-      label = "復帰待ち";
+      // Still a session member — never show offline during presence handoff.
+      label = "オンライン";
     } else {
       label = "離席中";
     }
