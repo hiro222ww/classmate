@@ -157,7 +157,11 @@ async function readSettings(): Promise<AppSettings> {
   settings.billing_enabled =
     settings.slot_billing_enabled || settings.theme_billing_enabled;
 
-  settings.age_mode = await getEffectiveAgeMode();
+  // Keep stored age_mode for save/diff. Do not replace with effective mode
+  // (effective may upgrade post_high_school_only → minor_separated_test).
+  settings.age_mode =
+    parseAgeModeValue(settings.age_mode) ??
+    ageModeFromLegacyMinors(settings.minors_enabled);
 
   settings.billing_copy = normalizeBillingCopy(
     settings.billing_copy,
@@ -174,11 +178,14 @@ export async function GET(req: Request) {
     if (denied) return denied;
 
     const settings = await readSettings();
+    const effectiveAgeMode = await getEffectiveAgeMode();
 
     return NextResponse.json({
       ok: true,
       ...settings,
       settings,
+      age_mode: effectiveAgeMode,
+      effective_age_mode: effectiveAgeMode,
       production_age_locked: isProductionAgeLocked(),
       allow_minors_experiment: process.env.ALLOW_MINORS_EXPERIMENT === "true",
     });
@@ -260,14 +267,21 @@ export async function POST(req: Request) {
       body.minors_enabled !== undefined
         ? Boolean(body.minors_enabled)
         : beforeSettings.minors_enabled;
-    // Preserve stored age_mode when omitted. Do not re-derive from minors on
-    // unrelated patches (e.g. billing toggles), or production lock misfires.
-    const requestedAgeMode =
-      body.age_mode !== undefined
-        ? parseAgeModeValue(body.age_mode) ??
-          ageModeFromLegacyMinors(requestedMinorsEnabled)
-        : parseAgeModeValue(beforeSettings.age_mode) ??
-          ageModeFromLegacyMinors(beforeSettings.minors_enabled);
+    // When minors toggle is sent without age_mode, sync age_mode to match.
+    // Preserve stored age_mode only when neither age field is present
+    // (e.g. billing-only patches).
+    let requestedAgeMode: AgeMode;
+    if (body.age_mode !== undefined) {
+      requestedAgeMode =
+        parseAgeModeValue(body.age_mode) ??
+        ageModeFromLegacyMinors(requestedMinorsEnabled);
+    } else if (body.minors_enabled !== undefined) {
+      requestedAgeMode = ageModeFromLegacyMinors(requestedMinorsEnabled);
+    } else {
+      requestedAgeMode =
+        parseAgeModeValue(beforeSettings.age_mode) ??
+        ageModeFromLegacyMinors(beforeSettings.minors_enabled);
+    }
 
     if (touchingAgePolicy) {
       const persistCheck = canPersistMinorsOrAgeModeChange({

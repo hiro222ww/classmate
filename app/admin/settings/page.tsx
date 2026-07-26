@@ -533,7 +533,14 @@ export default function AdminSettingsPage() {
               <input
                 type="checkbox"
                 checked={minorsEnabled}
+                disabled={productionAgeLocked && !minorsEnabled}
                 onChange={(e) => {
+                  if (productionAgeLocked && e.target.checked) {
+                    setMsg(
+                      "本番環境では未成年許可をONにできません（ALLOW_MINORS_EXPERIMENT が必要）。"
+                    );
+                    return;
+                  }
                   setMinorsEnabled(e.target.checked);
                   if (!e.target.checked) setMinorsRiskAck(false);
                 }}

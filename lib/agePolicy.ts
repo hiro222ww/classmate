@@ -53,11 +53,17 @@ export async function getEffectiveAgeMode(): Promise<AgeMode> {
       }
     }
 
+    // Minors OFF is authoritative: never keep a permissive age_mode around.
+    if (!minorsEnabled) {
+      cachedAgePolicy = { mode: "post_high_school_only", at: Date.now() };
+      return "post_high_school_only";
+    }
+
     const resolved =
       mode ?? ageModeFromLegacyMinors(minorsEnabled) ?? "post_high_school_only";
 
     const effectiveMode =
-      minorsEnabled && resolved === "post_high_school_only"
+      resolved === "post_high_school_only"
         ? "minor_separated_test"
         : resolved;
 
