@@ -46,7 +46,59 @@ type MicSessionCache = {
 };
 
 let activeMicCache: MicSessionCache | null = null;
-let acquirePromise: Promise<boolean> | null = null;
+/** Shared in-flight acquire so concurrent callers do not double getUserMedia. */
+let acquirePromise: Promise<MicAcquireSharedResult> | null = null;
+/** Bumped when the session mic is released; stale getUserMedia results must discard. */
+let micVoiceEpoch = 0;
+
+type MicAcquireSharedResult = {
+  ok: boolean;
+  sessionId: string;
+  voiceEpoch: number;
+  requestId: string;
+  trackId: string;
+};
+
+function nextMicRequestId(): string {
+  return Math.random().toString(16).slice(2, 10);
+}
+
+function bumpMicVoiceEpoch(reason: string): number {
+  micVoiceEpoch += 1;
+  debugConsoleLog(
+    `[local-mic] voice-epoch-bump epoch=${micVoiceEpoch} reason=${reason}`
+  );
+  return micVoiceEpoch;
+}
+
+function logMicAcquireEvent(
+  event:
+    | "mic-request-start"
+    | "mic-request-reuse-stream"
+    | "mic-request-reuse-promise"
+    | "mic-request-success"
+    | "mic-request-stale-result-discarded"
+    | "mic-request-failed",
+  params: {
+    sessionId: string;
+    voiceEpoch: number;
+    requestId: string;
+    trackId?: string | null;
+    reason?: string;
+    detail?: string;
+  }
+) {
+  const trackId = String(params.trackId ?? "").trim() || "-";
+  const reason = String(params.reason ?? "").trim();
+  const detail = String(params.detail ?? "").trim();
+  console.log(
+    `[mic] ${event} sessionId=${compactSessionId(params.sessionId)} ` +
+      `voiceEpoch=${params.voiceEpoch} requestId=${params.requestId} ` +
+      `trackId=${compactMediaId(trackId)}` +
+      (reason ? ` reason=${reason}` : "") +
+      (detail ? ` detail=${detail}` : "")
+  );
+}
 
 async function queryMicrophonePermissionStateLocal(): Promise<string> {
   return queryMicrophonePermissionState();
@@ -140,9 +192,6 @@ export async function requestCallMicrophone(params: {
 
   const permissionState = await queryMicrophonePermissionStateLocal();
   console.log(`[mic] permission-state ${permissionState}`);
-  console.log(
-    `[mic] request-start reason=${reason} session=${compactSessionId(params.sessionId)}`
-  );
 
   let lastError: unknown = null;
   const ok = await ensureLocalMicStream({
@@ -172,10 +221,6 @@ export async function requestCallMicrophone(params: {
   }
 
   const guidance = classifyMicError(lastError);
-  const failLog = formatMicErrorLog(lastError);
-  console.log(
-    `[mic] request-failed name=${failLog.name} message=${failLog.message}`
-  );
   return {
     ok: false,
     permissionDenied: guidance.permissionDenied,
@@ -448,6 +493,7 @@ export function releaseSessionMic(reason: string, sessionId?: string) {
 
   activeMicCache.stream.getTracks().forEach((track) => track.stop());
   activeMicCache = null;
+  bumpMicVoiceEpoch(reason);
 }
 
 function getCachedMic(
@@ -500,6 +546,39 @@ function setMicCache(
   };
 }
 
+function bindCallerMicRefs(params: {
+  sessionId: string;
+  reason: string;
+  selectedMicId?: string;
+  getUserMuted: () => boolean;
+  onLocalTrackMutedApplied?: UseLocalMicArgs["onLocalTrackMutedApplied"];
+  onMicReadyChange?: (ready: boolean) => void;
+  onStatusChange?: (text: string) => void;
+  onMicPermissionDenied?: (denied: boolean) => void;
+  streamRef: React.MutableRefObject<MediaStream | null>;
+  trackRef: React.MutableRefObject<MediaStreamTrack | null>;
+  stream: MediaStream;
+  track: MediaStreamTrack;
+}) {
+  const applyMuted = (track: MediaStreamTrack, applyReason: string) => {
+    const muted = params.getUserMuted();
+    applyUserMutedToTrack(track, muted, applyReason, "ensureLocalMicStream");
+    params.onLocalTrackMutedApplied?.({
+      userMuted: muted,
+      trackEnabled: track.enabled,
+      reason: applyReason,
+    });
+  };
+
+  // Reuse the live stream/track; do not replace sender tracks unnecessarily.
+  params.streamRef.current = params.stream;
+  params.trackRef.current = params.track;
+  applyMuted(params.track, params.reason);
+  params.onMicReadyChange?.(true);
+  params.onStatusChange?.("");
+  params.onMicPermissionDenied?.(false);
+}
+
 async function ensureLocalMicStream(params: {
   reason: string;
   sessionId: string;
@@ -516,6 +595,8 @@ async function ensureLocalMicStream(params: {
   onMicPermissionDenied?: (denied: boolean) => void;
   onAcquireError?: (error: unknown) => void;
 }): Promise<boolean> {
+  const requestId = nextMicRequestId();
+  const voiceEpochAtEntry = micVoiceEpoch;
   const bypassPermissionLatch = new Set([
     "user_retry",
     "user_request",
@@ -532,121 +613,50 @@ async function ensureLocalMicStream(params: {
     return false;
   }
 
-  if (acquirePromise) {
-    debugConsoleLog("[local-mic] ensure deduped (in-flight acquire)", {
-      reason: params.reason,
-      sessionId: params.sessionId,
-      timestamp: Date.now(),
-    });
-    return acquirePromise;
-  }
+  const {
+    reason,
+    sessionId,
+    deviceId,
+    selectedMicId,
+    onMicReadyChange,
+    onStatusChange,
+    streamRef,
+    trackRef,
+    showInitialPermissionHint = false,
+    userPickedMic = false,
+    getUserMuted,
+    onLocalTrackMutedApplied,
+    onMicPermissionDenied,
+    onAcquireError,
+  } = params;
 
-  acquirePromise = (async () => {
-    const {
-      reason,
+  const previousCachedSessionId = activeMicCache?.sessionId ?? null;
+  const { cache: cached, missReason } = getCachedMic(sessionId, selectedMicId);
+
+  if (cached) {
+    logMicAcquireEvent("mic-request-reuse-stream", {
       sessionId,
-      deviceId,
+      voiceEpoch: voiceEpochAtEntry,
+      requestId,
+      trackId: cached.track.id,
+      reason,
+      detail: "active_cache",
+    });
+    bindCallerMicRefs({
+      sessionId,
+      reason,
       selectedMicId,
-      onMicReadyChange,
-      onStatusChange,
-      streamRef,
-      trackRef,
-      showInitialPermissionHint = false,
-      userPickedMic = false,
       getUserMuted,
       onLocalTrackMutedApplied,
+      onMicReadyChange,
+      onStatusChange,
       onMicPermissionDenied,
-      onAcquireError,
-    } = params;
-
-    const applyMuted = (track: MediaStreamTrack, applyReason: string) => {
-      const muted = getUserMuted();
-      applyUserMutedToTrack(track, muted, applyReason, "ensureLocalMicStream");
-      onLocalTrackMutedApplied?.({
-        userMuted: muted,
-        trackEnabled: track.enabled,
-        reason: applyReason,
-      });
-    };
-
-    const previousCachedSessionId = activeMicCache?.sessionId ?? null;
-    const { cache: cached, missReason } = getCachedMic(sessionId, selectedMicId);
-
-    if (cached) {
-      streamRef.current = cached.stream;
-      trackRef.current = cached.track;
-      applyMuted(cached.track, params.reason);
-      onMicReadyChange?.(true);
-      onStatusChange?.("");
-      onMicPermissionDenied?.(false);
-      logLocalMicReady(cached.stream, cached.track);
-      logGetUserMediaAttempt({
-        reason,
-        sessionId,
-        previousCachedSessionId,
-        deviceId,
-        selectedMicId,
-        userPickedMic,
-        hasExistingStream: true,
-        existingAudioTrackReadyState: cached.track.readyState,
-        cacheHit: true,
-        cacheMissReason: null,
-        willCallGetUserMedia: false,
-      });
-      logGetUserMediaResult({
-        ok: true,
-        reason,
-        sessionId,
-        deviceId,
-        reused: true,
-        cacheHit: true,
-        trackLabel: cached.track.label,
-      });
-      return true;
-    }
-
-    const existingStream = streamRef.current;
-    const existingTrack = trackRef.current;
-
-    if (
-      isAudioTrackUsable(existingTrack) &&
-      existingStream &&
-      micDeviceIdsMatch(existingTrack!.getSettings().deviceId, selectedMicId)
-    ) {
-      setMicCache(sessionId, existingStream, existingTrack!, selectedMicId);
-      applyMuted(existingTrack!, params.reason);
-      onMicReadyChange?.(true);
-      onStatusChange?.("");
-      onMicPermissionDenied?.(false);
-      logLocalMicReady(existingStream, existingTrack!);
-      logGetUserMediaAttempt({
-        reason,
-        sessionId,
-        previousCachedSessionId,
-        deviceId,
-        selectedMicId,
-        userPickedMic,
-        hasExistingStream: true,
-        existingAudioTrackReadyState: existingTrack!.readyState,
-        cacheHit: false,
-        cacheMissReason: missReason ?? "ref_reuse",
-        willCallGetUserMedia: false,
-      });
-      logGetUserMediaResult({
-        ok: true,
-        reason,
-        sessionId,
-        deviceId,
-        reused: true,
-        cacheHit: false,
-        trackLabel: existingTrack!.label,
-      });
-      return true;
-    }
-
-    const navigationType = getNavigationType();
-    const permissionBefore = await queryMicrophonePermissionStateLocal();
-
+      streamRef,
+      trackRef,
+      stream: cached.stream,
+      track: cached.track,
+    });
+    logLocalMicReady(cached.stream, cached.track);
     logGetUserMediaAttempt({
       reason,
       sessionId,
@@ -654,115 +664,327 @@ async function ensureLocalMicStream(params: {
       deviceId,
       selectedMicId,
       userPickedMic,
-      hasExistingStream: !!existingStream,
-      existingAudioTrackReadyState: existingTrack?.readyState ?? null,
-      cacheHit: false,
-      cacheMissReason: missReason,
-      willCallGetUserMedia: true,
+      hasExistingStream: true,
+      existingAudioTrackReadyState: cached.track.readyState,
+      cacheHit: true,
+      cacheMissReason: null,
+      willCallGetUserMedia: false,
     });
-
-    debugConsoleLog("[local-mic] permission-before-getUserMedia", {
+    logGetUserMediaResult({
+      ok: true,
       reason,
-      navigationType,
-      permissionState: permissionBefore,
       sessionId,
       deviceId,
-      cacheMissReason: missReason,
-      timestamp: Date.now(),
+      reused: true,
+      cacheHit: true,
+      trackLabel: cached.track.label,
     });
-
-    if (showInitialPermissionHint && permissionBefore !== "granted") {
-      onStatusChange?.("マイクを許可してください");
-    }
-
-    try {
-      console.log(
-        `[mic] request-start reason=${reason} session=${compactSessionId(sessionId)}`
-      );
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: selectedMicId
-          ? {
-              deviceId: { exact: selectedMicId },
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            }
-          : {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-        video: false,
-      });
-
-      const track = stream.getAudioTracks()[0] ?? null;
-      if (!track) {
-        stream.getTracks().forEach((t) => t.stop());
-        throw new Error("no_audio_track");
-      }
-
-      if (existingStream && existingStream !== stream) {
-        existingStream.getTracks().forEach((t) => t.stop());
-      }
-
-      applyMuted(track, params.reason);
-      streamRef.current = stream;
-      trackRef.current = track;
-      setMicCache(sessionId, stream, track, selectedMicId);
-
-      onMicReadyChange?.(true);
-      onStatusChange?.("");
-      onMicPermissionDenied?.(false);
-
-      logLocalMicReady(stream, track);
-      logGetUserMediaResult({
-        ok: true,
-        reason,
-        sessionId,
-        deviceId,
-        trackLabel: track.label,
-      });
-      console.log(
-        `[mic] request-success session=${compactSessionId(sessionId)}`
-      );
-
-      return true;
-    } catch (error) {
-      onAcquireError?.(error);
-      onMicReadyChange?.(false);
-      const guidance = classifyMicError(error);
-      const failLog = formatMicErrorLog(error);
-      console.log(
-        `[mic] request-failed name=${failLog.name} message=${failLog.message}`
-      );
-      const permissionDenied = guidance.permissionDenied;
-      if (permissionDenied) {
-        setMicPermissionDeniedLatch(true);
-        logMicPermissionDeniedDeduped(error);
-      }
-      if (reason === "user_retry" && permissionDenied) {
-        onStatusChange?.(MIC_RETRY_FAILURE_MESSAGE);
-      } else {
-        onStatusChange?.(`${guidance.title}。${guidance.body}`);
-      }
-      onMicPermissionDenied?.(permissionDenied);
-      void logLocalMicFailed(error);
-      logGetUserMediaResult({
-        ok: false,
-        reason,
-        sessionId,
-        deviceId,
-        error,
-      });
-      return false;
-    }
-  })();
-
-  try {
-    return await acquirePromise;
-  } finally {
-    acquirePromise = null;
+    return true;
   }
+
+  const existingStream = streamRef.current;
+  const existingTrack = trackRef.current;
+
+  if (
+    isAudioTrackUsable(existingTrack) &&
+    existingStream &&
+    micDeviceIdsMatch(existingTrack!.getSettings().deviceId, selectedMicId)
+  ) {
+    setMicCache(sessionId, existingStream, existingTrack!, selectedMicId);
+    logMicAcquireEvent("mic-request-reuse-stream", {
+      sessionId,
+      voiceEpoch: voiceEpochAtEntry,
+      requestId,
+      trackId: existingTrack!.id,
+      reason,
+      detail: "ref_reuse",
+    });
+    bindCallerMicRefs({
+      sessionId,
+      reason,
+      selectedMicId,
+      getUserMuted,
+      onLocalTrackMutedApplied,
+      onMicReadyChange,
+      onStatusChange,
+      onMicPermissionDenied,
+      streamRef,
+      trackRef,
+      stream: existingStream,
+      track: existingTrack!,
+    });
+    logLocalMicReady(existingStream, existingTrack!);
+    logGetUserMediaAttempt({
+      reason,
+      sessionId,
+      previousCachedSessionId,
+      deviceId,
+      selectedMicId,
+      userPickedMic,
+      hasExistingStream: true,
+      existingAudioTrackReadyState: existingTrack!.readyState,
+      cacheHit: false,
+      cacheMissReason: missReason ?? "ref_reuse",
+      willCallGetUserMedia: false,
+    });
+    logGetUserMediaResult({
+      ok: true,
+      reason,
+      sessionId,
+      deviceId,
+      reused: true,
+      cacheHit: false,
+      trackLabel: existingTrack!.label,
+    });
+    return true;
+  }
+
+  if (!acquirePromise) {
+    const ownerRequestId = requestId;
+    const epochAtStart = micVoiceEpoch;
+    const ownedPromise = (async (): Promise<MicAcquireSharedResult> => {
+      const navigationType = getNavigationType();
+      const permissionBefore = await queryMicrophonePermissionStateLocal();
+
+      // Another caller may have filled the cache while we awaited permission.
+      const racedCache = getCachedMic(sessionId, selectedMicId).cache;
+      if (racedCache) {
+        logMicAcquireEvent("mic-request-reuse-stream", {
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: racedCache.track.id,
+          reason,
+          detail: "cache_after_permission",
+        });
+        return {
+          ok: true,
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: racedCache.track.id,
+        };
+      }
+
+      logGetUserMediaAttempt({
+        reason,
+        sessionId,
+        previousCachedSessionId,
+        deviceId,
+        selectedMicId,
+        userPickedMic,
+        hasExistingStream: !!existingStream,
+        existingAudioTrackReadyState: existingTrack?.readyState ?? null,
+        cacheHit: false,
+        cacheMissReason: missReason,
+        willCallGetUserMedia: true,
+      });
+
+      debugConsoleLog("[local-mic] permission-before-getUserMedia", {
+        reason,
+        navigationType,
+        permissionState: permissionBefore,
+        sessionId,
+        deviceId,
+        cacheMissReason: missReason,
+        timestamp: Date.now(),
+      });
+
+      if (showInitialPermissionHint && permissionBefore !== "granted") {
+        onStatusChange?.("マイクを許可してください");
+      }
+
+      try {
+        logMicAcquireEvent("mic-request-start", {
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: "-",
+          reason,
+        });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: selectedMicId
+            ? {
+                deviceId: { exact: selectedMicId },
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              }
+            : {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+              },
+          video: false,
+        });
+
+        const track = stream.getAudioTracks()[0] ?? null;
+        if (!track) {
+          stream.getTracks().forEach((t) => t.stop());
+          throw new Error("no_audio_track");
+        }
+
+        if (epochAtStart !== micVoiceEpoch) {
+          stream.getTracks().forEach((t) => t.stop());
+          logMicAcquireEvent("mic-request-stale-result-discarded", {
+            sessionId,
+            voiceEpoch: epochAtStart,
+            requestId: ownerRequestId,
+            trackId: track.id,
+            reason,
+            detail: `epoch_mismatch current=${micVoiceEpoch}`,
+          });
+          return {
+            ok: false,
+            sessionId,
+            voiceEpoch: epochAtStart,
+            requestId: ownerRequestId,
+            trackId: track.id,
+          };
+        }
+
+        // Prefer keeping an already-live cached track if one appeared.
+        const cacheNow = getCachedMic(sessionId, selectedMicId).cache;
+        if (cacheNow) {
+          stream.getTracks().forEach((t) => t.stop());
+          logMicAcquireEvent("mic-request-reuse-stream", {
+            sessionId,
+            voiceEpoch: epochAtStart,
+            requestId: ownerRequestId,
+            trackId: cacheNow.track.id,
+            reason,
+            detail: "cache_won_race",
+          });
+          return {
+            ok: true,
+            sessionId,
+            voiceEpoch: epochAtStart,
+            requestId: ownerRequestId,
+            trackId: cacheNow.track.id,
+          };
+        }
+
+        setMicCache(sessionId, stream, track, selectedMicId);
+        logLocalMicReady(stream, track);
+        logGetUserMediaResult({
+          ok: true,
+          reason,
+          sessionId,
+          deviceId,
+          trackLabel: track.label,
+        });
+        logMicAcquireEvent("mic-request-success", {
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: track.id,
+          reason,
+        });
+
+        return {
+          ok: true,
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: track.id,
+        };
+      } catch (error) {
+        onAcquireError?.(error);
+        const guidance = classifyMicError(error);
+        const failLog = formatMicErrorLog(error);
+        logMicAcquireEvent("mic-request-failed", {
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: "-",
+          reason,
+          detail: `${failLog.name}:${failLog.message}`,
+        });
+        const permissionDenied = guidance.permissionDenied;
+        if (permissionDenied) {
+          setMicPermissionDeniedLatch(true);
+          logMicPermissionDeniedDeduped(error);
+        }
+        if (reason === "user_retry" && permissionDenied) {
+          onStatusChange?.(MIC_RETRY_FAILURE_MESSAGE);
+        } else {
+          onStatusChange?.(`${guidance.title}。${guidance.body}`);
+        }
+        onMicPermissionDenied?.(permissionDenied);
+        void logLocalMicFailed(error);
+        logGetUserMediaResult({
+          ok: false,
+          reason,
+          sessionId,
+          deviceId,
+          error,
+        });
+        return {
+          ok: false,
+          sessionId,
+          voiceEpoch: epochAtStart,
+          requestId: ownerRequestId,
+          trackId: "-",
+        };
+      }
+    })();
+
+    const sharedPromise = ownedPromise.finally(() => {
+      if (acquirePromise === sharedPromise) {
+        acquirePromise = null;
+      }
+    });
+    acquirePromise = sharedPromise;
+  } else {
+    logMicAcquireEvent("mic-request-reuse-promise", {
+      sessionId,
+      voiceEpoch: voiceEpochAtEntry,
+      requestId,
+      trackId: "-",
+      reason,
+    });
+  }
+
+  const result = await acquirePromise!;
+
+  if (voiceEpochAtEntry !== micVoiceEpoch) {
+    logMicAcquireEvent("mic-request-stale-result-discarded", {
+      sessionId,
+      voiceEpoch: voiceEpochAtEntry,
+      requestId,
+      trackId: result.trackId,
+      reason,
+      detail: `caller_epoch_mismatch current=${micVoiceEpoch}`,
+    });
+    return false;
+  }
+
+  if (!result.ok) {
+    onMicReadyChange?.(false);
+    return false;
+  }
+
+  const readyCache = getCachedMic(sessionId, selectedMicId).cache;
+  if (!readyCache) {
+    onMicReadyChange?.(false);
+    return false;
+  }
+
+  bindCallerMicRefs({
+    sessionId,
+    reason,
+    selectedMicId,
+    getUserMuted,
+    onLocalTrackMutedApplied,
+    onMicReadyChange,
+    onStatusChange,
+    onMicPermissionDenied,
+    streamRef,
+    trackRef,
+    stream: readyCache.stream,
+    track: readyCache.track,
+  });
+  return true;
 }
 
 export function useLocalMic({
