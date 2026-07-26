@@ -210,6 +210,8 @@ export default function SelectClient() {
     toggle: toggleNotifications,
     busy: notificationsBusy,
     feedback: notificationsFeedback,
+    iosInstallGuideOpen,
+    dismissIosInstallGuide,
   } = useWebPushNotifications(deviceId, "select");
   const { refresh: refreshCurrentClass } = useCurrentClass(deviceId);
 
@@ -1081,6 +1083,8 @@ export default function SelectClient() {
           notificationsBusy={notificationsBusy}
           notificationsFeedback={notificationsFeedback}
           onToggleNotifications={toggleNotifications}
+          iosInstallGuideOpen={iosInstallGuideOpen}
+          onDismissIosInstallGuide={dismissIosInstallGuide}
         />
       </DashboardPageHeader>
 

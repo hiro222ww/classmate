@@ -9,6 +9,7 @@ import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthLoadingBanner } from "@/components/AuthLoadingUI";
 import { PushNotificationBell } from "@/components/PushNotificationBell";
+import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
 
 type Props = {
   returnPath: string;
@@ -19,6 +20,8 @@ type Props = {
   notificationsBusy?: boolean;
   notificationsFeedback?: string | null;
   onToggleNotifications?: () => void | Promise<void>;
+  iosInstallGuideOpen?: boolean;
+  onDismissIosInstallGuide?: () => void;
 };
 
 export function DashboardHeaderNav({
@@ -30,6 +33,8 @@ export function DashboardHeaderNav({
   notificationsBusy = false,
   notificationsFeedback = null,
   onToggleNotifications,
+  iosInstallGuideOpen = false,
+  onDismissIosInstallGuide,
 }: Props) {
   const { ready, loggedIn, accountLabel, adminAuthenticated } =
     useDashboardAccountStatus(deviceId);
@@ -56,6 +61,12 @@ export function DashboardHeaderNav({
           busy={notificationsBusy}
           feedback={notificationsFeedback}
           onToggle={onToggleNotifications}
+        />
+      ) : null}
+      {onDismissIosInstallGuide ? (
+        <IosWebPushInstallGuide
+          open={iosInstallGuideOpen}
+          onClose={onDismissIosInstallGuide}
         />
       ) : null}
 

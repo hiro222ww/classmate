@@ -401,6 +401,8 @@ export default function HomeClient() {
     busy: notificationsBusy,
     feedback: notificationsFeedback,
     markEnabled: markNotificationsEnabled,
+    iosInstallGuideOpen,
+    dismissIosInstallGuide,
   } = useWebPushNotifications(deviceId, "home");
   const {
     loading: currentClassLoading,
@@ -2444,6 +2446,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             notificationsBusy={notificationsBusy}
             notificationsFeedback={notificationsFeedback}
             onToggleNotifications={toggleNotifications}
+            iosInstallGuideOpen={iosInstallGuideOpen}
+            onDismissIosInstallGuide={dismissIosInstallGuide}
           />
         </DashboardPageHeader>
         <p style={{ margin: 0 }}>読み込み中...</p>
@@ -2465,6 +2469,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           notificationsBusy={notificationsBusy}
           notificationsFeedback={notificationsFeedback}
           onToggleNotifications={toggleNotifications}
+          iosInstallGuideOpen={iosInstallGuideOpen}
+          onDismissIosInstallGuide={dismissIosInstallGuide}
         />
       </DashboardPageHeader>
 

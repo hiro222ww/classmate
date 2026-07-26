@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { getDeviceId } from "@/lib/device";
 import {
+  isIosSafari,
+  isStandaloneDisplayMode,
+} from "@/lib/notificationPrompt";
+import {
   isWebPushSupported,
   subscribeWebPush,
   unsubscribeWebPush,
@@ -16,6 +20,7 @@ export function useWebPushNotifications(
   const [mounted, setMounted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [iosInstallGuideOpen, setIosInstallGuideOpen] = useState(false);
 
   useEffect(() => {
     if (!feedback) return;
@@ -32,6 +37,8 @@ export function useWebPushNotifications(
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!deviceId || !enabled || !mounted) return;
+    // Don't keep retrying subscribe on iOS Safari tabs (cannot work).
+    if (isIosSafari() && !isStandaloneDisplayMode()) return;
 
     void subscribeWebPush(deviceId)
       .then((result) => {
@@ -44,6 +51,10 @@ export function useWebPushNotifications(
       });
   }, [deviceId, enabled, logContext, mounted]);
 
+  const dismissIosInstallGuide = useCallback(() => {
+    setIosInstallGuideOpen(false);
+  }, []);
+
   const toggle = useCallback(async () => {
     if (typeof window === "undefined") return;
     if (busy) return;
@@ -52,6 +63,12 @@ export function useWebPushNotifications(
     setFeedback(null);
 
     try {
+      // iOS Safari tab: Web Push only works after Add to Home Screen.
+      if (isIosSafari() && !isStandaloneDisplayMode()) {
+        setIosInstallGuideOpen(true);
+        return;
+      }
+
       if (!isWebPushSupported()) {
         alert(
           "このブラウザは Web Push に対応していません。Chrome / Edge / Firefox、または iOS 16.4+ でホーム画面に追加した Safari をお試しください。"
@@ -107,5 +124,14 @@ export function useWebPushNotifications(
     setEnabled(next);
   }, []);
 
-  return { enabled, toggle, busy, feedback, mounted, markEnabled };
+  return {
+    enabled,
+    toggle,
+    busy,
+    feedback,
+    mounted,
+    markEnabled,
+    iosInstallGuideOpen,
+    dismissIosInstallGuide,
+  };
 }
