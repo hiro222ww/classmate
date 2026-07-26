@@ -9,6 +9,7 @@ import {
   findActiveSubscriptionItem,
   updateSubscriptionItemPrice,
 } from "@/lib/billingSubscriptions";
+import { assertCategoryBillingEnabled } from "@/lib/billingAvailability";
 
 export const runtime = "nodejs";
 
@@ -75,6 +76,14 @@ export async function POST(req: Request) {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "invalid_request_body";
       return NextResponse.json({ error: message }, { status: 400 });
+    }
+
+    const categoryGate = await assertCategoryBillingEnabled(checkout.category);
+    if (!categoryGate.ok) {
+      return NextResponse.json(
+        { error: categoryGate.error, message: categoryGate.message },
+        { status: 503 }
+      );
     }
 
     const customerId = await getCustomerIdByDeviceId(deviceId);

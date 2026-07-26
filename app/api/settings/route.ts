@@ -22,11 +22,19 @@ import {
   normalizeBillingCopy,
   type BillingCopySettings,
 } from "@/lib/billingCopySettings";
+import {
+  parseBillingEnabled,
+  parseSlotBillingEnabled,
+  parseThemeBillingEnabled,
+} from "@/lib/billingAvailability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_SETTINGS: {
+  billing_enabled: boolean;
+  slot_billing_enabled: boolean;
+  theme_billing_enabled: boolean;
   global_join_window: {
     enabled: boolean;
     start: string;
@@ -41,6 +49,9 @@ const DEFAULT_SETTINGS: {
   minors_enabled: boolean;
   age_mode: string;
 } = {
+  billing_enabled: true,
+  slot_billing_enabled: true,
+  theme_billing_enabled: false,
   global_join_window: {
     enabled: false,
     start: "21:00",
@@ -65,6 +76,9 @@ export async function GET() {
       .from("app_settings")
       .select("key, value")
       .in("key", [
+        "billing_enabled",
+        "slot_billing_enabled",
+        "theme_billing_enabled",
         "global_join_window",
         "billing_notice",
         "billing_copy",
@@ -76,8 +90,24 @@ export async function GET() {
     if (error) throw error;
 
     const settings = structuredClone(DEFAULT_SETTINGS);
+    let sawSlot = false;
+    let sawTheme = false;
+    let sawLegacy = false;
+    let legacyEnabled = false;
 
     for (const row of data ?? []) {
+      if (row.key === "slot_billing_enabled") {
+        settings.slot_billing_enabled = parseSlotBillingEnabled(row.value);
+        sawSlot = true;
+      }
+      if (row.key === "theme_billing_enabled") {
+        settings.theme_billing_enabled = parseThemeBillingEnabled(row.value);
+        sawTheme = true;
+      }
+      if (row.key === "billing_enabled") {
+        legacyEnabled = parseBillingEnabled(row.value);
+        sawLegacy = true;
+      }
       if (row.key === "global_join_window") {
         settings.global_join_window = {
           ...settings.global_join_window,
@@ -114,6 +144,14 @@ export async function GET() {
           ageModeFromLegacyMinors(settings.minors_enabled);
       }
     }
+
+    if (!sawSlot && !sawTheme && sawLegacy) {
+      settings.slot_billing_enabled = legacyEnabled;
+      settings.theme_billing_enabled = legacyEnabled;
+    }
+
+    settings.billing_enabled =
+      settings.slot_billing_enabled || settings.theme_billing_enabled;
 
     const ttlSetting = await getRecruitmentSessionTtlSetting();
     const effectiveAgeMode = await getEffectiveAgeMode();

@@ -9,6 +9,10 @@ import {
   lookupEntitlements,
   resolveUserIdForDevice,
 } from "@/lib/userIdentityMigration";
+import {
+  isSlotBillingEnabled,
+  SLOT_BILLING_OFF_EFFECTIVE_LIMIT,
+} from "@/lib/billingAvailability";
 
 export type ApiActor = UserIdentity & {
   userId: string;
@@ -134,6 +138,10 @@ export async function getClassSlotsForActor(
   }
 
   try {
+    if (!(await isSlotBillingEnabled())) {
+      return { ok: true, classSlots: SLOT_BILLING_OFF_EFFECTIVE_LIMIT };
+    }
+
     const ent = await lookupEntitlements({
       userId: actor.userId,
       deviceId,

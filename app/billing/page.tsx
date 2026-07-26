@@ -34,12 +34,23 @@ function BillingPageInner() {
     ? `${devQuery ? `${devQuery}&` : "?"}returnTo=${encodeURIComponent(returnTo)}`
     : devQuery;
   const { ready, loggedIn } = useRequireAccount("/billing");
-  const { copy } = useBillingCopy();
+  const { copy, slotBillingEnabled, themeBillingEnabled } = useBillingCopy();
   const isApp = isAppShellContext();
 
   const [loadingKey, setLoadingKey] = useState("");
 
   async function openBillingPortal(action: PortalAction) {
+    const isCancelAction =
+      action === "cancel_theme" || action === "cancel_slots";
+    const categoryEnabled =
+      action === "update_theme" || action === "cancel_theme"
+        ? themeBillingEnabled
+        : slotBillingEnabled;
+    if (!categoryEnabled && !isCancelAction) {
+      alert("現在、このカテゴリのプラン変更は停止しています。");
+      return;
+    }
+
     try {
       setLoadingKey(action);
 
@@ -111,21 +122,24 @@ function BillingPageInner() {
     cancelAction: "cancel_theme" | "cancel_slots";
     updateLabel: string;
     cancelLabel: string;
+    updateEnabled: boolean;
   }) {
     if (isApp) {
       return (
         <AppShellSection title={params.title}>
           <div style={{ display: "grid", gap: 10 }}>
-            <button
-              type="button"
-              disabled={loading}
-              className="app-shell-btn app-shell-btn--primary"
-              onClick={() => void openBillingPortal(params.updateAction)}
-            >
-              {loadingKey === params.updateAction
-                ? "開いています…"
-                : params.updateLabel}
-            </button>
+            {params.updateEnabled ? (
+              <button
+                type="button"
+                disabled={loading}
+                className="app-shell-btn app-shell-btn--primary"
+                onClick={() => void openBillingPortal(params.updateAction)}
+              >
+                {loadingKey === params.updateAction
+                  ? "開いています…"
+                  : params.updateLabel}
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={loading}
@@ -154,26 +168,28 @@ function BillingPageInner() {
       >
         <div style={{ fontSize: 18, fontWeight: 900 }}>{params.title}</div>
 
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => void openBillingPortal(params.updateAction)}
-          style={{
-            width: "100%",
-            padding: "14px 16px",
-            borderRadius: 14,
-            border: "1px solid #111",
-            background: "#111",
-            color: "#fff",
-            fontWeight: 900,
-            cursor: loading ? "default" : "pointer",
-            opacity: loading ? 0.7 : 1,
-          }}
-        >
-          {loadingKey === params.updateAction
-            ? "開いています…"
-            : params.updateLabel}
-        </button>
+        {params.updateEnabled ? (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void openBillingPortal(params.updateAction)}
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: 14,
+              border: "1px solid #111",
+              background: "#111",
+              color: "#fff",
+              fontWeight: 900,
+              cursor: loading ? "default" : "pointer",
+              opacity: loading ? 0.55 : 1,
+            }}
+          >
+            {loadingKey === params.updateAction
+              ? "開いています…"
+              : params.updateLabel}
+          </button>
+        ) : null}
 
         <button
           type="button"
@@ -239,12 +255,33 @@ function BillingPageInner() {
         </Link>
       }
     >
+      {!slotBillingEnabled && !themeBillingEnabled ? (
+        <section
+          className={isApp ? "app-shell-card" : undefined}
+          style={
+            isApp
+              ? undefined
+              : {
+                  border: "1px solid #fde68a",
+                  borderRadius: 18,
+                  padding: 16,
+                  background: "#fffbeb",
+                }
+          }
+        >
+          <div style={{ fontWeight: 900 }}>現在は課金を停止しています</div>
+          <p style={{ margin: "6px 0 0", color: "#667085", fontSize: 13 }}>
+            プラン変更は停止中です。既存契約の解約は引き続き利用できます。
+          </p>
+        </section>
+      ) : null}
       {renderPlanSection({
         title: "クラス枠",
         updateAction: "update_slots",
         cancelAction: "cancel_slots",
         updateLabel: "クラス枠を変更",
         cancelLabel: "クラス枠を解約",
+        updateEnabled: slotBillingEnabled,
       })}
 
       {renderPlanSection({
@@ -253,6 +290,7 @@ function BillingPageInner() {
         cancelAction: "cancel_theme",
         updateLabel: "支援額を変更",
         cancelLabel: "テーマプランを解約",
+        updateEnabled: themeBillingEnabled,
       })}
 
       <BillingSupportSection showPortalLogin={false} showBetaNotice={false} />

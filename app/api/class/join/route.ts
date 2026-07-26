@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
+import { getClassSlotsForActor } from "@/lib/actorIdentity";
 import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
 import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 
@@ -122,28 +123,22 @@ export async function POST(req: Request) {
       }
     }
 
-    const { data: ent, error: entErr } = await supabase
-      .from("user_entitlements")
-      .select("class_slots, topic_plan, theme_pass")
-      .eq("device_id", deviceId)
-      .maybeSingle();
-
-    console.log("[class/join] entitlements =", ent);
-    console.log("[class/join] entitlements error =", entErr);
-
-    if (entErr) {
+    const classSlotsRes = await getClassSlotsForActor(supabase, {
+      deviceId,
+      userId: null,
+    });
+    if (!classSlotsRes.ok) {
       return NextResponse.json(
         {
           ok: false,
           error: "db_error",
           where: "entitlements_lookup",
-          detail: entErr.message,
+          detail: classSlotsRes.error,
         },
         { status: 500 }
       );
     }
-
-    const classSlots = Math.max(1, Number(ent?.class_slots ?? 1));
+    const classSlots = classSlotsRes.classSlots;
     console.log("[class/join] classSlots =", classSlots);
 
     const { data: mine, error: mineErr } = await supabase

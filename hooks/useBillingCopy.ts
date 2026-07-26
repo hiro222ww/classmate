@@ -9,6 +9,8 @@ import {
 
 export function useBillingCopy() {
   const [copy, setCopy] = useState<BillingCopySettings>(DEFAULT_BILLING_COPY);
+  const [slotBillingEnabled, setSlotBillingEnabled] = useState(true);
+  const [themeBillingEnabled, setThemeBillingEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,8 +30,24 @@ export function useBillingCopy() {
         const legacyNotice = json?.settings?.billing_notice ?? null;
 
         setCopy(normalizeBillingCopy(raw, legacyNotice));
+
+        const settings = json?.settings ?? {};
+        const hasSlot = typeof settings.slot_billing_enabled === "boolean";
+        const hasTheme = typeof settings.theme_billing_enabled === "boolean";
+        if (hasSlot || hasTheme) {
+          setSlotBillingEnabled(settings.slot_billing_enabled !== false);
+          setThemeBillingEnabled(settings.theme_billing_enabled === true);
+        } else {
+          const legacy = settings.billing_enabled === true;
+          setSlotBillingEnabled(legacy);
+          setThemeBillingEnabled(legacy);
+        }
       } catch {
-        if (!cancelled) setCopy(DEFAULT_BILLING_COPY);
+        if (!cancelled) {
+          setCopy(DEFAULT_BILLING_COPY);
+          setSlotBillingEnabled(true);
+          setThemeBillingEnabled(false);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -40,5 +58,13 @@ export function useBillingCopy() {
     };
   }, []);
 
-  return { copy, loading };
+  const billingEnabled = slotBillingEnabled || themeBillingEnabled;
+
+  return {
+    copy,
+    billingEnabled,
+    slotBillingEnabled,
+    themeBillingEnabled,
+    loading,
+  };
 }

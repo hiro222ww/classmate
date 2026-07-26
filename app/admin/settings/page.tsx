@@ -14,11 +14,16 @@ import {
 } from "@/app/admin/adminUi";
 
 type RecruitmentTtlMode = "5" | "10" | "15" | "unlimited";
+type SaveStatus = "idle" | "saving" | "success" | "error";
 
 export default function AdminSettingsPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [billingSaveStatus, setBillingSaveStatus] = useState<SaveStatus>("idle");
+  const [billingSaveError, setBillingSaveError] = useState("");
 
+  const [slotBillingEnabled, setSlotBillingEnabled] = useState(true);
+  const [themeBillingEnabled, setThemeBillingEnabled] = useState(false);
   const [globalJoinEnabled, setGlobalJoinEnabled] = useState(false);
   const [globalJoinStart, setGlobalJoinStart] = useState("21:00");
   const [globalJoinEnd, setGlobalJoinEnd] = useState("21:30");
@@ -44,6 +49,16 @@ export default function AdminSettingsPage() {
       const sj = await readJsonOrThrow(res);
       const settings = sj.settings ?? {};
 
+      const hasSlot = typeof settings.slot_billing_enabled === "boolean";
+      const hasTheme = typeof settings.theme_billing_enabled === "boolean";
+      if (hasSlot || hasTheme) {
+        setSlotBillingEnabled(settings.slot_billing_enabled !== false);
+        setThemeBillingEnabled(settings.theme_billing_enabled === true);
+      } else {
+        const legacy = settings.billing_enabled === true;
+        setSlotBillingEnabled(legacy);
+        setThemeBillingEnabled(legacy);
+      }
       setGlobalJoinEnabled(Boolean(settings.global_join_window?.enabled));
       setGlobalJoinStart(String(settings.global_join_window?.start ?? "21:00"));
       setGlobalJoinEnd(String(settings.global_join_window?.end ?? "21:30"));
@@ -69,6 +84,34 @@ export default function AdminSettingsPage() {
     }
   }
 
+  async function saveBillingCategories(next: {
+    slot_billing_enabled?: boolean;
+    theme_billing_enabled?: boolean;
+  }): Promise<boolean> {
+    setBillingSaveStatus("saving");
+    setBillingSaveError("");
+    setMsg("");
+
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      await readJsonOrThrow(res);
+      setBillingSaveStatus("success");
+      setMsg("課金設定を保存しました");
+      return true;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "settings_save_failed";
+      setBillingSaveStatus("error");
+      setBillingSaveError(message);
+      setMsg(message);
+      return false;
+    }
+  }
+
   async function saveSettings() {
     setMsg("");
     setBusy(true);
@@ -87,6 +130,8 @@ export default function AdminSettingsPage() {
         credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          slot_billing_enabled: slotBillingEnabled,
+          theme_billing_enabled: themeBillingEnabled,
           global_join_window: {
             enabled: globalJoinEnabled,
             start: globalJoinStart,
@@ -101,9 +146,13 @@ export default function AdminSettingsPage() {
       });
 
       await readJsonOrThrow(res);
+      setBillingSaveStatus("success");
       setMsg("設定を保存しました");
     } catch (e: unknown) {
-      setMsg(e instanceof Error ? e.message : "settings_save_failed");
+      const message = e instanceof Error ? e.message : "settings_save_failed";
+      setMsg(message);
+      setBillingSaveStatus("error");
+      setBillingSaveError(message);
     } finally {
       setBusy(false);
     }
@@ -115,7 +164,7 @@ export default function AdminSettingsPage() {
         <header style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>運用設定</h1>
           <p style={{ margin: "8px 0 0", fontSize: 13, color: "#667085" }}>
-            入校受付時間・募集締切・未成年登録を管理します。
+            課金・入校受付時間・募集締切・未成年登録を管理します。
           </p>
         </header>
 
@@ -147,6 +196,146 @@ export default function AdminSettingsPage() {
             </button>
             {msg ? <span style={{ fontSize: 12, color: "#333" }}>{msg}</span> : null}
           </div>
+        </section>
+
+        <section style={{ ...adminCard, marginTop: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 10,
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+              課金機能
+            </h2>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: slotBillingEnabled ? "#dcfce7" : "#fee2e2",
+                  color: slotBillingEnabled ? "#166534" : "#991b1b",
+                  fontWeight: 900,
+                  fontSize: 12,
+                }}
+              >
+                スロット {slotBillingEnabled ? "ON" : "OFF"}
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: themeBillingEnabled ? "#dcfce7" : "#fee2e2",
+                  color: themeBillingEnabled ? "#166534" : "#991b1b",
+                  fontWeight: 900,
+                  fontSize: 12,
+                }}
+              >
+                テーマ {themeBillingEnabled ? "ON" : "OFF"}
+              </span>
+            </div>
+          </div>
+
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 12,
+              color: "#667085",
+              lineHeight: 1.5,
+            }}
+          >
+            カテゴリごとに新規購入・プラン変更を停止できます。既存契約の解約は引き続き利用できます。片方だけ変更してももう片方は上書きされません。
+          </p>
+
+          <label
+            style={{
+              marginTop: 12,
+              padding: "12px 14px",
+              borderRadius: 12,
+              border: "1px solid #e5e7eb",
+              background: "#f9fafb",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              fontSize: 13,
+              fontWeight: 800,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={slotBillingEnabled}
+              disabled={busy || billingSaveStatus === "saving"}
+              onChange={(e) => {
+                const next = e.target.checked;
+                const prev = slotBillingEnabled;
+                setSlotBillingEnabled(next);
+                void saveBillingCategories({ slot_billing_enabled: next }).then(
+                  (ok) => {
+                    if (!ok) setSlotBillingEnabled(prev);
+                  }
+                );
+              }}
+            />
+            クラススロット課金
+          </label>
+
+          <label
+            style={{
+              marginTop: 12,
+              padding: "12px 14px",
+              borderRadius: 12,
+              border: "1px solid #e5e7eb",
+              background: "#f9fafb",
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              fontSize: 13,
+              fontWeight: 800,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={themeBillingEnabled}
+              disabled={busy || billingSaveStatus === "saving"}
+              onChange={(e) => {
+                const next = e.target.checked;
+                const prev = themeBillingEnabled;
+                setThemeBillingEnabled(next);
+                void saveBillingCategories({ theme_billing_enabled: next }).then(
+                  (ok) => {
+                    if (!ok) setThemeBillingEnabled(prev);
+                  }
+                );
+              }}
+            />
+            テーマ課金
+          </label>
+
+          <p
+            style={{
+              margin: "10px 0 0",
+              fontSize: 12,
+              color:
+                billingSaveStatus === "error"
+                  ? "#991b1b"
+                  : billingSaveStatus === "success"
+                    ? "#166534"
+                    : "#667085",
+            }}
+          >
+            {billingSaveStatus === "saving"
+              ? "保存中…"
+              : billingSaveStatus === "success"
+                ? "保存しました"
+                : billingSaveStatus === "error"
+                  ? `保存に失敗しました: ${billingSaveError}`
+                  : null}
+          </p>
         </section>
 
         <section style={{ ...adminCard, marginTop: 12 }}>

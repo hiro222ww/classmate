@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
@@ -156,7 +156,7 @@ function PremiumPageInner() {
   const billingHref = withDev(`/billing${returnQuery}`);
 
   const { ready, loggedIn } = useRequireAccount("/premium");
-  const { copy } = useBillingCopy();
+  const { copy, slotBillingEnabled, themeBillingEnabled } = useBillingCopy();
   const isApp = isAppShellContext();
   const [deviceId, setDeviceId] = useState("");
   const [ent, setEnt] = useState<Entitlements | null>(null);
@@ -197,7 +197,8 @@ function PremiumPageInner() {
   const currentTopicSupport = topicSupportRankFromPlan(ent?.plan);
   const hasThemePass = Boolean(ent?.theme_pass) || currentTopicSupport > 0;
 
-  const canClick = useMemo(() => !!deviceId && !busyKey, [deviceId, busyKey]);
+  const canClickSlots = Boolean(slotBillingEnabled && deviceId && !busyKey);
+  const canClickTheme = Boolean(themeBillingEnabled && deviceId && !busyKey);
 
   async function openPortalUpdate(action: "update_theme" | "update_slots") {
     try {
@@ -294,24 +295,32 @@ function PremiumPageInner() {
 
   const currentPlanSection = (
     <SoftCard isApp={isApp}>
-      <div className={isApp ? "app-shell-muted" : undefined} style={isApp ? undefined : { fontSize: 14, color: "#666" }}>
-        現在のテーマプラン
-      </div>
-      <div style={{ marginTop: 8, fontWeight: 900, fontSize: 18 }}>
-        {hasThemePass
-          ? formatTopicPlanLine(currentTopicSupport || 400)
-          : "無料"}
-      </div>
+      {themeBillingEnabled ? (
+        <>
+          <div className={isApp ? "app-shell-muted" : undefined} style={isApp ? undefined : { fontSize: 14, color: "#666" }}>
+            現在のテーマプラン
+          </div>
+          <div style={{ marginTop: 8, fontWeight: 900, fontSize: 18 }}>
+            {hasThemePass
+              ? formatTopicPlanLine(currentTopicSupport || 400)
+              : "無料"}
+          </div>
+        </>
+      ) : null}
 
-      <div
-        className={isApp ? "app-shell-muted" : undefined}
-        style={isApp ? { marginTop: 16 } : { fontSize: 14, color: "#666", marginTop: 16 }}
-      >
-        現在のクラス枠
-      </div>
-      <div style={{ marginTop: 8, fontWeight: 900 }}>
-        {formatClassSlotPlanLine(currentSlots)}
-      </div>
+      {slotBillingEnabled ? (
+        <>
+          <div
+            className={isApp ? "app-shell-muted" : undefined}
+            style={isApp ? { marginTop: themeBillingEnabled ? 16 : 0 } : { fontSize: 14, color: "#666", marginTop: themeBillingEnabled ? 16 : 0 }}
+          >
+            現在のクラス枠
+          </div>
+          <div style={{ marginTop: 8, fontWeight: 900 }}>
+            {formatClassSlotPlanLine(currentSlots)}
+          </div>
+        </>
+      ) : null}
     </SoftCard>
   );
 
@@ -335,7 +344,7 @@ function PremiumPageInner() {
               name={topicSupportPlanName(p)}
               priceLine={`¥${p}/月`}
               active={isCurrentSupport}
-              disabled={!canClick || isCurrentSupport}
+              disabled={!canClickTheme || isCurrentSupport}
               busy={busyKey.includes(String(p))}
               buttonLabel={hasThemePass ? "支援額を変更" : "この支援額で始める"}
               onClick={() => start({ kind: "topic_plan", amount: p })}
@@ -363,7 +372,7 @@ function PremiumPageInner() {
               name={topicSupportPlanName(p)}
               priceLine={`¥${p}/月`}
               active={isCurrentSupport}
-              disabled={!canClick || isCurrentSupport}
+              disabled={!canClickTheme || isCurrentSupport}
               busy={busyKey.includes(String(p))}
               buttonLabel={hasThemePass ? "支援額を変更" : "この支援額で始める"}
               onClick={() => start({ kind: "topic_plan", amount: p })}
@@ -392,7 +401,7 @@ function PremiumPageInner() {
             name={`${s}クラス`}
             priceLine={formatClassSlotPrice(s)}
             active={currentSlots === s}
-            disabled={!canClick || currentSlots >= s}
+            disabled={!canClickSlots || currentSlots >= s}
             busy={busyKey.includes(String(s))}
             buttonLabel="増やす"
             onClick={() => start({ kind: "slots", slotsTotal: s })}
@@ -425,7 +434,7 @@ function PremiumPageInner() {
             name={`${s}クラス`}
             priceLine={formatClassSlotPrice(s)}
             active={currentSlots === s}
-            disabled={!canClick || currentSlots >= s}
+            disabled={!canClickSlots || currentSlots >= s}
             busy={busyKey.includes(String(s))}
             buttonLabel="増やす"
             onClick={() => start({ kind: "slots", slotsTotal: s })}
@@ -449,10 +458,21 @@ function PremiumPageInner() {
         </Link>
       }
     >
-      {currentPlanSection}
-      <ThemePlanTopicsSection />
-      {topicPlanSection}
-      {slotPlanSection}
+      {!slotBillingEnabled && !themeBillingEnabled ? (
+        <SoftCard isApp={isApp}>
+          <div style={{ fontWeight: 900 }}>現在は課金を停止しています</div>
+          <p
+            className={isApp ? "app-shell-muted" : undefined}
+            style={{ margin: "6px 0 0", color: "#667085", fontSize: 13 }}
+          >
+            新規購入とプラン変更は利用できません。
+          </p>
+        </SoftCard>
+      ) : null}
+      {slotBillingEnabled || themeBillingEnabled ? currentPlanSection : null}
+      {themeBillingEnabled ? <ThemePlanTopicsSection /> : null}
+      {themeBillingEnabled ? topicPlanSection : null}
+      {slotBillingEnabled ? slotPlanSection : null}
     </BillingPageShell>
   );
 }

@@ -48,6 +48,7 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 
 type World = {
@@ -223,6 +224,7 @@ export default function SelectClient() {
   const [tFilter, setTFilter] = useState<string>("all");
 
   const [ent, setEnt] = useState<Entitlements | null>(null);
+  const { themeBillingEnabled, slotBillingEnabled } = useBillingCopy();
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -692,6 +694,7 @@ export default function SelectClient() {
   }, [topics, prefs, wFilter, tFilter]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
+    if (!themeBillingEnabled) return true;
     return b.monthly_price <= topicPlan;
   }
 
@@ -995,7 +998,8 @@ export default function SelectClient() {
           <strong style={{ fontSize: 15 }}>{b.title}</strong>
           <span style={{ fontSize: 12, opacity: 0.9 }}>
             {profileMissing && "🧑未登録 "}
-            {locked ? "🔒" : "🔓"} {b.is_sensitive ? "🔞" : "🟢"}
+            {themeBillingEnabled ? (locked ? "🔒" : "🔓") : "🔓"}{" "}
+            {b.is_sensitive ? "🔞" : "🟢"}
           </span>
         </div>
 
@@ -1214,7 +1218,13 @@ export default function SelectClient() {
 
         <DashboardStatusBar
           slots={slots}
-          planLabel={tierName(topicPlan)}
+          planLabel={
+            themeBillingEnabled
+              ? tierName(topicPlan)
+              : slotBillingEnabled
+                ? `${slots}クラス枠`
+                : "制限なし"
+          }
           joinWindowOpen={joinWindowOpen}
           joinWindowText={joinWindowText}
           loading={loading}
@@ -1286,7 +1296,9 @@ export default function SelectClient() {
               {topics.map((t) => (
                 <option key={t.topic_key} value={t.topic_key}>
                   {t.title} {t.is_sensitive ? "🔞" : ""}{" "}
-                  {t.monthly_price ? `（要:${tierName(t.monthly_price)}以上）` : ""}
+                  {themeBillingEnabled && t.monthly_price
+                    ? `（要:${tierName(t.monthly_price)}以上）`
+                    : ""}
                 </option>
               ))}
             </select>

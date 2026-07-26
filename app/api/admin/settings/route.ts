@@ -26,11 +26,19 @@ import {
   type RecruitmentSessionTtlSetting,
 } from "@/lib/recruitmentSettings";
 import { DEFAULT_RECRUITMENT_SESSION_TTL_MINUTES } from "@/lib/recruitment";
+import {
+  parseBillingEnabled,
+  parseSlotBillingEnabled,
+  parseThemeBillingEnabled,
+} from "@/lib/billingAvailability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type AppSettings = {
+  billing_enabled: boolean;
+  slot_billing_enabled: boolean;
+  theme_billing_enabled: boolean;
   global_join_window: {
     enabled: boolean;
     start: string;
@@ -47,6 +55,9 @@ type AppSettings = {
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
+  billing_enabled: true,
+  slot_billing_enabled: true,
+  theme_billing_enabled: false,
   global_join_window: {
     enabled: false,
     start: "21:00",
@@ -70,6 +81,9 @@ async function readRawSettings() {
     .from("app_settings")
     .select("key, value")
     .in("key", [
+      "billing_enabled",
+      "slot_billing_enabled",
+      "theme_billing_enabled",
       "global_join_window",
       "billing_notice",
       "billing_copy",
@@ -84,8 +98,24 @@ async function readRawSettings() {
 
 async function readSettings(): Promise<AppSettings> {
   const settings = structuredClone(DEFAULT_SETTINGS);
+  let sawSlot = false;
+  let sawTheme = false;
+  let sawLegacy = false;
+  let legacyEnabled = false;
 
   for (const row of await readRawSettings()) {
+    if (row.key === "slot_billing_enabled") {
+      settings.slot_billing_enabled = parseSlotBillingEnabled(row.value);
+      sawSlot = true;
+    }
+    if (row.key === "theme_billing_enabled") {
+      settings.theme_billing_enabled = parseThemeBillingEnabled(row.value);
+      sawTheme = true;
+    }
+    if (row.key === "billing_enabled") {
+      legacyEnabled = parseBillingEnabled(row.value);
+      sawLegacy = true;
+    }
     if (row.key === "global_join_window") {
       settings.global_join_window = {
         ...settings.global_join_window,
@@ -118,6 +148,14 @@ async function readSettings(): Promise<AppSettings> {
         ageModeFromLegacyMinors(settings.minors_enabled);
     }
   }
+
+  if (!sawSlot && !sawTheme && sawLegacy) {
+    settings.slot_billing_enabled = legacyEnabled;
+    settings.theme_billing_enabled = legacyEnabled;
+  }
+
+  settings.billing_enabled =
+    settings.slot_billing_enabled || settings.theme_billing_enabled;
 
   settings.age_mode = await getEffectiveAgeMode();
 
@@ -165,6 +203,55 @@ export async function POST(req: Request) {
     const beforeSettings = await readSettings();
 
     const globalJoinWindow = body.global_join_window;
+    if (
+      body.slot_billing_enabled !== undefined &&
+      typeof body.slot_billing_enabled !== "boolean"
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "slot_billing_enabled_must_be_boolean" },
+        { status: 400 }
+      );
+    }
+    if (
+      body.theme_billing_enabled !== undefined &&
+      typeof body.theme_billing_enabled !== "boolean"
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "theme_billing_enabled_must_be_boolean" },
+        { status: 400 }
+      );
+    }
+    if (
+      body.billing_enabled !== undefined &&
+      typeof body.billing_enabled !== "boolean" &&
+      body.slot_billing_enabled === undefined &&
+      body.theme_billing_enabled === undefined
+    ) {
+      return NextResponse.json(
+        { ok: false, error: "billing_enabled_must_be_boolean" },
+        { status: 400 }
+      );
+    }
+
+    // Per-key patch: omit a key so the other category is not overwritten.
+    let nextSlot = beforeSettings.slot_billing_enabled;
+    let nextTheme = beforeSettings.theme_billing_enabled;
+    if (typeof body.slot_billing_enabled === "boolean") {
+      nextSlot = body.slot_billing_enabled;
+    }
+    if (typeof body.theme_billing_enabled === "boolean") {
+      nextTheme = body.theme_billing_enabled;
+    }
+    if (
+      typeof body.billing_enabled === "boolean" &&
+      body.slot_billing_enabled === undefined &&
+      body.theme_billing_enabled === undefined
+    ) {
+      // Legacy single switch: apply to both categories.
+      nextSlot = body.billing_enabled;
+      nextTheme = body.billing_enabled;
+    }
+
     const billingNotice = body.billing_notice;
     const billingCopyInput = body.billing_copy;
     const requestedMinorsEnabled =
@@ -203,6 +290,9 @@ export async function POST(req: Request) {
           : beforeSettings.billing_copy;
 
     const nextSettings: AppSettings = {
+      slot_billing_enabled: nextSlot,
+      theme_billing_enabled: nextTheme,
+      billing_enabled: nextSlot || nextTheme,
       global_join_window:
         globalJoinWindow != null
           ? {
@@ -222,6 +312,21 @@ export async function POST(req: Request) {
     };
 
     const rows = [
+      {
+        key: "slot_billing_enabled",
+        value: { enabled: nextSettings.slot_billing_enabled },
+        updated_at: new Date().toISOString(),
+      },
+      {
+        key: "theme_billing_enabled",
+        value: { enabled: nextSettings.theme_billing_enabled },
+        updated_at: new Date().toISOString(),
+      },
+      {
+        key: "billing_enabled",
+        value: { enabled: nextSettings.billing_enabled },
+        updated_at: new Date().toISOString(),
+      },
       {
         key: "global_join_window",
         value: nextSettings.global_join_window,
@@ -261,6 +366,25 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     clearAgePolicyCache();
+
+    if (
+      beforeSettings.slot_billing_enabled !== nextSettings.slot_billing_enabled ||
+      beforeSettings.theme_billing_enabled !== nextSettings.theme_billing_enabled
+    ) {
+      await writeAdminAuditLog({
+        actor,
+        action: "settings.billing_categories",
+        target: "app_settings",
+        before: {
+          slot_billing_enabled: beforeSettings.slot_billing_enabled,
+          theme_billing_enabled: beforeSettings.theme_billing_enabled,
+        },
+        after: {
+          slot_billing_enabled: nextSettings.slot_billing_enabled,
+          theme_billing_enabled: nextSettings.theme_billing_enabled,
+        },
+      });
+    }
 
     if (beforeSettings.minors_enabled !== nextSettings.minors_enabled) {
       await writeAdminAuditLog({

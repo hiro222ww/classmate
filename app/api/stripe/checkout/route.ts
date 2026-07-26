@@ -2,8 +2,12 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { isSellablePriceId } from "@/lib/billingCatalog";
+import {
+  categoryForPriceId,
+  isSellablePriceId,
+} from "@/lib/billingCatalog";
 import { resolveAppOrigin } from "@/lib/appOrigin";
+import { assertCategoryBillingEnabled } from "@/lib/billingAvailability";
 
 export async function POST(req: Request) {
   try {
@@ -17,6 +21,19 @@ export async function POST(req: Request) {
 
     if (!priceId || !isSellablePriceId(priceId)) {
       return NextResponse.json({ error: "price_not_allowed" }, { status: 400 });
+    }
+
+    const category = categoryForPriceId(priceId);
+    if (!category) {
+      return NextResponse.json({ error: "price_not_allowed" }, { status: 400 });
+    }
+
+    const categoryGate = await assertCategoryBillingEnabled(category);
+    if (!categoryGate.ok) {
+      return NextResponse.json(
+        { error: categoryGate.error, message: categoryGate.message },
+        { status: 503 }
+      );
     }
 
     const { data: billing, error: bErr } = await supabaseAdmin

@@ -10,6 +10,7 @@ import {
   createBillingPortalSession,
   type PortalAction,
 } from "@/lib/stripePortal";
+import { assertCategoryBillingEnabled } from "@/lib/billingAvailability";
 
 export const runtime = "nodejs";
 
@@ -78,6 +79,19 @@ export async function POST(req: Request) {
     const action = normalizePortalAction(body);
     if (!action) {
       return NextResponse.json({ error: "invalid_portal_action" }, { status: 400 });
+    }
+
+    const isCancelAction =
+      action === "cancel_theme" || action === "cancel_slots";
+    if (!isCancelAction) {
+      const category = action === "update_theme" ? "topic_plan" : "slots";
+      const categoryGate = await assertCategoryBillingEnabled(category);
+      if (!categoryGate.ok) {
+        return NextResponse.json(
+          { error: categoryGate.error, message: categoryGate.message },
+          { status: 503 }
+        );
+      }
     }
 
     const customer = await resolveBillingCustomer({
