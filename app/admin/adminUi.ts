@@ -8,7 +8,7 @@ export async function readJsonOrThrow(r: Response) {
     throw new Error("non_json_response");
   }
   const j = JSON.parse(raw);
-  if (!r.ok) throw new Error(j?.error ?? "request_failed");
+  if (!r.ok) throw new Error(j?.message ?? j?.error ?? "request_failed");
   return j;
 }
 

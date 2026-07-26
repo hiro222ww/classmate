@@ -254,23 +254,36 @@ export async function POST(req: Request) {
 
     const billingNotice = body.billing_notice;
     const billingCopyInput = body.billing_copy;
+    const touchingAgePolicy =
+      body.minors_enabled !== undefined || body.age_mode !== undefined;
     const requestedMinorsEnabled =
       body.minors_enabled !== undefined
         ? Boolean(body.minors_enabled)
         : beforeSettings.minors_enabled;
+    // Preserve stored age_mode when omitted. Do not re-derive from minors on
+    // unrelated patches (e.g. billing toggles), or production lock misfires.
     const requestedAgeMode =
-      parseAgeModeValue(body.age_mode) ??
-      ageModeFromLegacyMinors(requestedMinorsEnabled);
+      body.age_mode !== undefined
+        ? parseAgeModeValue(body.age_mode) ??
+          ageModeFromLegacyMinors(requestedMinorsEnabled)
+        : parseAgeModeValue(beforeSettings.age_mode) ??
+          ageModeFromLegacyMinors(beforeSettings.minors_enabled);
 
-    const persistCheck = canPersistMinorsOrAgeModeChange({
-      nextMinorsEnabled: requestedMinorsEnabled,
-      nextAgeMode: requestedAgeMode,
-    });
-    if (!persistCheck.allowed) {
-      return NextResponse.json(
-        { ok: false, error: "production_age_locked", message: persistCheck.reason },
-        { status: 403 }
-      );
+    if (touchingAgePolicy) {
+      const persistCheck = canPersistMinorsOrAgeModeChange({
+        nextMinorsEnabled: requestedMinorsEnabled,
+        nextAgeMode: requestedAgeMode,
+      });
+      if (!persistCheck.allowed) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "production_age_locked",
+            message: persistCheck.reason,
+          },
+          { status: 403 }
+        );
+      }
     }
 
     const nextBillingCopy =
@@ -311,58 +324,85 @@ export async function POST(req: Request) {
       age_mode: requestedAgeMode,
     };
 
-    const rows = [
-      {
-        key: "slot_billing_enabled",
-        value: { enabled: nextSettings.slot_billing_enabled },
-        updated_at: new Date().toISOString(),
-      },
-      {
-        key: "theme_billing_enabled",
-        value: { enabled: nextSettings.theme_billing_enabled },
-        updated_at: new Date().toISOString(),
-      },
-      {
-        key: "billing_enabled",
-        value: { enabled: nextSettings.billing_enabled },
-        updated_at: new Date().toISOString(),
-      },
-      {
+    const now = new Date().toISOString();
+    const billingTouched =
+      typeof body.slot_billing_enabled === "boolean" ||
+      typeof body.theme_billing_enabled === "boolean" ||
+      typeof body.billing_enabled === "boolean";
+    const rows: Array<{ key: string; value: unknown; updated_at: string }> = [];
+
+    if (billingTouched) {
+      rows.push(
+        {
+          key: "slot_billing_enabled",
+          value: { enabled: nextSettings.slot_billing_enabled },
+          updated_at: now,
+        },
+        {
+          key: "theme_billing_enabled",
+          value: { enabled: nextSettings.theme_billing_enabled },
+          updated_at: now,
+        },
+        {
+          key: "billing_enabled",
+          value: { enabled: nextSettings.billing_enabled },
+          updated_at: now,
+        }
+      );
+    }
+    if (globalJoinWindow != null) {
+      rows.push({
         key: "global_join_window",
         value: nextSettings.global_join_window,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        key: "billing_notice",
-        value: nextSettings.billing_notice,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        key: "billing_copy",
-        value: nextSettings.billing_copy,
-        updated_at: new Date().toISOString(),
-      },
-      {
+        updated_at: now,
+      });
+    }
+    if (billingCopyInput != null || billingNotice != null) {
+      rows.push(
+        {
+          key: "billing_notice",
+          value: nextSettings.billing_notice,
+          updated_at: now,
+        },
+        {
+          key: "billing_copy",
+          value: nextSettings.billing_copy,
+          updated_at: now,
+        }
+      );
+    }
+    if (body.recruitment_session_ttl_minutes != null) {
+      rows.push({
         key: "recruitment_session_ttl_minutes",
         value: nextSettings.recruitment_session_ttl_minutes,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        key: "minors_enabled",
-        value: nextSettings.minors_enabled,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        key: "age_mode",
-        value: nextSettings.age_mode,
-        updated_at: new Date().toISOString(),
-      },
-    ];
+        updated_at: now,
+      });
+    }
+    if (touchingAgePolicy) {
+      rows.push(
+        {
+          key: "minors_enabled",
+          value: nextSettings.minors_enabled,
+          updated_at: now,
+        },
+        {
+          key: "age_mode",
+          value: nextSettings.age_mode,
+          updated_at: now,
+        }
+      );
+    }
+
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "no_settings_to_update" },
+        { status: 400 }
+      );
+    }
 
     const { error } = await supabaseAdmin
       .from("app_settings")
       .upsert(rows, { onConflict: "key" });
-
     if (error) throw error;
 
     clearAgePolicyCache();
