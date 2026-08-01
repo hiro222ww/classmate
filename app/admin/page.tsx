@@ -4,6 +4,11 @@ export const dynamic = "force-dynamic";
 
 const cards = [
   {
+    title: "撮影用デモ通話",
+    desc: "広報録画・スクショ用。WebRTCなしで通話画面を再現",
+    href: "/call/demo",
+  },
+  {
     title: "ルーム監視",
     desc: "現在のルーム、参加者、危険度を確認",
     href: "/admin/rooms",

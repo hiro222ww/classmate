@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="64" fill="#86efac"/>
+  <circle cx="64" cy="48" r="22" fill="#f0fdf4"/>
+  <ellipse cx="64" cy="98" rx="36" ry="28" fill="#f0fdf4"/>
+  <text x="64" y="56" text-anchor="middle" font-size="22" font-family="system-ui,sans-serif" font-weight="700" fill="#166534">O</text>
+</svg>

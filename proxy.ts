@@ -48,6 +48,8 @@ export async function proxy(req: NextRequest) {
 
   const isAdminPage = pathname.startsWith("/admin");
   const isAdminApi = pathname.startsWith("/api/admin");
+  const isCallDemoPage =
+    pathname === "/call/demo" || pathname.startsWith("/call/demo/");
 
   const isLoginPage = pathname === "/admin/login";
   const isLoginApi = pathname === "/api/admin/login";
@@ -58,7 +60,7 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!isAdminPage && !isAdminApi) {
+  if (!isAdminPage && !isAdminApi && !isCallDemoPage) {
     return NextResponse.next();
   }
 
@@ -97,5 +99,5 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/api/admin/:path*"],
+  matcher: ["/admin/:path*", "/api/admin/:path*", "/call/demo", "/call/demo/:path*"],
 };
