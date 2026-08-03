@@ -13,6 +13,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logCallEntryBlocked } from "@/lib/entryFlowLog";
 import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import SharedCanvasBoard from "./SharedCanvasBoard";
+import CallRoomView from "./CallRoomView";
 import CallVoiceLayer from "./CallVoiceLayer";
 import {
   isCallMicSessionActive,
@@ -27,14 +28,12 @@ import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
-import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
 } from "@/lib/profileNavigation";
 import SessionMessages from "@/components/SessionMessages";
-import YouTubeWatchParty from "./YouTubeWatchParty";
-import MemberModerationButtons from "@/components/MemberModerationButtons";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import {
   formatMemberDisplayName,
@@ -104,11 +103,9 @@ import {
 import { clearCallBfcacheSuspend } from "@/lib/callReloadDiagnostics";
 import { requestRemoteAudioUnlock } from "@/lib/remoteAudioUnlock";
 import {
-  LIST_MEMBER_AVATAR_PX,
   normalizeMemberDeviceId,
   type MemberProfileTarget,
 } from "@/lib/memberProfileView";
-import MemberListAvatar from "@/components/MemberListAvatar";
 import { debugVoiceRetryable } from "@/lib/debugVoiceLog";
 import {
   getBackgroundSyncIntervalMs,
@@ -140,7 +137,6 @@ import {
   mapCallStatusLabelToPhase,
   resolveCallStatusTransitionLog,
   resolveCallMemberStatus,
-  resolveCallMemberUserDisplayText,
   resolveDisplayManualAudioReconnect,
   resolveEffectivePeerConnection,
   type CallStatusPhase,
@@ -3029,814 +3025,190 @@ export default function CallClient() {
     voiceLayerShouldRender,
   ]);
 
+  const voiceLayerNode = voiceLayerActive ? (
+    <CallVoiceLayer
+      sessionId={sessionId}
+      deviceId={deviceId}
+      members={voiceMembers}
+      membersSyncRevision={membersSyncRevision}
+      userMuted={userMuted}
+      userMutedRef={userMutedRef}
+      listenOnly={voiceEntryMode === "listen_only"}
+      autoAcquireOnMount={voiceEntryMode === "mic"}
+      presenceMembers={members}
+      onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
+      onMicReadyChange={handleMicReadyChange}
+      onMicPermissionDeniedChange={handleMicPermissionDeniedChange}
+      onMicRetryReady={handleMicRetryReady}
+      onMicLevelChange={handleMicLevelChange}
+      onRemoteSpeakingChange={handleRemoteSpeakingChange}
+      onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
+      onRemoteCountChange={handleRemoteCountChange}
+      onStatusChange={setCallInfo}
+      onPeerStatesChange={handlePeerStatesChange}
+      onPeerDiagnosticsChange={handlePeerDiagnosticsChange}
+      onVoiceCleanup={handleVoiceCleanup}
+      onManualPeerHardResetReady={handleManualPeerHardResetReady}
+      onReadinessSnapshot={handleVoiceReadinessSnapshot}
+      onVoiceLayerMountedChange={handleVoiceLayerMountedChange}
+      onSoftResetExhausted={handleSoftResetExhausted}
+      onExplicitRemoteLeave={handleExplicitRemoteLeave}
+    />
+  ) : null;
+
+  const entryGateSlot = showMicEntryGate ? (
+    <>
+      <InAppBrowserNotice />
+      <MicEntryGate
+        busy={gateBusy || voiceEntryMode === "checking"}
+        errorTitle={gateError?.title}
+        errorBody={gateError?.body}
+        showInAppHint={gateError?.showInAppHint}
+        onRequestMic={() => {
+          void handleGateRequestMic();
+        }}
+        onListenOnly={handleListenOnlyEntry}
+      />
+    </>
+  ) : null;
+
   return (
-    <main
-      className={
-        isAppShellContext()
-          ? "app-immersive-inner app-immersive-inner--wide"
-          : undefined
+    <CallRoomView
+      voiceLayer={voiceLayerNode}
+      entryGateSlot={entryGateSlot}
+      presenceToasts={presenceToasts}
+      filled={filled}
+      capacity={capacity}
+      membersSyncRevision={membersSyncRevision}
+      showCallStuckReconnect={showCallStuckReconnect}
+      onCallStuckReconnect={() => handleCallStuckReconnect()}
+      meetingPlanLabel={
+        meetingPlan && !meetingPlan.is_past
+          ? `次の集合：${meetingPlan.display_label}`
+          : null
       }
-      style={
-        isAppShellContext()
-          ? undefined
-          : { maxWidth: 1100, margin: "0 auto", padding: 16 }
+      callRequestLabel={
+        callRequest?.is_active ? callRequest.display_label : null
       }
-    >
-      {presenceToasts.length > 0 ? (
-        <div
-          aria-live="polite"
-          style={{
-            position: "fixed",
-            left: "50%",
-            top: 16,
-            transform: "translateX(-50%)",
-            zIndex: 11000,
-            display: "grid",
-            gap: 8,
-            width: "min(420px, calc(100vw - 24px))",
-          }}
-        >
-          {presenceToasts.map((toast) => (
-            <div
-              key={toast.id}
-              style={{
-                borderRadius: 12,
-                padding: "10px 14px",
-                background: "#111827",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 800,
-                textAlign: "center",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
-              }}
-            >
-              {toast.message}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {voiceLayerActive ? (
-        <CallVoiceLayer
-          sessionId={sessionId}
-          deviceId={deviceId}
-          members={voiceMembers}
-          membersSyncRevision={membersSyncRevision}
-          userMuted={userMuted}
-          userMutedRef={userMutedRef}
-          listenOnly={voiceEntryMode === "listen_only"}
-          autoAcquireOnMount={voiceEntryMode === "mic"}
-          presenceMembers={members}
-          onLocalTrackMutedApplied={handleLocalTrackMutedApplied}
-          onMicReadyChange={handleMicReadyChange}
-          onMicPermissionDeniedChange={handleMicPermissionDeniedChange}
-          onMicRetryReady={handleMicRetryReady}
-          onMicLevelChange={handleMicLevelChange}
-          onRemoteSpeakingChange={handleRemoteSpeakingChange}
-          onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
-          onRemoteCountChange={handleRemoteCountChange}
-          onStatusChange={setCallInfo}
-          onPeerStatesChange={handlePeerStatesChange}
-          onPeerDiagnosticsChange={handlePeerDiagnosticsChange}
-          onVoiceCleanup={handleVoiceCleanup}
-          onManualPeerHardResetReady={handleManualPeerHardResetReady}
-          onReadinessSnapshot={handleVoiceReadinessSnapshot}
-          onVoiceLayerMountedChange={handleVoiceLayerMountedChange}
-          onSoftResetExhausted={handleSoftResetExhausted}
-          onExplicitRemoteLeave={handleExplicitRemoteLeave}
-        />
-      ) : null}
-
-      {showMicEntryGate ? (
-        <>
-          <InAppBrowserNotice />
-          <MicEntryGate
-            busy={gateBusy || voiceEntryMode === "checking"}
-            errorTitle={gateError?.title}
-            errorBody={gateError?.body}
-            showInAppHint={gateError?.showInAppHint}
-            onRequestMic={() => {
-              void handleGateRequestMic();
-            }}
-            onListenOnly={handleListenOnlyEntry}
-          />
-        </>
-      ) : null}
-
-      <div
-        className={
-          isAppShellContext() ? "app-immersive-call-header" : undefined
+      onProfileEdit={() => router.push(profileEditHref)}
+      onInviteFriends={async () => {
+        if (!sessionId || !classId) {
+          alert("まだ招待リンクを作れません。");
+          return;
         }
-        style={
-          isAppShellContext()
-            ? undefined
-            : {
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                flexWrap: "wrap",
-              }
+
+        const inviteUrl = buildInviteRoomUrl({
+          classId,
+          sessionId,
+        });
+
+        try {
+          await navigator.clipboard.writeText(inviteUrl);
+          alert("招待リンクをコピーしました");
+        } catch {
+          window.prompt(
+            "コピーできませんでした。下のリンクをコピーしてください。",
+            inviteUrl
+          );
         }
-      >
-        <div>
-          <h1
-            className={isAppShellContext() ? "app-shell-title" : undefined}
-            style={
-              isAppShellContext()
-                ? undefined
-                : { fontSize: 24, fontWeight: 900, margin: 0 }
-            }
-          >
-            通話ルーム
-          </h1>
-          <div
-            className={isAppShellContext() ? "app-shell-subtitle" : undefined}
-            style={
-              isAppShellContext()
-                ? undefined
-                : { marginTop: 6, fontSize: 13, color: "#666" }
-            }
-          >
-            参加人数{" "}
-            {membersSyncRevision > 0
-              ? `${filled}/${capacity}`
-              : `--/${capacity}`}
-          </div>
-          {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
-            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
-                接続処理が長時間続いています
-              </span>
-              <button
-                type="button"
-                onClick={() => handleCallStuckReconnect()}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 10,
-                  border: "1px solid #f59e0b",
-                  background: "#fffbeb",
-                  color: "#b45309",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
-              >
-                再接続
-              </button>
-            </div>
-          ) : null}
-          {meetingPlan && !meetingPlan.is_past ? (
-            <div style={{ marginTop: 4, fontSize: 12, color: "#374151", fontWeight: 800 }}>
-              次の集合：{meetingPlan.display_label}
-            </div>
-          ) : null}
-          {callRequest?.is_active ? (
-            <div style={{ marginTop: 4, fontSize: 12, color: "#92400e", fontWeight: 800 }}>
-              {callRequest.display_label}
-            </div>
-          ) : null}
-        </div>
-
-        <div
-          className={
-            isAppShellContext() ? "app-immersive-call-actions" : undefined
+      }}
+      onHome={() => {
+        logNavigationIntent("return_home", "CallClient.home_button");
+        router.push(withDev(resolveShellDashboardPath()));
+      }}
+      onExit={() => {
+        const roomHref = withDev(
+          `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
+            `&sessionId=${encodeURIComponent(sessionId)}`
+        );
+        logNavigationIntent("left_call_return_room", "CallClient.exit_button");
+        logRouteChange(getCurrentPath(), roomHref, "left_call_return_room");
+        markSelfLeftCall();
+        releaseSessionMic("call_exit", sessionId);
+        router.push(roomHref);
+      }}
+      fetchErrorCount={fetchErrorCount}
+      showWaitingForOthers={
+        !hasOtherMember && membersSyncRevision > 0 && members.length > 0
+      }
+      visibleMembers={visibleMembers}
+      deviceId={deviceId}
+      classId={classId}
+      sessionId={sessionId}
+      nowMs={nowMs}
+      getMemberStatus={getMemberStatus}
+      peerDiagnostics={peerDiagnostics}
+      remoteAudioHealth={remoteAudioHealth}
+      isSessionMember={(memberId) => apiSessionMemberIdsRef.current.has(memberId)}
+      wasPeerConnected={(memberId) => everConnectedPeersRef.current.has(memberId)}
+      onMemberClick={(member) => {
+        const memberDeviceId = normalizeMemberDeviceId(member.device_id);
+        if (!memberDeviceId || !deviceId) return;
+        setProfileTarget({
+          deviceId: memberDeviceId,
+          viewerDeviceId: deviceId,
+          classId,
+          sessionId,
+          displayName: member.display_name,
+          photoPath: member.photo_path,
+        });
+      }}
+      onManualAudioReconnect={handleManualAudioReconnect}
+      showMicPermissionWarning={showMicPermissionWarning}
+      micPermissionWarningTitle={
+        gateError?.title ||
+        callInfo ||
+        (micPermissionDenied
+          ? "マイクが許可されていません。ブラウザの設定からマイクを許可してから、もう一度お試しください。"
+          : "マイク準備中…")
+      }
+      micPermissionWarningBody={gateError?.body}
+      onRetryMic={() => {
+        if (voiceEntryMode === "gate" || voiceEntryMode === "checking") {
+          void handleGateRequestMic();
+          return;
+        }
+        void retryMicPermissionRef.current();
+      }}
+      voiceJoinFatalError={voiceJoinFatalError}
+      voiceSelfReconnecting={voiceSelfReconnecting}
+      onVoiceReconnect={() => handleCallStuckReconnect()}
+      muteDisabled={voiceEntryMode === "listen_only"}
+      userMuted={userMuted}
+      micReady={micReady}
+      muteButtonLabel={muteButtonLabel}
+      onMuteClick={() => {
+        requestRemoteAudioUnlock();
+        setUserMuted((prev) => {
+          const next = !prev;
+          userMutedRef.current = next;
+          logVoiceUiMuteToggle({
+            fromMuted: prev,
+            toMuted: next,
+            refMuted: userMutedRef.current,
+          });
+          logMuteStateSet({
+            userMuted: next,
+            prev,
+            reason: next ? "user_click_mute" : "user_click_unmute",
+            source: "user_click",
+          });
+          if (!next) {
+            markCallMicEverUnmuted(sessionId, deviceId);
           }
-          style={
-            isAppShellContext()
-              ? undefined
-              : { display: "flex", gap: 8, flexWrap: "wrap" }
-          }
-        >
-          <button
-            type="button"
-            onClick={() => router.push(profileEditHref)}
-            className={
-              isAppShellContext() ? "app-shell-btn app-shell-btn--ghost" : undefined
-            }
-            style={
-              isAppShellContext()
-                ? undefined
-                : {
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #d1d5db",
-                    background: "#fff",
-                    color: "#374151",
-                    fontWeight: 900,
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }
-            }
-          >
-            プロフィール編集
-          </button>
-
-          <button
-            className={
-              isAppShellContext() ? "app-shell-btn app-shell-btn--primary" : undefined
-            }
-            onClick={async () => {
-              if (!sessionId || !classId) {
-                alert("まだ招待リンクを作れません。");
-                return;
-              }
-
-              const inviteUrl = buildInviteRoomUrl({
-                classId,
-                sessionId,
-              });
-
-              try {
-                await navigator.clipboard.writeText(inviteUrl);
-                alert("招待リンクをコピーしました");
-              } catch {
-                window.prompt(
-                  "コピーできませんでした。下のリンクをコピーしてください。",
-                  inviteUrl
-                );
-              }
-            }}
-            style={
-              isAppShellContext()
-                ? undefined
-                : {
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #111827",
-                    background: "#111827",
-                    color: "#fff",
-                    fontWeight: 900,
-                    fontSize: 13,
-                    cursor: "pointer",
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-                  }
-            }
-          >
-            友達を招待
-          </button>
-
-          {isAppShellContext() ? (
-            <button
-              type="button"
-              className="app-shell-btn app-shell-btn--ghost"
-              onClick={() => {
-                logNavigationIntent("return_home", "CallClient.home_button");
-                router.push(withDev(resolveShellDashboardPath()));
-              }}
-            >
-              ホーム
-            </button>
-          ) : null}
-
-          <button
-            type="button"
-            className={
-              isAppShellContext() ? "app-shell-btn app-shell-btn--danger" : undefined
-            }
-            style={
-              isAppShellContext()
-                ? undefined
-                : {
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #e5e7eb",
-                    background: "#fff",
-                    color: "#374151",
-                    fontWeight: 900,
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }
-            }
-            onClick={() => {
-              const roomHref = withDev(
-                `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
-                  `&sessionId=${encodeURIComponent(sessionId)}`
-              );
-              logNavigationIntent("left_call_return_room", "CallClient.exit_button");
-              logRouteChange(getCurrentPath(), roomHref, "left_call_return_room");
-              markSelfLeftCall();
-              releaseSessionMic("call_exit", sessionId);
-              router.push(roomHref);
-            }}
-          >
-            退出
-          </button>
-        </div>
-      </div>
-
-      {fetchErrorCount >= 3 && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "10px 12px",
-            borderRadius: 12,
-            background: "#fffbeb",
-            color: "#92400e",
-            border: "1px solid #fde68a",
-            fontSize: 13,
-            fontWeight: 800,
-          }}
-        >
-          通話メンバーの取得を再試行中です。接続中の通話は維持します。
-        </div>
-      )}
-
-      {!hasOtherMember && membersSyncRevision > 0 && members.length > 0 ? (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "10px 12px",
-            borderRadius: 12,
-            background: "#f9fafb",
-            color: "#6b7280",
-            border: "1px solid #e5e7eb",
-            fontSize: 13,
-            fontWeight: 800,
-          }}
-        >
-          他の参加者の参加を待っています。
-        </div>
-      ) : null}
-
-      <section
-        style={{
-          marginTop: 16,
-          padding: 14,
-          border: "1px solid #e5e7eb",
-          borderRadius: 18,
-          background: "#fff",
-        }}
-      >
-        <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 12 }}>
-          通話中のメンバー
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-            gap: 12,
-          }}
-        >
-          {Array.from({ length: capacity }).map((_, i) => {
-            const member = visibleMembers[i];
-            const isFilled = !!member;
-            const isMe = member?.device_id === deviceId;
-            const status = getMemberStatus(member);
-            const memberId = member?.device_id ?? "";
-            const diag = memberId ? peerDiagnostics[memberId] : undefined;
-            const memberAudioHealth = memberId
-              ? remoteAudioHealth[memberId] ?? null
-              : null;
-            const showManualAudioReconnect =
-              isVoiceLayerDebugEnabled() &&
-              !!member &&
-              !isMe &&
-              resolveDisplayManualAudioReconnect({
-                isMe: false,
-                conn: diag?.conn ?? "-",
-                ice: diag?.ice ?? "-",
-                hasPc: diag?.hasPc ?? false,
-                hasRemoteStream: diag?.hasRemoteStream ?? false,
-                lastPlaybackConfirmedAt: diag?.lastPlaybackConfirmedAt ?? null,
-                lastPlaybackActiveAt: diag?.lastPlaybackActiveAt ?? null,
-                lastOnTrackAt: diag?.lastOnTrackAt ?? null,
-                lastUnmuteAt: diag?.lastUnmuteAt ?? null,
-                lastPlaySuccessAt:
-                  memberAudioHealth?.lastPlaySuccessAt ??
-                  diag?.lastPlaySuccessAt ??
-                  null,
-                remoteAudioHealth: memberAudioHealth,
-                trackReady:
-                  memberAudioHealth?.trackReady ?? diag?.trackReady ?? "-",
-                liveStreamHealHold: diag?.liveStreamHealHold === true,
-                p2pDirectFailedHoldActive: diag?.p2pDirectFailedHoldActive === true,
-                autoHardResetInProgress: diag?.autoHardResetInProgress === true,
-                voicePeerRepairInProgress: diag?.voicePeerRepairInProgress === true,
-                autoHardResetGiveUp: diag?.autoHardResetGiveUp === true,
-                reconnectRequestPending: diag?.reconnectRequestPending === true,
-                wasPeerConnected: everConnectedPeersRef.current.has(memberId),
-                nowMs,
-                debugUi: isVoiceLayerDebugEnabled(),
-                audioUnhealthySinceMs: computeAudioUnhealthySinceMs({
-                  nowMs,
-                  remoteAudioHealth: memberAudioHealth,
-                  hasRemoteStream: diag?.hasRemoteStream ?? false,
-                  trackReady:
-                    memberAudioHealth?.trackReady ?? diag?.trackReady ?? "-",
-                  wasPeerConnected: everConnectedPeersRef.current.has(memberId),
-                }),
-                remoteDeviceId: memberId,
-              }).show;
-            const avatarEager = i < 4;
-
-            const isSpeaking =
-              !!member?.lastSpokeAt &&
-              nowMs > 0 &&
-              nowMs - member.lastSpokeAt < 1500;
-
-            return (
-              <div
-                key={member?.device_id ?? `empty-${i}`}
-                style={{
-                  minHeight: 96,
-                  borderRadius: 16,
-                  border: isSpeaking
-                    ? "2px solid #22c55e"
-                    : "1px solid #e5e7eb",
-                  background: isFilled ? "#ffffff" : "#f9fafb",
-                  padding: 12,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  boxShadow: isSpeaking
-                    ? "0 8px 24px rgba(34,197,94,0.18)"
-                    : "none",
-                  transform: isSpeaking ? "translateY(-2px)" : "none",
-                  transition:
-                    "transform 160ms ease, box-shadow 160ms ease, border 160ms ease",
-                }}
-              >
-                <button
-                  type="button"
-                  disabled={!isFilled || !member || !deviceId}
-                  onClick={() => {
-                    if (!member) return;
-                    const memberDeviceId = normalizeMemberDeviceId(
-                      member.device_id
-                    );
-                    if (!memberDeviceId || !deviceId) return;
-                    setProfileTarget({
-                      deviceId: memberDeviceId,
-                      viewerDeviceId: deviceId,
-                      classId,
-                      sessionId,
-                      displayName: member.display_name,
-                      photoPath: member.photo_path,
-                    });
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    minWidth: 0,
-                    flex: 1,
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    margin: 0,
-                    cursor: isFilled && member ? "pointer" : "default",
-                    textAlign: "left",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: LIST_MEMBER_AVATAR_PX,
-                      height: LIST_MEMBER_AVATAR_PX,
-                      borderRadius: "50%",
-                      background: isFilled ? "#dbeafe" : "#e5e7eb",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 12,
-                      fontWeight: 900,
-                      overflow: "hidden",
-                      flexShrink: 0,
-                      border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
-                    }}
-                  >
-                    {member ? (
-                      <MemberListAvatar
-                        photoPath={member.photo_path}
-                        avatarUrl={member.avatar_url}
-                        label={member.display_name}
-                        sizePx={LIST_MEMBER_AVATAR_PX}
-                        isMe={isMe}
-                        eager={avatarEager}
-                      />
-                    ) : null}
-                  </div>
-
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 800,
-                        color: isFilled ? "#111827" : "#9ca3af",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {isFilled
-                        ? isMe
-                          ? `${formatMemberDisplayName(member)} (You)`
-                          : formatMemberDisplayName(member)
-                        : "空席"}
-                    </div>
-                  </div>
-                </button>
-
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-end",
-                      gap: 6,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        padding: "4px 8px",
-                        borderRadius: 999,
-                        background: isSpeaking ? "#dcfce7" : status.chipBg,
-                        color: isSpeaking ? "#166534" : status.chipText,
-                        fontSize: 11,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {isSpeaking
-                        ? "発話中"
-                        : resolveCallMemberUserDisplayText({
-                            text: status.text,
-                            isMe,
-                            screen: member?.screen ?? null,
-                            isInCall: member?.is_in_call === true,
-                            inSessionMember: memberId
-                              ? apiSessionMemberIdsRef.current.has(memberId)
-                              : false,
-                            audioConfirmedStrict:
-                              memberAudioHealth?.audioConfirmedStrict === true,
-                            playbackActive:
-                              memberAudioHealth?.playbackActive === true,
-                            audioActuallyPlaying:
-                              memberAudioHealth?.audioActuallyPlaying === true,
-                            recentPlaySuccess: isRecentPlaySuccess(
-                              memberAudioHealth?.lastPlaySuccessAt ??
-                                diag?.lastPlaySuccessAt,
-                              nowMs
-                            ),
-                          })}
-                    </div>
-
-                    {showManualAudioReconnect && memberId ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleManualAudioReconnect(memberId);
-                        }}
-                        style={{
-                          padding: "4px 8px",
-                          borderRadius: 8,
-                          border: "1px solid #f59e0b",
-                          background: "#fffbeb",
-                          color: "#b45309",
-                          fontSize: 10,
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        音声を再接続
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {isFilled && !isMe && member?.device_id ? (
-                    <details style={{ marginTop: 4, position: "relative" }}>
-                      <summary
-                        style={{
-                          listStyle: "none",
-                          cursor: "pointer",
-                          fontSize: 18,
-                          color: "#9ca3af",
-                          lineHeight: 1,
-                          width: 28,
-                          height: 28,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          borderRadius: 999,
-                        }}
-                      >
-                        ︙
-                      </summary>
-
-                      <div
-                        style={{
-                          position: "absolute",
-                          right: 0,
-                          top: 32,
-                          zIndex: 20,
-                          padding: 8,
-                          borderRadius: 12,
-                          border: "1px solid #e5e7eb",
-                          background: "#fff",
-                          boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-                        }}
-                      >
-                        <MemberModerationButtons
-                          myDeviceId={deviceId}
-                          targetDeviceId={member.device_id}
-                          targetName={formatMemberDisplayName(member)}
-                          sessionId={sessionId}
-                          classId={classId}
-                        />
-                      </div>
-                    </details>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} /> */}
-
-      <section
-        style={{
-          marginTop: 16,
-          padding: 14,
-          border: "1px solid #e5e7eb",
-          borderRadius: 18,
-          background: "#fff",
-        }}
-      >
-        <div style={{ fontWeight: 900, fontSize: 15 }}>音声設定</div>
-
-        {showMicPermissionWarning ? (
-          <div
-            style={{
-              marginTop: 10,
-              padding: "10px 12px",
-              borderRadius: 12,
-              background: "#fffbeb",
-              border: "1px solid #fde68a",
-              fontSize: 13,
-              color: "#92400e",
-            }}
-          >
-            <div style={{ fontWeight: 800 }}>
-              {gateError?.title ||
-                callInfo ||
-                (micPermissionDenied
-                  ? "マイクが許可されていません。ブラウザの設定からマイクを許可してから、もう一度お試しください。"
-                  : "マイク準備中…")}
-            </div>
-            {gateError?.body ? (
-              <div style={{ marginTop: 6, lineHeight: 1.65 }}>{gateError.body}</div>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                if (voiceEntryMode === "gate" || voiceEntryMode === "checking") {
-                  void handleGateRequestMic();
-                  return;
-                }
-                void retryMicPermissionRef.current();
-              }}
-              style={{
-                marginTop: 8,
-                padding: "8px 12px",
-                borderRadius: 10,
-                border: "1px solid #d97706",
-                background: "#fff",
-                color: "#92400e",
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              もう一度試す
-            </button>
-          </div>
-        ) : null}
-
-        {voiceJoinFatalError ? (
-          <div
-            style={{
-              marginTop: 10,
-              padding: "10px 12px",
-              borderRadius: 12,
-              background: "#f9fafb",
-              border: "1px solid #e5e7eb",
-              fontSize: 13,
-              color: "#4b5563",
-              lineHeight: 1.65,
-            }}
-          >
-            <div>音声接続に失敗しました。もう一度参加してください。</div>
-            <button
-              type="button"
-              onClick={() => handleCallStuckReconnect()}
-              style={{
-                marginTop: 8,
-                padding: "8px 12px",
-                borderRadius: 10,
-                border: "1px solid #9ca3af",
-                background: "#fff",
-                color: "#374151",
-                fontWeight: 800,
-                cursor: "pointer",
-              }}
-            >
-              音声を再接続
-            </button>
-          </div>
-        ) : voiceSelfReconnecting ? (
-          <div style={{ marginTop: 10, fontSize: 12, color: "#9ca3af" }}>
-            再接続中…
-          </div>
-        ) : null}
-
-        <div
-          style={{
-            marginTop: 10,
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <button
-            disabled={voiceEntryMode === "listen_only" || !micReady}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: userMuted ? "#fff" : "#111827",
-              color: userMuted ? "#111827" : "#fff",
-              fontWeight: 900,
-              cursor: micReady ? "pointer" : "not-allowed",
-              opacity: micReady ? 1 : 0.6,
-            }}
-            onClick={() => {
-              requestRemoteAudioUnlock();
-              setUserMuted((prev) => {
-                const next = !prev;
-                userMutedRef.current = next;
-                logVoiceUiMuteToggle({
-                  fromMuted: prev,
-                  toMuted: next,
-                  refMuted: userMutedRef.current,
-                });
-                logMuteStateSet({
-                  userMuted: next,
-                  prev,
-                  reason: next ? "user_click_mute" : "user_click_unmute",
-                  source: "user_click",
-                });
-                if (!next) {
-                  markCallMicEverUnmuted(sessionId, deviceId);
-                }
-                writeCallMutePreference(sessionId, deviceId, next, {
-                  source: "user_click",
-                });
-                voiceProdLog(
-                  `[voice-ui] mute-toggle-applied userMuted=${next ? 1 : 0} ` +
-                    `ref=${userMutedRef.current ? 1 : 0} stored=${readCallMutePreference(sessionId, deviceId) === true ? 1 : readCallMutePreference(sessionId, deviceId) === false ? 0 : "-"}`
-                );
-                return next;
-              });
-            }}
-          >
-            {muteButtonLabel}
-          </button>
-
-          <div style={{ fontSize: 12, color: "#374151", minWidth: 180 }}>
-            マイク入力: {(micLevel * 100).toFixed(1)}
-          </div>
-
-          <div
-            style={{
-              width: 140,
-              height: 10,
-              borderRadius: 999,
-              background: "#e5e7eb",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                width: `${Math.min(100, micLevel * 800)}%`,
-                height: "100%",
-                background: "#111827",
-              }}
-            />
-          </div>
-        </div>
-      </section>
-
-      <section style={{ marginTop: 16 }}>
-        {sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
-      </section>
-
-      <div style={{ marginTop: 16 }}>
+          writeCallMutePreference(sessionId, deviceId, next, {
+            source: "user_click",
+          });
+          voiceProdLog(
+            `[voice-ui] mute-toggle-applied userMuted=${next ? 1 : 0} ` +
+              `ref=${userMutedRef.current ? 1 : 0} stored=${readCallMutePreference(sessionId, deviceId) === true ? 1 : readCallMutePreference(sessionId, deviceId) === false ? 0 : "-"}`
+          );
+          return next;
+        });
+      }}
+      micLevel={micLevel}
+      boardSlot={sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
+      messagesSlot={
         <SessionMessages
           sessionId={sessionId}
           deviceId={deviceId}
@@ -3847,13 +3219,15 @@ export default function CallClient() {
           maxHeight={240}
           collapsible
         />
-      </div>
-
-      <MemberProfileModal
-        target={profileTarget}
-        onClose={() => setProfileTarget(null)}
-        returnTo={buildCurrentPathReturnTo(pathname, searchParams.toString())}
-      />
-    </main>
+      }
+      profileModalSlot={
+        <MemberProfileModal
+          target={profileTarget}
+          onClose={() => setProfileTarget(null)}
+          returnTo={buildCurrentPathReturnTo(pathname, searchParams.toString())}
+        />
+      }
+    />
   );
+
 }

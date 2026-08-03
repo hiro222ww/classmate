@@ -33,6 +33,9 @@ import { useBoardSounds } from "./board/useBoardSounds";
 
 type SharedCanvasBoardProps = {
   sessionId: string;
+  /** Static chrome only — no Supabase / realtime / drawing (demo & screenshots). */
+  previewOnly?: boolean;
+  previewOverlayText?: string;
 };
 
 const BOARD_REALTIME_RESUBSCRIBE_MS = 4000;
@@ -68,7 +71,199 @@ function boardTouchAction(
   return touchMode === "pan" ? "pan-x pan-y" : "none";
 }
 
-function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
+function SharedCanvasBoardPreview({
+  overlayText,
+}: {
+  overlayText?: string;
+}) {
+  const isTouchLike =
+    typeof window !== "undefined" &&
+    (("ontouchstart" in window && navigator.maxTouchPoints > 0) ||
+      window.matchMedia("(pointer: coarse)").matches);
+
+  return (
+    <div
+      className="classmate-board-root"
+      style={{ marginTop: 10, ...BOARD_TOUCH_GUARD }}
+    >
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          ...BOARD_TOUCH_GUARD,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+            flex: "1 1 auto",
+            minWidth: 0,
+            ...BOARD_TOUCH_GUARD,
+          }}
+        >
+          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
+            太さ
+            <input
+              type="range"
+              min={1}
+              max={10}
+              value={4}
+              disabled
+              readOnly
+              style={{ marginLeft: 8, verticalAlign: "middle" }}
+            />
+          </label>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {CHALK_COLORS.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                title={c.name}
+                disabled
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 999,
+                  border:
+                    c.value === CHALK_COLORS[0]?.value
+                      ? "2px solid #111"
+                      : "1px solid #bbb",
+                  background: c.value,
+                  cursor: "default",
+                  opacity: 0.85,
+                }}
+              />
+            ))}
+
+            <button
+              type="button"
+              disabled
+              style={{
+                padding: "8px 10px",
+                borderRadius: 12,
+                border: "1px solid #ddd",
+                background: "#fff",
+                color: "#111",
+                fontWeight: 900,
+                cursor: "default",
+                opacity: 0.85,
+              }}
+            >
+              黒板消し
+            </button>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+            flexShrink: 0,
+          }}
+        >
+          <button
+            type="button"
+            disabled
+            style={{
+              padding: "8px 12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: "#fff",
+              color: "#111827",
+              fontWeight: 900,
+              cursor: "default",
+              opacity: 0.85,
+            }}
+          >
+            全画面
+          </button>
+          <button
+            type="button"
+            disabled
+            aria-label="黒板をすべて消す"
+            style={{
+              padding: "8px 12px",
+              borderRadius: 12,
+              border: "1px solid #fca5a5",
+              background: "#fff5f5",
+              color: "#b91c1c",
+              fontWeight: 900,
+              cursor: "default",
+              opacity: 0.85,
+            }}
+          >
+            🗑 全消し
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="classmate-board-scroll"
+        style={{
+          marginTop: 10,
+          borderRadius: 16,
+          border: "1px solid rgba(0,0,0,0.08)",
+          background: BOARD_OUTER_BG,
+          padding: 10,
+          overflowX: "auto",
+          overflowY: "hidden",
+          ...BOARD_TOUCH_GUARD,
+        }}
+      >
+        <div
+          className="classmate-board-surface"
+          style={{
+            position: "relative",
+            width: "100%",
+            maxWidth: "none",
+            margin: "0 auto",
+            minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
+            minHeight: isTouchLike ? 420 : 620,
+            aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
+            borderRadius: 16,
+            border: "2px solid #073126",
+            background: BOARD_BG,
+            boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            ...BOARD_TOUCH_GUARD,
+          }}
+        >
+          {overlayText ? (
+            <div
+              style={{
+                padding: "16px 20px",
+                color: "#e9fbe8",
+                fontWeight: 900,
+                fontSize: 14,
+                lineHeight: 1.6,
+                whiteSpace: "pre-wrap",
+                textAlign: "center",
+                textShadow: "0 1px 0 rgba(0,0,0,0.25)",
+                maxWidth: "90%",
+              }}
+            >
+              {overlayText}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef("");
   const displayNameRef = useRef("");
@@ -1641,4 +1836,13 @@ function SharedCanvasBoard({ sessionId }: SharedCanvasBoardProps) {
   );
 }
 
-export default SharedCanvasBoard;
+export default function SharedCanvasBoard({
+  sessionId,
+  previewOnly = false,
+  previewOverlayText,
+}: SharedCanvasBoardProps) {
+  if (previewOnly) {
+    return <SharedCanvasBoardPreview overlayText={previewOverlayText} />;
+  }
+  return <SharedCanvasBoardLive sessionId={sessionId} />;
+}

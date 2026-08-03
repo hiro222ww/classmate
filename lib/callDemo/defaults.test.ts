@@ -75,7 +75,6 @@ describe("callDemo isolation", () => {
       "app/call/demo/CallDemoClient.tsx",
       "app/call/demo/CallDemoControlPanel.tsx",
       "app/call/demo/page.tsx",
-      "components/call/CallRoomStage.tsx",
       "lib/callDemo/defaults.ts",
       "lib/callDemo/storage.ts",
     ];
@@ -95,5 +94,13 @@ describe("callDemo isolation", () => {
         );
       }
     }
+    // Shared view is used by demo, but must not pull voice/mic acquisition itself.
+    const roomView = await fs.readFile(
+      path.join(root, "app/call/CallRoomView.tsx"),
+      "utf8"
+    );
+    expect(/CallVoiceLayer/.test(roomView)).toBe(false);
+    expect(/useLocalMic/.test(roomView)).toBe(false);
+    expect(/getUserMedia\s*\(/.test(roomView)).toBe(false);
   });
 });
