@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { tailJoinId } from "@/lib/joinStateInvariants";
 import { isValidUuid } from "@/lib/userIdentity";
+import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 import {
   evaluateOpenJoinedSessionReuse,
   isDeadlinePassed,
@@ -279,6 +280,17 @@ export async function pruneSplitClassSessionMemberships(params: {
           .map((row) => tailJoinId(String(row.session_id ?? "")))
           .join(",")}`
     );
+
+    const affectedSessionIds = Array.from(
+      new Set(
+        (removedRows ?? [])
+          .map((row) => String(row.session_id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
+    for (const sid of affectedSessionIds) {
+      await closeEmptySessionIfNeeded(client, sid);
+    }
   }
 
   return removed;
@@ -345,6 +357,7 @@ export async function pruneStaleUserDeviceSessionRows(params: {
         `user=${tailJoinId(userId)} keep=${tailJoinId(deviceId)} removed=${removed} ` +
         `devices=${removedDeviceIds.map((id) => tailJoinId(id)).join(",")}`
     );
+    await closeEmptySessionIfNeeded(client, sessionId);
   }
 
   return removed;
