@@ -2,8 +2,10 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ClassRepairPanel from "./ClassRepairPanel";
+
+type RoomsScope = "active" | "ended" | "all";
 
 type RoomMember = {
   device_id: string;
@@ -45,6 +47,10 @@ type Summary = {
   active_room_count: number;
   active_user_count: number;
   dangerous_room_count: number;
+  listed_room_count?: number | null;
+  sessions_total_count?: number | null;
+  fetched_count?: number | null;
+  scoped_count?: number | null;
 };
 
 type LoadState = "idle" | "success" | "empty" | "auth_error" | "fetch_error";
@@ -66,10 +72,17 @@ async function readJsonResponse(r: Response) {
     error?: string;
     detail?: string;
     warning?: string | null;
+    scope?: RoomsScope;
     rooms?: RoomRow[];
     summary?: Summary;
   };
 }
+
+const SCOPE_OPTIONS: Array<{ value: RoomsScope; label: string }> = [
+  { value: "active", label: "進行中" },
+  { value: "ended", label: "終了済み" },
+  { value: "all", label: "全件" },
+];
 
 function fmtDateTime(iso: string | null) {
   if (!iso) return "-";
@@ -106,6 +119,7 @@ export default function AdminRoomsPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [scope, setScope] = useState<RoomsScope>("active");
   const [rooms, setRooms] = useState<RoomRow[]>([]);
   const [summary, setSummary] = useState<Summary>({
     active_room_count: 0,
@@ -120,15 +134,23 @@ export default function AdminRoomsPage() {
     active_room_count: 0,
     active_user_count: 0,
     dangerous_room_count: 0,
+    listed_room_count: 0,
+    sessions_total_count: null,
+    fetched_count: 0,
+    scoped_count: 0,
   };
 
-  async function loadRooms() {
+  async function loadRooms(nextScope: RoomsScope = scope) {
     setBusy(true);
     setMsg("");
     setLoadState("idle");
 
     try {
-      const res = await fetch("/api/admin/rooms?limit=100", {
+      const qs = new URLSearchParams({
+        scope: nextScope,
+        limit: "200",
+      });
+      const res = await fetch(`/api/admin/rooms?${qs.toString()}`, {
         method: "GET",
         cache: "no-store",
         credentials: "same-origin",
@@ -165,18 +187,32 @@ export default function AdminRoomsPage() {
       const nextRooms = j.rooms ?? [];
       setRooms(nextRooms);
       setSummary(j.summary ?? emptySummary);
+      const totalSuffix =
+        typeof j.summary?.sessions_total_count === "number"
+          ? ` / DB総数: ${j.summary.sessions_total_count}`
+          : "";
       const warningSuffix = j.warning ? ` / 警告: ${j.warning}` : "";
 
       if (nextRooms.length === 0) {
-        console.log("[admin/rooms-ui] fetch ok, empty", { count: 0 });
+        console.log("[admin/rooms-ui] fetch ok, empty", {
+          count: 0,
+          scope: nextScope,
+        });
         setLoadState("empty");
-        setMsg(`読み込みOK — 表示対象ルームは0件です${warningSuffix}`);
+        setMsg(
+          `読み込みOK — 表示対象ルームは0件です（scope=${nextScope}${totalSuffix}）${warningSuffix}`
+        );
         return;
       }
 
-      console.log("[admin/rooms-ui] fetch ok", { count: nextRooms.length });
+      console.log("[admin/rooms-ui] fetch ok", {
+        count: nextRooms.length,
+        scope: nextScope,
+      });
       setLoadState("success");
-      setMsg(`読み込みOK（rooms: ${nextRooms.length}）${warningSuffix}`);
+      setMsg(
+        `読み込みOK（rooms: ${nextRooms.length}, scope=${nextScope}${totalSuffix}）${warningSuffix}`
+      );
     } catch (e: unknown) {
       console.error("[admin/rooms-ui] unexpected error", e);
       setRooms([]);
@@ -187,6 +223,12 @@ export default function AdminRoomsPage() {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    void loadRooms(scope);
+    // Initial + scope-driven reloads are intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   const pageStyle: React.CSSProperties = {
     padding: 16,
@@ -227,14 +269,28 @@ export default function AdminRoomsPage() {
 
   const emptyTableMessage =
     loadState === "idle"
-      ? "「読み込み」を押してください"
+      ? "読み込み中…"
       : loadState === "auth_error"
         ? "認証エラー: 未ログインまたは認証切れです"
         : loadState === "fetch_error"
           ? "取得エラー: 上のメッセージを確認してください"
           : loadState === "empty"
             ? "表示対象ルームは0件です（API成功）"
-            : "進行中ルームがありません";
+            : "表示対象ルームがありません";
+
+  const scopeHelp =
+    scope === "active"
+      ? "進行中: closed/ended/expired を除外し、session_members がある session のみ表示します。"
+      : scope === "ended"
+        ? "終了済み: closed/ended/expired のみ表示します（members 空でも表示）。"
+        : "全件: status フィルタなしで最新分を表示します（members 空でも表示）。最大200件。";
+
+  const listTitle =
+    scope === "active"
+      ? "進行中ルーム"
+      : scope === "ended"
+        ? "終了済みルーム"
+        : "ルーム一覧（全件）";
 
   return (
     <main style={pageStyle}>
@@ -243,17 +299,39 @@ export default function AdminRoomsPage() {
       </h1>
 
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
-        session_members に参加者がいる、終了前の session を一覧表示します（classes は補助情報）。
+        {scopeHelp} classes は補助情報です。
       </div>
 
       <section style={{ ...card, marginTop: 12 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {SCOPE_OPTIONS.map((opt) => {
+              const selected = scope === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setScope(opt.value)}
+                  style={{
+                    ...btnGhost,
+                    background: selected ? "#111" : "#fff",
+                    color: selected ? "#fff" : "#111",
+                    opacity: busy ? 0.6 : 1,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
           <button
-            onClick={loadRooms}
+            onClick={() => void loadRooms(scope)}
             disabled={busy}
             style={{ ...btn, opacity: busy ? 0.6 : 1 }}
           >
-            {busy ? "処理中…" : "読み込み"}
+            {busy ? "処理中…" : "再読み込み"}
           </button>
 
           <button onClick={() => (window.location.href = "/admin")} style={btnGhost}>
@@ -296,14 +374,17 @@ export default function AdminRoomsPage() {
         }}
       >
         <div style={card}>
-          <div style={{ fontSize: 12, color: "#666" }}>アクティブルーム</div>
+          <div style={{ fontSize: 12, color: "#666" }}>表示中ルーム</div>
           <div style={{ marginTop: 6, fontSize: 28, fontWeight: 900 }}>
-            {summary.active_room_count}
+            {summary.listed_room_count ?? summary.active_room_count}
+          </div>
+          <div style={{ marginTop: 4, fontSize: 11, color: "#888" }}>
+            DB総数: {summary.sessions_total_count ?? "-"}
           </div>
         </div>
 
         <div style={card}>
-          <div style={{ fontSize: 12, color: "#666" }}>アクティブユーザー</div>
+          <div style={{ fontSize: 12, color: "#666" }}>表示中メンバー数</div>
           <div style={{ marginTop: 6, fontSize: 28, fontWeight: 900 }}>
             {summary.active_user_count}
           </div>
@@ -319,7 +400,7 @@ export default function AdminRoomsPage() {
 
       <section style={{ ...card, marginTop: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
-          進行中ルーム
+          {listTitle}
         </h2>
 
         <div style={{ marginTop: 12, overflowX: "auto" }}>

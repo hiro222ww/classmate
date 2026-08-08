@@ -5,11 +5,21 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const CLOSED_STATUSES = ["closed", "ended", "expired"];
+const CLOSED_STATUSES = ["closed", "ended", "expired"] as const;
+
+export type AdminRoomsScope = "active" | "ended" | "all";
 
 /** session_members uses joined_at; there is no created_at column. */
 export const ADMIN_ROOMS_SESSION_MEMBERS_SELECT =
   "session_id, device_id, display_name, joined_at";
+
+export function parseAdminRoomsScope(raw: string | null): AdminRoomsScope {
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if (value === "ended" || value === "all") return value;
+  return "active";
+}
 
 type RoomMemberDto = {
   device_id: string;
@@ -62,7 +72,19 @@ function calcRiskLevel(score: number): "低" | "中" | "高" {
 
 function isClosedStatus(status: string | null | undefined) {
   if (!status) return false;
-  return CLOSED_STATUSES.includes(String(status).trim().toLowerCase());
+  return (CLOSED_STATUSES as readonly string[]).includes(
+    String(status).trim().toLowerCase()
+  );
+}
+
+function matchesRoomsScope(
+  status: string | null | undefined,
+  scope: AdminRoomsScope
+) {
+  const closed = isClosedStatus(status);
+  if (scope === "ended") return closed;
+  if (scope === "all") return true;
+  return !closed;
 }
 
 export async function GET(req: Request) {
@@ -73,7 +95,16 @@ export async function GET(req: Request) {
     console.log("[admin/rooms] start");
 
     const { searchParams } = new URL(req.url);
-    const limit = Math.min(Number(searchParams.get("limit") ?? 100), 200);
+    const scope = parseAdminRoomsScope(searchParams.get("scope"));
+    const limitRaw = Number(searchParams.get("limit") ?? 100);
+    const limit = Math.min(
+      Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 100,
+      200
+    );
+
+    const { count: sessionsTotalCount } = await supabaseAdmin
+      .from("sessions")
+      .select("id", { count: "exact", head: true });
 
     const { data: sessions, error: sessionsError } = await supabaseAdmin
       .from("sessions")
@@ -93,26 +124,34 @@ export async function GET(req: Request) {
       );
     }
 
-    const activeSessions = (sessions ?? []).filter((s) => {
-      return !isClosedStatus(s.status);
-    });
+    const scopedSessions = (sessions ?? []).filter((s) =>
+      matchesRoomsScope(s.status, scope)
+    );
 
     console.log("[admin/rooms] sessions fetched", {
-      count: sessions?.length ?? 0,
-      activeCount: activeSessions.length,
-      sessionIds: activeSessions.map((s) => s.id),
+      scope,
+      limit,
+      fetched: sessions?.length ?? 0,
+      scopedCount: scopedSessions.length,
+      sessionsTotalCount: sessionsTotalCount ?? null,
+      sessionIds: scopedSessions.map((s) => s.id),
     });
 
-    const sessionIds = activeSessions.map((s) => s.id);
+    const sessionIds = scopedSessions.map((s) => s.id);
 
     if (sessionIds.length === 0) {
       return NextResponse.json({
         ok: true,
+        scope,
         rooms: [],
         summary: {
           active_room_count: 0,
           active_user_count: 0,
           dangerous_room_count: 0,
+          listed_room_count: 0,
+          sessions_total_count: sessionsTotalCount ?? null,
+          fetched_count: sessions?.length ?? 0,
+          scoped_count: 0,
         },
       });
     }
@@ -162,13 +201,15 @@ export async function GET(req: Request) {
       sessionIdsWithMembers: Array.from(memberCountBySessionId.keys()),
     });
 
-    // Prefer rooms that still have members. If the members query failed, fall
-    // back to listing active sessions so metrics/list are not completely blank.
-    const sessionsWithMembers = membersError
-      ? activeSessions
-      : activeSessions.filter((s) => {
-          return (memberCountBySessionId.get(String(s.id)) ?? 0) > 0;
-        });
+    // active scope keeps the old "has members" filter. ended/all list by status
+    // even when empty (useful for ops audit). On members fetch failure, keep list.
+    const requireMembers = scope === "active";
+    const sessionsWithMembers =
+      membersError || !requireMembers
+        ? scopedSessions
+        : scopedSessions.filter((s) => {
+            return (memberCountBySessionId.get(String(s.id)) ?? 0) > 0;
+          });
 
     const classIds = Array.from(
       new Set(
@@ -418,12 +459,18 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      scope,
       rooms,
       warning: membersWarning,
       summary: {
+        // Keep legacy keys as "currently listed" metrics for the selected scope.
         active_room_count: rooms.length,
         active_user_count: rooms.reduce((sum, r) => sum + r.member_count, 0),
         dangerous_room_count: rooms.filter((r) => r.risk_level === "高").length,
+        listed_room_count: rooms.length,
+        sessions_total_count: sessionsTotalCount ?? null,
+        fetched_count: sessions?.length ?? 0,
+        scoped_count: scopedSessions.length,
       },
     });
   } catch (e: unknown) {
