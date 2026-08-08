@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { LoadSpinner } from "@/components/LoadStateUI";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 
 export type InvitePrepStageId =
   | "invite_link"
@@ -54,6 +55,10 @@ export default function InviteJoinProgress({
 
   return (
     <div
+      className="cm-paper-card cm-invite-progress"
+      data-cm-invite={failed ? "error" : stage}
+      data-cm-invite-slow={slow ? "1" : "0"}
+      data-cm-invite-very-slow={verySlow ? "1" : "0"}
       style={{
         border: "1px solid #e5e7eb",
         borderRadius: 16,
@@ -64,16 +69,26 @@ export default function InviteJoinProgress({
       }}
     >
       <div>
-        <div style={{ fontWeight: 900, fontSize: 17, color: "#111827" }}>
+        <div
+          className="cm-section-title cm-emblem-heading"
+          style={{ fontWeight: 900, fontSize: 17, color: "#111827" }}
+        >
+          {(stage === "done" || (!failed && current >= ORDER.length - 1)) && (
+            <ClassmateEmblem size="sm" decorative />
+          )}
           クラスへの参加を準備しています
         </div>
-        <p style={{ margin: "8px 0 0", color: "#6b7280", fontSize: 13, fontWeight: 700 }}>
+        <p
+          className="cm-invite-lead"
+          style={{ margin: "8px 0 0", color: "#6b7280", fontSize: 13, fontWeight: 700 }}
+        >
           招待情報とプロフィールを確認しています。この画面は閉じずにお待ちください。
         </p>
       </div>
 
       {classLabel ? (
         <div
+          className="cm-invite-destination"
           style={{
             padding: "10px 12px",
             borderRadius: 12,
@@ -92,13 +107,20 @@ export default function InviteJoinProgress({
         </div>
       ) : null}
 
-      <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 10 }}>
+      <ol
+        className="cm-invite-stages"
+        style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 10 }}
+      >
         {STAGES.map((item, index) => {
           const done = !failed && current > index;
           const active = !failed && current === index;
+          const state = done ? "done" : active ? "active" : "pending";
           return (
             <li
               key={item.id}
+              className="cm-invite-stage"
+              data-cm-stage={item.id}
+              data-cm-stage-state={state}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -109,6 +131,7 @@ export default function InviteJoinProgress({
               }}
             >
               <span
+                className="cm-invite-stage-mark"
                 style={{
                   width: 22,
                   height: 22,
@@ -128,12 +151,16 @@ export default function InviteJoinProgress({
         })}
       </ol>
 
-      <p style={{ margin: 0, color: "#6b7280", fontSize: 12, fontWeight: 700 }}>
+      <p
+        className="cm-invite-hint"
+        style={{ margin: 0, color: "#6b7280", fontSize: 12, fontWeight: 700 }}
+      >
         参加処理中です。連続してボタンを押す必要はありません。
       </p>
 
       {slow && !failed ? (
         <div
+          className="cm-call-banner cm-call-banner--warn cm-invite-slow"
           style={{
             padding: "10px 12px",
             borderRadius: 12,
@@ -149,29 +176,50 @@ export default function InviteJoinProgress({
       ) : null}
 
       {(verySlow || failed) && (
-        <div style={{ display: "grid", gap: 8 }}>
+        <div className="cm-invite-actions-block" style={{ display: "grid", gap: 8 }}>
           {failed && errorMessage ? (
-            <div style={{ color: "#b91c1c", fontWeight: 800, fontSize: 13 }}>
+            <div
+              className="cm-home-error cm-invite-error"
+              style={{ color: "#b91c1c", fontWeight: 800, fontSize: 13 }}
+            >
               {errorMessage}
             </div>
           ) : (
-            <div style={{ color: "#92400e", fontWeight: 800, fontSize: 13 }}>
+            <div
+              className="cm-call-banner cm-call-banner--warn cm-invite-retry-hint"
+              style={{ color: "#92400e", fontWeight: 800, fontSize: 13 }}
+            >
               まだ完了しない場合は、もう一度お試しいただけます。
             </div>
           )}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {onRetry ? (
-              <button type="button" onClick={onRetry} style={actionBtn}>
+              <button
+                type="button"
+                className="cm-cta-primary cm-invite-retry"
+                onClick={onRetry}
+                style={actionBtn}
+              >
                 もう一度試す
               </button>
             ) : null}
             {onCopyInvite && inviteUrl ? (
-              <button type="button" onClick={onCopyInvite} style={actionBtn}>
+              <button
+                type="button"
+                className="cm-cta-primary cm-invite-copy"
+                onClick={onCopyInvite}
+                style={actionBtn}
+              >
                 招待リンクをコピー
               </button>
             ) : null}
             {onHome ? (
-              <button type="button" onClick={onHome} style={ghostBtn}>
+              <button
+                type="button"
+                className="cm-cta-secondary cm-invite-home"
+                onClick={onHome}
+                style={ghostBtn}
+              >
                 ホームへ戻る
               </button>
             ) : null}

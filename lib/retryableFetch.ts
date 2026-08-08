@@ -54,6 +54,7 @@ export function isRetryableNetworkError(error: unknown): boolean {
     name === "TypeError" &&
     (lower.includes("load failed") ||
       lower.includes("failed to fetch") ||
+      lower.includes("fetch failed") ||
       lower.includes("network"))
   ) {
     return true;
@@ -63,7 +64,10 @@ export function isRetryableNetworkError(error: unknown): boolean {
     lower.includes("load failed") ||
     lower.includes("network error") ||
     lower.includes("network request failed") ||
-    lower.includes("failed to fetch")
+    lower.includes("failed to fetch") ||
+    lower.includes("fetch failed") ||
+    lower.includes("connect timeout") ||
+    lower.includes("und_err_connect_timeout")
   ) {
     return true;
   }

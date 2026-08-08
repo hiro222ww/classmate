@@ -28,6 +28,7 @@ export function DashboardStatusBar({
 }: DashboardStatusBarProps) {
   return (
     <section
+      className="cm-status-bar"
       style={{
         display: "flex",
         gap: 8,
@@ -35,21 +36,25 @@ export function DashboardStatusBar({
         alignItems: "center",
       }}
     >
-      <span style={CHIP}>クラス枠: {slots}</span>
+      <span className="cm-status-chip" style={CHIP}>
+        クラス枠: {slots}
+      </span>
 
       <HelpTip label="テーマプランについて" content={PLAN_HELP_TEXT}>
-        <span style={CHIP}>テーマプラン: {planLabel}</span>
+        <span className="cm-status-chip" style={CHIP}>
+          テーマプラン: {planLabel}
+        </span>
       </HelpTip>
 
       {joinWindowOpen ? (
-        <span style={CHIP}>
+        <span className="cm-status-chip" style={CHIP}>
           <span
             aria-hidden
             style={{
               width: 7,
               height: 7,
               borderRadius: 999,
-              background: "#22c55e",
+              background: "var(--cm-success, #22c55e)",
               display: "inline-block",
             }}
           />
@@ -57,13 +62,18 @@ export function DashboardStatusBar({
         </span>
       ) : (
         <HelpTip label="入校受付時間について" content={ADMISSION_WINDOW_HELP_TEXT}>
-          <span style={CHIP}>受付時間外</span>
+          <span className="cm-status-chip" style={CHIP}>
+            受付時間外
+          </span>
         </HelpTip>
       )}
 
       {onReload ? (
         <button
           type="button"
+          className={["cm-status-reload", loading ? "cm-is-loading" : ""]
+            .filter(Boolean)
+            .join(" ")}
           onClick={onReload}
           disabled={loading}
           aria-label="再読み込み"

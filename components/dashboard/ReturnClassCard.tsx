@@ -30,9 +30,11 @@ export function ReturnClassCard({
   listHref,
   listLabel = "所属クラス一覧へ",
 }: ReturnClassCardProps) {
+  const sectionClass = ["cm-paper-card", className].filter(Boolean).join(" ");
+
   if (loading) {
     return (
-      <section className={className} style={DASH_CARD} aria-busy="true">
+      <section className={sectionClass} style={DASH_CARD} aria-busy="true">
         <div
           style={{
             display: "flex",
@@ -46,7 +48,7 @@ export function ReturnClassCard({
               width: 100,
               height: 18,
               borderRadius: 8,
-              background: "#f3f4f6",
+              background: "var(--cm-beige, #f3f4f6)",
             }}
           />
         </div>
@@ -63,7 +65,7 @@ export function ReturnClassCard({
   }
 
   return (
-    <section className={className} style={DASH_CARD}>
+    <section className={sectionClass} style={DASH_CARD}>
       <div
         style={{
           display: "flex",
@@ -73,6 +75,7 @@ export function ReturnClassCard({
         }}
       >
         <h2
+          className="cm-section-title"
           style={{
             margin: 0,
             fontSize: 18,
@@ -90,6 +93,7 @@ export function ReturnClassCard({
         {canEnterCurrent && onEnterCurrent ? (
           <button
             type="button"
+            className="cm-cta-primary"
             onClick={onEnterCurrent}
             disabled={opening}
             style={{
@@ -105,6 +109,7 @@ export function ReturnClassCard({
         {listHref ? (
           <Link
             href={listHref}
+            className="cm-cta-secondary"
             style={{
               ...SECONDARY_BTN,
               width: "auto",

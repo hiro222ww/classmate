@@ -55,15 +55,20 @@ export async function getHomeClassSlotContextForActor(
     return { ok: false, error: membershipRes.error };
   }
   if (!slotsRes.ok) {
-    return { ok: false, error: slotsRes.error };
+    // Slot-limit lookup is independent of membership rows. A transient
+    // entitlements/settings failure must not hide successful memberships.
+    console.warn("[class/mine] slots lookup failed; using free-tier default", {
+      message: slotsRes.error,
+    });
   }
 
   const snapshot = buildActiveMembershipSnapshot(membershipRes.rows);
   const resolved = resolveHomeVisibleBillableClassIds(membershipRes.rows);
+  const slotLimit = slotsRes.ok ? slotsRes.classSlots : 1;
 
   const context: HomeClassSlotContext = {
     deviceId: normalizedDeviceId,
-    slotLimit: slotsRes.classSlots,
+    slotLimit,
     activeMembershipClassIds: membershipRes.rows.map((row) => row.classId),
     visibleClassIds: resolved.visibleClassIds,
     slotCountClassIds: resolved.slotCountClassIds,

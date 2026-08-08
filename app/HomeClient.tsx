@@ -46,6 +46,7 @@ import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
 import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
@@ -295,48 +296,48 @@ function summarizeMemberParticipation(
 function getClassStatusStyle(label: string) {
   if (label === "通話中") {
     return {
-      background: "#dcfce7",
-      color: "#166534",
-      border: "1px solid #86efac",
+      background: "rgba(76, 107, 87, 0.14)",
+      color: "var(--cm-board, #166534)",
+      border: "1px solid rgba(76, 107, 87, 0.35)",
     };
   }
 
   if (label === "募集中") {
     return {
-      background: "#dbeafe",
-      color: "#1d4ed8",
-      border: "1px solid #93c5fd",
+      background: "rgba(47, 109, 181, 0.12)",
+      color: "var(--cm-blue, #1d4ed8)",
+      border: "1px solid rgba(47, 109, 181, 0.35)",
     };
   }
 
   if (label === "募集締切" || label === "募集停止" || label === "募集終了") {
     return {
-      background: "#f3f4f6",
-      color: "#6b7280",
-      border: "1px solid #d1d5db",
+      background: "var(--cm-beige, #f3f4f6)",
+      color: "var(--cm-muted, #6b7280)",
+      border: "1px solid var(--cm-border, #d1d5db)",
     };
   }
 
   if (label === "待機中" || label === "待機ルーム内" || label === "オンライン") {
     return {
-      background: "#fef3c7",
-      color: "#92400e",
-      border: "1px solid #fcd34d",
+      background: "rgba(212, 165, 116, 0.2)",
+      color: "#8a5a28",
+      border: "1px solid var(--cm-gold, #fcd34d)",
     };
   }
 
   if (label === "入室中" || label === "所属中") {
     return {
-      background: "#e0e7ff",
-      color: "#3730a3",
-      border: "1px solid #a5b4fc",
+      background: "rgba(47, 109, 181, 0.1)",
+      color: "var(--cm-blue, #3730a3)",
+      border: "1px solid rgba(47, 109, 181, 0.28)",
     };
   }
 
   return {
-    background: "#f9fafb",
-    color: "#6b7280",
-    border: "1px solid #e5e7eb",
+    background: "var(--cm-beige, #f9fafb)",
+    color: "var(--cm-muted, #6b7280)",
+    border: "1px solid var(--cm-border, #e5e7eb)",
   };
 }
 
@@ -360,8 +361,8 @@ function StatusPill({ children }: { children: React.ReactNode }) {
         fontSize: 11,
         padding: "5px 10px",
         borderRadius: 999,
-        background: "#f3f4f6",
-        color: "#4b5563",
+        background: "var(--cm-beige, #f3f4f6)",
+        color: "var(--cm-muted, #4b5563)",
         fontWeight: 800,
         display: "inline-flex",
         alignItems: "center",
@@ -2427,6 +2428,19 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     }
   }
 
+  const homeStateClass = [
+    "cm-home-body",
+    loading && classes.length === 0 && !hasJoinedClasses && !currentClassLoading
+      ? "cm-home-state-loading"
+      : "",
+    !loading && !hasJoinedClasses ? "cm-home-state-empty" : "",
+    hasJoinedClasses ? "cm-home-state-loaded" : "",
+    error ? "cm-home-state-error" : "",
+    authLoading && hasJoinedClasses ? "cm-home-state-refreshing" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   if (
     loading &&
     classes.length === 0 &&
@@ -2434,7 +2448,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     !currentClassLoading
   ) {
     return (
-      <div style={{ display: "grid", gap: 24 }}>
+      <div className={homeStateClass} style={{ display: "grid", gap: 24 }}>
         <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
         <DashboardPageHeader>
           <DashboardHeaderNav
@@ -2450,13 +2464,18 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             onDismissIosInstallGuide={dismissIosInstallGuide}
           />
         </DashboardPageHeader>
-        <p style={{ margin: 0 }}>読み込み中...</p>
+        <p
+          className="cm-home-loading-line"
+          style={{ margin: 0, color: "var(--cm-muted, #6b7280)" }}
+        >
+          読み込み中...
+        </p>
       </div>
     );
   }
 
   return (
-    <div style={{ display: "grid", gap: 24 }}>
+    <div className={homeStateClass} style={{ display: "grid", gap: 24 }}>
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
       <DashboardPageHeader>
@@ -2474,8 +2493,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         />
       </DashboardPageHeader>
 
-      <div>
-        <p style={{ margin: 0, fontSize: 15, color: "#374151" }}>
+      <div className="cm-home-welcome">
+        <p style={{ margin: 0, fontSize: 15, color: "var(--cm-text, #374151)" }}>
           {authLoading || (authStatus === "authenticated" && !profileName) ? (
             <>
               ようこそ、<AuthTextSkeleton width={96} /> さん
@@ -2487,14 +2506,28 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
           )}
         </p>
         {authLoading ? (
-          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 13,
+              color: "var(--cm-muted, #6b7280)",
+              fontWeight: 700,
+            }}
+          >
             {authSlow
               ? "読み込みに時間がかかっています"
               : "アカウント情報を確認しています…"}
             {authError ? `（${authError}）` : ""}
           </p>
         ) : authStatus === "authenticated" && !profileName ? (
-          <p style={{ margin: "8px 0 0", fontSize: 13, color: "#6b7280", fontWeight: 700 }}>
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 13,
+              color: "var(--cm-muted, #6b7280)",
+              fontWeight: 700,
+            }}
+          >
             アカウント情報を読み込んでいます
           </p>
         ) : null}
@@ -2530,16 +2563,32 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       </div>
 
       {error ? (
-        <div style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}>{error}</div>
+        <div
+          className="cm-home-error"
+          style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
+        >
+          {error}
+        </div>
       ) : null}
 
       <div
+        className={
+          !hasJoinedClasses && !loading ? "cm-home-empty-emblem-wrap" : undefined
+        }
         style={{
           display: "grid",
           gap: 16,
           gridTemplateColumns: "1fr",
         }}
       >
+        {!hasJoinedClasses && !loading ? (
+          <ClassmateEmblem
+            size="lg"
+            variant="watermark"
+            decorative
+            className="cm-home-empty-emblem"
+          />
+        ) : null}
         <JoinNewCard
           className="home-dash-join"
           quickJoinBusy={quickBusy}
@@ -2555,11 +2604,13 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       {hasJoinedClasses ? (
         <section style={{ display: "grid", gap: 14 }}>
           <h3
+            className="cm-section-title"
             style={{
               margin: 0,
               fontSize: 15,
               fontWeight: 900,
-              color: "#374151",
+              color: "var(--cm-text, #374151)",
+              width: "fit-content",
             }}
           >
             所属クラス
@@ -2612,12 +2663,14 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               return (
                 <div
                   key={c.id}
+                  className="cm-paper-card cm-class-card"
                   style={{
                     textAlign: "left",
                     padding: "16px",
-                    borderRadius: 16,
-                    border: "1px solid #e5e7eb",
-                    background: "#fafafa",
+                    borderRadius: "var(--cm-radius, 16px)",
+                    border: "1px solid var(--cm-border, #e5e7eb)",
+                    background: "var(--cm-card-bg, #fafafa)",
+                    boxShadow: "var(--cm-shadow-soft, none)",
                   }}
                 >
                   <div
@@ -2633,7 +2686,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                       <div
                         style={{
                           fontWeight: 900,
-                          color: "#111",
+                          color: "var(--cm-text, #111)",
                           fontSize: 26,
                           lineHeight: 1.2,
                           letterSpacing: "0.02em",
@@ -2645,7 +2698,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                         style={{
                           marginTop: 6,
                           fontSize: 13,
-                          color: "#64748b",
+                          color: "var(--cm-muted, #64748b)",
                           fontWeight: 800,
                         }}
                       >
@@ -2671,9 +2724,9 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                             fontWeight: 900,
                             padding: "4px 8px",
                             borderRadius: 999,
-                            background: "#fee2e2",
+                            background: "var(--cm-pink-soft, #fee2e2)",
                             color: "#b91c1c",
-                            border: "1px solid #fecaca",
+                            border: "1px solid var(--cm-pink, #fecaca)",
                             whiteSpace: "nowrap",
                           }}
                         >
@@ -2797,6 +2850,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                   <div style={{ marginTop: 14, display: "flex" }}>
                     <button
                       type="button"
+                      className="cm-cta-primary"
                       onClick={() => void openClass(c)}
                       disabled={opening || authLoading}
                       style={{
@@ -2883,9 +2937,9 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                 alignItems: "center",
                                 gap: 8,
                                 padding: "8px 10px",
-                                borderRadius: 10,
-                                background: "#fafafa",
-                                border: "1px solid #eee",
+                                borderRadius: "var(--cm-radius-sm, 10px)",
+                                background: "var(--cm-card-bg-soft, #fafafa)",
+                                border: "1px solid var(--cm-border, #eee)",
                               }}
                             >
                               <button
@@ -2914,7 +2968,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                   cursor: "pointer",
                                   fontSize: 13,
                                   fontWeight: 800,
-                                  color: "#111",
+                                  color: "var(--cm-text, #111)",
                                   textAlign: "left",
                                   minWidth: 0,
                                   flex: 1,
@@ -2932,7 +2986,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                                     height: LIST_MEMBER_AVATAR_PX,
                                     borderRadius: "50%",
                                     objectFit: "cover",
-                                    border: "1px solid #e5e7eb",
+                                    border: "1px solid var(--cm-border, #e5e7eb)",
                                     flexShrink: 0,
                                   }}
                                 />
@@ -2974,10 +3028,10 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
                     style={{
                       marginTop: 10,
                       padding: "8px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #fecaca",
-                      background: "#fff",
-                      color: "#b91c1c",
+                      borderRadius: "var(--cm-radius-sm, 8px)",
+                      border: "1px solid var(--cm-pink, #fecaca)",
+                      background: "var(--cm-card-bg, #fff)",
+                      color: "var(--cm-danger, #b91c1c)",
                       fontWeight: 800,
                       fontSize: 12,
                       cursor: leaving ? "default" : "pointer",

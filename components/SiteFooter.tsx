@@ -10,6 +10,7 @@ export default function SiteFooter() {
 
   return (
     <footer
+      className="cm-site-footer"
       style={{
         padding: "24px 16px",
         borderTop: "1px solid #e5e7eb",
@@ -20,6 +21,7 @@ export default function SiteFooter() {
       }}
     >
       <div
+        className="cm-site-footer-links"
         style={{
           display: "flex",
           gap: 16,
@@ -35,7 +37,9 @@ export default function SiteFooter() {
         <Link href="/legal/commercial-disclosure">Legal</Link>
       </div>
 
-      <div style={{ marginTop: 8 }}>© {new Date().getFullYear()} classmate</div>
+      <div className="cm-site-footer-copy" style={{ marginTop: 8 }}>
+        © {new Date().getFullYear()} classmate
+      </div>
     </footer>
   );
 }

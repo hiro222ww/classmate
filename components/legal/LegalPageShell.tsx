@@ -14,9 +14,10 @@ export default function LegalPageShell({ children }: Props) {
   const homeHref = withDev(resolveShellDashboardPath());
 
   const backLink = (
-    <p style={{ margin: isApp ? "0 0 16px" : "0 0 20px" }}>
+    <p className="cm-legal-back" style={{ margin: isApp ? "0 0 16px" : "0 0 20px" }}>
       <Link
         href={homeHref}
+        className="cm-legal-back-link"
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -36,6 +37,7 @@ export default function LegalPageShell({ children }: Props) {
     return (
       <AppShellPage>
         <div
+          className="cm-classroom-scope cm-legal-root cm-legal-root--app"
           style={{
             maxWidth: 720,
             margin: "0 auto",
@@ -43,7 +45,7 @@ export default function LegalPageShell({ children }: Props) {
           }}
         >
           {backLink}
-          {children}
+          <article className="cm-paper-card cm-legal-doc">{children}</article>
         </div>
       </AppShellPage>
     );
@@ -51,6 +53,7 @@ export default function LegalPageShell({ children }: Props) {
 
   return (
     <main
+      className="cm-classroom-scope cm-legal-root"
       style={{
         maxWidth: 720,
         margin: "0 auto",
@@ -59,7 +62,7 @@ export default function LegalPageShell({ children }: Props) {
       }}
     >
       {backLink}
-      {children}
+      <article className="cm-paper-card cm-legal-doc">{children}</article>
     </main>
   );
 }

@@ -515,6 +515,7 @@ export default function SessionMessages({
     <>
       {err ? (
         <div
+          className="cm-home-error cm-room-msg-error"
           style={{
             marginBottom: 8,
             color: "#b91c1c",
@@ -533,7 +534,7 @@ export default function SessionMessages({
       <div style={{ position: "relative" }}>
         <div
           ref={boxRef}
-          className="classmate-session-messages-list"
+          className="classmate-session-messages-list cm-room-msg-list"
           style={{
             display: "grid",
             gap: 10,
@@ -546,13 +547,13 @@ export default function SessionMessages({
           }}
         >
           {!initialLoadDone ? (
-            <div style={{ color: "#666", fontSize: 13 }}>
+            <div className="cm-room-loading-line" style={{ color: "#666", fontSize: 13 }}>
               メッセージを確認しています…
             </div>
           ) : err && messages.length === 0 ? (
             <div style={{ color: "#b91c1c", fontSize: 13 }}>{err}</div>
           ) : messages.length === 0 ? (
-            <div style={{ color: "#666", fontSize: 13 }}>
+            <div className="cm-room-msg-empty" style={{ color: "#666", fontSize: 13 }}>
               まだメッセージはありません
             </div>
           ) : (
@@ -563,6 +564,7 @@ export default function SessionMessages({
               return (
                 <div
                   key={m.id}
+                  className={isMe ? "cm-room-msg-row is-me" : "cm-room-msg-row"}
                   style={{
                     display: "grid",
                     gap: 4,
@@ -570,6 +572,7 @@ export default function SessionMessages({
                   }}
                 >
                   <div
+                    className="cm-room-msg-meta"
                     style={{
                       fontSize: 11,
                       color: "#6b7280",
@@ -582,6 +585,9 @@ export default function SessionMessages({
                   </div>
 
                   <div
+                    className={
+                      isMe ? "cm-room-msg-bubble is-me" : "cm-room-msg-bubble"
+                    }
                     style={{
                       maxWidth: "78%",
                       padding: "9px 11px",
@@ -887,6 +893,7 @@ export default function SessionMessages({
 
           <button
             type="button"
+            className="cm-room-send-btn"
             onClick={() => void handleSendButton()}
             disabled={sending || (!draft.trim() && !pendingImage)}
             style={{
@@ -915,6 +922,7 @@ export default function SessionMessages({
 
   return (
     <section
+      className="cm-paper-card cm-room-messages"
       style={{
         padding: 14,
         border: "1px solid #e5e7eb",
@@ -940,7 +948,7 @@ export default function SessionMessages({
               padding: 0,
             }}
           >
-            <span>{title}</span>
+            <span className="cm-section-title">{title}</span>
             <span style={{ color: "#6b7280", fontSize: 12 }}>
               {messages.length}件 {show ? "▲" : "▼"}
             </span>
@@ -950,7 +958,12 @@ export default function SessionMessages({
         </>
       ) : (
         <>
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>{title}</div>
+          <div
+            className="cm-section-title"
+            style={{ fontWeight: 900, marginBottom: 8, width: "fit-content" }}
+          >
+            {title}
+          </div>
           {body}
         </>
       )}

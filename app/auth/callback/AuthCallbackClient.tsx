@@ -83,35 +83,57 @@ export default function AuthCallbackClient() {
   }, [callbackKey, oauthError, returnTo]);
 
   return (
-    <main style={{ maxWidth: 520, margin: "0 auto", padding: 24 }}>
-      <h1 style={{ margin: 0, fontSize: 24, fontWeight: 900 }}>ログイン処理中…</h1>
-      {error ? (
-        <>
-          {hint ? (
-            <p style={{ color: "#92400e", lineHeight: 1.65, fontWeight: 700 }}>
-              {hint}
-            </p>
-          ) : null}
-          <p style={{ color: "#b91c1c", lineHeight: 1.65 }}>{error}</p>
-          <p style={{ fontSize: 13 }}>
-            <Link href={withDev(buildShellAwareLoginUrl(returnTo))}>
-              ログイン画面へ戻る
-            </Link>
+    <main
+      className="cm-classroom-scope cm-auth-root cm-auth-callback"
+      data-cm-auth={error ? (hint ? "restore" : "error") : "processing"}
+      style={{ maxWidth: 520, margin: "0 auto", padding: 24 }}
+    >
+      <div className="cm-paper-card cm-auth-card" style={{ padding: 16, display: "grid", gap: 12 }}>
+        <h1
+          className="cm-section-title"
+          style={{ margin: 0, fontSize: 24, fontWeight: 900 }}
+        >
+          ログイン処理中…
+        </h1>
+        {error ? (
+          <>
             {hint ? (
-              <>
-                {" · "}
-                <Link href={withDev(`/profile?returnTo=${encodeURIComponent(returnTo)}`)}>
-                  プロフィール登録
-                </Link>
-              </>
+              <p
+                className="cm-call-banner cm-call-banner--warn cm-auth-hint"
+                style={{ color: "#92400e", lineHeight: 1.65, fontWeight: 700 }}
+              >
+                {hint}
+              </p>
             ) : null}
+            <p
+              className="cm-home-error cm-auth-error"
+              style={{ color: "#b91c1c", lineHeight: 1.65 }}
+            >
+              {error}
+            </p>
+            <p className="cm-auth-footer" style={{ fontSize: 13 }}>
+              <Link href={withDev(buildShellAwareLoginUrl(returnTo))}>
+                ログイン画面へ戻る
+              </Link>
+              {hint ? (
+                <>
+                  {" · "}
+                  <Link href={withDev(`/profile?returnTo=${encodeURIComponent(returnTo)}`)}>
+                    プロフィール登録
+                  </Link>
+                </>
+              ) : null}
+            </p>
+          </>
+        ) : (
+          <p
+            className="cm-home-loading-line cm-auth-processing"
+            style={{ color: "#6b7280", lineHeight: 1.65 }}
+          >
+            セッションを確認しています。しばらくお待ちください。
           </p>
-        </>
-      ) : (
-        <p style={{ color: "#6b7280", lineHeight: 1.65 }}>
-          セッションを確認しています。しばらくお待ちください。
-        </p>
-      )}
+        )}
+      </div>
     </main>
   );
 }

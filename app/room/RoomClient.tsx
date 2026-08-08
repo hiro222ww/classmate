@@ -74,6 +74,7 @@ import {
 import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
 import { HelpTip } from "@/components/HelpTip";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { fetchWithRetry } from "@/lib/retryableFetch";
 import {
   compactMemberDeviceIds,
@@ -4139,7 +4140,18 @@ const name = rawName === "You" ? "参加者" : rawName;
         </div>
       )}
 
-      <div style={{ paddingTop: showDevBanner ? 28 : 0 }}>
+      <div
+        className={[
+          "cm-room-root",
+          sessionResolving ? "cm-room-state-loading" : "",
+          err ? "cm-room-state-error" : "",
+          membersLoadState === "empty" ? "cm-room-state-empty" : "",
+          membersListRefreshing ? "cm-room-state-refreshing" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        style={{ paddingTop: showDevBanner ? 28 : 0 }}
+      >
         <ChalkboardRoomShell
           title={shellTitle}
           subtitle={shellSubtitle}
@@ -4243,6 +4255,7 @@ const name = rawName === "You" ? "参加者" : rawName;
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button
                 type="button"
+                className="cm-room-ghost-btn"
                 onClick={() => router.push(profileEditHref)}
                 style={{
                   padding: "8px 12px",
@@ -4259,7 +4272,7 @@ const name = rawName === "You" ? "参加者" : rawName;
               </button>
             </div>
 
-            {classId && deviceId ? (
+            {classId ? (
               <MeetingPlanSection
                 classId={classId}
                 deviceId={deviceId}
@@ -4280,6 +4293,7 @@ const name = rawName === "You" ? "参加者" : rawName;
             ) : null}
 
             <div
+              className="cm-paper-card cm-room-invite"
               style={{
                 border: "1px solid #e5e7eb",
                 borderRadius: 14,
@@ -4296,10 +4310,16 @@ const name = rawName === "You" ? "参加者" : rawName;
                 label="招待リンクについて"
                 content="この待機ルームに直接参加できるリンクをコピーします。"
               >
-                <div style={{ fontWeight: 900 }}>友達を招待</div>
+                <span className="cm-section-title" style={{ fontWeight: 900 }}>
+                  友達を招待
+                </span>
               </HelpTip>
 
               <button
+                type="button"
+                className={
+                  sessionId && classId ? "cm-cta-primary cm-room-invite-btn" : ""
+                }
                 onClick={async () => {
                   if (!sessionId || !classId) {
                     alert("まだ招待リンクを作れません。");
@@ -4342,6 +4362,7 @@ const name = rawName === "You" ? "参加者" : rawName;
             </div>
 
             <div
+              className="cm-paper-card cm-room-members"
               style={{
                 border: "1px solid #e5e7eb",
                 borderRadius: 14,
@@ -4359,12 +4380,18 @@ const name = rawName === "You" ? "参加者" : rawName;
                   flexWrap: "wrap",
                 }}
               >
-                <span>参加メンバー</span>
+                <span className="cm-section-title cm-emblem-heading">
+                  <ClassmateEmblem size="xs" variant="muted" decorative />
+                  参加メンバー
+                </span>
                 <span style={{ color: "#6b7280", fontWeight: 800, fontSize: 12 }}>
                   {subtitle}
                 </span>
                 {membersListRefreshing && membersListInitialFetchDone ? (
-                  <span style={softUpdatingBadgeStyle}>
+                  <span
+                    className="cm-room-refreshing-badge"
+                    style={softUpdatingBadgeStyle}
+                  >
                     <LoadSpinner size={10} />
                     更新中
                   </span>
@@ -4384,11 +4411,14 @@ const name = rawName === "You" ? "参加者" : rawName;
                   }}
                 />
               ) : membersLoadState === "empty" ? (
-                <div style={{ color: "#6b7280" }}>まだ参加者はいません</div>
+                <div className="cm-room-empty-members" style={{ color: "#6b7280" }}>
+                  まだ参加者はいません
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: 8 }}>
                   {membersLoadState === "loading" || membersListRefreshing ? (
                     <div
+                      className="cm-room-refreshing-badge"
                       style={{
                         ...softUpdatingBadgeStyle,
                         width: "fit-content",
@@ -4431,6 +4461,12 @@ const name = rawName === "You" ? "参加者" : rawName;
                     return (
                       <div
                         key={did || "unknown"}
+                        className={[
+                          "cm-room-member-row",
+                          highlighted ? "cm-room-member-highlighted" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
                         style={{
                           display: "flex",
                           alignItems: "center",

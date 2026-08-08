@@ -105,6 +105,14 @@ export async function GET(req: Request) {
     membershipsMs = Date.now() - membershipsStartMs;
 
     if (!slotCtxRes.ok) {
+      if (process.env.NODE_ENV === "development") {
+        console.error("[class/mine] membership query failed", {
+          code: "",
+          message: slotCtxRes.error,
+          details: "",
+          hint: "",
+        });
+      }
       return NextResponse.json(
         {
           ok: false,

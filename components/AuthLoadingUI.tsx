@@ -16,6 +16,8 @@ export function AuthLoadingBanner({
 }: AuthLoadingBannerProps) {
   return (
     <div
+      className="cm-paper-card cm-auth-loading"
+      data-cm-auth={error ? "error" : slow ? "slow" : "loading"}
       role="status"
       aria-live="polite"
       style={{
@@ -35,6 +37,7 @@ export function AuthLoadingBanner({
         }}
       >
         <span
+          className="cm-auth-loading-spin"
           aria-hidden
           style={{
             width: compact ? 14 : 18,
@@ -49,6 +52,7 @@ export function AuthLoadingBanner({
         />
         <div style={{ display: "grid", gap: 2 }}>
           <span
+            className="cm-home-loading-line"
             style={{
               fontSize: compact ? 12 : 14,
               fontWeight: 800,
@@ -60,7 +64,10 @@ export function AuthLoadingBanner({
               : "アカウント情報を確認しています…"}
           </span>
           {error ? (
-            <span style={{ fontSize: 12, color: "#b91c1c", fontWeight: 700 }}>
+            <span
+              className="cm-home-error"
+              style={{ fontSize: 12, color: "#b91c1c", fontWeight: 700 }}
+            >
               {error}
             </span>
           ) : null}
@@ -70,6 +77,7 @@ export function AuthLoadingBanner({
       {(slow || error) && onReload ? (
         <button
           type="button"
+          className="cm-cta-secondary cm-auth-reload"
           onClick={onReload}
           style={{
             width: "fit-content",

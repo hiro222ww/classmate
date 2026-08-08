@@ -48,6 +48,7 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 
@@ -977,8 +978,11 @@ export default function SelectClient() {
     const joinDisabled =
       busy || !deviceId || profileMissing || admissionClosed || prefsNotReady;
 
+    const enterReady = !locked && !profileMissing && !admissionClosed;
+
     return (
       <div
+        className="cm-board-card"
         style={{
           border: "1px solid #ddd",
           borderRadius: 16,
@@ -997,8 +1001,10 @@ export default function SelectClient() {
             alignItems: "baseline",
           }}
         >
-          <strong style={{ fontSize: 15 }}>{b.title}</strong>
-          <span style={{ fontSize: 12, opacity: 0.9 }}>
+          <strong className="cm-board-card-title" style={{ fontSize: 15 }}>
+            {b.title}
+          </strong>
+          <span className="cm-board-meta" style={{ fontSize: 12, opacity: 0.9 }}>
             {profileMissing && "🧑未登録 "}
             {themeBillingEnabled ? (locked ? "🔒" : "🔓") : "🔓"}{" "}
             {b.is_sensitive ? "🔞" : "🟢"}
@@ -1021,6 +1027,10 @@ export default function SelectClient() {
         ) : null}
 
         <button
+          type="button"
+          className={["cm-board-enter", enterReady ? "cm-cta-primary" : ""]
+            .filter(Boolean)
+            .join(" ")}
           onClick={() => void joinMatchedBoard(b)}
           disabled={joinDisabled}
           style={{
@@ -1063,9 +1073,17 @@ export default function SelectClient() {
     joinedClassesLoading || joinedClassCount > 0;
   const isApp = isAppShellContext();
 
+  const selectScopeClass = [
+    "cm-classroom-scope",
+    "cm-select-scope",
+    isApp ? "app-immersive-inner" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <main
-      className={isApp ? "app-immersive-inner" : undefined}
+      className={selectScopeClass}
       style={
         isApp
           ? { color: "#111" }
@@ -1117,12 +1135,16 @@ export default function SelectClient() {
       )}
 
       {hasProfile === false ? (
-        <section style={{ ...DASH_CARD, marginTop: 20, borderColor: "#fde68a" }}>
+        <section
+          className="cm-profile-needed"
+          style={{ ...DASH_CARD, marginTop: 20, borderColor: "#fde68a" }}
+        >
           <div style={{ fontWeight: 900, fontSize: 15, color: "#92400e" }}>
             プロフィール登録が必要です
           </div>
           <Link
             href={withDev(buildProfileEditPath("/class/select"))}
+            className="cm-cta-primary"
             style={{
               ...PRIMARY_BTN,
               display: "inline-flex",
@@ -1165,6 +1187,7 @@ export default function SelectClient() {
 
       {joinLimitMessage ? (
         <div
+          className="cm-join-limit"
           style={{
             marginTop: 12,
             padding: 12,
@@ -1270,6 +1293,7 @@ export default function SelectClient() {
       {showNarrow && (
         <>
           <section
+            className="cm-select-filters"
             style={{
               marginTop: 12,
               display: "flex",
@@ -1309,7 +1333,18 @@ export default function SelectClient() {
           </section>
 
           <section style={{ marginTop: 14 }}>
-            <h2 style={{ margin: "10px 0", fontSize: 16, fontWeight: 900 }}>テーマ</h2>
+            <h2
+              className="cm-section-title cm-emblem-heading"
+              style={{
+                margin: "10px 0",
+                fontSize: 16,
+                fontWeight: 900,
+                width: "fit-content",
+              }}
+            >
+              <ClassmateEmblem size="xs" variant="muted" decorative />
+              テーマ
+            </h2>
             <div
               style={{
                 display: "grid",
@@ -1323,7 +1358,10 @@ export default function SelectClient() {
             </div>
 
             {boards.length === 0 && !loading ? (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
+              <div
+                className="cm-select-empty"
+                style={{ marginTop: 10, fontSize: 12, color: "#666" }}
+              >
                 条件に合うテーマがありません
               </div>
             ) : null}

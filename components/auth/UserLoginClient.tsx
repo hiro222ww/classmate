@@ -29,6 +29,7 @@ import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
 import AppShellPage from "@/components/app-shell/AppShellPage";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 
 function GoogleLoginButton({
   busy,
@@ -180,39 +181,57 @@ export default function UserLoginClient() {
   if (isApp) {
     return (
       <AppShellPage showBottomNav={false}>
-        <header>
-          <h1 className="app-shell-title">ログイン</h1>
-          <p className="app-shell-subtitle">
-            Google アカウントで Classmate を続けます
+        <div
+          className="cm-classroom-scope cm-auth-root cm-auth-root--app"
+          data-cm-auth={busy ? "busy" : error ? "error" : "idle"}
+        >
+          <header>
+            <h1 className="app-shell-title cm-section-title">ログイン</h1>
+            <p className="app-shell-subtitle">
+              Google アカウントで Classmate を続けます
+            </p>
+          </header>
+
+          <section
+            className="app-shell-card cm-paper-card cm-auth-card"
+            style={{ display: "grid", gap: 12 }}
+          >
+            <div className="cm-auth-card-emblem">
+              <ClassmateEmblem size="md" decorative />
+            </div>
+            <GoogleLoginButton
+              busy={busy}
+              onClick={() => void onGoogleLogin()}
+              className="app-shell-btn cm-auth-google"
+              style={{ justifyContent: "flex-start" }}
+            />
+          </section>
+
+          {error ? (
+            <p className="app-shell-error cm-home-error cm-auth-error">{error}</p>
+          ) : null}
+
+          {busy ? (
+            <p
+              className="app-shell-muted cm-home-loading-line cm-auth-busy-note"
+              style={{ margin: 0, fontSize: 13 }}
+            >
+              認証後にアプリへ戻ってもこの画面のままの場合は、一度アプリを閉じて開き直すか、下のリンクからホームへ戻ってください。
+            </p>
+          ) : null}
+
+          <p className="app-shell-muted cm-auth-footer" style={{ margin: 0, fontSize: 13 }}>
+            <Link href={homeHref}>ホームへ戻る</Link>
           </p>
-        </header>
-
-        <section className="app-shell-card" style={{ display: "grid", gap: 12 }}>
-          <GoogleLoginButton
-            busy={busy}
-            onClick={() => void onGoogleLogin()}
-            className="app-shell-btn"
-            style={{ justifyContent: "flex-start" }}
-          />
-        </section>
-
-        {error ? <p className="app-shell-error">{error}</p> : null}
-
-        {busy ? (
-          <p className="app-shell-muted" style={{ margin: 0, fontSize: 13 }}>
-            認証後にアプリへ戻ってもこの画面のままの場合は、一度アプリを閉じて開き直すか、下のリンクからホームへ戻ってください。
-          </p>
-        ) : null}
-
-        <p className="app-shell-muted" style={{ margin: 0, fontSize: 13 }}>
-          <Link href={homeHref}>ホームへ戻る</Link>
-        </p>
+        </div>
       </AppShellPage>
     );
   }
 
   return (
     <main
+      className="cm-classroom-scope cm-auth-root"
+      data-cm-auth={busy ? "busy" : error ? "error" : "idle"}
       style={{
         maxWidth: 520,
         margin: "0 auto",
@@ -222,6 +241,7 @@ export default function UserLoginClient() {
       }}
     >
       <header
+        className="cm-auth-header"
         style={{
           display: "flex",
           alignItems: "center",
@@ -229,7 +249,10 @@ export default function UserLoginClient() {
           flexWrap: "wrap",
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900 }}>
+        <h1
+          className="cm-section-title"
+          style={{ margin: 0, fontSize: 28, fontWeight: 900 }}
+        >
           ログイン / 新規登録
         </h1>
         <HelpTip
@@ -239,6 +262,7 @@ export default function UserLoginClient() {
       </header>
 
       <section
+        className="cm-paper-card cm-auth-card"
         style={{
           border: "1px solid #e5e7eb",
           borderRadius: 18,
@@ -247,9 +271,13 @@ export default function UserLoginClient() {
           gap: 12,
         }}
       >
+        <div className="cm-auth-card-emblem">
+          <ClassmateEmblem size="lg" decorative />
+        </div>
         <GoogleLoginButton
           busy={busy}
           onClick={() => void onGoogleLogin()}
+          className="cm-auth-google"
           style={{
             display: "flex",
             alignItems: "center",
@@ -270,6 +298,7 @@ export default function UserLoginClient() {
 
       {error ? (
         <p
+          className="cm-home-error cm-auth-error"
           style={{
             margin: 0,
             color: "#b91c1c",
@@ -281,7 +310,10 @@ export default function UserLoginClient() {
         </p>
       ) : null}
 
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#6b7280" }}>
+      <p
+        className="cm-auth-footer"
+        style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#6b7280" }}
+      >
         <Link href={homeHref}>ホームへ戻る</Link>
         {" · "}
         <Link href={settingsHref}>アカウント設定</Link>

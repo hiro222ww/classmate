@@ -42,10 +42,10 @@ export default function RootLayout({
       <body
         style={{
           margin: 0,
-          background: "#fff",
-          color: "#111",
+          background: "var(--cm-page-bg, #fff)",
+          color: "var(--cm-text, #111)",
           fontFamily:
-            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+            "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Noto Sans JP', sans-serif",
         }}
       >
         <LineInAppBrowserGate>

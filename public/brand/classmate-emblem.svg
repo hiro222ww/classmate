@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-hidden="true">
+  <!-- flag -->
+  <path d="M64 10 L64 22" stroke="#1e4f8a" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="M64 10 L86 18 L64 26 Z" fill="#1e4f8a"/>
+  <!-- shield outer -->
+  <path d="M28 28 C28 28 40 24 64 24 C88 24 100 28 100 28 L100 62 C100 86 82 104 64 114 C46 104 28 86 28 62 Z" fill="#1e4f8a"/>
+  <!-- shield inner -->
+  <path d="M34 32 C34 32 44 29 64 29 C84 29 94 32 94 32 L94 62 C94 82 78 98 64 106 C50 98 34 82 34 62 Z" fill="#2f6db5"/>
+  <!-- sakura -->
+  <g transform="translate(64 64)">
+    <g id="petal">
+      <path d="M0 -8 C6 -20 16 -22 20 -14 C24 -6 14 2 0 8 C-14 2 -24 -6 -20 -14 C-16 -22 -6 -20 0 -8 Z" fill="#f7c8d6" transform="translate(0 -10)"/>
+    </g>
+    <use href="#petal" transform="rotate(72)"/>
+    <use href="#petal" transform="rotate(144)"/>
+    <use href="#petal" transform="rotate(216)"/>
+    <use href="#petal" transform="rotate(288)"/>
+    <circle cx="0" cy="0" r="3.2" fill="#f3a4b8"/>
+    <circle cx="0" cy="-5" r="1.4" fill="#f0a070"/>
+    <circle cx="4.6" cy="-1.6" r="1.4" fill="#f0a070"/>
+    <circle cx="2.8" cy="4" r="1.4" fill="#f0a070"/>
+    <circle cx="-2.8" cy="4" r="1.4" fill="#f0a070"/>
+    <circle cx="-4.6" cy="-1.6" r="1.4" fill="#f0a070"/>
+  </g>
+</svg>

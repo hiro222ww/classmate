@@ -13,6 +13,7 @@ import {
   isSlotBillingEnabled,
   SLOT_BILLING_OFF_EFFECTIVE_LIMIT,
 } from "@/lib/billingAvailability";
+import { isRetryableNetworkError } from "@/lib/retryableFetch";
 
 export type ApiActor = UserIdentity & {
   userId: string;
@@ -142,15 +143,35 @@ export async function getClassSlotsForActor(
       return { ok: true, classSlots: SLOT_BILLING_OFF_EFFECTIVE_LIMIT };
     }
 
-    const ent = await lookupEntitlements({
-      userId: actor.userId,
-      deviceId,
-    });
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const ent = await lookupEntitlements({
+          userId: actor.userId,
+          deviceId,
+        });
 
-    return {
-      ok: true,
-      classSlots: Math.max(1, Number(ent?.class_slots ?? 1)),
-    };
+        return {
+          ok: true,
+          classSlots: Math.max(1, Number(ent?.class_slots ?? 1)),
+        };
+      } catch (error) {
+        lastError = error;
+        const message =
+          error instanceof Error ? error.message : "entitlements_lookup_failed";
+        const retryable = isRetryableNetworkError({
+          name: error instanceof Error ? error.name : "TypeError",
+          message,
+        });
+        if (!retryable || attempt >= 1) break;
+      }
+    }
+
+    const message =
+      lastError instanceof Error
+        ? lastError.message
+        : "entitlements_lookup_failed";
+    return { ok: false, error: message };
   } catch (error) {
     const message = error instanceof Error ? error.message : "entitlements_lookup_failed";
     return { ok: false, error: message };

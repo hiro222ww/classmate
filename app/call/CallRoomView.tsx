@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import CallPresenceToastStack from "@/components/call/CallPresenceToastStack";
 import MemberListAvatar from "@/components/MemberListAvatar";
 import MemberModerationButtons from "@/components/MemberModerationButtons";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { isAppShellContext } from "@/lib/appShellContext";
 import type { CallPresenceToast } from "@/lib/callPresenceToasts";
 import { formatMemberDisplayName } from "@/lib/resolveDisplayName";
@@ -161,13 +162,23 @@ export default function CallRoomView({
 
   return (
     <main
-      className={
-        inAppShell ? "app-immersive-inner app-immersive-inner--wide" : undefined
-      }
+      className={[
+        "cm-classroom-scope",
+        "cm-call-root",
+        inAppShell ? "app-immersive-inner app-immersive-inner--wide" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={
         inAppShell ? undefined : { maxWidth: 1100, margin: "0 auto", padding: 16 }
       }
     >
+      <ClassmateEmblem
+        size="md"
+        variant="watermark"
+        decorative
+        className="cm-call-emblem-watermark"
+      />
       <CallPresenceToastStack toasts={presenceToasts} />
 
       {voiceLayer}
@@ -175,7 +186,12 @@ export default function CallRoomView({
       {entryGateSlot}
 
       <div
-        className={inAppShell ? "app-immersive-call-header" : undefined}
+        className={[
+          "cm-call-header",
+          inAppShell ? "app-immersive-call-header" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         style={
           inAppShell
             ? undefined
@@ -190,7 +206,12 @@ export default function CallRoomView({
       >
         <div>
           <h1
-            className={inAppShell ? "app-shell-title" : undefined}
+            className={[
+              "cm-call-title",
+              inAppShell ? "app-shell-title" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             style={
               inAppShell
                 ? undefined
@@ -200,7 +221,12 @@ export default function CallRoomView({
             通話ルーム
           </h1>
           <div
-            className={inAppShell ? "app-shell-subtitle" : undefined}
+            className={[
+              "cm-call-count",
+              inAppShell ? "app-shell-subtitle" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             style={
               inAppShell
                 ? undefined
@@ -213,12 +239,19 @@ export default function CallRoomView({
               : `--/${capacity}`}
           </div>
           {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
-            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
+            <div
+              className="cm-call-stuck"
+              style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}
+            >
+              <span
+                className="cm-call-stuck-label"
+                style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}
+              >
                 接続処理が長時間続いています
               </span>
               <button
                 type="button"
+                className="cm-call-warn-btn"
                 onClick={() => onCallStuckReconnect?.()}
                 style={{
                   padding: "6px 12px",
@@ -236,19 +269,30 @@ export default function CallRoomView({
             </div>
           ) : null}
           {meetingPlanLabel ? (
-            <div style={{ marginTop: 4, fontSize: 12, color: "#374151", fontWeight: 800 }}>
+            <div
+              className="cm-call-meta"
+              style={{ marginTop: 4, fontSize: 12, color: "#374151", fontWeight: 800 }}
+            >
               {meetingPlanLabel}
             </div>
           ) : null}
           {callRequestLabel ? (
-            <div style={{ marginTop: 4, fontSize: 12, color: "#92400e", fontWeight: 800 }}>
+            <div
+              className="cm-call-meta cm-call-meta--accent"
+              style={{ marginTop: 4, fontSize: 12, color: "#92400e", fontWeight: 800 }}
+            >
               {callRequestLabel}
             </div>
           ) : null}
         </div>
 
         <div
-          className={inAppShell ? "app-immersive-call-actions" : undefined}
+          className={[
+            "cm-call-actions",
+            inAppShell ? "app-immersive-call-actions" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           style={
             inAppShell
               ? undefined
@@ -258,9 +302,13 @@ export default function CallRoomView({
           <button
             type="button"
             onClick={onProfileEdit}
-            className={
-              inAppShell ? "app-shell-btn app-shell-btn--ghost" : undefined
-            }
+            className={[
+              "cm-room-ghost-btn",
+              "cm-call-action-btn",
+              inAppShell ? "app-shell-btn app-shell-btn--ghost" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             style={
               inAppShell
                 ? undefined
@@ -280,9 +328,13 @@ export default function CallRoomView({
           </button>
 
           <button
-            className={
-              inAppShell ? "app-shell-btn app-shell-btn--primary" : undefined
-            }
+            className={[
+              "cm-cta-primary",
+              "cm-call-action-btn",
+              inAppShell ? "app-shell-btn app-shell-btn--primary" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             onClick={onInviteFriends}
             style={
               inAppShell
@@ -306,7 +358,7 @@ export default function CallRoomView({
           {inAppShell && onHome ? (
             <button
               type="button"
-              className="app-shell-btn app-shell-btn--ghost"
+              className="app-shell-btn app-shell-btn--ghost cm-room-ghost-btn cm-call-action-btn"
               onClick={onHome}
             >
               ホーム
@@ -315,9 +367,14 @@ export default function CallRoomView({
 
           <button
             type="button"
-            className={
-              inAppShell ? "app-shell-btn app-shell-btn--danger" : undefined
-            }
+            className={[
+              "cm-room-ghost-btn",
+              "cm-call-action-btn",
+              "cm-call-exit-btn",
+              inAppShell ? "app-shell-btn app-shell-btn--danger" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             style={
               inAppShell
                 ? undefined
@@ -341,6 +398,7 @@ export default function CallRoomView({
 
       {fetchErrorCount >= 3 && (
         <div
+          className="cm-call-banner cm-call-banner--warn"
           style={{
             marginTop: 12,
             padding: "10px 12px",
@@ -358,6 +416,7 @@ export default function CallRoomView({
 
       {showWaitingForOthers ? (
         <div
+          className="cm-call-banner cm-call-banner--wait"
           style={{
             marginTop: 12,
             padding: "10px 12px",
@@ -376,6 +435,7 @@ export default function CallRoomView({
       {bannerSlot}
 
       <section
+        className="cm-paper-card cm-call-members"
         style={{
           marginTop: 16,
           padding: 14,
@@ -384,7 +444,10 @@ export default function CallRoomView({
           background: "#fff",
         }}
       >
-        <div style={{ fontSize: 15, fontWeight: 900, marginBottom: 12 }}>
+        <div
+          className="cm-section-title"
+          style={{ fontSize: 15, fontWeight: 900, marginBottom: 12 }}
+        >
           通話中のメンバー
         </div>
 
@@ -456,6 +519,14 @@ export default function CallRoomView({
             return (
               <div
                 key={member?.device_id ?? `empty-${i}`}
+                className={[
+                  "cm-call-seat",
+                  isFilled ? "cm-call-seat--filled" : "cm-call-seat--empty",
+                  isSpeaking ? "cm-call-seat--speaking" : "",
+                  isMe ? "cm-call-seat--me" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 style={{
                   minHeight: 96,
                   borderRadius: 16,
@@ -501,6 +572,13 @@ export default function CallRoomView({
                   }}
                 >
                   <div
+                    className={[
+                      "cm-call-seat-avatar",
+                      isMe ? "cm-call-seat-avatar--me" : "",
+                      !isFilled ? "cm-call-seat-avatar--empty" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                     style={{
                       width: LIST_MEMBER_AVATAR_PX,
                       height: LIST_MEMBER_AVATAR_PX,
@@ -530,6 +608,9 @@ export default function CallRoomView({
 
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div
+                      className={
+                        isFilled ? "cm-call-seat-name" : "cm-call-seat-name cm-call-seat-name--empty"
+                      }
                       style={{
                         fontSize: 14,
                         fontWeight: 800,
@@ -558,6 +639,13 @@ export default function CallRoomView({
                     }}
                   >
                     <div
+                      className={[
+                        "cm-call-status-chip",
+                        isSpeaking ? "cm-call-status-chip--speaking" : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      data-cm-status={isSpeaking ? "発話中" : status.text}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -598,6 +686,7 @@ export default function CallRoomView({
                     {showManualAudioReconnect && memberId ? (
                       <button
                         type="button"
+                        className="cm-call-warn-btn"
                         onClick={(e) => {
                           e.stopPropagation();
                           onManualAudioReconnect?.(memberId);
@@ -645,6 +734,7 @@ export default function CallRoomView({
                       </summary>
 
                       <div
+                        className="cm-call-mod-menu"
                         style={{
                           position: "absolute",
                           right: 0,
@@ -677,6 +767,7 @@ export default function CallRoomView({
       {/* <YouTubeWatchParty sessionId={sessionId} deviceId={deviceId} /> */}
 
       <section
+        className="cm-paper-card cm-call-audio"
         style={{
           marginTop: 16,
           padding: 14,
@@ -685,10 +776,13 @@ export default function CallRoomView({
           background: "#fff",
         }}
       >
-        <div style={{ fontWeight: 900, fontSize: 15 }}>音声設定</div>
+        <div className="cm-section-title" style={{ fontWeight: 900, fontSize: 15 }}>
+          音声設定
+        </div>
 
         {showMicPermissionWarning ? (
           <div
+            className="cm-call-banner cm-call-banner--warn"
             style={{
               marginTop: 10,
               padding: "10px 12px",
@@ -710,6 +804,7 @@ export default function CallRoomView({
             {onRetryMic ? (
               <button
                 type="button"
+                className="cm-call-warn-btn"
                 onClick={onRetryMic}
                 style={{
                   marginTop: 8,
@@ -730,6 +825,7 @@ export default function CallRoomView({
 
         {voiceJoinFatalError ? (
           <div
+            className="cm-call-banner cm-call-banner--error"
             style={{
               marginTop: 10,
               padding: "10px 12px",
@@ -745,6 +841,7 @@ export default function CallRoomView({
             {onVoiceReconnect ? (
               <button
                 type="button"
+                className="cm-cta-secondary cm-call-reconnect-btn"
                 onClick={onVoiceReconnect}
                 style={{
                   marginTop: 8,
@@ -762,12 +859,16 @@ export default function CallRoomView({
             ) : null}
           </div>
         ) : voiceSelfReconnecting ? (
-          <div style={{ marginTop: 10, fontSize: 12, color: "#9ca3af" }}>
+          <div
+            className="cm-call-reconnecting"
+            style={{ marginTop: 10, fontSize: 12, color: "#9ca3af" }}
+          >
             再接続中…
           </div>
         ) : null}
 
         <div
+          className="cm-call-mic-row"
           style={{
             marginTop: 10,
             display: "flex",
@@ -777,6 +878,13 @@ export default function CallRoomView({
           }}
         >
           <button
+            className={[
+              "cm-call-mute-btn",
+              userMuted ? "cm-call-mute-btn--muted" : "cm-call-mute-btn--live",
+              muteButtonLabel === "聞き専" ? "cm-call-mute-btn--listen" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             disabled={muteDisabled || !micReady}
             style={{
               padding: "10px 14px",
@@ -793,11 +901,15 @@ export default function CallRoomView({
             {muteButtonLabel}
           </button>
 
-          <div style={{ fontSize: 12, color: "#374151", minWidth: 180 }}>
+          <div
+            className="cm-call-mic-label"
+            style={{ fontSize: 12, color: "#374151", minWidth: 180 }}
+          >
             マイク入力: {(micLevel * 100).toFixed(1)}
           </div>
 
           <div
+            className="cm-call-mic-meter"
             style={{
               width: 140,
               height: 10,
@@ -807,6 +919,7 @@ export default function CallRoomView({
             }}
           >
             <div
+              className="cm-call-mic-meter-fill"
               style={{
                 width: `${Math.min(100, micLevel * 800)}%`,
                 height: "100%",

@@ -1,7 +1,38 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { isBillableClassName, isLegacyEntryClassName } from "@/lib/legacyClassNames";
 import type { ActorLookup } from "@/lib/actorIdentity";
 import { isValidUuid } from "@/lib/userIdentity";
+import { isRetryableNetworkError } from "@/lib/retryableFetch";
+
+function logMembershipQueryFailed(error: PostgrestError) {
+  if (process.env.NODE_ENV !== "development") return;
+  console.error("[class/mine] membership query failed", {
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+  });
+}
+
+async function queryWithTransientRetry<T>(
+  run: () => PromiseLike<{ data: T; error: PostgrestError | null }>,
+  opts?: { attempts?: number }
+): Promise<{ data: T; error: PostgrestError | null }> {
+  const attempts = Math.max(1, opts?.attempts ?? 2);
+  let last: { data: T; error: PostgrestError | null } | null = null;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    last = await run();
+    if (!last.error) return last;
+    const retryable = isRetryableNetworkError({
+      name: "TypeError",
+      message: last.error.message,
+    });
+    if (!retryable || attempt >= attempts - 1) return last;
+  }
+
+  return last ?? { data: null as T, error: null };
+}
 
 export type ActiveClassMembershipRow = {
   classId: string;
@@ -99,22 +130,26 @@ export async function fetchActiveClassMembershipsForActor(
   };
 
   if (userId && isValidUuid(userId)) {
-    const { data, error } = await sb
-      .from("class_memberships")
-      .select("class_id, joined_at")
-      .eq("user_id", userId);
+    const { data, error } = await queryWithTransientRetry(() =>
+      sb
+        .from("class_memberships")
+        .select("class_id, joined_at")
+        .eq("user_id", userId)
+    );
 
     if (error) {
+      logMembershipQueryFailed(error);
       return { ok: false, error: error.message };
     }
     appendRows(data as MembershipLite[] | null);
 
-    const { data: linkedDevices, error: linkedError } = await sb
-      .from("user_devices")
-      .select("device_id")
-      .eq("user_id", userId);
+    const { data: linkedDevices, error: linkedError } =
+      await queryWithTransientRetry(() =>
+        sb.from("user_devices").select("device_id").eq("user_id", userId)
+      );
 
     if (linkedError) {
+      logMembershipQueryFailed(linkedError);
       return { ok: false, error: linkedError.message };
     }
 
@@ -130,24 +165,31 @@ export async function fetchActiveClassMembershipsForActor(
     );
 
     if (linkedDeviceIds.length > 0) {
-      const { data: byDevices, error: byDevicesError } = await sb
-        .from("class_memberships")
-        .select("class_id, joined_at")
-        .in("device_id", linkedDeviceIds)
-        .is("user_id", null);
+      const { data: byDevices, error: byDevicesError } =
+        await queryWithTransientRetry(() =>
+          sb
+            .from("class_memberships")
+            .select("class_id, joined_at")
+            .in("device_id", linkedDeviceIds)
+            .is("user_id", null)
+        );
 
       if (byDevicesError) {
+        logMembershipQueryFailed(byDevicesError);
         return { ok: false, error: byDevicesError.message };
       }
       appendRows(byDevices as MembershipLite[] | null);
     }
   } else if (normalizedDeviceId) {
-    const { data, error } = await sb
-      .from("class_memberships")
-      .select("class_id, joined_at")
-      .eq("device_id", normalizedDeviceId);
+    const { data, error } = await queryWithTransientRetry(() =>
+      sb
+        .from("class_memberships")
+        .select("class_id, joined_at")
+        .eq("device_id", normalizedDeviceId)
+    );
 
     if (error) {
+      logMembershipQueryFailed(error);
       return { ok: false, error: error.message };
     }
     appendRows(data as MembershipLite[] | null);
@@ -159,12 +201,12 @@ export async function fetchActiveClassMembershipsForActor(
     return { ok: true, rows: [] };
   }
 
-  const { data: classRows, error: classErr } = await sb
-    .from("classes")
-    .select("id, name")
-    .in("id", classIds);
+  const { data: classRows, error: classErr } = await queryWithTransientRetry(
+    () => sb.from("classes").select("id, name").in("id", classIds)
+  );
 
   if (classErr) {
+    logMembershipQueryFailed(classErr);
     return { ok: false, error: classErr.message };
   }
 

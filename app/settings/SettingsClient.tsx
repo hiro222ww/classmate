@@ -50,6 +50,7 @@ export default function SettingsClient() {
 
   return (
     <main
+      className="cm-classroom-scope cm-settings-root"
       style={{
         maxWidth: 720,
         margin: "0 auto",
@@ -65,6 +66,7 @@ export default function SettingsClient() {
       />
 
       <section
+        className="cm-paper-card cm-settings-section"
         style={{
           border: "1px solid #e5e7eb",
           borderRadius: 18,
@@ -81,7 +83,9 @@ export default function SettingsClient() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ fontWeight: 900, fontSize: 16 }}>アカウント</div>
+          <div className="cm-section-title" style={{ fontWeight: 900, fontSize: 16 }}>
+            アカウント
+          </div>
           {!loading && !loggedIn ? (
             <HelpTip
               label="ログイン状態について"
@@ -100,11 +104,15 @@ export default function SettingsClient() {
           />
         ) : loggedIn ? (
           <>
-            <p style={{ margin: 0, fontSize: 14, color: "#111827", fontWeight: 800 }}>
+            <p
+              className="cm-settings-account-email"
+              style={{ margin: 0, fontSize: 14, color: "#111827", fontWeight: 800 }}
+            >
               {account?.email ?? accountStatusLabel(account)}
             </p>
             <button
               type="button"
+              className="cm-cta-secondary cm-settings-logout"
               disabled={busy}
               onClick={() => void onLogout()}
               style={{
@@ -122,6 +130,7 @@ export default function SettingsClient() {
           </>
         ) : (
           <Link
+            className="cm-cta-primary cm-settings-login"
             href={withDev(buildShellAwareLoginUrl("/settings"))}
             style={{
               display: "inline-block",
@@ -140,6 +149,7 @@ export default function SettingsClient() {
       </section>
 
       <section
+        className="cm-paper-card cm-settings-section cm-settings-section--notify"
         style={{
           border: "1px solid #e5e7eb",
           borderRadius: 18,
@@ -155,6 +165,7 @@ export default function SettingsClient() {
       </section>
 
       <section
+        className="cm-paper-card cm-settings-section"
         style={{
           border: "1px solid #e5e7eb",
           borderRadius: 18,
@@ -171,7 +182,9 @@ export default function SettingsClient() {
             flexWrap: "wrap",
           }}
         >
-          <div style={{ fontWeight: 900, fontSize: 16 }}>課金</div>
+          <div className="cm-section-title" style={{ fontWeight: 900, fontSize: 16 }}>
+            課金
+          </div>
           <HelpTip
             label="課金について"
             content="プランの確認・変更、支払い管理はこちらから行えます。"
@@ -179,6 +192,7 @@ export default function SettingsClient() {
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Link
+            className="cm-cta-secondary cm-settings-link"
             href={withDev("/premium")}
             style={{
               padding: "10px 14px",
@@ -192,6 +206,7 @@ export default function SettingsClient() {
             プラン
           </Link>
           <Link
+            className="cm-cta-secondary cm-settings-link"
             href={withDev("/billing")}
             style={{
               padding: "10px 14px",
@@ -209,6 +224,7 @@ export default function SettingsClient() {
 
       {isDevFeatureEnabled() && account ? (
         <section
+          className="cm-paper-card cm-settings-section cm-settings-dev"
           style={{
             border: "1px solid #e5e7eb",
             borderRadius: 18,
@@ -226,13 +242,23 @@ export default function SettingsClient() {
       ) : null}
 
       {message ? (
-        <p style={{ margin: 0, color: "#166534", fontWeight: 700 }}>{message}</p>
+        <p
+          className="cm-profile-status cm-profile-status--ok"
+          style={{ margin: 0, color: "#166534", fontWeight: 700 }}
+        >
+          {message}
+        </p>
       ) : null}
       {error ? (
-        <p style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}>{error}</p>
+        <p
+          className="cm-home-error cm-settings-error"
+          style={{ margin: 0, color: "#b91c1c", fontWeight: 700 }}
+        >
+          {error}
+        </p>
       ) : null}
 
-      <p style={{ margin: 0, fontSize: 13 }}>
+      <p className="cm-settings-footer" style={{ margin: 0, fontSize: 13 }}>
         <Link href={withDev("/profile")}>プロフィール編集</Link>
         {" · "}
         <Link href={withDev("/home")}>ホーム</Link>

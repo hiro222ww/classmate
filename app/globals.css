@@ -1,14 +1,6 @@
-:root{
-  --bg: #f5f5f7;
-  --panel: #ffffff;
-  --panel2: #f1f1f3;
-  --text: #111111;
-  --muted: #666666;
-  --line: #e5e5e5;
-  --accent: #7C5CFF;
-  --accent2: #22C55E;
-  --danger: #FF4D6D;
-}
+@import "./classroomTheme.css";
+
+/* Token values live in classroomTheme.css (--cm-* and legacy aliases). */
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
@@ -42,8 +34,8 @@ body{
   width: 38px;
   height: 38px;
   border-radius: 14px;
-  background: linear-gradient(135deg, rgba(124,92,255,1), rgba(34,197,94,0.95));
-  box-shadow: 0 10px 25px rgba(124,92,255,0.18);
+  background: linear-gradient(135deg, var(--cm-blue), #5b8fc9);
+  box-shadow: 0 10px 25px rgba(47, 109, 181, 0.2);
 }
 
 .title{ font-size: 20px; font-weight: 900; letter-spacing: 0.2px; }
@@ -123,14 +115,19 @@ body{
 
 .btn{
   padding: 12px 14px;
-  border-radius: 14px;
+  border-radius: var(--cm-radius-sm, 14px);
   border: none;
-  background: #111;
+  background: var(--cm-blue, #111);
   cursor:pointer;
   color: #fff;
   font-weight: 900;
+  box-shadow: 0 8px 18px rgba(47, 109, 181, 0.18);
 }
-.btn:hover{ background: #222; }
+.btn:hover{ background: var(--cm-blue-hover, #222); }
+.btn:focus-visible{
+  outline: none;
+  box-shadow: var(--cm-focus);
+}
 
 .btnGhost{
   padding: 12px 14px;

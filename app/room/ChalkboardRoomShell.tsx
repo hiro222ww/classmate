@@ -54,14 +54,30 @@ export function ChalkboardRoomShell({
   const homeHref = withDev(
     isApp ? resolveShellDashboardPath() : "/"
   );
-  const ghostBtnClass = "app-shell-btn app-shell-btn--ghost";
-  const primaryBtnClass = "app-shell-btn app-shell-btn--primary";
+  const ghostBtnClass = [
+    "cm-room-ghost-btn",
+    isApp ? "app-shell-btn app-shell-btn--ghost" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const primaryBtnClass = [
+    "cm-cta-primary",
+    "cm-room-start-btn",
+    isApp ? "app-shell-btn app-shell-btn--primary" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const mainClass = [
+    "cm-classroom-scope",
+    "cm-room-scope",
+    isApp ? "app-immersive-inner app-immersive-inner--wide" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <main
-      className={
-        isApp ? "app-immersive-inner app-immersive-inner--wide" : undefined
-      }
+      className={mainClass}
       style={
         isApp
           ? undefined
@@ -69,7 +85,9 @@ export function ChalkboardRoomShell({
       }
     >
       <div
-        className={isApp ? "app-immersive-toolbar" : undefined}
+        className={
+          isApp ? "app-immersive-toolbar cm-room-toolbar" : "cm-room-toolbar"
+        }
         style={
           isApp
             ? undefined
@@ -86,7 +104,7 @@ export function ChalkboardRoomShell({
           <button
             type="button"
             onClick={onBack}
-            className={isApp ? ghostBtnClass : undefined}
+            className={ghostBtnClass}
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
             戻る
@@ -98,7 +116,7 @@ export function ChalkboardRoomShell({
             type="button"
             onClick={onStartCall}
             disabled={startDisabled}
-            className={isApp ? primaryBtnClass : undefined}
+            className={primaryBtnClass}
             style={
               isApp
                 ? undefined
@@ -117,7 +135,7 @@ export function ChalkboardRoomShell({
 
         <Link
           href={moveHref}
-          className={isApp ? ghostBtnClass : undefined}
+          className={ghostBtnClass}
           style={isApp ? undefined : WEB_GHOST_BTN}
         >
           移動
@@ -127,7 +145,7 @@ export function ChalkboardRoomShell({
           <button
             type="button"
             onClick={onHome}
-            className={isApp ? ghostBtnClass : undefined}
+            className={ghostBtnClass}
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
             ホーム
@@ -135,7 +153,7 @@ export function ChalkboardRoomShell({
         ) : (
           <Link
             href={homeHref}
-            className={isApp ? ghostBtnClass : undefined}
+            className={ghostBtnClass}
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
             ホーム
@@ -145,9 +163,13 @@ export function ChalkboardRoomShell({
         {right}
       </div>
 
-      <div style={{ marginTop: 8 }}>
+      <div className="cm-room-board-wrap" style={{ marginTop: 8 }}>
         <div
-          className={isApp ? "app-immersive-board" : undefined}
+          className={
+            isApp
+              ? "app-immersive-board cm-room-chalkboard"
+              : "cm-room-chalkboard"
+          }
           style={
             isApp
               ? undefined
@@ -171,7 +193,11 @@ export function ChalkboardRoomShell({
             }}
           >
             <div
-              className={isApp ? "app-immersive-board-title" : undefined}
+              className={
+                isApp
+                  ? "app-immersive-board-title cm-room-board-title"
+                  : "cm-room-board-title"
+              }
               style={
                 isApp
                   ? undefined
@@ -187,7 +213,9 @@ export function ChalkboardRoomShell({
             </div>
 
             {!isApp ? (
-              <div style={{ fontSize: 11, opacity: 0.8 }}>board</div>
+              <div className="cm-room-board-label" style={{ fontSize: 11, opacity: 0.8 }}>
+                board
+              </div>
             ) : null}
           </div>
 
@@ -195,6 +223,7 @@ export function ChalkboardRoomShell({
             {lines.map((t, i) => (
               <div
                 key={i}
+                className="cm-room-board-line"
                 style={{
                   fontSize: 15,
                   lineHeight: 1.45,
@@ -209,7 +238,9 @@ export function ChalkboardRoomShell({
         </div>
       </div>
 
-      <section style={{ marginTop: 10, color: "#111" }}>{children}</section>
+      <section className="cm-room-body" style={{ marginTop: 10, color: "#111" }}>
+        {children}
+      </section>
     </main>
   );
 }

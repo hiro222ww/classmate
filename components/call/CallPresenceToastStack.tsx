@@ -12,6 +12,7 @@ export default function CallPresenceToastStack({
 
   return (
     <div
+      className="cm-call-toast-stack"
       aria-live="polite"
       style={{
         position: "fixed",
@@ -27,6 +28,7 @@ export default function CallPresenceToastStack({
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          className="cm-call-toast"
           style={{
             borderRadius: 12,
             padding: "10px 14px",

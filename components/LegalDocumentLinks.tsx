@@ -14,6 +14,7 @@ export function LegalDocumentLinks({
 }) {
   return (
     <nav
+      className="cm-legal-links"
       aria-label="規約・ポリシー"
       style={{
         display: "flex",
@@ -24,13 +25,26 @@ export function LegalDocumentLinks({
         lineHeight: 1.6,
       }}
     >
-      <Link href="/terms" target="_blank" rel="noopener noreferrer" style={linkStyle}>
+      <Link
+        className="cm-legal-link"
+        href="/terms"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={linkStyle}
+      >
         利用規約
       </Link>
-      <Link href="/privacy" target="_blank" rel="noopener noreferrer" style={linkStyle}>
+      <Link
+        className="cm-legal-link"
+        href="/privacy"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={linkStyle}
+      >
         プライバシーポリシー
       </Link>
       <Link
+        className="cm-legal-link"
         href="/guidelines"
         target="_blank"
         rel="noopener noreferrer"
@@ -53,6 +67,8 @@ export function LegalConsentCheckbox({
 }) {
   return (
     <label
+      className="cm-profile-legal cm-consent-check"
+      data-cm-consent={checked ? "agreed" : "needed"}
       style={{
         display: "flex",
         alignItems: "flex-start",
@@ -70,15 +86,28 @@ export function LegalConsentCheckbox({
         style={{ marginTop: 4 }}
       />
       <span>
-        <Link href="/terms" target="_blank" rel="noopener noreferrer" style={linkStyle}>
+        <Link
+          className="cm-legal-link"
+          href="/terms"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={linkStyle}
+        >
           利用規約
         </Link>
         、
-        <Link href="/privacy" target="_blank" rel="noopener noreferrer" style={linkStyle}>
+        <Link
+          className="cm-legal-link"
+          href="/privacy"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={linkStyle}
+        >
           プライバシーポリシー
         </Link>
         、
         <Link
+          className="cm-legal-link"
           href="/guidelines"
           target="_blank"
           rel="noopener noreferrer"

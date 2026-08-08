@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { BillingCategory } from "@/lib/billingCatalog";
+import { isRetryableNetworkError } from "@/lib/retryableFetch";
 
 export const BILLING_DISABLED_MESSAGE =
   "β期間中のため、現在はこの課金カテゴリの新規購入・プラン変更を停止しています。";
@@ -65,18 +66,35 @@ export function parseThemeBillingEnabled(value: unknown): boolean {
 }
 
 async function readSettingValue(key: string): Promise<unknown> {
-  const { data, error } = await supabaseAdmin
-    .from("app_settings")
-    .select("value")
-    .eq("key", key)
-    .maybeSingle();
+  const attempts = 2;
 
-  if (error) {
-    console.error(`[billing-availability] lookup failed key=${key}`, error.message);
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const { data, error } = await supabaseAdmin
+      .from("app_settings")
+      .select("value")
+      .eq("key", key)
+      .maybeSingle();
+
+    if (!error) {
+      return data?.value ?? null;
+    }
+
+    const retryable = isRetryableNetworkError({
+      name: "TypeError",
+      message: error.message,
+    });
+    if (retryable && attempt < attempts - 1) {
+      continue;
+    }
+
+    console.error(
+      `[billing-availability] lookup failed key=${key}`,
+      error.message
+    );
     return null;
   }
 
-  return data?.value ?? null;
+  return null;
 }
 
 export async function getBillingCategoryFlags(): Promise<BillingCategoryFlags> {

@@ -10,6 +10,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { AuthLoadingBanner } from "@/components/AuthLoadingUI";
 import { PushNotificationBell } from "@/components/PushNotificationBell";
 import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
+import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 
 type Props = {
   returnPath: string;
@@ -87,12 +88,18 @@ export function DashboardHeaderNav({
             href={withDev(buildProfileEditPath(returnPath))}
             style={{
               padding: "8px 12px",
-              borderRadius: 12,
-              border: hasProfile ? "1px solid #e5e7eb" : "1px solid #111827",
-              background: hasProfile ? "#fff" : "#111827",
+              borderRadius: "var(--cm-radius-sm, 12px)",
+              border: hasProfile
+                ? "1px solid var(--dash-secondary-border, #e5e7eb)"
+                : "1px solid var(--dash-primary-bg, #111827)",
+              background: hasProfile
+                ? "var(--dash-secondary-bg, #fff)"
+                : "var(--dash-primary-bg, #111827)",
               fontWeight: 800,
               fontSize: 13,
-              color: hasProfile ? "#374151" : "#fff",
+              color: hasProfile
+                ? "var(--dash-secondary-text, #374151)"
+                : "#fff",
               textDecoration: "none",
             }}
           >
@@ -103,12 +110,12 @@ export function DashboardHeaderNav({
             href={withDev("/premium")}
             style={{
               padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
+              borderRadius: "var(--cm-radius-sm, 12px)",
+              border: "1px solid var(--dash-secondary-border, #ccc)",
+              background: "var(--dash-secondary-bg, #fff)",
               fontWeight: 900,
               fontSize: 13,
-              color: "#111",
+              color: "var(--cm-text, #111)",
               textDecoration: "none",
             }}
           >
@@ -119,12 +126,12 @@ export function DashboardHeaderNav({
             href={withDev("/billing")}
             style={{
               padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid #ccc",
-              background: "#fff",
+              borderRadius: "var(--cm-radius-sm, 12px)",
+              border: "1px solid var(--dash-secondary-border, #ccc)",
+              background: "var(--dash-secondary-bg, #fff)",
               fontWeight: 900,
               fontSize: 13,
-              color: "#111",
+              color: "var(--cm-text, #111)",
               textDecoration: "none",
             }}
           >
@@ -135,12 +142,16 @@ export function DashboardHeaderNav({
             href={accountHref}
             style={{
               padding: "8px 10px",
-              borderRadius: 12,
-              border: loggedIn ? "1px solid #dbeafe" : "1px solid #e5e7eb",
-              background: loggedIn ? "#eff6ff" : "#fff",
+              borderRadius: "var(--cm-radius-sm, 12px)",
+              border: loggedIn
+                ? "1px solid rgba(47, 109, 181, 0.35)"
+                : "1px solid var(--dash-secondary-border, #e5e7eb)",
+              background: loggedIn
+                ? "rgba(47, 109, 181, 0.1)"
+                : "var(--dash-secondary-bg, #fff)",
               fontWeight: 800,
               fontSize: 12,
-              color: "#111827",
+              color: "var(--cm-text, #111827)",
               textDecoration: "none",
               opacity: ready ? 1 : 0.65,
               maxWidth: 200,
@@ -207,7 +218,8 @@ export function DashboardPageHeader({
         gap: 12,
       }}
     >
-      <div>
+      <div className="cm-emblem-heading">
+        <ClassmateEmblem size="sm" decorative />
         <h1
           style={{
             margin: 0,

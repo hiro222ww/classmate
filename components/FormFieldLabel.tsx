@@ -16,6 +16,7 @@ export function FormFieldLabel({
 }: FormFieldLabelProps) {
   return (
     <div
+      className="cm-form-field-label"
       style={{
         display: "flex",
         alignItems: "center",
@@ -42,6 +43,7 @@ export function SectionTitle({
 }) {
   return (
     <div
+      className="cm-form-section-title"
       style={{
         display: "flex",
         alignItems: "center",
@@ -49,7 +51,12 @@ export function SectionTitle({
         flexWrap: "wrap",
       }}
     >
-      <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900 }}>{title}</h2>
+      <h2
+        className="cm-section-title"
+        style={{ margin: 0, fontSize: 17, fontWeight: 900 }}
+      >
+        {title}
+      </h2>
       <HelpTip label={helpLabel} content={helpContent} />
     </div>
   );
@@ -75,7 +82,7 @@ export function FormSection({
   children: ReactNode;
 }) {
   return (
-    <section style={sectionStyle}>
+    <section className="cm-paper-card cm-form-section" style={sectionStyle}>
       <SectionTitle title={title} helpLabel={helpLabel} helpContent={helpContent} />
       {children}
     </section>

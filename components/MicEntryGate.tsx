@@ -22,6 +22,7 @@ export function MicEntryGate({
 }: MicEntryGateProps) {
   return (
     <section
+      className="cm-paper-card cm-call-prep"
       style={{
         marginTop: 16,
         padding: 16,
@@ -41,7 +42,9 @@ export function MicEntryGate({
           flexWrap: "wrap",
         }}
       >
-        <div style={{ fontWeight: 900, fontSize: 16 }}>通話の準備</div>
+        <div className="cm-section-title" style={{ fontWeight: 900, fontSize: 16 }}>
+          通話の準備
+        </div>
         <HelpTip
           label="通話の準備について"
           content="マイクを使って話すか、聞き専で参加できます。聞き専はマイクを使わず、他の参加者の音声だけ聞く参加方法です。後からマイクを許可して発話することもできます。"
@@ -50,6 +53,7 @@ export function MicEntryGate({
 
       {errorTitle ? (
         <div
+          className="cm-call-banner cm-call-banner--danger"
           style={{
             padding: "10px 12px",
             borderRadius: 12,
@@ -76,6 +80,7 @@ export function MicEntryGate({
 
       <button
         type="button"
+        className="cm-cta-primary cm-call-prep-primary"
         disabled={busy}
         onClick={onRequestMic}
         style={{
@@ -94,6 +99,7 @@ export function MicEntryGate({
 
       <button
         type="button"
+        className="cm-cta-secondary cm-call-prep-secondary"
         disabled={busy}
         onClick={onListenOnly}
         style={{

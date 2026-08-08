@@ -4,7 +4,10 @@ import LegalPageShell from "@/components/legal/LegalPageShell";
 export default function TermsPage() {
   return (
     <LegalPageShell>
-      <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 24 }}>
+      <h1
+        className="cm-legal-title"
+        style={{ fontSize: 28, fontWeight: "bold", marginBottom: 24 }}
+      >
         利用規約
       </h1>
 
@@ -98,6 +101,7 @@ export default function TermsPage() {
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <h2
+      className="cm-legal-section-title"
       style={{
         fontSize: 20,
         fontWeight: "bold",

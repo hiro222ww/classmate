@@ -38,6 +38,7 @@ export default function CommercialDisclosurePage() {
   return (
     <LegalPageShell>
       <h1
+        className="cm-legal-title"
         style={{
           fontSize: 22,
           fontWeight: 600,
@@ -48,8 +49,8 @@ export default function CommercialDisclosurePage() {
         Commercial disclosure
       </h1>
 
-      <div style={{ marginTop: 20 }}>
-        <section style={sectionStyle}>
+      <div className="cm-legal-disclosure" style={{ marginTop: 20 }}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>サービス内容</dt>
             <dd style={ddStyle}>
@@ -58,7 +59,7 @@ export default function CommercialDisclosurePage() {
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>販売価格</dt>
             <dd style={ddStyle}>
@@ -67,14 +68,14 @@ export default function CommercialDisclosurePage() {
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>支払方法</dt>
             <dd style={ddStyle}>クレジットカード決済（Stripe）</dd>
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>支払時期</dt>
             <dd style={ddStyle}>
@@ -83,7 +84,7 @@ export default function CommercialDisclosurePage() {
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>解約について</dt>
             <dd style={ddStyle}>
@@ -92,7 +93,7 @@ export default function CommercialDisclosurePage() {
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>返金について</dt>
             <dd style={ddStyle}>
@@ -101,28 +102,28 @@ export default function CommercialDisclosurePage() {
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>メールアドレス</dt>
             <dd style={ddStyle}>classmate.app.team@gmail.com</dd>
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>所在地</dt>
             <dd style={ddStyle}>請求があった場合、遅滞なく開示します。</dd>
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>電話番号</dt>
             <dd style={ddStyle}>請求があった場合、遅滞なく開示します。</dd>
           </div>
         </section>
 
-        <section style={sectionStyle}>
+        <section className="cm-legal-disclosure-row" style={sectionStyle}>
           <div style={rowStyle}>
             <dt style={dtStyle}>販売事業者</dt>
             <dd style={ddStyle}>吉川 弘晃</dd>

@@ -23,8 +23,10 @@ export function JoinNewCard({
   onQuickJoin,
   onPickPlace,
 }: JoinNewCardProps) {
+  const sectionClass = ["cm-paper-card", className].filter(Boolean).join(" ");
+
   return (
-    <section className={className} style={DASH_CARD}>
+    <section className={sectionClass} style={DASH_CARD}>
       <div
         style={{
           display: "flex",
@@ -33,7 +35,10 @@ export function JoinNewCard({
           marginBottom: 12,
         }}
       >
-        <strong style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}>
+        <strong
+          className="cm-section-title"
+          style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}
+        >
           新しく参加する
         </strong>
         <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
@@ -42,6 +47,7 @@ export function JoinNewCard({
       <div style={{ display: "grid", gap: 8 }}>
         <button
           type="button"
+          className="cm-cta-primary"
           onClick={onQuickJoin}
           disabled={quickJoinDisabled || quickJoinBusy}
           style={{
@@ -55,6 +61,7 @@ export function JoinNewCard({
 
         <button
           type="button"
+          className="cm-cta-secondary"
           onClick={onPickPlace}
           style={SECONDARY_BTN}
         >

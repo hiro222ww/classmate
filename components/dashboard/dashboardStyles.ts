@@ -1,30 +1,37 @@
 import type { CSSProperties } from "react";
 
+/**
+ * Dashboard surface styles. Prefer CSS variables so pages can opt into the
+ * classroom mood via .cm-classroom-scope without logic changes.
+ * Fallbacks preserve the previous cold/neutral look when vars are unset.
+ */
 export const DASH_CARD: CSSProperties = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 16,
+  border: "1px solid var(--dash-card-border, #e5e7eb)",
+  borderRadius: "var(--dash-card-radius, 16px)",
   padding: "14px 16px",
-  background: "#fff",
-  boxShadow: "0 1px 2px rgba(15, 23, 42, 0.04)",
+  background: "var(--dash-card-bg, #fff)",
+  boxShadow: "var(--dash-card-shadow, 0 1px 2px rgba(15, 23, 42, 0.04))",
 };
 
 export const PRIMARY_BTN: CSSProperties = {
   padding: "13px 16px",
-  borderRadius: 12,
+  borderRadius: "var(--cm-radius-sm, 12px)",
   border: "none",
-  background: "#111827",
+  background: "var(--dash-primary-bg-full, var(--dash-primary-bg, #111827))",
   color: "#fff",
   fontWeight: 900,
   fontSize: 15,
   cursor: "pointer",
   width: "100%",
+  boxShadow: "var(--dash-primary-shadow, 0 1px 2px rgba(15, 23, 42, 0.08))",
 };
 
 export const CLASS_ENTER_BTN: CSSProperties = {
   padding: "10px 18px",
-  borderRadius: 10,
+  borderRadius: "var(--cm-radius-sm, 10px)",
   border: "none",
-  background: "#16a34a",
+  background:
+    "var(--dash-enter-bg-full, var(--dash-enter-bg, #16a34a))",
   color: "#fff",
   fontWeight: 800,
   fontSize: 14,
@@ -34,15 +41,15 @@ export const CLASS_ENTER_BTN: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  boxShadow: "0 1px 2px rgba(22, 163, 74, 0.2)",
+  boxShadow: "var(--dash-enter-shadow, 0 1px 2px rgba(22, 163, 74, 0.2))",
 };
 
 export const SECONDARY_BTN: CSSProperties = {
   padding: "11px 16px",
-  borderRadius: 12,
-  border: "1px solid #e5e7eb",
-  background: "#fff",
-  color: "#374151",
+  borderRadius: "var(--cm-radius-sm, 12px)",
+  border: "1px solid var(--dash-secondary-border, #e5e7eb)",
+  background: "var(--dash-secondary-bg, #fff)",
+  color: "var(--dash-secondary-text, #374151)",
   fontWeight: 800,
   fontSize: 14,
   cursor: "pointer",
@@ -53,8 +60,8 @@ export const CHIP: CSSProperties = {
   fontSize: 11,
   padding: "5px 10px",
   borderRadius: 999,
-  background: "#f3f4f6",
-  color: "#4b5563",
+  background: "var(--dash-chip-bg, #f3f4f6)",
+  color: "var(--dash-chip-text, #4b5563)",
   fontWeight: 800,
   display: "inline-flex",
   alignItems: "center",

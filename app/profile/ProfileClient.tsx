@@ -555,11 +555,15 @@ export default function ProfileClient() {
   }
 
   if (loading) {
-    return <p>読み込み中...</p>;
+    return <p className="cm-home-loading-line">読み込み中...</p>;
   }
 
   return (
-    <form onSubmit={onSubmit} style={{ display: "grid", gap: 16 }}>
+    <form
+      className="cm-profile-form"
+      onSubmit={onSubmit}
+      style={{ display: "grid", gap: 16 }}
+    >
       <SectionTitle
         title={hasExistingProfile ? "プロフィール編集" : "プロフィール登録"}
         helpLabel="プロフィールについて"
@@ -570,6 +574,7 @@ export default function ProfileClient() {
 
       {isDevFeatureEnabled() && (
         <div
+          className="cm-call-banner cm-call-banner--warn cm-profile-dev"
           style={{
             padding: 10,
             border: "1px solid #fcd34d",
@@ -591,6 +596,7 @@ export default function ProfileClient() {
 
       {errorMsg && (
         <div
+          className="cm-home-error cm-profile-error"
           style={{
             padding: 10,
             border: "1px solid #f5c2c7",
@@ -625,6 +631,7 @@ export default function ProfileClient() {
         <div style={{ display: "grid", gap: 6 }}>
           <FormFieldLabel>ニックネーム（必須）</FormFieldLabel>
           <input
+            className="cm-form-input"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="例：たろう"
@@ -641,6 +648,7 @@ export default function ProfileClient() {
             生年月日（必須）
           </FormFieldLabel>
           <input
+            className="cm-form-input"
             type="date"
             value={birthDate}
             onChange={(e) => {
@@ -654,13 +662,17 @@ export default function ProfileClient() {
           />
 
           {age !== null ? (
-            <p style={{ margin: 0, fontWeight: 700, color: "#374151" }}>
+            <p
+              className="cm-profile-age"
+              style={{ margin: 0, fontWeight: 700, color: "#374151" }}
+            >
               年齢：{age}歳
             </p>
           ) : null}
 
           {isMinor && minorsEnabled !== true && (
             <div
+              className="cm-home-error cm-profile-notice cm-profile-notice--danger"
               style={{
                 display: "grid",
                 gap: 8,
@@ -688,6 +700,7 @@ export default function ProfileClient() {
 
           {isMinor && minorsEnabled === true && (
             <div
+              className="cm-call-banner cm-call-banner--warn cm-profile-notice cm-profile-notice--guardian"
               style={{
                 display: "grid",
                 gap: 8,
@@ -720,6 +733,7 @@ export default function ProfileClient() {
         <div style={{ display: "grid", gap: 6 }}>
           <FormFieldLabel>性別（必須）</FormFieldLabel>
           <select
+            className="cm-form-input"
             value={gender}
             onChange={(e) => setGender(e.target.value as Gender)}
             style={{ padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
@@ -759,6 +773,7 @@ export default function ProfileClient() {
         <div style={{ display: "grid", gap: 6 }}>
           <FormFieldLabel>趣味（任意）</FormFieldLabel>
           <textarea
+            className="cm-form-input"
             value={hobbies}
             onChange={(e) => setHobbies(e.target.value)}
             placeholder="例：読書、散歩、ゲーム"
@@ -777,6 +792,7 @@ export default function ProfileClient() {
         <div style={{ display: "grid", gap: 6 }}>
           <FormFieldLabel>ひとこと / 自己紹介（任意）</FormFieldLabel>
           <textarea
+            className="cm-form-input"
             value={bio}
             onChange={(e) => setBio(e.target.value)}
             placeholder="例：はじめまして。よろしくお願いします。"
@@ -800,6 +816,7 @@ export default function ProfileClient() {
             プロフィール写真（任意）
           </FormFieldLabel>
           <input
+            className="cm-form-file"
             type="file"
             accept="image/*"
             disabled={compressing || submitting}
@@ -811,18 +828,25 @@ export default function ProfileClient() {
           />
 
           {compressing ? (
-            <p style={{ margin: 0, color: "#555", fontWeight: 700 }}>
+            <p
+              className="cm-profile-status cm-profile-status--busy"
+              style={{ margin: 0, color: "#555", fontWeight: 700 }}
+            >
               画像を圧縮しています...
             </p>
           ) : null}
 
           {photoInfo ? (
-            <p style={{ margin: 0, color: "#166534", fontWeight: 700 }}>
+            <p
+              className="cm-profile-status cm-profile-status--ok"
+              style={{ margin: 0, color: "#166534", fontWeight: 700 }}
+            >
               {photoInfo}
             </p>
           ) : null}
 
           <img
+            className="cm-profile-avatar"
             src={previewUrl}
             alt="preview"
             onError={(e) => {
@@ -861,13 +885,29 @@ export default function ProfileClient() {
               : LEGAL_HELP
           }
         >
-          <LegalConsentCheckbox checked={legalAgreed} onChange={setLegalAgreed} />
+          <div
+            className="cm-consent-panel"
+            data-cm-consent={legalAgreed ? "agreed" : "needed"}
+          >
+            <LegalConsentCheckbox checked={legalAgreed} onChange={setLegalAgreed} />
+          </div>
         </FormSection>
       ) : null}
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div
+        className="cm-profile-actions"
+        style={{ display: "flex", gap: 10, flexWrap: "wrap" }}
+      >
         <button
           type="submit"
+          className={[
+            "cm-cta-primary",
+            "cm-profile-save",
+            submitting || compressing ? "cm-profile-save--busy" : "",
+            !canSubmit ? "cm-profile-save--disabled" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           disabled={!canSubmit}
           style={{
             padding: "10px 14px",
@@ -890,6 +930,7 @@ export default function ProfileClient() {
 
         <button
           type="button"
+          className="cm-cta-secondary cm-profile-back"
           onClick={() => router.push(withDev(returnTo))}
           style={{
             padding: "10px 14px",
@@ -904,6 +945,7 @@ export default function ProfileClient() {
         </button>
 
         <Link
+          className="cm-cta-secondary cm-profile-settings-link"
           href={withDev("/settings")}
           style={{
             padding: "10px 14px",

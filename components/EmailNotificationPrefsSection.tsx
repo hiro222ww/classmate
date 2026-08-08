@@ -122,12 +122,30 @@ export default function EmailNotificationPrefsSection({
   }
 
   return (
-    <div style={{ display: "grid", gap: compact ? 10 : 12 }}>
+    <div
+      className="cm-settings-notify"
+      data-cm-notify={
+        !canConfigure
+          ? "needs-login"
+          : loading
+            ? "loading"
+            : !configured
+              ? "server-unconfigured"
+              : prefs.emailEnabled
+                ? "enabled"
+                : "disabled"
+      }
+      style={{ display: "grid", gap: compact ? 10 : 12 }}
+    >
       <div>
-        <div style={{ fontWeight: 900, fontSize: compact ? 14 : 16 }}>
+        <div
+          className="cm-section-title"
+          style={{ fontWeight: 900, fontSize: compact ? 14 : 16 }}
+        >
           メール通知
         </div>
         <p
+          className="cm-settings-note"
           style={{
             margin: "6px 0 0",
             fontSize: 13,
@@ -141,26 +159,41 @@ export default function EmailNotificationPrefsSection({
       </div>
 
       {!canConfigure ? (
-        <p style={{ margin: 0, fontSize: 13, color: "#92400e", fontWeight: 700 }}>
+        <p
+          className="cm-call-banner cm-call-banner--warn cm-settings-notify-gate"
+          style={{ margin: 0, fontSize: 13, color: "#92400e", fontWeight: 700 }}
+        >
           Google ログイン後に設定できます。
         </p>
       ) : loading ? (
-        <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>読み込み中…</p>
+        <p
+          className="cm-home-loading-line"
+          style={{ margin: 0, fontSize: 13, color: "#6b7280" }}
+        >
+          読み込み中…
+        </p>
       ) : (
         <>
           {email ? (
-            <p style={{ margin: 0, fontSize: 12, color: "#6b7280" }}>
+            <p
+              className="cm-settings-notify-email"
+              style={{ margin: 0, fontSize: 12, color: "#6b7280" }}
+            >
               送信先: {email}
             </p>
           ) : null}
 
           {!configured ? (
-            <p style={{ margin: 0, fontSize: 12, color: "#b45309" }}>
+            <p
+              className="cm-call-banner cm-call-banner--warn cm-settings-notify-unconfigured"
+              style={{ margin: 0, fontSize: 12, color: "#b45309" }}
+            >
               メール送信のサーバー設定が未完了です。設定は保存できますが、送信開始は準備後になります。
             </p>
           ) : null}
 
           <label
+            className="cm-settings-toggle"
             style={{
               display: "flex",
               alignItems: "center",
@@ -180,8 +213,12 @@ export default function EmailNotificationPrefsSection({
           </label>
 
           {prefs.emailEnabled ? (
-            <div style={{ display: "grid", gap: 8, paddingLeft: 4 }}>
+            <div
+              className="cm-settings-toggle-group"
+              style={{ display: "grid", gap: 8, paddingLeft: 4 }}
+            >
               <label
+                className="cm-settings-toggle"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -202,6 +239,7 @@ export default function EmailNotificationPrefsSection({
                 「今ひま？」呼び出し
               </label>
               <label
+                className="cm-settings-toggle"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -227,12 +265,18 @@ export default function EmailNotificationPrefsSection({
       )}
 
       {message ? (
-        <p style={{ margin: 0, color: "#166534", fontSize: 13, fontWeight: 700 }}>
+        <p
+          className="cm-profile-status cm-profile-status--ok"
+          style={{ margin: 0, color: "#166534", fontSize: 13, fontWeight: 700 }}
+        >
           {message}
         </p>
       ) : null}
       {error ? (
-        <p style={{ margin: 0, color: "#b91c1c", fontSize: 13, fontWeight: 700 }}>
+        <p
+          className="cm-home-error"
+          style={{ margin: 0, color: "#b91c1c", fontSize: 13, fontWeight: 700 }}
+        >
           {error}
         </p>
       ) : null}

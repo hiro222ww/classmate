@@ -23,6 +23,7 @@ export function EntryFailurePanel({
 }: EntryFailurePanelProps) {
   return (
     <div
+      className="cm-entry-notice"
       style={{
         marginTop: 12,
         padding: "14px 16px",

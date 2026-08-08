@@ -475,6 +475,15 @@ export default function CallDemoClient() {
         ) : null}
         {bannerText ? (
           <div
+            className={[
+              "cm-call-banner",
+              showExitConfirm
+                ? "cm-call-banner--warn"
+                : state.uiScene === "connecting" ||
+                    state.uiScene === "reconnecting"
+                  ? "cm-call-banner--warn"
+                  : "cm-call-banner--wait",
+            ].join(" ")}
             style={{
               marginTop: 12,
               padding: "10px 12px",

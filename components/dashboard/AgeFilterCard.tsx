@@ -243,8 +243,10 @@ export function AgeFilterCard({
     !prefsLoaded ||
     hasProfile === false;
 
+  const sectionClass = ["cm-paper-card", className].filter(Boolean).join(" ");
+
   return (
-    <section className={className} style={DASH_CARD}>
+    <section className={sectionClass} style={DASH_CARD}>
       <div
         style={{
           display: "flex",
@@ -254,7 +256,10 @@ export function AgeFilterCard({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <strong style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}>
+          <strong
+            className="cm-section-title"
+            style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}
+          >
             年齢絞り込み
           </strong>
           <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />

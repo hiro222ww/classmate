@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   isoToJstDatetimeLocalInput,
   type MeetingPlanPublic,
@@ -48,10 +48,20 @@ export default function MeetingPlanSection({
   const safeDeviceId = String(deviceId ?? "").trim();
   const safePlan = plan ?? null;
 
+  // Keep initial localValue empty so SSR/client first paint never diverge via Date.now().
+  // Value is filled only when the editor opens (client interaction).
   const [editing, setEditing] = useState(false);
-  const [localValue, setLocalValue] = useState(() => defaultLocalValue(safePlan));
+  const [localValue, setLocalValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // deviceId is often "" on SSR (no window/localStorage) and a real id on the
+  // client first paint. Gate action enablement until after mount so the first
+  // client render matches the server HTML.
+  const [clientReady, setClientReady] = useState(false);
+
+  useEffect(() => {
+    setClientReady(true);
+  }, []);
 
   const summaryText = useMemo(() => {
     if (!safePlan) return "次の集合は未定";
@@ -131,9 +141,27 @@ export default function MeetingPlanSection({
 
   const hasFuturePlan = Boolean(safePlan && !safePlan.is_past);
   const fontSize = compact ? 12 : 13;
+  // Until clientReady, treat actions as unavailable so SSR HTML matches the
+  // first client render even when parent passes a browser-only deviceId.
+  const canAct = clientReady && Boolean(safeDeviceId);
+  const summaryClassName = [
+    "meeting-plan-summary",
+    safePlan?.is_past ? "is-past" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
+      className={[
+        "meeting-plan-section",
+        compact ? "is-compact" : "",
+        editing ? "is-editing" : "",
+        hasFuturePlan ? "has-future-plan" : "",
+        error ? "has-error" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={{
         marginTop: compact ? 0 : 10,
         padding: compact ? "8px 10px" : "10px 12px",
@@ -143,17 +171,24 @@ export default function MeetingPlanSection({
       }}
     >
       <div
+        className={summaryClassName}
         style={{
           fontSize,
           fontWeight: 900,
-          color: plan?.is_past ? "#6b7280" : "#111827",
+          color: safePlan?.is_past ? "#6b7280" : "#111827",
         }}
       >
         {summaryText}
       </div>
 
-      {showActions && safeDeviceId ? (
+      {/*
+        Always keep the same action-row DOM when showActions is on.
+        deviceId readiness and hasFuturePlan only toggle className / disabled /
+        visibility — never add/remove tags between SSR and first client paint.
+      */}
+      {showActions ? (
         <div
+          className="meeting-plan-actions"
           style={{
             display: "flex",
             gap: 8,
@@ -162,72 +197,99 @@ export default function MeetingPlanSection({
             alignItems: "center",
           }}
         >
-          {!editing ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={openEditor}
-                style={actionButtonStyle(busy)}
-              >
-                {hasFuturePlan ? "変更" : "集合時間を設定"}
-              </button>
+          <div
+            className="meeting-plan-view-controls"
+            style={{
+              display: editing ? "none" : "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <button
+              type="button"
+              disabled={busy || !canAct}
+              onClick={openEditor}
+              style={actionButtonStyle(busy || !canAct)}
+            >
+              {hasFuturePlan ? "変更" : "集合時間を設定"}
+            </button>
 
-              {hasFuturePlan ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void cancelPlan()}
-                  style={secondaryButtonStyle(busy)}
-                >
-                  キャンセル
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <input
-                type="datetime-local"
-                value={localValue}
-                disabled={busy}
-                onChange={(e) => setLocalValue(e.target.value)}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}
-              />
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void savePlan()}
-                style={actionButtonStyle(busy)}
-              >
-                {busy ? "保存中…" : "保存"}
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setEditing(false);
-                  setError(null);
-                }}
-                style={secondaryButtonStyle(busy)}
-              >
-                閉じる
-              </button>
-            </>
-          )}
+            <button
+              type="button"
+              disabled={busy || !canAct || !hasFuturePlan}
+              onClick={() => void cancelPlan()}
+              className={
+                hasFuturePlan
+                  ? "meeting-plan-cancel-btn"
+                  : "meeting-plan-cancel-btn is-hidden"
+              }
+              style={{
+                ...secondaryButtonStyle(busy || !canAct || !hasFuturePlan),
+                display: hasFuturePlan ? undefined : "none",
+              }}
+            >
+              キャンセル
+            </button>
+          </div>
+
+          <div
+            className="meeting-plan-edit-controls"
+            style={{
+              display: editing ? "flex" : "none",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <input
+              type="datetime-local"
+              value={localValue}
+              disabled={busy || !canAct}
+              onChange={(e) => setLocalValue(e.target.value)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid #d1d5db",
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy || !canAct}
+              onClick={() => void savePlan()}
+              style={actionButtonStyle(busy || !canAct)}
+            >
+              {busy ? "保存中…" : "保存"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+              }}
+              style={secondaryButtonStyle(busy)}
+            >
+              閉じる
+            </button>
+          </div>
         </div>
       ) : null}
 
-      {error ? (
-        <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626", fontWeight: 800 }}>
-          {error}
-        </div>
-      ) : null}
+      <div
+        className={error ? "meeting-plan-error" : "meeting-plan-error is-empty"}
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: "#dc2626",
+          fontWeight: 800,
+          display: error ? undefined : "none",
+        }}
+      >
+        {error ?? ""}
+      </div>
     </div>
   );
 }

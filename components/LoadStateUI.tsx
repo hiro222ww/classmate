@@ -90,8 +90,9 @@ export function MembersLoadingPanel({
   children?: ReactNode;
 }) {
   return (
-    <div style={{ display: "grid", gap: 10 }}>
+    <div className="cm-room-members-loading" style={{ display: "grid", gap: 10 }}>
       <div
+        className="cm-room-loading-line"
         style={{
           display: "flex",
           alignItems: "center",
@@ -119,6 +120,7 @@ export function LoadErrorPanel({
 }) {
   return (
     <div
+      className="cm-home-error cm-room-load-error"
       style={{
         display: "grid",
         gap: 10,
@@ -134,6 +136,7 @@ export function LoadErrorPanel({
       {onRetry ? (
         <button
           type="button"
+          className="cm-room-ghost-btn"
           onClick={onRetry}
           style={{
             width: "fit-content",
@@ -171,8 +174,8 @@ export const softUpdatingBadgeStyle: CSSProperties = {
   gap: 6,
   padding: "4px 8px",
   borderRadius: 999,
-  background: "#f3f4f6",
-  color: "#6b7280",
+  background: "var(--dash-chip-bg, #f3f4f6)",
+  color: "var(--dash-chip-text, #6b7280)",
   fontSize: 11,
   fontWeight: 800,
 };
