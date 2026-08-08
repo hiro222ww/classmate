@@ -97,7 +97,20 @@ async function readSettingValue(key: string): Promise<unknown> {
   return null;
 }
 
+const BILLING_FLAGS_TTL_MS = 15_000;
+let billingFlagsCache:
+  | { at: number; flags: BillingCategoryFlags }
+  | null = null;
+
 export async function getBillingCategoryFlags(): Promise<BillingCategoryFlags> {
+  const now = Date.now();
+  if (
+    billingFlagsCache &&
+    now - billingFlagsCache.at < BILLING_FLAGS_TTL_MS
+  ) {
+    return billingFlagsCache.flags;
+  }
+
   const [slotRaw, themeRaw, legacyRaw] = await Promise.all([
     readSettingValue("slot_billing_enabled"),
     readSettingValue("theme_billing_enabled"),
@@ -110,18 +123,22 @@ export async function getBillingCategoryFlags(): Promise<BillingCategoryFlags> {
   const hasSlotKey = slotRaw != null;
   const hasThemeKey = themeRaw != null;
 
+  let flags: BillingCategoryFlags;
   if (!hasSlotKey && !hasThemeKey && legacyRaw != null) {
     const legacyOn = parseBillingFlag(legacyRaw, false);
-    return {
+    flags = {
       slot_billing_enabled: legacyOn,
       theme_billing_enabled: legacyOn,
     };
+  } else {
+    flags = {
+      slot_billing_enabled: parseSlotBillingEnabled(slotRaw),
+      theme_billing_enabled: parseThemeBillingEnabled(themeRaw),
+    };
   }
 
-  return {
-    slot_billing_enabled: parseSlotBillingEnabled(slotRaw),
-    theme_billing_enabled: parseThemeBillingEnabled(themeRaw),
-  };
+  billingFlagsCache = { at: now, flags };
+  return flags;
 }
 
 export async function isSlotBillingEnabled(): Promise<boolean> {

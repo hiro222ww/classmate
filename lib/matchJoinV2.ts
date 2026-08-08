@@ -48,6 +48,11 @@ import {
   type ActorLookup,
 } from "@/lib/actorIdentity";
 import { readMatchPrefsForActor } from "@/lib/matchPrefsStorage";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
+import {
+  shouldBypassJoinAgeGates,
+  shouldBypassRecruitmentTimeGates,
+} from "@/lib/opsTestModeShared";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -575,6 +580,7 @@ function checkGenderRestriction(params: {
   topic: TopicGenderRestrictionRow | null;
   profile: ProfileRow;
   isExistingMember?: boolean;
+  ignoreTopicRecruitmentClosed?: boolean;
 }) {
   const isExistingMember = params.isExistingMember === true;
 
@@ -600,7 +606,11 @@ function checkGenderRestriction(params: {
     );
   }
 
-  if (!isExistingMember && params.topic?.accepting_new_users === false) {
+  if (
+    !isExistingMember &&
+    params.topic?.accepting_new_users === false &&
+    !params.ignoreTopicRecruitmentClosed
+  ) {
     return NextResponse.json(
       {
         ok: false,
@@ -638,11 +648,15 @@ async function enforceAdmissionForNewJoin(params: {
   deviceId: string;
   classId?: string;
   sessionId?: string;
+  userId?: string | null;
+  req?: Request;
 }) {
   const blocked = await blockNewJoinIfAdmissionClosed({
     deviceId: params.deviceId,
     classId: params.classId ?? "",
     sessionId: params.sessionId,
+    userId: params.userId,
+    req: params.req,
   });
   if (blocked) return blocked;
 
@@ -731,11 +745,14 @@ export async function matchJoinV2Post(req: Request) {
     const actorResult = await resolveApiActor({ req, deviceId });
     const userId = actorResult.ok ? actorResult.actor.userId : "";
     const actor = { userId: userId || null, deviceId };
+    const opsTest = resolveOpsTestFlags(req);
 
     const admissionBlocked = await enforceAdmissionForNewJoin({
       deviceId,
       classId: forcedClassId,
       sessionId: forcedSessionId || undefined,
+      userId: userId || null,
+      req,
     });
     if (admissionBlocked) return admissionBlocked;
 
@@ -794,28 +811,37 @@ export async function matchJoinV2Post(req: Request) {
     const selfAge = calcAgeFromBirthDate(selfProfile.birth_date);
 
     const ageMode: AgeMode = await getEffectiveAgeMode();
-    const selfAgeCheck = checkSelfAgeForJoin(selfAge, ageMode);
-    if (!selfAgeCheck.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: selfAgeCheck.error,
-          message:
-            selfAgeCheck.message ||
-            resolveMatchJoinUserMessage(selfAgeCheck.error),
-        },
-        { status: 403 }
+    if (!shouldBypassJoinAgeGates(opsTest)) {
+      const selfAgeCheck = checkSelfAgeForJoin(selfAge, ageMode);
+      if (!selfAgeCheck.ok) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: selfAgeCheck.error,
+            message:
+              selfAgeCheck.message ||
+              resolveMatchJoinUserMessage(selfAgeCheck.error),
+          },
+          { status: 403 }
+        );
+      }
+
+      // Peer age-range clamping stays on for normal users and for admins
+      // without ignoreAge. ignoreAge only relaxes the admin's own join gates;
+      // other users' requests never see these flags.
+      const ageRanged = applyAgeModeToMatchRange(
+        ageMode,
+        requestedMinAge,
+        requestedMaxAge,
+        selfAge
+      );
+      requestedMinAge = ageRanged.minAge;
+      requestedMaxAge = ageRanged.maxAge;
+    } else {
+      console.log(
+        `[match-join] bypass reason=ops_test_ignore_age step=self_age_and_match_range device=${tailMatchId(deviceId)}`
       );
     }
-
-    const ageRanged = applyAgeModeToMatchRange(
-      ageMode,
-      requestedMinAge,
-      requestedMaxAge,
-      selfAge
-    );
-    requestedMinAge = ageRanged.minAge;
-    requestedMaxAge = ageRanged.maxAge;
 
     logMatchJoinPrefs({
       requestId,
@@ -913,6 +939,7 @@ export async function matchJoinV2Post(req: Request) {
         topic: topicGenderRes.row,
         profile: selfProfile,
         isExistingMember: membershipCheck.isMember,
+        ignoreTopicRecruitmentClosed: shouldBypassRecruitmentTimeGates(opsTest),
       });
       if (genderBlocked) return genderBlocked;
 
@@ -921,13 +948,15 @@ export async function matchJoinV2Post(req: Request) {
         classIsSensitive: existingClass.is_sensitive,
         topicRow: topicGenderRes.row,
       });
-      const topicAgeBlocked = checkTopicAgeAccess({
-        mode: ageMode,
-        selfAge,
-        isSensitive: topicAgeMeta.isSensitive,
-        topicMinAge: topicAgeMeta.topicMinAge,
-      });
-      if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
+      if (!shouldBypassJoinAgeGates(opsTest)) {
+        const topicAgeBlocked = checkTopicAgeAccess({
+          mode: ageMode,
+          selfAge,
+          isSensitive: topicAgeMeta.isSensitive,
+          topicMinAge: topicAgeMeta.topicMinAge,
+        });
+        if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
+      }
 
       if (openJoinedClass && !membershipCheck.isMember) {
         console.log(
@@ -941,6 +970,7 @@ export async function matchJoinV2Post(req: Request) {
       }
 
       if (
+        !shouldBypassRecruitmentTimeGates(opsTest) &&
         !membershipCheck.isMember &&
         isDeadlinePassed(existingClass.match_deadline_at ?? null)
       ) {
@@ -962,24 +992,28 @@ export async function matchJoinV2Post(req: Request) {
         topic: topicGenderRes.row,
         profile: selfProfile,
         isExistingMember: topicMemberRes.isMember,
+        ignoreTopicRecruitmentClosed: shouldBypassRecruitmentTimeGates(opsTest),
       });
       if (genderBlocked) return genderBlocked;
 
       const topicAgeMeta = resolveTopicAgeMeta({
         topicRow: topicGenderRes.row,
       });
-      const topicAgeBlocked = checkTopicAgeAccess({
-        mode: ageMode,
-        selfAge,
-        isSensitive: topicAgeMeta.isSensitive,
-        topicMinAge: topicAgeMeta.topicMinAge,
-      });
-      if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
+      if (!shouldBypassJoinAgeGates(opsTest)) {
+        const topicAgeBlocked = checkTopicAgeAccess({
+          mode: ageMode,
+          selfAge,
+          isSensitive: topicAgeMeta.isSensitive,
+          topicMinAge: topicAgeMeta.topicMinAge,
+        });
+        if (!topicAgeBlocked.ok) return topicAgeBlockedResponse(topicAgeBlocked);
+      }
 
       const topicRes = await getTopicDeadline({ worldKey, topicKey });
       if (!topicRes.ok) return topicRes.response;
 
       if (
+        !shouldBypassRecruitmentTimeGates(opsTest) &&
         !topicMemberRes.isMember &&
         topicRes.row?.match_deadline_at &&
         isDeadlinePassed(topicRes.row.match_deadline_at)
@@ -1115,6 +1149,8 @@ export async function matchJoinV2Post(req: Request) {
       );
     }
 
+    // Always reject active/closed/expired joins for new members.
+    // ignoreRecruitment only bypasses time gates (deadline/TTL/accepting_new_users).
     if (
       !openJoinedClass &&
       !canRejoinTargetClass &&
@@ -1127,6 +1163,7 @@ export async function matchJoinV2Post(req: Request) {
         classId: row.class_id,
         sessionId: row.session_id,
         sessionStatus: resolvedSessionStatus,
+        opsIgnoreRecruitment: opsTest.ignoreRecruitment,
       });
 
       return NextResponse.json(
@@ -1142,6 +1179,7 @@ export async function matchJoinV2Post(req: Request) {
     }
 
     if (
+      !shouldBypassRecruitmentTimeGates(opsTest) &&
       !openJoinedClass &&
       !canRejoinTargetClass &&
       isRecruitingSessionStatus(resolvedSessionStatus) &&

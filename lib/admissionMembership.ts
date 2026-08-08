@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAdmissionStatus } from "@/lib/admissionWindow";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   hasClassMembershipForActor,
@@ -96,15 +97,29 @@ export async function loadRejoinEligibilityForActor(
   });
 }
 
-/** 既存メンバー再入室は bypass。未所属の新規参加のみ受付時間を確認する。 */
+/**
+ * 既存メンバー再入室は bypass。未所属の新規参加のみ受付時間を確認する。
+ * 運営テストモード（管理者本人 + ignoreAdmission）のみ受付時間を例外許可する。
+ * 受付設定自体は変更しない。年齢・定員・課金などはここでは見ない。
+ */
 export async function blockNewJoinIfAdmissionClosed(params: {
   deviceId: string;
   classId: string;
   sessionId?: string;
+  userId?: string | null;
+  req?: Request;
 }): Promise<NextResponse | null> {
   const eligibility = await loadRejoinEligibility(params);
 
   if (canRejoinFromEligibility(eligibility)) {
+    return null;
+  }
+
+  if (params.req && resolveOpsTestFlags(params.req).ignoreAdmission) {
+    console.log(
+      `[admission] bypass reason=ops_test_ignore_admission device=${String(params.deviceId).slice(-4)} ` +
+        `class=${String(params.classId ?? "").slice(-6)}`
+    );
     return null;
   }
 

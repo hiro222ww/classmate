@@ -65,6 +65,16 @@ export function blocksNewJoinSessionStatus(status: unknown) {
   );
 }
 
+/** Ended / destroyed sessions must never be revived by ops recruitment bypass. */
+export function isTerminalSessionStatus(status: unknown) {
+  const normalized = normalizeSessionStatus(status);
+  return (
+    normalized === "closed" ||
+    normalized === "expired" ||
+    normalized === "ended"
+  );
+}
+
 export function isSessionOpenForNewJoin(status: unknown) {
   const normalized = normalizeSessionStatus(status);
   if (!normalized) return true;

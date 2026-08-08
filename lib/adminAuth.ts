@@ -50,15 +50,26 @@ export function verifyAdminToken(token: string | undefined | null) {
   }
 }
 
-export function requireAdmin(req: Request) {
+export function getAdminTokenFromRequest(req: Request): string | undefined {
   const cookieHeader = req.headers.get("cookie") || "";
-  const token = cookieHeader
+  return cookieHeader
     .split(";")
     .map((v) => v.trim())
     .find((v) => v.startsWith(`${ADMIN_COOKIE_NAME}=`))
     ?.split("=")[1];
+}
 
-  if (!verifyAdminToken(token)) {
+/** Server-side admin session check (HMAC cookie from /admin login). */
+export function isAdminRequest(req: Request): boolean {
+  try {
+    return verifyAdminToken(getAdminTokenFromRequest(req));
+  } catch {
+    return false;
+  }
+}
+
+export function requireAdmin(req: Request) {
+  if (!isAdminRequest(req)) {
     return NextResponse.json(
       { ok: false, error: "Unauthorized" },
       { status: 401 }

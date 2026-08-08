@@ -542,9 +542,17 @@ function mergeRoomMemberPresenceSource(
   member: MemberRow,
   presence?: PresenceRow
 ): ParticipationSource {
+  const memberScreen = String(member.screen ?? "").trim() || null;
+  const presenceScreen = String(presence?.screen ?? "").trim() || null;
+  // Prefer live presence when session/status left a blank/offline screen.
+  const screen =
+    !memberScreen || memberScreen === "offline"
+      ? presenceScreen ?? memberScreen
+      : memberScreen;
+
   return {
     is_in_call: member.is_in_call === true ? true : presence?.is_in_call,
-    screen: member.screen ?? presence?.screen ?? null,
+    screen,
     session_id: presence?.session_id ?? member.presence_session_id ?? null,
     presence_session_id:
       member.presence_session_id ??
@@ -1891,6 +1899,13 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
     try {
       if (invite) {
+        const inviteDoneKey = `${classId}:${sessionId}:${deviceId}:${openJoinedClass}`;
+        if (inviteJoinDoneKeyRef.current === inviteDoneKey) {
+          roomLog(
+            `[session-members] self-rejoin skip=invite_already_done session=${sessionId.slice(-6)}`
+          );
+          return true;
+        }
         const inviteResult = await runInviteJoinWithAuth({
           classId,
           sessionId,
@@ -1904,7 +1919,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         }
         joinedSessionKeyRef.current = `${sessionId}:${classId}:${deviceId}:${name}`;
         hasClassMembershipHintRef.current = true;
-        inviteJoinDoneKeyRef.current = `${classId}:${sessionId}:${deviceId}:${openJoinedClass}`;
+        inviteJoinDoneKeyRef.current = inviteDoneKey;
         return true;
       }
 
@@ -2444,11 +2459,11 @@ if (!res.ok || !json?.ok) {
 
     const schedulePresence = () => {
       if (timer) window.clearInterval(timer);
+      // Keep a slower heartbeat while backgrounded so peers do not flap offline.
       const ms =
         typeof document !== "undefined" && document.hidden ? 30_000 : 10_000;
       timer = window.setInterval(() => {
         if (window.location.pathname !== "/room") return;
-        if (typeof document !== "undefined" && document.hidden) return;
         void sendPresence();
       }, ms);
     };
@@ -3643,9 +3658,17 @@ const name = rawName === "You" ? "参加者" : rawName;
   retryJoinRef.current = join;
 
   void (async () => {
-    await probeRoomFastReady();
-    if (cancelled) return;
+    const bootStarted = Date.now();
+    // Invite joins almost always miss the probe; skip the extra RTT.
+    if (!invite) {
+      await probeRoomFastReady();
+      if (cancelled) return;
+      roomLog(`[room-perf] probe_done ms=${Date.now() - bootStarted}`);
+    } else {
+      roomLog("[room-perf] probe_skip=invite");
+    }
     await join();
+    roomLog(`[room-perf] join_boot_total ms=${Date.now() - bootStarted}`);
   })();
 
   return () => {

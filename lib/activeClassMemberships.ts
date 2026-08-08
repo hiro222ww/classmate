@@ -130,34 +130,35 @@ export async function fetchActiveClassMembershipsForActor(
   };
 
   if (userId && isValidUuid(userId)) {
-    const { data, error } = await queryWithTransientRetry(() =>
-      sb
-        .from("class_memberships")
-        .select("class_id, joined_at")
-        .eq("user_id", userId)
-    );
-
-    if (error) {
-      logMembershipQueryFailed(error);
-      return { ok: false, error: error.message };
-    }
-    appendRows(data as MembershipLite[] | null);
-
-    const { data: linkedDevices, error: linkedError } =
-      await queryWithTransientRetry(() =>
+    // Parallelize independent lookups on the join hot path.
+    const [byUserRes, linkedDevicesRes] = await Promise.all([
+      queryWithTransientRetry(() =>
+        sb
+          .from("class_memberships")
+          .select("class_id, joined_at")
+          .eq("user_id", userId)
+      ),
+      queryWithTransientRetry(() =>
         sb.from("user_devices").select("device_id").eq("user_id", userId)
-      );
+      ),
+    ]);
 
-    if (linkedError) {
-      logMembershipQueryFailed(linkedError);
-      return { ok: false, error: linkedError.message };
+    if (byUserRes.error) {
+      logMembershipQueryFailed(byUserRes.error);
+      return { ok: false, error: byUserRes.error.message };
     }
+    if (linkedDevicesRes.error) {
+      logMembershipQueryFailed(linkedDevicesRes.error);
+      return { ok: false, error: linkedDevicesRes.error.message };
+    }
+
+    appendRows(byUserRes.data as MembershipLite[] | null);
 
     const linkedDeviceIds = Array.from(
       new Set(
         [
           normalizedDeviceId,
-          ...(linkedDevices ?? []).map((row) =>
+          ...(linkedDevicesRes.data ?? []).map((row) =>
             String((row as { device_id?: unknown }).device_id ?? "").trim()
           ),
         ].filter(Boolean)

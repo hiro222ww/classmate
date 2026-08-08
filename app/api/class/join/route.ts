@@ -4,6 +4,8 @@ import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
 import { getClassSlotsForActor } from "@/lib/actorIdentity";
 import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
 import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
+import { shouldBypassJoinAgeGates } from "@/lib/opsTestModeShared";
 
 /** @deprecated Legacy endpoint. Prefer `/api/class/match-join-v2`. Not used by the current app UI. */
 export const dynamic = "force-dynamic";
@@ -44,8 +46,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const ageGuard = await enforceDeviceJoinAge(deviceId);
-    if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
+    if (!shouldBypassJoinAgeGates(resolveOpsTestFlags(req))) {
+      const ageGuard = await enforceDeviceJoinAge(deviceId);
+      if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
+    }
 
     const { data: cls, error: clsErr } = await supabase
       .from("classes")
@@ -197,6 +201,7 @@ export async function POST(req: Request) {
     const admissionBlocked = await blockNewJoinIfAdmissionClosed({
       deviceId,
       classId,
+      req,
     });
     if (admissionBlocked) return admissionBlocked;
 

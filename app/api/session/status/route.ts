@@ -61,7 +61,7 @@ type PresenceRow = {
 };
 
 type PresenceInfo = {
-  screen: string;
+  screen: string | null;
   session_id: string | null;
   last_seen_at: string | null;
   is_in_call: boolean;
@@ -228,7 +228,9 @@ async function getPresenceMap(
       fresh && screen === "call" && rowSessionId === sessionId;
 
     map.set(did, {
-      screen: fresh ? screen : "offline",
+      // Stale presence must not rewrite screen to the string "offline":
+      // that truthy value masks fresher presenceMap screens in client merges.
+      screen: fresh ? screen : null,
       session_id: fresh ? rowSessionId : null,
       last_seen_at: lastSeenAt,
       is_in_call: isInCall,

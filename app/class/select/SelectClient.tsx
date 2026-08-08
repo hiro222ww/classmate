@@ -50,6 +50,7 @@ import {
 import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
+import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 
 type World = {
@@ -206,6 +207,13 @@ export default function SelectClient() {
   };
 
   const [deviceId, setDeviceId] = useState("");
+  const { adminAuthenticated, opsTestFlags } = useDashboardAccountStatus(deviceId);
+  const opsTestActive =
+    adminAuthenticated &&
+    (opsTestFlags.ignoreAdmission ||
+      opsTestFlags.ignoreAge ||
+      opsTestFlags.allowMinorProfile ||
+      opsTestFlags.ignoreRecruitment);
   const {
     enabled: notificationsEnabled,
     toggle: toggleNotifications,
@@ -974,11 +982,20 @@ export default function SelectClient() {
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
     const admissionClosed = !joinWindowOpen;
+    const adminTestJoin =
+      admissionClosed && adminAuthenticated && opsTestFlags.ignoreAdmission;
     const prefsNotReady = !prefsLoaded;
     const joinDisabled =
-      busy || !deviceId || profileMissing || admissionClosed || prefsNotReady;
+      busy ||
+      !deviceId ||
+      profileMissing ||
+      (admissionClosed && !opsTestFlags.ignoreAdmission) ||
+      prefsNotReady;
 
-    const enterReady = !locked && !profileMissing && !admissionClosed;
+    const enterReady =
+      !locked &&
+      !profileMissing &&
+      (!admissionClosed || opsTestFlags.ignoreAdmission);
 
     return (
       <div
@@ -1040,13 +1057,13 @@ export default function SelectClient() {
             borderRadius: 12,
             border: "1px solid #ccc",
             background:
-              profileMissing || admissionClosed
+              profileMissing || (admissionClosed && !opsTestFlags.ignoreAdmission)
                 ? "#e5e5e5"
                 : locked
                   ? "#f3f3f3"
                   : "#111",
             color:
-              profileMissing || admissionClosed
+              profileMissing || (admissionClosed && !opsTestFlags.ignoreAdmission)
                 ? "#666"
                 : locked
                   ? "#111"
@@ -1057,11 +1074,13 @@ export default function SelectClient() {
         >
           {profileMissing
             ? "プロフィール登録が必要"
-            : admissionClosed
-              ? "入校受付時間外"
-              : locked
-                ? `参加（要：${tierName(b.monthly_price)}以上）`
-                : "入る"}
+            : adminTestJoin
+              ? "管理者としてテスト入室"
+              : admissionClosed
+                ? "入校受付時間外"
+                : locked
+                  ? `参加（要：${tierName(b.monthly_price)}以上）`
+                  : "入る"}
         </button>
       </div>
     );
@@ -1254,6 +1273,8 @@ export default function SelectClient() {
           }
           joinWindowOpen={joinWindowOpen}
           joinWindowText={joinWindowText}
+          adminMode={adminAuthenticated}
+          opsTestActive={opsTestActive}
           loading={loading}
           onReload={() => {
             void reloadCatalog();
@@ -1264,12 +1285,33 @@ export default function SelectClient() {
           }}
         />
 
+        {!joinWindowOpen && opsTestFlags.ignoreAdmission ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#78716c",
+            }}
+          >
+            現在は入校受付時間外です。運営テストモードでテスト入室できます。
+          </p>
+        ) : null}
+
         <div className="home-dash-bottom">
           <JoinNewCard
             className="home-dash-join"
             quickJoinBusy={busy}
             quickJoinDisabled={
-              !deviceId || hasProfile === false || !joinWindowOpen || !prefsLoaded
+              !deviceId ||
+              hasProfile === false ||
+              (!joinWindowOpen && !opsTestFlags.ignoreAdmission) ||
+              !prefsLoaded
+            }
+            quickJoinLabel={
+              !joinWindowOpen && opsTestFlags.ignoreAdmission
+                ? "管理者としてテスト入室"
+                : "今すぐ入る"
             }
             pickPlaceLabel={showNarrow ? "閉じる" : "入る場所を選ぶ"}
             onQuickJoin={() => void enterQuickFreeTheme()}

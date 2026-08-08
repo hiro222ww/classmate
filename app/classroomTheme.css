@@ -174,6 +174,11 @@
   position: relative;
   isolation: isolate;
   min-height: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  /* Atmosphere decorations stay clipped; content is constrained via min-width/wrap. */
   overflow: hidden;
   color: var(--cm-text);
   background:
@@ -232,6 +237,9 @@
 .cm-classroom-scope > * {
   position: relative;
   z-index: 1;
+  /* CSS grid/flex default min-width:auto was expanding past the iPhone viewport. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cm-classroom-scope a:focus-visible,
@@ -243,6 +251,15 @@
 /* ========== Header: classroom nameplate ========== */
 .cm-classroom-scope header {
   position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 14px 16px 16px;
   margin: 0 0 4px;
   border-radius: 22px;
@@ -250,6 +267,11 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 247, 242, 0.55));
   border: 1px solid rgba(232, 216, 196, 0.95);
   box-shadow: var(--cm-shadow-soft);
+}
+
+.cm-classroom-scope header > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cm-classroom-scope header::before {
@@ -274,6 +296,7 @@
 
 .cm-classroom-scope header > div:first-child {
   padding-left: 46px;
+  flex: 1 1 auto;
 }
 
 .cm-classroom-scope header h1 {
@@ -323,9 +346,12 @@
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.75) inset,
     0 0 0 1px rgba(232, 216, 196, 0.65),
-    3px 5px 0 rgba(238, 223, 201, 0.55),
+    0 5px 0 rgba(238, 223, 201, 0.55),
     var(--cm-shadow) !important;
   overflow: visible;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* Small heading tab peeking above the card */
@@ -572,6 +598,11 @@
   }
   .cm-classroom-scope header {
     padding: 12px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .cm-classroom-scope header > div:first-child {
+    flex: 0 1 auto;
   }
 }
 
@@ -619,9 +650,12 @@
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.75) inset,
     0 0 0 1px rgba(232, 216, 196, 0.55),
-    3px 5px 0 rgba(238, 223, 201, 0.5),
+    0 5px 0 rgba(238, 223, 201, 0.5),
     var(--cm-shadow-soft) !important;
   overflow: visible;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   color: var(--cm-text) !important;
 }
 

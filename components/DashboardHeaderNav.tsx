@@ -37,8 +37,13 @@ export function DashboardHeaderNav({
   iosInstallGuideOpen = false,
   onDismissIosInstallGuide,
 }: Props) {
-  const { ready, loggedIn, accountLabel, adminAuthenticated } =
+  const { ready, loggedIn, accountLabel, adminAuthenticated, opsTestFlags } =
     useDashboardAccountStatus(deviceId);
+  const opsTestActive =
+    opsTestFlags.ignoreAdmission ||
+    opsTestFlags.ignoreAge ||
+    opsTestFlags.allowMinorProfile ||
+    opsTestFlags.ignoreRecruitment;
   const { status, slow, error } = useAuth();
   const hideWebPush = isAppShellContext();
 
@@ -54,6 +59,8 @@ export function DashboardHeaderNav({
         alignItems: "center",
         flexWrap: "wrap",
         justifyContent: "flex-end",
+        minWidth: 0,
+        maxWidth: "100%",
       }}
     >
       {onToggleNotifications && !hideWebPush ? (
@@ -164,21 +171,56 @@ export function DashboardHeaderNav({
           </Link>
 
           {adminAuthenticated ? (
-            <Link
-              href={withDev("/admin")}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 12,
-                border: "1px solid #c4b5fd",
-                background: "#f5f3ff",
-                fontWeight: 900,
-                fontSize: 13,
-                color: "#5b21b6",
-                textDecoration: "none",
-              }}
-            >
-              管理
-            </Link>
+            <>
+              {opsTestActive ? (
+                <span
+                  title="運営テストモードが有効です（管理者本人のみ）"
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid #f59e0b",
+                    background: "#fffbeb",
+                    fontWeight: 800,
+                    fontSize: 11,
+                    color: "#92400e",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  運営テスト中
+                </span>
+              ) : (
+                <span
+                  title="管理者としてログイン中です"
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid #d6d3d1",
+                    background: "rgba(255,253,250,0.9)",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    color: "#78716c",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  管理者
+                </span>
+              )}
+              <Link
+                href={withDev("/admin")}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 12,
+                  border: "1px solid #c4b5fd",
+                  background: "#f5f3ff",
+                  fontWeight: 900,
+                  fontSize: 13,
+                  color: "#5b21b6",
+                  textDecoration: "none",
+                }}
+              >
+                管理
+              </Link>
+            </>
           ) : null}
 
           {isDevFeatureEnabled() ? (
@@ -213,12 +255,17 @@ export function DashboardPageHeader({
     <header
       style={{
         display: "flex",
+        flexWrap: "wrap",
         justifyContent: "space-between",
         alignItems: "center",
         gap: 12,
+        width: "100%",
+        maxWidth: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
       }}
     >
-      <div className="cm-emblem-heading">
+      <div className="cm-emblem-heading" style={{ minWidth: 0, maxWidth: "100%" }}>
         <ClassmateEmblem size="sm" decorative />
         <h1
           style={{

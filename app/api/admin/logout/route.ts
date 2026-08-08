@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ADMIN_COOKIE_NAME } from "@/lib/adminAuth";
+import { clearOpsTestCookie } from "@/lib/opsTestMode";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,7 @@ export async function POST() {
     path: "/",
     maxAge: 0,
   });
+  clearOpsTestCookie(res);
 
   return res;
 }

@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getBillableMembershipSnapshot, getClassSlotsForDevice } from "@/lib/classMembershipSlots";
+import { evaluateClassSlotsLimit } from "@/lib/classMembershipSlots";
 import { formatPostgresError, postgresErrorBody } from "@/lib/postgresError";
 import {
   blocksNewJoinSessionStatus,
   isRecruitingSessionStatus,
   isSessionEligibleForNormalJoin,
+  isTerminalSessionStatus,
   parseOpenJoinedClassFlag,
 } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 import { expireStaleRecruitmentSessions } from "@/lib/expireRecruitmentSessions";
 import {
-  ADMISSION_CLOSED_MESSAGE,
+  blockNewJoinIfAdmissionClosed,
   canRejoinFromEligibility,
   loadRejoinEligibility,
 } from "@/lib/admissionMembership";
-import { getAdmissionStatus } from "@/lib/admissionWindow";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
@@ -27,6 +27,11 @@ import {
   resolveApiActor,
   hasClassMembershipForActor,
 } from "@/lib/actorIdentity";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
+import {
+  shouldBypassJoinAgeGates,
+  shouldBypassRecruitmentTimeGates,
+} from "@/lib/opsTestModeShared";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -242,8 +247,15 @@ export async function POST(req: Request) {
       openJoinedClass,
     });
 
-    const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
-    if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
+    const opsTest = resolveOpsTestFlags(req);
+    if (!shouldBypassJoinAgeGates(opsTest)) {
+      const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
+      if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
+    } else {
+      console.log(
+        `[session/join] bypass reason=ops_test_ignore_age device=${deviceId.slice(-4)}`
+      );
+    }
 
     const ensured = await ensureJoinableSession(sessionId);
 
@@ -379,8 +391,14 @@ export async function POST(req: Request) {
     }
 
     if (!canRejoin && !invite) {
-      const admission = await getAdmissionStatus();
-      if (!admission.open) {
+      const admissionBlocked = await blockNewJoinIfAdmissionClosed({
+        deviceId,
+        classId: session.classId,
+        sessionId,
+        userId: userId || null,
+        req,
+      });
+      if (admissionBlocked) {
         console.log(
           `[admission] blocked reason=closed path=session_join session=${sessionId.slice(-6)} ` +
             `class=${String(session.classId ?? "").slice(-6)} device=${deviceId.slice(-4)}`
@@ -390,16 +408,7 @@ export async function POST(req: Request) {
           classId: session.classId,
           deviceId,
         });
-
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "admission_closed",
-            admission,
-            message: ADMISSION_CLOSED_MESSAGE,
-          },
-          { status: 403 }
-        );
+        return admissionBlocked;
       }
     }
 
@@ -411,6 +420,8 @@ export async function POST(req: Request) {
     });
     repairMs += Date.now() - repairStartMs;
 
+    // Terminal / non-recruiting session states stay enforced even with
+    // ignoreRecruitment (ops only bypasses deadline/TTL time gates).
     if (blocksNewJoinSessionStatus(session.status) && !canRejoin) {
       const { data: existingSessionMemberRow, error: existingSessionMemberErr } =
         await supabaseAdmin
@@ -432,6 +443,7 @@ export async function POST(req: Request) {
       }
 
       if (!existingSessionMemberRow) {
+        const terminal = isTerminalSessionStatus(session.status);
         console.log("[session/join] recruitment_closed", {
           sessionId,
           sessionStatus: session.status,
@@ -439,15 +451,19 @@ export async function POST(req: Request) {
           canRejoin,
           deviceId,
           requestedClassId,
+          terminal,
+          opsIgnoreRecruitment: opsTest.ignoreRecruitment,
         });
 
         return NextResponse.json(
           {
             ok: false,
-            error: "recruitment_closed",
+            error: terminal ? "session_closed" : "recruitment_closed",
             sessionStatus: session.status,
             sessionId,
-            message: "このセッションは現在募集していません。",
+            message: terminal
+              ? "このセッションは終了しています。"
+              : "このセッションは現在募集していません。",
           },
           { status: 403 }
         );
@@ -455,6 +471,7 @@ export async function POST(req: Request) {
     }
 
     if (
+      !shouldBypassRecruitmentTimeGates(opsTest) &&
       !canRejoin &&
       isRecruitingSessionStatus(session.status) &&
       !isSessionEligibleForNormalJoin({
@@ -594,35 +611,27 @@ export async function POST(req: Request) {
     }
 
     if (!alreadyInClass) {
-      const slotsRes = await getClassSlotsForDevice(
-        supabaseAdmin,
-        deviceId,
-        userId || null
-      );
-      if (!slotsRes.ok) {
+      const slotCheckStarted = Date.now();
+      const slotEval = await evaluateClassSlotsLimit(supabaseAdmin, deviceId, {
+        joiningClassId: classId,
+        userId: userId || null,
+      });
+      if (!slotEval.ok) {
         return NextResponse.json(
-          { ok: false, error: "entitlement_check_failed", detail: slotsRes.error },
+          { ok: false, error: "entitlement_check_failed", detail: slotEval.error },
           { status: 500 }
         );
       }
 
-      const classSlots = slotsRes.classSlots;
-
-      const billableRes = await getBillableMembershipSnapshot(
-        supabaseAdmin,
-        deviceId,
-        userId || null
+      const classSlots = slotEval.context.slotLimit;
+      console.log(
+        `[session/join] slot_check ms=${Date.now() - slotCheckStarted} ` +
+          `count=${slotEval.context.slotCount} limit=${classSlots} class=${tailJoinId(classId)}`
       );
-      if (!billableRes.ok) {
-        return NextResponse.json(
-          { ok: false, error: "membership_count_failed", detail: billableRes.error },
-          { status: 500 }
-        );
-      }
 
-      if (billableRes.snapshot.billableCount >= classSlots) {
+      if (!slotEval.allowed) {
         console.log(
-          `[match-join] reject class_slot_limit active=${billableRes.snapshot.billableCount} ` +
+          `[match-join] reject class_slot_limit active=${slotEval.context.slotCount} ` +
             `limit=${classSlots} class=${tailJoinId(classId)}`
         );
         return NextResponse.json(
@@ -630,9 +639,9 @@ export async function POST(req: Request) {
             ok: false,
             error: "class_slots_limit",
             message: "参加できるクラス数の上限に達しています。",
-            currentCount: billableRes.snapshot.billableCount,
-            totalMembershipCount: billableRes.snapshot.totalCount,
-            legacyMembershipCount: billableRes.snapshot.legacyCount,
+            currentCount: slotEval.context.slotCount,
+            totalMembershipCount: slotEval.context.snapshot.totalCount,
+            legacyMembershipCount: slotEval.context.snapshot.legacyCount,
             classSlots,
           },
           { status: 403 }

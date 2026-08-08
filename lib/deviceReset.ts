@@ -1,5 +1,6 @@
 import { DEVICE_ID_KEY, createDeviceUuid } from "@/lib/device";
 import { ADMIN_COOKIE_NAME } from "@/lib/adminAuth";
+import { OPS_TEST_COOKIE_NAME } from "@/lib/opsTestModeShared";
 
 const LOCAL_PREFIX = "classmate_";
 const SESSION_PREFIX = "classmate_";
@@ -66,6 +67,7 @@ export function resetClassmateDeviceState(): DeviceResetResult {
   }
 
   clearClassmateCookie(ADMIN_COOKIE_NAME);
+  clearClassmateCookie(OPS_TEST_COOKIE_NAME);
 
   const id = createDeviceUuid();
 

@@ -1,17 +1,18 @@
 import { randomUUID } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getBillableMembershipSnapshot } from "@/lib/classMembershipSlots";
+import { evaluateClassSlotsLimit } from "@/lib/classMembershipSlots";
 import { ensureClassSessionMembership } from "@/lib/ensureClassSessionMembership";
 import { resolveInviteJoinSession } from "@/lib/inviteJoinSession";
 import { isDeadlinePassed } from "@/lib/recruitment";
 import { getRecruitmentSessionTtlMinutes } from "@/lib/recruitmentSettings";
 import { enforceDeviceJoinAge } from "@/lib/joinAgeGuard";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
+import { shouldBypassJoinAgeGates } from "@/lib/opsTestModeShared";
 import {
   hasClassMembershipForActor,
   profileExistsForActor,
   resolveInviteApiActor,
-  getClassSlotsForActor,
 } from "@/lib/actorIdentity";
 import {
   assertDeviceBootstrapAllowed,
@@ -375,31 +376,48 @@ export async function executeJoinByInvite(
   });
 
   if (!alreadyMember) {
-    const ageGuard = await enforceDeviceJoinAge(deviceId, actor.userId);
-    logInviteJoinServer("step", {
-      requestId,
-      classId,
-      deviceId,
+    const opsTest = resolveOpsTestFlags(input.req);
+    if (!shouldBypassJoinAgeGates(opsTest)) {
+      const ageGuard = await enforceDeviceJoinAge(deviceId, actor.userId);
+      logInviteJoinServer("step", {
+        requestId,
+        classId,
+        deviceId,
+        userId: actor.userId,
+        ageGuardOk: ageGuard.ok,
+        step: "age_guard",
+      });
+
+      if (!ageGuard.ok) {
+        return {
+          httpStatus: ageGuard.error === "profile_age_required" ? 400 : 403,
+          result: failure(requestId, {
+            code: "age_restricted",
+            message: ageGuard.message || joinByInviteUserMessage("age_restricted"),
+            classId,
+            sessionId: requestedSessionId,
+            detail: ageGuard.error,
+          }),
+        };
+      }
+    } else {
+      logInviteJoinServer("step", {
+        requestId,
+        classId,
+        deviceId,
+        userId: actor.userId,
+        ageGuardOk: true,
+        step: "age_guard",
+        detail: "ops_test_ignore_age",
+      });
+    }
+
+    const slotCheckStarted = Date.now();
+    const slotEval = await evaluateClassSlotsLimit(sb, deviceId, {
+      joiningClassId: classId,
       userId: actor.userId,
-      ageGuardOk: ageGuard.ok,
-      step: "age_guard",
     });
-
-    if (!ageGuard.ok) {
-      return {
-        httpStatus: ageGuard.error === "profile_age_required" ? 400 : 403,
-        result: failure(requestId, {
-          code: "age_restricted",
-          message: ageGuard.message || joinByInviteUserMessage("age_restricted"),
-          classId,
-          sessionId: requestedSessionId,
-          detail: ageGuard.error,
-        }),
-      };
-    }
-
-    const slotsRes = await getClassSlotsForActor(sb, actor);
-    if (!slotsRes.ok) {
+    if (!slotEval.ok) {
       return {
         httpStatus: 500,
         result: failure(requestId, {
@@ -407,44 +425,22 @@ export async function executeJoinByInvite(
           message: joinByInviteUserMessage("server_error"),
           classId,
           sessionId: requestedSessionId,
-          detail: slotsRes.error,
+          detail: slotEval.error,
         }),
       };
     }
-
-    const billableRes = await getBillableMembershipSnapshot(
-      sb,
-      deviceId,
-      actor.userId
-    );
-    if (!billableRes.ok) {
-      return {
-        httpStatus: 500,
-        result: failure(requestId, {
-          code: "server_error",
-          message: joinByInviteUserMessage("server_error"),
-          classId,
-          sessionId: requestedSessionId,
-          detail: billableRes.error,
-        }),
-      };
-    }
-
-    const atSlotLimit =
-      billableRes.snapshot.billableCount >= slotsRes.classSlots &&
-      !billableRes.snapshot.billableClassIds.includes(classId);
 
     logInviteJoinServer("step", {
       requestId,
       classId,
       deviceId,
       userId: actor.userId,
-      classSlotsOk: !atSlotLimit,
+      classSlotsOk: slotEval.allowed,
       step: "slot_check",
-      detail: `count=${billableRes.snapshot.billableCount} limit=${slotsRes.classSlots}`,
+      detail: `count=${slotEval.context.slotCount} limit=${slotEval.context.slotLimit} ms=${Date.now() - slotCheckStarted}`,
     });
 
-    if (atSlotLimit) {
+    if (!slotEval.allowed) {
       return {
         httpStatus: 403,
         result: failure(requestId, {

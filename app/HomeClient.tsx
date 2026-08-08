@@ -49,6 +49,7 @@ import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardH
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
+import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
@@ -177,9 +178,17 @@ function mergeMemberPresenceSource(
   member: ClassMember,
   presence?: PresenceRow
 ): ParticipationSource {
+  const memberScreen = String(member.screen ?? "").trim() || null;
+  const presenceScreen = String(presence?.screen ?? "").trim() || null;
+  // Prefer live presence when session/status left a blank/offline screen.
+  const screen =
+    !memberScreen || memberScreen === "offline"
+      ? presenceScreen ?? memberScreen
+      : memberScreen;
+
   return {
     is_in_call: member.is_in_call === true ? true : presence?.is_in_call,
-    screen: member.screen ?? presence?.screen ?? null,
+    screen,
     session_id: presence?.session_id ?? member.presence_session_id ?? null,
     presence_session_id:
       member.presence_session_id ??
@@ -396,6 +405,7 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
+  const { adminAuthenticated, opsTestFlags } = useDashboardAccountStatus(deviceId);
   const {
     enabled: notificationsEnabled,
     toggle: toggleNotifications,
@@ -421,6 +431,14 @@ export default function HomeClient() {
   const [quickBusy, setQuickBusy] = useState(false);
   const [joinWindowOpen, setJoinWindowOpen] = useState(true);
   const [joinWindowText, setJoinWindowText] = useState("");
+  const adminCanBypassAdmission =
+    adminAuthenticated && opsTestFlags.ignoreAdmission && !joinWindowOpen;
+  const opsTestActive =
+    adminAuthenticated &&
+    (opsTestFlags.ignoreAdmission ||
+      opsTestFlags.ignoreAge ||
+      opsTestFlags.allowMinorProfile ||
+      opsTestFlags.ignoreRecruitment);
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
@@ -2558,7 +2576,20 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             ) : (
               <StatusPill>受付時間外</StatusPill>
             )}
+            {opsTestActive ? <StatusPill>運営テスト中</StatusPill> : null}
           </div>
+        ) : null}
+        {adminCanBypassAdmission ? (
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#78716c",
+            }}
+          >
+            現在は入校受付時間外です。運営テストモードでテスト入室できます。
+          </p>
         ) : null}
       </div>
 
@@ -2592,7 +2623,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         <JoinNewCard
           className="home-dash-join"
           quickJoinBusy={quickBusy}
-          quickJoinDisabled={!joinWindowOpen || authLoading}
+          quickJoinDisabled={
+            (!joinWindowOpen && !opsTestFlags.ignoreAdmission) || authLoading
+          }
+          quickJoinLabel={
+            adminCanBypassAdmission ? "管理者としてテスト入室" : "今すぐ入る"
+          }
           onQuickJoin={quickJoinFreeAndOpen}
           onPickPlace={() => {
             if (authLoading) return;

@@ -10,6 +10,7 @@ type JoinNewCardProps = {
   className?: string;
   quickJoinDisabled?: boolean;
   quickJoinBusy?: boolean;
+  quickJoinLabel?: string;
   pickPlaceLabel?: string;
   onQuickJoin: () => void;
   onPickPlace: () => void;
@@ -19,6 +20,7 @@ export function JoinNewCard({
   className,
   quickJoinDisabled = false,
   quickJoinBusy = false,
+  quickJoinLabel = "今すぐ入る",
   pickPlaceLabel = "入る場所を選ぶ",
   onQuickJoin,
   onPickPlace,
@@ -56,7 +58,7 @@ export function JoinNewCard({
             cursor: quickJoinDisabled || quickJoinBusy ? "not-allowed" : "pointer",
           }}
         >
-          {quickJoinBusy ? "参加中…" : "今すぐ入る"}
+          {quickJoinBusy ? "参加中…" : quickJoinLabel}
         </button>
 
         <button

@@ -14,6 +14,8 @@ type DashboardStatusBarProps = {
   planLabel: string;
   joinWindowOpen: boolean;
   joinWindowText?: string;
+  adminMode?: boolean;
+  opsTestActive?: boolean;
   loading?: boolean;
   onReload?: () => void;
 };
@@ -23,6 +25,8 @@ export function DashboardStatusBar({
   planLabel,
   joinWindowOpen,
   joinWindowText,
+  adminMode = false,
+  opsTestActive = false,
   loading = false,
   onReload,
 }: DashboardStatusBarProps) {
@@ -67,6 +71,24 @@ export function DashboardStatusBar({
           </span>
         </HelpTip>
       )}
+
+      {opsTestActive ? (
+        <span
+          className="cm-status-chip"
+          style={{ ...CHIP, color: "#92400e", borderColor: "#f59e0b" }}
+          title="運営テストモードが有効です（管理者本人のみ）"
+        >
+          運営テスト中
+        </span>
+      ) : adminMode ? (
+        <span
+          className="cm-status-chip"
+          style={{ ...CHIP, color: "#78716c", borderColor: "#d6d3d1" }}
+          title="管理者としてログイン中です"
+        >
+          管理者
+        </span>
+      ) : null}
 
       {onReload ? (
         <button

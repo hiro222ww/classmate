@@ -25,6 +25,8 @@ import {
 } from "@/lib/userProfilePersistence";
 import { enforceProfileSaveAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 import { getEffectiveAgeMode, getMinorsEnabled } from "@/lib/agePolicy";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
+import { shouldBypassProfileAgeGates } from "@/lib/opsTestModeShared";
 import {
   USER_PROFILE_BASE_SELECT,
   USER_PROFILE_LEGAL_CONSENT_SELECT,
@@ -518,21 +520,30 @@ export async function POST(req: Request) {
     guardian_consent,
   });
 
-  const ageGuard = await enforceProfileSaveAge({
-    age,
-    guardianConsent: guardian_consent,
-  });
-  if (!ageGuard.ok) {
-    console.log("[profile][POST] age-policy rejected", {
+  const opsTest = resolveOpsTestFlags(req);
+  if (!shouldBypassProfileAgeGates(opsTest)) {
+    const ageGuard = await enforceProfileSaveAge({
+      age,
+      guardianConsent: guardian_consent,
+    });
+    if (!ageGuard.ok) {
+      console.log("[profile][POST] age-policy rejected", {
+        birthDate: birth_date,
+        calculatedAge: age,
+        minorsEnabled,
+        ageMode,
+        error: ageGuard.error,
+        rejectedReason: ageGuard.message,
+        mode: ageGuard.mode,
+      });
+      return joinAgeGuardResponse(ageGuard);
+    }
+  } else {
+    console.log("[profile][POST] bypass reason=ops_test_allow_minor_profile", {
       birthDate: birth_date,
       calculatedAge: age,
-      minorsEnabled,
       ageMode,
-      error: ageGuard.error,
-      rejectedReason: ageGuard.message,
-      mode: ageGuard.mode,
     });
-    return joinAgeGuardResponse(ageGuard);
   }
 
   console.log("[profile][POST] age-policy allowed", {

@@ -1,5 +1,7 @@
 "use client";
 
+import { OpsTestModePanel } from "@/components/admin/OpsTestModePanel";
+
 export const dynamic = "force-dynamic";
 
 const cards = [
@@ -110,6 +112,8 @@ export default function AdminHomePage() {
             ログアウト
           </button>
         </header>
+
+        <OpsTestModePanel />
 
         <section
           style={{

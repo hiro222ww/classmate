@@ -6,6 +6,8 @@ import { blockNewJoinIfAdmissionClosed } from "@/lib/admissionMembership";
 import { enforceDeviceJoinAge, joinAgeGuardResponse } from "@/lib/joinAgeGuard";
 import { resolveApiActor, getClassSlotsForActor } from "@/lib/actorIdentity";
 import { lookupEntitlements } from "@/lib/userIdentityMigration";
+import { resolveOpsTestFlags } from "@/lib/opsTestMode";
+import { shouldBypassJoinAgeGates } from "@/lib/opsTestModeShared";
 
 /** @deprecated Legacy endpoint. Prefer `/api/class/match-join-v2`. Not used by the current app UI. */
 export const dynamic = "force-dynamic";
@@ -45,8 +47,10 @@ export async function POST(req: Request) {
     const userId = actorResult.ok ? actorResult.actor.userId : "";
     const actor = { userId: userId || null, deviceId };
 
-    const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
-    if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
+    if (!shouldBypassJoinAgeGates(resolveOpsTestFlags(req))) {
+      const ageGuard = await enforceDeviceJoinAge(deviceId, userId || null);
+      if (!ageGuard.ok) return joinAgeGuardResponse(ageGuard);
+    }
 
     const slotsRes = await getClassSlotsForActor(supabase, actor);
     if (!slotsRes.ok) {
@@ -129,6 +133,7 @@ export async function POST(req: Request) {
       const admissionBlocked = await blockNewJoinIfAdmissionClosed({
         deviceId,
         classId: "",
+        req,
       });
       if (admissionBlocked) return admissionBlocked;
 
@@ -193,6 +198,7 @@ export async function POST(req: Request) {
     const admissionBlocked = await blockNewJoinIfAdmissionClosed({
       deviceId,
       classId,
+      req,
     });
     if (admissionBlocked) return admissionBlocked;
 
