@@ -9,6 +9,7 @@ import OAuthRootCodeRedirectBoot from "@/components/OAuthRootCodeRedirectBoot";
 import AppAccountNav from "@/components/AppAccountNav";
 import SiteFooter from "@/components/SiteFooter";
 import LineInAppBrowserGate from "@/components/LineInAppBrowserGate";
+import PageVisitTracker from "@/components/PageVisitTracker";
 import { resolveAppOrigin } from "@/lib/appOrigin";
 import "./globals.css";
 
@@ -55,6 +56,9 @@ export default function RootLayout({
             <CapacitorAuthReturnBoot />
             <AppShellContextBoot />
             <AuthBoot />
+            <Suspense fallback={null}>
+              <PageVisitTracker />
+            </Suspense>
             <Suspense fallback={null}>
               <AppAccountNav />
             </Suspense>

@@ -16,6 +16,11 @@ const cards = [
     href: "/admin/rooms",
   },
   {
+    title: "アクセス履歴",
+    desc: "本番ページの訪問数・ユニーク・最近のアクセス",
+    href: "/admin/visits",
+  },
+  {
     title: "通話管理",
     desc: "TURN率、失敗率、通話停止設定",
     href: "/admin/voice",
