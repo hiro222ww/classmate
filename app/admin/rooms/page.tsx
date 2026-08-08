@@ -65,6 +65,7 @@ async function readJsonResponse(r: Response) {
     ok?: boolean;
     error?: string;
     detail?: string;
+    warning?: string | null;
     rooms?: RoomRow[];
     summary?: Summary;
   };
@@ -164,23 +165,24 @@ export default function AdminRoomsPage() {
       const nextRooms = j.rooms ?? [];
       setRooms(nextRooms);
       setSummary(j.summary ?? emptySummary);
+      const warningSuffix = j.warning ? ` / 警告: ${j.warning}` : "";
 
       if (nextRooms.length === 0) {
         console.log("[admin/rooms-ui] fetch ok, empty", { count: 0 });
         setLoadState("empty");
-        setMsg("読み込みOK — 表示対象ルームは0件です");
+        setMsg(`読み込みOK — 表示対象ルームは0件です${warningSuffix}`);
         return;
       }
 
       console.log("[admin/rooms-ui] fetch ok", { count: nextRooms.length });
       setLoadState("success");
-      setMsg(`読み込みOK（rooms: ${nextRooms.length}）`);
-    } catch (e: any) {
+      setMsg(`読み込みOK（rooms: ${nextRooms.length}）${warningSuffix}`);
+    } catch (e: unknown) {
       console.error("[admin/rooms-ui] unexpected error", e);
       setRooms([]);
       setSummary(emptySummary);
       setLoadState("fetch_error");
-      setMsg(e?.message ?? "load_failed");
+      setMsg(e instanceof Error ? e.message : "load_failed");
     } finally {
       setBusy(false);
     }

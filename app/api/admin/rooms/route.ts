@@ -7,6 +7,10 @@ export const runtime = "nodejs";
 
 const CLOSED_STATUSES = ["closed", "ended", "expired"];
 
+/** session_members uses joined_at; there is no created_at column. */
+export const ADMIN_ROOMS_SESSION_MEMBERS_SELECT =
+  "session_id, device_id, display_name, joined_at";
+
 type RoomMemberDto = {
   device_id: string;
   display_name: string | null;
@@ -113,25 +117,22 @@ export async function GET(req: Request) {
       });
     }
 
+    // session_members has joined_at (not created_at). Keep listing usable even
+    // if member enrichment fails.
     const { data: members, error: membersError } = await supabaseAdmin
       .from("session_members")
-      .select("session_id, device_id, created_at")
+      .select(ADMIN_ROOMS_SESSION_MEMBERS_SELECT)
       .in("session_id", sessionIds);
 
+    let membersWarning: string | null = null;
     if (membersError) {
       console.error("[admin/rooms] members fetch failed", membersError);
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "members_fetch_failed",
-          detail: membersError.message,
-        },
-        { status: 500 }
-      );
+      membersWarning = `members_fetch_failed: ${membersError.message}`;
     }
 
     const memberCountBySessionId = new Map<string, number>();
     const latestMemberAtBySessionId = new Map<string, string>();
+    const memberDisplayNameByKey = new Map<string, string | null>();
 
     for (const member of members ?? []) {
       const sid = String(member.session_id ?? "").trim();
@@ -143,23 +144,31 @@ export async function GET(req: Request) {
         (memberCountBySessionId.get(sid) ?? 0) + 1
       );
 
-      const createdAt = member.created_at ?? null;
-      if (createdAt) {
+      const joinedAt = String(member.joined_at ?? "").trim() || null;
+      if (joinedAt) {
         const prev = latestMemberAtBySessionId.get(sid);
-        if (!prev || new Date(createdAt).getTime() > new Date(prev).getTime()) {
-          latestMemberAtBySessionId.set(sid, createdAt);
+        if (!prev || new Date(joinedAt).getTime() > new Date(prev).getTime()) {
+          latestMemberAtBySessionId.set(sid, joinedAt);
         }
       }
+
+      const displayName = String(member.display_name ?? "").trim() || null;
+      memberDisplayNameByKey.set(`${sid}:${deviceId}`, displayName);
     }
 
     console.log("[admin/rooms] members fetched", {
       count: members?.length ?? 0,
+      warning: membersWarning,
       sessionIdsWithMembers: Array.from(memberCountBySessionId.keys()),
     });
 
-    const sessionsWithMembers = activeSessions.filter((s) => {
-      return (memberCountBySessionId.get(String(s.id)) ?? 0) > 0;
-    });
+    // Prefer rooms that still have members. If the members query failed, fall
+    // back to listing active sessions so metrics/list are not completely blank.
+    const sessionsWithMembers = membersError
+      ? activeSessions
+      : activeSessions.filter((s) => {
+          return (memberCountBySessionId.get(String(s.id)) ?? 0) > 0;
+        });
 
     const classIds = Array.from(
       new Set(
@@ -246,8 +255,11 @@ export async function GET(req: Request) {
 
       list.push({
         device_id: deviceId,
-        display_name: profile?.display_name ?? null,
-        joined_at: row.created_at ?? null,
+        display_name:
+          profile?.display_name ??
+          memberDisplayNameByKey.get(`${sessionId}:${deviceId}`) ??
+          null,
+        joined_at: String(row.joined_at ?? "").trim() || null,
       });
       membersBySession.set(sessionId, list);
     }
@@ -407,16 +419,18 @@ export async function GET(req: Request) {
     return NextResponse.json({
       ok: true,
       rooms,
+      warning: membersWarning,
       summary: {
         active_room_count: rooms.length,
         active_user_count: rooms.reduce((sum, r) => sum + r.member_count, 0),
         dangerous_room_count: rooms.filter((r) => r.risk_level === "高").length,
       },
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error("[admin/rooms] fatal =", e);
+    const message = e instanceof Error ? e.message : "admin rooms failed";
     return NextResponse.json(
-      { ok: false, error: e?.message ?? "admin rooms failed" },
+      { ok: false, error: message },
       { status: 500 }
     );
   }
