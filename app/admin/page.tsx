@@ -21,6 +21,11 @@ const cards = [
     href: "/admin/visits",
   },
   {
+    title: "プロフィール登録",
+    desc: "今日・累計の登録数と最近の完了プロフィール",
+    href: "/admin/profiles",
+  },
+  {
     title: "通話管理",
     desc: "TURN率、失敗率、通話停止設定",
     href: "/admin/voice",
