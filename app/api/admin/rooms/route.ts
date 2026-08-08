@@ -21,6 +21,26 @@ export function parseAdminRoomsScope(raw: string | null): AdminRoomsScope {
   return "active";
 }
 
+/** Closed terminal statuses excluded from scope=active ("進行中"). */
+export const ADMIN_ROOMS_CLOSED_STATUSES = CLOSED_STATUSES;
+
+/**
+ * PostgREST status filter to apply BEFORE limit.
+ * Without this, newest-N rows are mostly closed/expired and open 1-member
+ * rooms older than that window never appear in scope=active.
+ */
+export function adminRoomsStatusFilterClause(
+  scope: AdminRoomsScope
+): { op: "not_in" | "in"; values: readonly string[] } | null {
+  if (scope === "active") {
+    return { op: "not_in", values: CLOSED_STATUSES };
+  }
+  if (scope === "ended") {
+    return { op: "in", values: CLOSED_STATUSES };
+  }
+  return null;
+}
+
 type RoomMemberDto = {
   device_id: string;
   display_name: string | null;
@@ -106,11 +126,26 @@ export async function GET(req: Request) {
       .from("sessions")
       .select("id", { count: "exact", head: true });
 
-    const { data: sessions, error: sessionsError } = await supabaseAdmin
+    // Filter by scope at the DB layer first. Limiting newest rows and then
+    // filtering in JS drops older open rooms (including 1-member forming/active).
+    let sessionsQuery = supabaseAdmin
       .from("sessions")
       .select("id, class_id, topic, status, created_at")
       .order("created_at", { ascending: false })
       .limit(limit);
+
+    const statusFilter = adminRoomsStatusFilterClause(scope);
+    if (statusFilter?.op === "not_in") {
+      sessionsQuery = sessionsQuery.not(
+        "status",
+        "in",
+        `(${statusFilter.values.join(",")})`
+      );
+    } else if (statusFilter?.op === "in") {
+      sessionsQuery = sessionsQuery.in("status", [...statusFilter.values]);
+    }
+
+    const { data: sessions, error: sessionsError } = await sessionsQuery;
 
     if (sessionsError) {
       console.error("[admin/rooms] sessions fetch failed", sessionsError);
@@ -201,8 +236,10 @@ export async function GET(req: Request) {
       sessionIdsWithMembers: Array.from(memberCountBySessionId.keys()),
     });
 
-    // active scope keeps the old "has members" filter. ended/all list by status
-    // even when empty (useful for ops audit). On members fetch failure, keep list.
+    // active ("進行中"): keep sessions with >=1 member (1-person rooms included).
+    // 0-member open sessions are excluded — there are many stale empty "active"
+    // rows that would flood the list. ended/all list by status even when empty.
+    // On members fetch failure, keep list.
     const requireMembers = scope === "active";
     const sessionsWithMembers =
       membersError || !requireMembers
