@@ -1,6 +1,11 @@
 import { debugConsoleLog } from "@/lib/debugVoiceLog";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import {
+  presenceBucketFromInternal,
+  resolvePresenceBucket,
+  type PresenceBucket,
+} from "@/lib/memberPresenceBucket";
+import {
   isStableVoiceJoinMode,
   STABLE_REMOTE_PEER_GRACE_MS,
 } from "@/lib/stableVoiceJoin";
@@ -204,13 +209,6 @@ function hasConnectingEvidence(input: ResolveMemberStatusInput): boolean {
   );
 }
 
-function presenceSessionAligned(input: ResolveMemberStatusInput): boolean {
-  const current = String(input.currentSessionId ?? "").trim();
-  const presence = String(input.presenceSessionId ?? "").trim();
-  if (!current || !presence) return true;
-  return current === presence;
-}
-
 function shouldPreserveVoiceUiStatus(
   previous: InternalMemberStatus,
   input: ResolveMemberStatusInput,
@@ -231,6 +229,29 @@ function shouldPreserveVoiceUiStatus(
   return nowMs - anchor < voiceUiGraceMs();
 }
 
+function previousBucketFromInput(
+  input: ResolveMemberStatusInput
+): PresenceBucket | null {
+  if (input.previousInternal) {
+    return presenceBucketFromInternal(input.previousInternal);
+  }
+  if (input.previousParticipation === "in_call") return "in_call";
+  if (input.previousParticipation === "waiting") return "online";
+  if (input.previousParticipation === "offline") return "offline";
+  if (input.previous === "in_call") return "in_call";
+  if (
+    input.previous === "connecting" ||
+    input.previous === "in_session" ||
+    input.previous === "in_room"
+  ) {
+    return "online";
+  }
+  if (input.previous === "offline" || input.previous === "member_only") {
+    return "offline";
+  }
+  return null;
+}
+
 /**
  * UI display only. Voice connection (getRemoteIds / closePeer) must not call this.
  */
@@ -243,14 +264,18 @@ export function resolveInternalMemberStatus(
 } {
   const nowMs = input.nowMs ?? Date.now();
   const freshMs = input.freshMs ?? PRESENCE_FRESH_MS_HOME;
-  const fresh = isPresenceFresh(input.last_seen_at, freshMs);
-  const stale = parseTs(input.last_seen_at) != null && !fresh;
-  const freshScreen = fresh ? String(input.screen ?? "").trim() : "";
+  const lastSeen = parseTs(input.last_seen_at);
+  const fresh = lastSeen != null && nowMs - lastSeen <= freshMs;
+  const stale = lastSeen != null && !fresh;
   const evidence = buildEvidence(input, nowMs, fresh, stale);
   const previousInternal = input.previousInternal ?? null;
 
   if (input.explicitLeaveSeen || input.localExitedCall) {
-    return { internal: "in_room", reason: "explicit_leave", evidence };
+    // Left the call but may still be in the waiting room with fresh presence.
+    if (fresh) {
+      return { internal: "in_room", reason: "explicit_leave_online", evidence };
+    }
+    return { internal: "offline", reason: "explicit_leave_offline", evidence };
   }
 
   if (
@@ -263,94 +288,83 @@ export function resolveInternalMemberStatus(
     return { internal: "in_voice", reason: "self_on_call_screen", evidence };
   }
 
-  if (hasStrongInCallEvidence(input, nowMs)) {
-    return { internal: "in_voice", reason: "voice_connected", evidence };
-  }
+  // Call-screen WebRTC evidence only (does not invent online for other surfaces).
+  if (input.context === "call") {
+    if (hasStrongInCallEvidence(input, nowMs)) {
+      return { internal: "in_voice", reason: "voice_connected", evidence };
+    }
 
-  if (hasConnectingEvidence(input) && input.context === "call") {
-    return {
-      internal: "connecting_voice",
-      reason: "voice_connecting",
-      evidence,
-    };
-  }
+    if (hasConnectingEvidence(input)) {
+      return {
+        internal: "connecting_voice",
+        reason: "voice_connecting",
+        evidence,
+      };
+    }
 
-  if (
-    previousInternal &&
-    shouldPreserveVoiceUiStatus(previousInternal, input, nowMs)
-  ) {
-    return {
-      internal: previousInternal,
-      reason: "voice_ui_presence_grace",
-      evidence,
-    };
+    if (
+      previousInternal &&
+      shouldPreserveVoiceUiStatus(previousInternal, input, nowMs)
+    ) {
+      return {
+        internal: previousInternal,
+        reason: "voice_ui_presence_grace",
+        evidence,
+      };
+    }
   }
 
   if (input.isMe && input.context === "room") {
     return { internal: "in_room", reason: "self_in_room", evidence };
   }
 
-  // Fresh waiting-room presence wins over a lagged is_in_call flag.
-  if (fresh && freshScreen === "room") {
-    return { internal: "in_room", reason: "fresh_presence_room", evidence };
-  }
+  const bucketResult = resolvePresenceBucket({
+    last_seen_at: input.last_seen_at,
+    is_in_call: input.is_in_call,
+    screen: input.screen,
+    effective_status: input.effective_status,
+    presenceSessionId: input.presenceSessionId,
+    currentSessionId: input.currentSessionId,
+    freshMs,
+    nowMs,
+    previousBucket: previousBucketFromInput(input),
+    explicitLeave:
+      input.explicitLeaveSeen === true || input.localExitedCall === true,
+  });
 
-  // Active call member from current session_members — never show offline.
-  if (
-    input.inSessionMembers &&
-    input.is_in_call === true &&
-    !input.explicitLeaveSeen &&
-    !input.localExitedCall
-  ) {
-    return { internal: "in_voice", reason: "active_call_member", evidence };
-  }
-
-  if (fresh && freshScreen === "call" && presenceSessionAligned(input)) {
+  if (bucketResult.bucket === "in_call") {
     if (input.context === "call") {
       return {
         internal: "connecting_voice",
-        reason: "fresh_call_screen_connecting",
+        reason: bucketResult.reason,
         evidence,
       };
     }
-    if (input.inSessionMembers) {
-      return {
-        internal: "in_voice",
-        reason: "fresh_call_screen_in_call",
-        evidence,
-      };
-    }
-  }
-
-  const effective = String(input.effective_status ?? "")
-    .trim()
-    .toLowerCase();
-  if (
-    input.inSessionMembers &&
-    fresh &&
-    presenceSessionAligned(input) &&
-    (effective === "calling" || effective === "call") &&
-    !input.explicitLeaveSeen &&
-    !input.localExitedCall
-  ) {
-    return { internal: "in_voice", reason: "fresh_effective_calling", evidence };
-  }
-
-  if (input.inSessionMembers) {
     return {
-      internal: "in_session",
-      reason: stale
-        ? "session_member_stale_presence"
-        : "session_member_no_fresh_room_presence",
+      internal: "in_voice",
+      reason: bucketResult.reason,
       evidence,
     };
   }
 
-  if (input.inClassMembership) {
+  if (bucketResult.bucket === "online") {
+    return {
+      internal: "in_room",
+      reason: bucketResult.reason,
+      evidence,
+    };
+  }
+
+  // Offline from presence. Do NOT promote session_members → online.
+  if (input.inClassMembership && !input.inSessionMembers) {
     return { internal: "member_only", reason: "class_member_only", evidence };
   }
 
-  return { internal: "offline", reason: "offline", evidence };
+  return {
+    internal: "offline",
+    reason: bucketResult.reason,
+    evidence,
+  };
 }
 
 export type MemberPresenceStatus = "in_call" | "online" | "offline";
@@ -441,21 +455,8 @@ export function resolveMemberParticipationForUi(
     isMe: input.isMe,
   });
 
-  if (
-    input.inSessionMembers &&
-    resolved.evidence.stalePresence &&
-    !resolved.evidence.freshPresence &&
-    !resolved.evidence.explicitLeaveSeen
-  ) {
-    if (input.context === "call") {
-      label = "接続不安定";
-    } else if (input.context === "room") {
-      // Still a session member — never show offline during presence handoff.
-      label = "オンライン";
-    } else {
-      label = "離席中";
-    }
-  }
+  // Stale presence is offline (handoff grace is applied inside resolvePresenceBucket).
+  // Session membership alone must not force 「オンライン」.
 
   logMemberStatusDecide({
     context: input.context,

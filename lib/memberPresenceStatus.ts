@@ -1581,9 +1581,19 @@ export function resolveEffectivePeerConnection(params: {
   };
 }
 
+/** Home / room / call UI share the same online freshness window (see memberPresenceBucket). */
 export const PRESENCE_FRESH_MS_HOME = 45_000;
-export const PRESENCE_FRESH_MS_ROOM = 15_000;
+/** Alias of HOME — room background heartbeat is ~30s, so 15s caused false offline. */
+export const PRESENCE_FRESH_MS_ROOM = PRESENCE_FRESH_MS_HOME;
 export const PRESENCE_STALE_GRACE_MS = 20_000;
+
+export {
+  getMemberPresenceStatus,
+  resolvePresenceBucket,
+  pickLatestPresenceByDeviceId,
+  mergePresenceSources,
+  type PresenceBucket,
+} from "@/lib/memberPresenceBucket";
 
 export type ParticipationSource = {
   is_in_call?: boolean;

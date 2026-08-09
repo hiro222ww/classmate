@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getMemberStatusLabel,
   resolveInternalMemberStatus,
+  resolveMemberParticipationForUi,
   sanitizePresenceForUi,
   toMemberPresenceStatus,
 } from "./memberStatus";
@@ -16,7 +17,7 @@ describe("sanitizePresenceForUi", () => {
         last_seen_at: stale,
         effective_status: "calling",
       },
-      15_000,
+      45_000,
       { preserveSessionCall: true }
     );
     expect(out.is_in_call).toBe(true);
@@ -31,7 +32,7 @@ describe("sanitizePresenceForUi", () => {
         screen: "call",
         last_seen_at: stale,
       },
-      15_000
+      45_000
     );
     expect(out.is_in_call).toBe(false);
     expect(out.screen).toBeNull();
@@ -39,7 +40,23 @@ describe("sanitizePresenceForUi", () => {
 });
 
 describe("resolveInternalMemberStatus room presence", () => {
-  it("marks active call session members as in_voice", () => {
+  it("marks fresh active call as in_voice", () => {
+    const resolved = resolveInternalMemberStatus({
+      context: "room",
+      deviceId: "peer-1",
+      inSessionMembers: true,
+      is_in_call: true,
+      screen: "call",
+      last_seen_at: new Date().toISOString(),
+      currentSessionId: "sess-a",
+      presenceSessionId: "sess-a",
+    });
+    expect(resolved.internal).toBe("in_voice");
+    expect(toMemberPresenceStatus(resolved.internal)).toBe("in_call");
+    expect(getMemberStatusLabel(resolved.internal, "room")).toBe("通話中");
+  });
+
+  it("does not treat stale is_in_call as in_call", () => {
     const resolved = resolveInternalMemberStatus({
       context: "room",
       deviceId: "peer-1",
@@ -49,10 +66,9 @@ describe("resolveInternalMemberStatus room presence", () => {
       last_seen_at: new Date(Date.now() - 60_000).toISOString(),
       currentSessionId: "sess-a",
     });
-    expect(resolved.internal).toBe("in_voice");
-    expect(resolved.reason).toBe("active_call_member");
-    expect(toMemberPresenceStatus(resolved.internal)).toBe("in_call");
-    expect(getMemberStatusLabel(resolved.internal, "room")).toBe("通話中");
+    expect(resolved.internal).toBe("offline");
+    expect(toMemberPresenceStatus(resolved.internal)).toBe("offline");
+    expect(getMemberStatusLabel(resolved.internal, "room")).toBe("オフライン");
   });
 
   it("marks fresh room presence as online", () => {
@@ -84,12 +100,12 @@ describe("resolveInternalMemberStatus room presence", () => {
     expect(getMemberStatusLabel(resolved.internal, "room")).toBe("オンライン");
   });
 
-  it("shows offline only when not in session and not present", () => {
+  it("shows offline when session member has no fresh presence", () => {
     const resolved = resolveInternalMemberStatus({
       context: "room",
       deviceId: "peer-1",
-      inSessionMembers: false,
-      inClassMembership: false,
+      inSessionMembers: true,
+      inClassMembership: true,
       is_in_call: false,
       screen: null,
       last_seen_at: null,
@@ -98,18 +114,31 @@ describe("resolveInternalMemberStatus room presence", () => {
     expect(toMemberPresenceStatus(resolved.internal)).toBe("offline");
   });
 
-  it("ignores call presence from another session", () => {
+  it("ignores call presence from another session (still online if fresh)", () => {
     const resolved = resolveInternalMemberStatus({
       context: "room",
       deviceId: "peer-1",
       inSessionMembers: true,
-      is_in_call: false,
+      is_in_call: true,
       screen: "call",
       last_seen_at: new Date().toISOString(),
       presenceSessionId: "sess-old",
       currentSessionId: "sess-new",
     });
-    expect(resolved.internal).toBe("in_session");
+    expect(resolved.internal).toBe("in_room");
     expect(getMemberStatusLabel(resolved.internal, "room")).toBe("オンライン");
+  });
+
+  it("does not force online label for stale session members", () => {
+    const display = resolveMemberParticipationForUi({
+      context: "room",
+      deviceId: "peer-1",
+      inSessionMembers: true,
+      is_in_call: false,
+      screen: "room",
+      last_seen_at: new Date(Date.now() - 120_000).toISOString(),
+    });
+    expect(display.internal).toBe("offline");
+    expect(display.label).toBe("オフライン");
   });
 });

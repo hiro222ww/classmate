@@ -3,7 +3,6 @@ import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 import {
   isPresenceFresh,
   PRESENCE_FRESH_MS_HOME,
-  PRESENCE_FRESH_MS_ROOM,
   type ParticipationSource,
 } from "@/lib/memberPresenceStatus";
 import { isStableVoiceJoinMode, STABLE_REMOTE_PEER_GRACE_MS } from "@/lib/stableVoiceJoin";
@@ -21,8 +20,8 @@ type MemberRow = {
   is_in_call?: boolean | null;
 };
 
-export function getPresenceFreshMsForContext(context: MemberListContext): number {
-  if (context === "room") return PRESENCE_FRESH_MS_ROOM;
+export function getPresenceFreshMsForContext(_context: MemberListContext): number {
+  // Home / room / call share one online freshness window.
   return PRESENCE_FRESH_MS_HOME;
 }
 

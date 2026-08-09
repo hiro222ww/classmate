@@ -48,14 +48,29 @@ describe("callStatusPriority", () => {
     expect(expired.peerStillInCall).toBe(false);
   });
 
-  it("presence stale grace then expired while still on call", () => {
-    const grace = evaluateCallParticipationPriority({
+  it("fresh call presence is in_call; missing presence uses short grace then expires", () => {
+    const active = evaluateCallParticipationPriority({
       nowMs,
       explicitLeft: false,
       inApiSessionMembers: true,
       absentSinceMs: null,
       isInCall: true,
       lastSeenAt: new Date(nowMs - 2_000).toISOString(),
+      lastInCallAtMs: nowMs - 2_000,
+      joinTransitionSinceMs: nowMs - 2_000,
+      screen: "call",
+    });
+    expect(active.priority).toBe("in_call");
+    expect(active.peerStillInCall).toBe(true);
+
+    // No fresh presence row: hold briefly via lastInCallAt, then expire.
+    const grace = evaluateCallParticipationPriority({
+      nowMs,
+      explicitLeft: false,
+      inApiSessionMembers: true,
+      absentSinceMs: null,
+      isInCall: true,
+      lastSeenAt: null,
       lastInCallAtMs: nowMs - 2_000,
       joinTransitionSinceMs: nowMs - 2_000,
       screen: "call",
@@ -70,9 +85,7 @@ describe("callStatusPriority", () => {
       inApiSessionMembers: true,
       absentSinceMs: null,
       isInCall: true,
-      lastSeenAt: new Date(
-        nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1
-      ).toISOString(),
+      lastSeenAt: null,
       lastInCallAtMs: nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1,
       joinTransitionSinceMs: nowMs - CALL_PRESENCE_STALE_GRACE_MS - 1,
       screen: "call",

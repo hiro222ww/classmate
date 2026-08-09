@@ -1,7 +1,7 @@
 import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
 import { CALL_LIVE_MEMBER_ABSENT_GRACE_MS } from "@/lib/callMembersSync";
 import { CALL_JOIN_TRANSITION_GRACE_MS } from "@/lib/callPresenceGrace";
-import { isPresenceFresh } from "@/lib/memberPresenceStatus";
+import { resolvePresenceBucket } from "@/lib/memberPresenceBucket";
 import { getPresenceFreshMsForContext } from "@/lib/sessionMemberListMerge";
 
 /** Brief label before removing departed remote from the call grid. */
@@ -73,7 +73,6 @@ export function evaluateCallParticipationPriority(params: {
   }
 
   const freshMs = getPresenceFreshMsForContext("call");
-  const presenceFresh = isPresenceFresh(params.lastSeenAt, freshMs);
   const screen = String(params.screen ?? "").trim();
   const leftCallScreen =
     screen === "room" || screen === "home" || screen === "offline";
@@ -104,44 +103,52 @@ export function evaluateCallParticipationPriority(params: {
     };
   }
 
-  // Still in call but presence heartbeat is stale: short reconnect hold.
-  if (!presenceFresh) {
-    const lastSeenMs = parseTimestampMs(params.lastSeenAt);
-    if (
-      lastSeenMs != null &&
-      params.nowMs - lastSeenMs >= CALL_PRESENCE_STALE_GRACE_MS
-    ) {
-      return {
-        priority: "presence_stale_expired",
-        reason: "presence_stale_expired",
-        peerStillInCall: false,
-      };
-    }
+  const bucket = resolvePresenceBucket({
+    last_seen_at: params.lastSeenAt,
+    is_in_call: params.isInCall,
+    screen: params.screen,
+    freshMs,
+    nowMs: params.nowMs,
+  });
 
-    const transitionAnchor =
-      params.joinTransitionSinceMs ??
-      params.lastInCallAtMs ??
-      lastSeenMs ??
-      params.nowMs;
-    const transitionElapsed = params.nowMs - transitionAnchor;
-    if (transitionElapsed >= CALL_PRESENCE_STALE_GRACE_MS) {
-      return {
-        priority: "presence_stale_expired",
-        reason: "presence_stale_expired",
-        peerStillInCall: false,
-      };
-    }
-
+  if (bucket.bucket === "in_call") {
     return {
-      priority: "presence_stale_grace",
-      reason: "presence_stale_grace",
+      priority: "in_call",
+      reason: "active",
       peerStillInCall: true,
     };
   }
 
+  // Still flagged in-call but presence heartbeat is stale: short reconnect hold.
+  const lastSeenMs = parseTimestampMs(params.lastSeenAt);
+  if (
+    lastSeenMs != null &&
+    params.nowMs - lastSeenMs >= CALL_PRESENCE_STALE_GRACE_MS
+  ) {
+    return {
+      priority: "presence_stale_expired",
+      reason: "presence_stale_expired",
+      peerStillInCall: false,
+    };
+  }
+
+  const transitionAnchor =
+    params.joinTransitionSinceMs ??
+    params.lastInCallAtMs ??
+    lastSeenMs ??
+    params.nowMs;
+  const transitionElapsed = params.nowMs - transitionAnchor;
+  if (transitionElapsed >= CALL_PRESENCE_STALE_GRACE_MS) {
+    return {
+      priority: "presence_stale_expired",
+      reason: "presence_stale_expired",
+      peerStillInCall: false,
+    };
+  }
+
   return {
-    priority: "in_call",
-    reason: "active",
+    priority: "presence_stale_grace",
+    reason: "presence_stale_grace",
     peerStillInCall: true,
   };
 }

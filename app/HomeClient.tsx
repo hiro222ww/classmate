@@ -87,6 +87,10 @@ import {
   type UiParticipationStatus,
 } from "@/lib/memberPresenceStatus";
 import {
+  mergePresenceSources,
+  pickLatestPresenceByDeviceId,
+} from "@/lib/memberPresenceBucket";
+import {
   countPresenceStates,
   getPresenceFreshMsForContext,
   logMemberSource,
@@ -178,27 +182,15 @@ function mergeMemberPresenceSource(
   member: ClassMember,
   presence?: PresenceRow
 ): ParticipationSource {
-  const memberScreen = String(member.screen ?? "").trim() || null;
-  const presenceScreen = String(presence?.screen ?? "").trim() || null;
-  // Prefer live presence when session/status left a blank/offline screen.
-  const screen =
-    !memberScreen || memberScreen === "offline"
-      ? presenceScreen ?? memberScreen
-      : memberScreen;
-
-  return {
-    is_in_call: member.is_in_call === true ? true : presence?.is_in_call,
-    screen,
-    session_id: presence?.session_id ?? member.presence_session_id ?? null,
-    presence_session_id:
-      member.presence_session_id ??
-      presence?.presence_session_id ??
-      presence?.session_id ??
-      null,
-    last_seen_at: member.last_seen_at ?? presence?.last_seen_at ?? null,
-    effective_status: presence?.effective_status ?? presence?.status ?? null,
-    status: presence?.status ?? null,
-  };
+  return mergePresenceSources(
+    {
+      is_in_call: member.is_in_call,
+      screen: member.screen,
+      last_seen_at: member.last_seen_at,
+      presence_session_id: member.presence_session_id,
+    },
+    presence
+  );
 }
 
 function resolveHomeMemberParticipation(
@@ -1209,6 +1201,7 @@ try {
   const presenceMap: Record<string, PresenceRow> = {};
   let ignoredNonMember = 0;
   let ignoredStale = 0;
+  const mappedRows: PresenceRow[] = [];
   for (const raw of presenceItems) {
     const mapped = mapPresenceApiRow(raw as Record<string, unknown>, sessionId);
     if (!mapped) continue;
@@ -1218,18 +1211,17 @@ try {
       ignoredNonMember += 1;
       continue;
     }
+    mappedRows.push(mapped as PresenceRow);
+  }
+  for (const mapped of pickLatestPresenceByDeviceId(mappedRows)) {
+    const did = String(mapped.device_id ?? "").trim();
+    if (!did) continue;
     const seen = mapped.last_seen_at;
     const t = seen ? new Date(seen).getTime() : NaN;
     const fresh =
       Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_HOME;
     if (!fresh) {
       ignoredStale += 1;
-      if (sessionMemberIds.has(did)) {
-        presenceMap[did] = mapped;
-        console.log(
-          `[presence] stale device=${did.slice(-4)} keptInMembers=1 context=home`
-        );
-      }
       continue;
     }
     presenceMap[did] = mapped;
