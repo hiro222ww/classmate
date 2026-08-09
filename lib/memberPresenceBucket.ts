@@ -142,6 +142,17 @@ export type PresenceMergeInput = {
   status?: string | null;
 };
 
+/** mergePresenceSources output — nulls normalized for ParticipationSource. */
+export type PresenceMergeResult = {
+  is_in_call?: boolean;
+  screen?: string | null;
+  last_seen_at?: string | null;
+  session_id?: string | null;
+  presence_session_id?: string | null;
+  effective_status?: string | null;
+  status?: string | null;
+};
+
 /**
  * Merge session-member row + presence row without inventing online.
  * Prefers the side with the newer last_seen for screen / is_in_call / last_seen.
@@ -149,7 +160,7 @@ export type PresenceMergeInput = {
 export function mergePresenceSources(
   member?: PresenceMergeInput | null,
   presence?: PresenceMergeInput | null
-): PresenceMergeInput {
+): PresenceMergeResult {
   const memberTs = parseTs(member?.last_seen_at) ?? -1;
   const presenceTs = parseTs(presence?.last_seen_at) ?? -1;
   const presenceNewer = presenceTs >= 0 && presenceTs >= memberTs;
@@ -183,7 +194,7 @@ export function mergePresenceSources(
       : member?.last_seen_at ?? presence?.last_seen_at ?? null;
 
   return {
-    is_in_call,
+    is_in_call: is_in_call ?? undefined,
     screen,
     last_seen_at,
     session_id: presence?.session_id ?? member?.session_id ?? null,

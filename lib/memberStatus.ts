@@ -328,8 +328,8 @@ export function resolveInternalMemberStatus(
     freshMs,
     nowMs,
     previousBucket: previousBucketFromInput(input),
-    explicitLeave:
-      input.explicitLeaveSeen === true || input.localExitedCall === true,
+    // Explicit leave already returned above; keep bucket path non-leave.
+    explicitLeave: false,
   });
 
   if (bucketResult.bucket === "in_call") {
