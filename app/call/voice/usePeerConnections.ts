@@ -13178,11 +13178,31 @@ export function usePeerConnections({
       const remoteId = String(member.device_id ?? "").trim();
       if (!remoteId || remoteId === selfId) continue;
       if (!isPresenceConfirmedRemoteLeave(member)) continue;
-      if (!pcsRef.current.has(remoteId)) continue;
-      // Stop reconnect loops for peers who left /call but remain session_members.
-      maybeClosePeerForMemberRemoval(remoteId, "presence_confirmed_leave");
+
+      voiceSessionMemberIdsRef.current.delete(remoteId);
+      voiceSessionMemberAbsentSinceRef.current.delete(remoteId);
+      markRemotePeerExplicitRemoved(remotePeerGraceRefsRef.current, remoteId);
+      p2pDirectFailedHoldUntilRef.current.delete(remoteId);
+      peerStatesRef.current.delete(remoteId);
+
+      // Force-clean PC + remote/orphan streams so leavers do not leave
+      // half-dead PeerConnections that keep UI in 再接続中.
+      if (
+        pcsRef.current.has(remoteId) ||
+        remoteStreamsRef.current.has(remoteId) ||
+        orphanRemoteAudioRef.current.has(remoteId)
+      ) {
+        closePeer(remoteId, {
+          clearConnectionId: true,
+          preserveRemoteAudio: false,
+          reason: "presence_confirmed_leave",
+          force: true,
+        });
+      } else {
+        maybeClosePeerForMemberRemoval(remoteId, "presence_confirmed_leave");
+      }
     }
-  }, [deviceId, members, maybeClosePeerForMemberRemoval]);
+  }, [closePeer, deviceId, members, maybeClosePeerForMemberRemoval]);
 
   useEffect(() => {
     const localStreamReady = isLocalTrackLive(
