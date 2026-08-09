@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildVoiceConnectionMembers,
   getCallActiveRemoteDeviceIds,
+  getConfirmedCallRemoteDeviceIds,
+  isConfirmedLeftCallScreen,
   isMemberActiveOnCallScreen,
 } from "./voiceSessionMembers";
 
@@ -51,5 +53,21 @@ describe("voiceSessionMembers call-active", () => {
     expect(out.find((m) => m.device_id === "a")?.is_in_call).toBe(false);
     expect(out.find((m) => m.device_id === "b")?.is_in_call).toBe(true);
     expect(out.find((m) => m.device_id === "c")?.is_in_call).toBe(true);
+  });
+
+  it("treats room/home as confirmed left call and excludes from targets", () => {
+    expect(
+      isConfirmedLeftCallScreen({ is_in_call: false, screen: "room" })
+    ).toBe(true);
+    expect(
+      getConfirmedCallRemoteDeviceIds(
+        [
+          { device_id: "self", is_in_call: true, screen: "call" },
+          { device_id: "a", is_in_call: true, screen: "call" },
+          { device_id: "b", is_in_call: false, screen: "room" },
+        ],
+        "self"
+      )
+    ).toEqual(["a"]);
   });
 });

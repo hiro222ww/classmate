@@ -20,12 +20,12 @@ describe("callPresenceGrace", () => {
     ).toBe(false);
   });
 
-  it("allows repair during join transition for session members", () => {
+  it("allows repair during join transition while still on call screen", () => {
     const result = evaluateRemoteVoiceRepairEligibility({
       remoteId: "remote-a",
       selfDeviceId: "self",
       nowMs,
-      member: { device_id: "remote-a", is_in_call: false, screen: "room" },
+      member: { device_id: "remote-a", is_in_call: false, screen: "call" },
       inSessionMembers: true,
       absentSinceMs: null,
       joinTransitionSinceMs: nowMs - 2_000,
@@ -39,7 +39,7 @@ describe("callPresenceGrace", () => {
       remoteId: "remote-a",
       selfDeviceId: "self",
       nowMs,
-      member: { device_id: "remote-a", is_in_call: false, screen: "room" },
+      member: { device_id: "remote-a", is_in_call: false, screen: "call" },
       inSessionMembers: true,
       absentSinceMs: null,
       joinTransitionSinceMs: nowMs - CALL_JOIN_TRANSITION_GRACE_MS - 1,
@@ -47,6 +47,21 @@ describe("callPresenceGrace", () => {
     });
     expect(result.eligible).toBe(false);
     expect(result.skipReason).toBe("join_transition_expired");
+  });
+
+  it("does not repair session members who already left /call", () => {
+    const result = evaluateRemoteVoiceRepairEligibility({
+      remoteId: "remote-a",
+      selfDeviceId: "self",
+      nowMs,
+      member: { device_id: "remote-a", is_in_call: false, screen: "room" },
+      inSessionMembers: true,
+      absentSinceMs: null,
+      joinTransitionSinceMs: nowMs - 2_000,
+      explicitRemoved: false,
+    });
+    expect(result.eligible).toBe(false);
+    expect(result.skipReason).toBe("explicit_left");
   });
 
   it("holds repair while session member is missing but grace not expired", () => {

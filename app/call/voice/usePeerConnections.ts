@@ -217,8 +217,11 @@ import {
 } from "@/lib/voiceMutePolicy";
 import {
   getCallActiveRemoteDeviceIds,
+  getConfirmedCallRemoteDeviceIds,
   getSessionMemberRemoteDeviceIds,
+  isConfirmedLeftCallScreen,
   isLocalVoiceParticipant,
+  isMemberActiveOnCallScreen,
 } from "@/lib/voiceSessionMembers";
 import {
   createRemotePeerGraceRefs,
@@ -2017,20 +2020,39 @@ export function usePeerConnections({
       const id = String(member.device_id ?? "").trim();
       if (!id || id === selfId) continue;
       if (remotePeerGraceRefsRef.current.explicitRemoved.has(id)) continue;
-      voiceSessionMemberIdsRef.current.add(id);
-      voiceSessionMemberAbsentSinceRef.current.delete(id);
+
+      // Track only peers still on /call. Session members in room must not
+      // accumulate into remoteIds / reconnect targets.
+      if (
+        member.is_in_call === true &&
+        isMemberActiveOnCallScreen(member)
+      ) {
+        voiceSessionMemberIdsRef.current.add(id);
+        voiceSessionMemberAbsentSinceRef.current.delete(id);
+        continue;
+      }
+
+      if (isConfirmedLeftCallScreen(member)) {
+        voiceSessionMemberIdsRef.current.delete(id);
+        voiceSessionMemberAbsentSinceRef.current.delete(id);
+      }
     }
   }, [members, deviceId, membersSyncRevision]);
 
   const getSessionMemberRemoteIds = useCallback(() => {
     const selfId = String(deviceId ?? "").trim();
-    let fromMembers = getSessionMemberRemoteDeviceIds(activeMembers, selfId);
+    // Voice targets = confirmed call-active peers only (not every session_member).
+    let fromMembers = getConfirmedCallRemoteDeviceIds(activeMembers, selfId, {
+      sessionId,
+    });
     if (
       fromMembers.length === 0 &&
       members.length > 1 &&
       isStableVoiceJoinMode()
     ) {
-      fromMembers = getSessionMemberRemoteDeviceIds(members, selfId);
+      fromMembers = getConfirmedCallRemoteDeviceIds(members, selfId, {
+        sessionId,
+      });
       if (fromMembers.length > 0) {
         debugConsoleLog(
           `[voice-peer] remoteIds-rebuild session=${sessionId.slice(-6)} ` +
@@ -2047,6 +2069,10 @@ export function usePeerConnections({
     for (const id of voiceSessionMemberIdsRef.current) {
       if (!id || id === selfId) continue;
       if (remotePeerGraceRefsRef.current.explicitRemoved.has(id)) continue;
+      const member = activeMembers.find(
+        (row) => String(row.device_id ?? "").trim() === id
+      );
+      if (member && isConfirmedLeftCallScreen(member)) continue;
       merged.add(id);
     }
     return Array.from(merged);
@@ -2119,18 +2145,19 @@ export function usePeerConnections({
   }, [deviceId, members, membersSyncRevision, presenceMembers]);
 
   const getRemoteIds = useCallback(() => {
-    const strict = getStrictRemoteIds();
-    const sessionMemberIds = isStableVoiceJoinMode()
-      ? getSessionMemberRemoteIds()
-      : undefined;
+    const selfId = String(deviceId ?? "").trim();
+    const strict = getStrictRemoteIds().filter(
+      (id) => id && id !== selfId
+    );
+    // Grace only for recently call-active peers (ICE/presence lag). Do not pass
+    // full session membership — that kept exited classmates in remoteIds.
     const { ids } = getRemoteIdsWithMemberGrace(
       strict,
       remotePeerGraceRefsRef.current,
-      Date.now(),
-      sessionMemberIds
+      Date.now()
     );
-    return ids;
-  }, [getSessionMemberRemoteIds, getStrictRemoteIds]);
+    return ids.filter((id) => id && id !== selfId);
+  }, [deviceId, getStrictRemoteIds]);
 
   const emitReadinessSnapshot = useCallback(
     (reason: string) => {
@@ -13146,13 +13173,13 @@ export function usePeerConnections({
   }, [deviceId, members, membersSyncRevision, maybeClosePeerForMemberRemoval]);
 
   useEffect(() => {
-    if (isStableVoiceJoinMode()) return;
     const selfId = String(deviceId ?? "").trim();
     for (const member of members) {
       const remoteId = String(member.device_id ?? "").trim();
       if (!remoteId || remoteId === selfId) continue;
       if (!isPresenceConfirmedRemoteLeave(member)) continue;
       if (!pcsRef.current.has(remoteId)) continue;
+      // Stop reconnect loops for peers who left /call but remain session_members.
       maybeClosePeerForMemberRemoval(remoteId, "presence_confirmed_leave");
     }
   }, [deviceId, members, maybeClosePeerForMemberRemoval]);

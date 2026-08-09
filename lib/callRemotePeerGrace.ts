@@ -1,8 +1,5 @@
 /** Grace before closing peers after transient is_in_call=false or member list drop. */
-import {
-  getRemotePeerMemberGraceMs,
-  isStableVoiceJoinMode,
-} from "@/lib/stableVoiceJoin";
+import { getRemotePeerMemberGraceMs } from "@/lib/stableVoiceJoin";
 
 export const REMOTE_PEER_MEMBER_GRACE_MS = 8_000;
 
@@ -40,10 +37,9 @@ export function markSessionMemberRemoteIds(
 ) {
   for (const id of sessionMemberRemoteIds) {
     if (!id) continue;
+    // Track membership sightings only. Do not refresh lastStrictInCallAt here —
+    // that was extending "再接続中" for session members who already left /call.
     refs.lastSeenInMembersAt.set(id, nowMs);
-    if (isStableVoiceJoinMode()) {
-      refs.lastStrictInCallAt.set(id, nowMs);
-    }
   }
 }
 
@@ -93,33 +89,14 @@ export function getRemoteIdsWithMemberGrace(
   const merged = new Set(strictRemoteIds);
   const graceIds: string[] = [];
 
-  if (isStableVoiceJoinMode() && sessionMemberRemoteIds?.length) {
-    for (const id of sessionMemberRemoteIds) {
-      if (!id || refs.explicitRemoved.has(id)) continue;
-      if (!merged.has(id)) {
-        merged.add(id);
-        graceIds.push(id);
-      }
-    }
-  }
-
+  // Keep brief grace only for peers that were recently call-active (ICE/presence lag).
+  // Do not pull in every session_member — that keeps exited classmates in remoteIds.
   for (const [id, lastAt] of refs.lastStrictInCallAt.entries()) {
     if (refs.explicitRemoved.has(id)) continue;
     if (merged.has(id)) continue;
     if (nowMs - lastAt < graceMs) {
       merged.add(id);
       graceIds.push(id);
-    }
-  }
-
-  if (isStableVoiceJoinMode()) {
-    for (const [id, lastAt] of refs.lastSeenInMembersAt.entries()) {
-      if (refs.explicitRemoved.has(id)) continue;
-      if (merged.has(id)) continue;
-      if (nowMs - lastAt < graceMs) {
-        merged.add(id);
-        graceIds.push(id);
-      }
     }
   }
 
@@ -186,21 +163,25 @@ export function shouldCloseRemotePeerNow(
   return { closeNow: true, graceRemainingMs: 0, via: "grace_expired" };
 }
 
-/** Presence-confirmed room/offline — not used for immediate close in stable mode. */
+/** Presence-confirmed room/home/offline leave — close voice peer promptly. */
 export function isPresenceConfirmedRemoteLeave(member: {
   is_in_call?: boolean;
   screen?: string | null;
   last_seen_at?: string | null;
 }): boolean {
-  if (isStableVoiceJoinMode()) return false;
   if (member.is_in_call === true) return false;
   const screen = String(member.screen ?? "").trim();
-  if (screen !== "room" && screen !== "offline") return false;
+  if (screen !== "room" && screen !== "offline" && screen !== "home") {
+    return false;
+  }
   const lastSeen = String(member.last_seen_at ?? "").trim();
-  if (!lastSeen) return false;
+  if (!lastSeen) {
+    // Fresh member payload without last_seen still counts as left /call.
+    return true;
+  }
   const t = new Date(lastSeen).getTime();
-  if (!Number.isFinite(t)) return false;
-  return Date.now() - t < 20_000;
+  if (!Number.isFinite(t)) return true;
+  return Date.now() - t < 60_000;
 }
 
 export function getClosePeerEvidence(

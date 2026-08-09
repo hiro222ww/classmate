@@ -18,6 +18,30 @@ export function isMemberActiveOnCallScreen(
   return true;
 }
 
+/** Presence/API confirmed the peer left /call (still may remain a session_member). */
+export function isConfirmedLeftCallScreen(
+  member: Pick<VoiceMemberRow, "is_in_call" | "screen"> | null | undefined
+): boolean {
+  if (!member) return false;
+  if (member.is_in_call === true) return false;
+  return !isMemberActiveOnCallScreen(member);
+}
+
+/**
+ * Device IDs that should be WebRTC targets right now.
+ * Confirmed call-active only (excludes self, explicit leave, room/home/offline).
+ */
+export function getConfirmedCallRemoteDeviceIds(
+  members: ReadonlyArray<VoiceMemberRow>,
+  selfDeviceId: string,
+  opts?: {
+    sessionId?: string;
+    explicitLeftIds?: ReadonlySet<string>;
+  }
+): string[] {
+  return getCallActiveRemoteDeviceIds(members, selfDeviceId, opts);
+}
+
 /**
  * Remotes actively on the call screen with is_in_call=true (raw API presence).
  * Used for voice repair targeting and strict in-call UI — not session-wide stable override.

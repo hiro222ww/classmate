@@ -4,6 +4,7 @@ import {
 } from "@/lib/callMembersSync";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import {
+  isConfirmedLeftCallScreen,
   isMemberActiveOnCallScreen,
   type VoiceMemberRow,
 } from "@/lib/voiceSessionMembers";
@@ -58,6 +59,12 @@ export function evaluateRemoteVoiceRepairEligibility(params: {
 
   if (isMemberCallActive(params.member)) {
     return { eligible: true };
+  }
+
+  // Left /call (room/home/offline) — never keep reconnecting just because they
+  // remain a session_member.
+  if (params.member && isConfirmedLeftCallScreen(params.member)) {
+    return { eligible: false, skipReason: "explicit_left" };
   }
 
   if (params.inSessionMembers) {
