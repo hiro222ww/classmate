@@ -25,6 +25,20 @@ describe("voiceSessionMembers call-active", () => {
     expect(ids).toEqual(["a"]);
   });
 
+  it("includes lag-tolerant voice members still on call screen", () => {
+    // buildVoiceConnectionMembers forces is_in_call while screen=call.
+    const voiceMembers = buildVoiceConnectionMembers(
+      [
+        { device_id: "self", is_in_call: true, screen: "call" },
+        { device_id: "peer", is_in_call: false, screen: "call" },
+      ],
+      { sessionId: "sess", stable: true }
+    );
+    expect(
+      getCallActiveRemoteDeviceIds(voiceMembers, "self", { sessionId: "sess" })
+    ).toEqual(["peer"]);
+  });
+
   it("does not force in_call for left-call screens in stable mode", () => {
     const out = buildVoiceConnectionMembers(
       [

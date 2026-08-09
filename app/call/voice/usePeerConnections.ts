@@ -2053,12 +2053,13 @@ export function usePeerConnections({
   }, [activeMembers, deviceId, members, sessionId]);
 
   const getStrictRemoteIds = useCallback(() => {
-    return getCallActiveRemoteDeviceIds(
-      presenceMembersRef.current,
-      deviceId,
-      { sessionId }
-    );
-  }, [deviceId, sessionId]);
+    // Voice-layer members already apply lag-tolerant is_in_call for peers on
+    // /call. Using raw presenceMembers here missed classmates during brief
+    // presence lag (they never entered remoteIds / PC setup).
+    return getCallActiveRemoteDeviceIds(activeMembers, deviceId, {
+      sessionId,
+    });
+  }, [activeMembers, deviceId, sessionId]);
 
   const isRemoteVoiceRepairEligible = useCallback(
     (remoteId: string) => {
