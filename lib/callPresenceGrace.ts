@@ -22,11 +22,16 @@ export function isMemberCallActive(
 export type RemoteVoiceRepairSkipReason =
   | "explicit_left"
   | "explicit_removed"
+  | "confirmed_left_call"
   | "remote_absent_grace_hold"
   | "remote_absent_grace_expired"
   | "join_transition_expired"
   | "session_member_missing_initial";
 
+/**
+ * Repair eligibility for a remote peer.
+ * `member` should be the voice-layer row (lag-tolerant), not raw presence.
+ */
 export function evaluateRemoteVoiceRepairEligibility(params: {
   remoteId: string;
   selfDeviceId: string;
@@ -57,14 +62,24 @@ export function evaluateRemoteVoiceRepairEligibility(params: {
     return { eligible: false, skipReason: "explicit_left" };
   }
 
+  // Confirmed left /call (room/home/offline) — stop repair even if still session_member.
+  if (params.member && isConfirmedLeftCallScreen(params.member)) {
+    return { eligible: false, skipReason: "confirmed_left_call" };
+  }
+
+  // Voice-layer call-active (or still on /call with lag-tolerant flags).
   if (isMemberCallActive(params.member)) {
     return { eligible: true };
   }
 
-  // Left /call (room/home/offline) — never keep reconnecting just because they
-  // remain a session_member.
-  if (params.member && isConfirmedLeftCallScreen(params.member)) {
-    return { eligible: false, skipReason: "explicit_left" };
+  // Session + still on call screen: keep repairable. Do not permanently skip
+  // via join_transition_expired when presence briefly lags is_in_call=false.
+  if (
+    params.inSessionMembers &&
+    params.member &&
+    isMemberActiveOnCallScreen(params.member)
+  ) {
+    return { eligible: true };
   }
 
   if (params.inSessionMembers) {

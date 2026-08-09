@@ -2087,18 +2087,26 @@ export function usePeerConnections({
     });
   }, [activeMembers, deviceId, sessionId]);
 
-  const isRemoteVoiceRepairEligible = useCallback(
+  const getRemoteVoiceRepairEligibility = useCallback(
     (remoteId: string) => {
       const id = String(remoteId ?? "").trim();
-      if (!id || id === deviceId) return false;
+      if (!id || id === deviceId) {
+        return {
+          eligible: false as const,
+          skipReason: "explicit_left" as const,
+        };
+      }
 
-      const member = presenceMembersRef.current.find(
+      // Voice-layer members (lag-tolerant). Do not use raw presenceMembers here —
+      // that caused join_transition_expired while remoteIds still included the peer.
+      const member = activeMembers.find(
         (row) => String(row.device_id ?? "").trim() === id
       );
       const inSession =
         getSessionMemberRemoteIds().includes(id) ||
-        voiceSessionMemberIdsRef.current.has(id);
-      const result = evaluateRemoteVoiceRepairEligibility({
+        voiceSessionMemberIdsRef.current.has(id) ||
+        !!member;
+      return evaluateRemoteVoiceRepairEligibility({
         remoteId: id,
         selfDeviceId: deviceId,
         nowMs: Date.now(),
@@ -2110,26 +2118,36 @@ export function usePeerConnections({
         explicitRemoved: remotePeerGraceRefsRef.current.explicitRemoved.has(id),
         sessionId,
       });
-
-      if (!result.eligible && result.skipReason) {
-        logVoiceRepairSkip({ remoteId: id, reason: result.skipReason });
-      }
-      return result.eligible;
     },
-    [deviceId, getSessionMemberRemoteIds, sessionId]
+    [activeMembers, deviceId, getSessionMemberRemoteIds, sessionId]
+  );
+
+  const isRemoteVoiceRepairEligible = useCallback(
+    (remoteId: string) => getRemoteVoiceRepairEligibility(remoteId).eligible,
+    [getRemoteVoiceRepairEligibility]
   );
 
   useEffect(() => {
     const now = Date.now();
     const selfId = String(deviceId ?? "").trim();
-    for (const member of presenceMembersRef.current) {
+    // Track join_transition against voice-layer members (same SoT as remoteIds).
+    for (const member of activeMembers) {
       const id = String(member.device_id ?? "").trim();
       if (!id || id === selfId) continue;
-      if (isMemberCallActive(member)) {
+
+      if (isConfirmedLeftCallScreen(member)) {
         remoteJoinTransitionSinceRef.current.delete(id);
         continue;
       }
-      if (!getSessionMemberRemoteDeviceIds(presenceMembersRef.current, selfId).includes(id)) {
+
+      if (isMemberCallActive(member) || isMemberActiveOnCallScreen(member)) {
+        remoteJoinTransitionSinceRef.current.delete(id);
+        continue;
+      }
+
+      if (
+        !getSessionMemberRemoteDeviceIds(activeMembers, selfId).includes(id)
+      ) {
         continue;
       }
       const since = remoteJoinTransitionSinceRef.current.get(id);
@@ -2142,7 +2160,7 @@ export function usePeerConnections({
         });
       }
     }
-  }, [deviceId, members, membersSyncRevision, presenceMembers]);
+  }, [activeMembers, deviceId, membersSyncRevision]);
 
   const getRemoteIds = useCallback(() => {
     const selfId = String(deviceId ?? "").trim();
@@ -5538,9 +5556,15 @@ export function usePeerConnections({
         return false;
       }
 
-      if (!isRemoteVoiceRepairEligible(remoteId)) {
-        logVoiceRepairSkip({ remoteId, reason: "remote_absent" });
-        return false;
+      {
+        const repair = getRemoteVoiceRepairEligibility(remoteId);
+        if (!repair.eligible) {
+          logVoiceRepairSkip({
+            remoteId,
+            reason: repair.skipReason ?? "remote_absent",
+          });
+          return false;
+        }
       }
 
       if (!isLocalTrackLive(localAudioTrackRef, localStreamRef)) {
@@ -5881,7 +5905,7 @@ export function usePeerConnections({
       buildVoicePlaybackBlockReason,
       logVoiceReconnectDecision,
       shouldSuppressTransportDisconnectReconnect,
-      isRemoteVoiceRepairEligible,
+      getRemoteVoiceRepairEligibility,
     ]
   );
 
@@ -8706,9 +8730,15 @@ export function usePeerConnections({
       logKind: "sent" | "retry" = "sent"
     ): Promise<boolean> => {
       const compact = compactDeviceId(remoteId);
-      if (!isRemoteVoiceRepairEligible(remoteId)) {
-        logVoiceRepairSkip({ remoteId, reason: "remote_absent" });
-        return false;
+      {
+        const repair = getRemoteVoiceRepairEligibility(remoteId);
+        if (!repair.eligible) {
+          logVoiceRepairSkip({
+            remoteId,
+            reason: repair.skipReason ?? "remote_absent",
+          });
+          return false;
+        }
       }
       const logReason =
         logKind === "retry" ? "no_offer_after_auto_hard_reset" : reason;
@@ -8746,7 +8776,7 @@ export function usePeerConnections({
 
       return true;
     },
-    [isRemoteVoiceRepairEligible, sendSignal]
+    [getRemoteVoiceRepairEligibility, sendSignal]
   );
 
   useEffect(() => {
@@ -9290,9 +9320,15 @@ export function usePeerConnections({
     async (remoteId: string, triggerReason: string) => {
       if (!remoteId || remoteId === deviceId) return;
       if (!micReady || !signalReady) return;
-      if (!isRemoteVoiceRepairEligible(remoteId)) {
-        logVoiceRepairSkip({ remoteId, reason: "remote_absent" });
-        return;
+      {
+        const repair = getRemoteVoiceRepairEligibility(remoteId);
+        if (!repair.eligible) {
+          logVoiceRepairSkip({
+            remoteId,
+            reason: repair.skipReason ?? "remote_absent",
+          });
+          return;
+        }
       }
       if (!isRemoteInCall(remoteId)) return;
       if (autoHardResetGiveUpRef.current.has(remoteId)) return;
@@ -9349,8 +9385,8 @@ export function usePeerConnections({
       beginReconnectAfterHardReset,
       deviceId,
       emitPeerStates,
+      getRemoteVoiceRepairEligibility,
       isRemoteInCall,
-      isRemoteVoiceRepairEligible,
       micReady,
       runPeerHardReset,
       signalReady,
@@ -13181,6 +13217,7 @@ export function usePeerConnections({
 
       voiceSessionMemberIdsRef.current.delete(remoteId);
       voiceSessionMemberAbsentSinceRef.current.delete(remoteId);
+      remoteJoinTransitionSinceRef.current.delete(remoteId);
       markRemotePeerExplicitRemoved(remotePeerGraceRefsRef.current, remoteId);
       p2pDirectFailedHoldUntilRef.current.delete(remoteId);
       peerStatesRef.current.delete(remoteId);
