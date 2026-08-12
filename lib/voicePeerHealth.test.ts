@@ -6,6 +6,7 @@ import {
   evaluateVoicePeerRepairAction,
   evaluateVoicePeerTransportFailure,
   recordVoicePeerRepairAction,
+  refreshVoicePeerHealthConfirmFlags,
   shouldSkipVoicePeerRepair,
   shouldSuppressInboundHealthReconnectRequest,
   updateVoicePeerHealthObservations,
@@ -232,7 +233,44 @@ describe("voicePeerHealth", () => {
         hasPlaybackEvidence: false,
         transportDead: false,
       })
-    ).toBe(true);
+    ).toEqual({
+      suppress: true,
+      reason: "already_audio_confirmed_strict",
+    });
+  });
+
+  it("suppresses inbound pending reconnect when strict even if connectionId differs", () => {
+    expect(
+      shouldSuppressInboundHealthReconnectRequest({
+        resetReason: "health_audio_confirmed_strict_pending",
+        incomingConnectionId: "conn-old",
+        currentConnectionId: "conn-new",
+        audioConfirmedStrict: true,
+        autoRecoveryFrozen: false,
+        hasPlaybackEvidence: false,
+        transportDead: false,
+      })
+    ).toEqual({
+      suppress: true,
+      reason: "already_audio_confirmed_strict",
+    });
+  });
+
+  it("suppresses inbound pending reconnect when frozen even if connectionId differs", () => {
+    expect(
+      shouldSuppressInboundHealthReconnectRequest({
+        resetReason: "health_audio_confirmed_strict_pending",
+        incomingConnectionId: "conn-old",
+        currentConnectionId: "conn-new",
+        audioConfirmedStrict: false,
+        autoRecoveryFrozen: true,
+        hasPlaybackEvidence: false,
+        transportDead: false,
+      })
+    ).toEqual({
+      suppress: true,
+      reason: "already_auto_recovery_frozen",
+    });
   });
 
   it("allows inbound pending reconnect when transport is dead", () => {
@@ -246,6 +284,60 @@ describe("voicePeerHealth", () => {
         hasPlaybackEvidence: false,
         transportDead: true,
       })
-    ).toBe(false);
+    ).toEqual({ suppress: false });
+  });
+
+  it("re-reads confirm flags so mid-await strict does not look pending", () => {
+    const entry = createVoicePeerHealthEntry(
+      100_000 - VOICE_PEER_HEALTH_UNCONFIRMED_MS - 1_000
+    );
+    // Strict lands during collectPeerRtpStats await.
+    clearVoicePeerHealthOnAudioConfirmedStrict(entry, 100_000);
+    const flags = refreshVoicePeerHealthConfirmFlags({
+      marksAudioConfirmedStrict: false,
+      healthAudioConfirmedStrict: false,
+      hasPlaybackEvidence: false,
+      autoRecoveryFrozen: false,
+      lastAudioConfirmedAt: entry.lastAudioConfirmedAt,
+    });
+    expect(flags.audioConfirmedStrict).toBe(true);
+    expect(flags.autoRecoveryFrozen).toBe(true);
+
+    const snapshot = baseSnapshot({
+      ...flags,
+      peerAgeMs: VOICE_PEER_HEALTH_UNCONFIRMED_MS + 1_000,
+      iceConnected: true,
+    });
+    const classification = classifyVoicePeerHealth(snapshot, entry);
+    expect(classification.state).toBe("healthy");
+    expect(
+      evaluateVoicePeerRepairAction({ snapshot, entry, classification })
+    ).toBeNull();
+  });
+
+  it("still reconnects for true health pending without confirm evidence", () => {
+    const entry = createVoicePeerHealthEntry(
+      100_000 - VOICE_PEER_HEALTH_UNCONFIRMED_MS - 1_000
+    );
+    const snapshot = baseSnapshot({
+      audioConfirmedStrict: false,
+      hasPlaybackEvidence: false,
+      autoRecoveryFrozen: false,
+      peerAgeMs: VOICE_PEER_HEALTH_UNCONFIRMED_MS + 1_000,
+      iceConnected: true,
+      joinAgeMs: 20_000,
+      inboundDeltaPackets: 1,
+    });
+    const classification = classifyVoicePeerHealth(snapshot, entry);
+    expect(classification).toEqual({
+      state: "unconfirmed",
+      reason: "audio_confirmed_strict_pending",
+    });
+    expect(
+      evaluateVoicePeerRepairAction({ snapshot, entry, classification })
+    ).toEqual({
+      stage: "reconnect_request",
+      reason: "audio_confirmed_strict_pending",
+    });
   });
 });

@@ -1,4 +1,5 @@
 import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
+import { voiceProdLog } from "@/lib/debugVoiceLog";
 import type { VoiceSoftResetTriggerReason } from "@/lib/voiceSoftReset";
 import { VOICE_JOIN_STABILIZATION_MS } from "@/lib/voiceJoinTiming";
 
@@ -585,37 +586,72 @@ export function shouldSuppressInboundHealthReconnectRequest(params: {
   autoRecoveryFrozen: boolean;
   hasPlaybackEvidence: boolean;
   transportDead: boolean;
-}): boolean {
+}): { suppress: boolean; reason?: string } {
   const resetReason = String(params.resetReason ?? "").trim();
   const pendingHealthReconnect =
     resetReason === "health_audio_confirmed_strict_pending" ||
     resetReason.endsWith("audio_confirmed_strict_pending");
 
-  if (!pendingHealthReconnect) return false;
+  if (!pendingHealthReconnect) return { suppress: false };
 
-  const sameConnection =
-    params.currentConnectionId != null &&
-    params.incomingConnectionId === params.currentConnectionId;
-  if (!sameConnection) return false;
+  // Established local audio wins even if connectionId drifted (stale health
+  // reconnect from the peer). Still allow reconnect when transport is dead.
+  if (params.transportDead) return { suppress: false };
 
-  if (params.transportDead) return false;
+  if (params.audioConfirmedStrict) {
+    return { suppress: true, reason: "already_audio_confirmed_strict" };
+  }
+  if (params.autoRecoveryFrozen) {
+    return { suppress: true, reason: "already_auto_recovery_frozen" };
+  }
+  if (params.hasPlaybackEvidence) {
+    return { suppress: true, reason: "already_playback_evidence" };
+  }
+  return { suppress: false };
+}
 
-  return (
-    params.audioConfirmedStrict ||
-    params.autoRecoveryFrozen ||
-    params.hasPlaybackEvidence
-  );
+/**
+ * Re-read confirm flags after async gaps (e.g. collectPeerRtpStats) so a
+ * mid-await audio_confirmed_strict does not send health_*_pending reconnect.
+ */
+export function refreshVoicePeerHealthConfirmFlags(params: {
+  marksAudioConfirmedStrict: boolean;
+  healthAudioConfirmedStrict: boolean;
+  hasPlaybackEvidence: boolean;
+  autoRecoveryFrozen: boolean;
+  lastAudioConfirmedAt: number | null;
+}): {
+  audioConfirmedStrict: boolean;
+  hasPlaybackEvidence: boolean;
+  autoRecoveryFrozen: boolean;
+} {
+  const audioConfirmedStrict =
+    params.marksAudioConfirmedStrict ||
+    params.healthAudioConfirmedStrict ||
+    params.lastAudioConfirmedAt != null;
+  return {
+    audioConfirmedStrict,
+    hasPlaybackEvidence:
+      params.hasPlaybackEvidence || audioConfirmedStrict,
+    autoRecoveryFrozen:
+      params.autoRecoveryFrozen || params.lastAudioConfirmedAt != null,
+  };
 }
 
 export function logVoicePeerRepairSuppressInboundReconnect(params: {
   remoteId: string;
   reason: string;
   resetReason: string;
+  incomingConnectionId?: string | null;
+  currentConnectionId?: string | null;
 }) {
-  if (!isDebugLogEnabled()) return;
-  logDebug(
-    "call",
-    `[voice-peer-repair] suppress-inbound-reconnect remote=${params.remoteId.slice(-4)} ` +
-      `reason=${params.reason} resetReason=${params.resetReason}`
+  const incoming = String(params.incomingConnectionId ?? "").trim() || "-";
+  const current = String(params.currentConnectionId ?? "").trim() || "-";
+  voiceProdLog(
+    `[voice-peer-repair] suppress-inbound-reconnect ` +
+      `remote=${params.remoteId.slice(-4)} ` +
+      `reason=${params.reason} resetReason=${params.resetReason} ` +
+      `incomingConnectionId=${incoming.slice(-8)} ` +
+      `currentConnectionId=${current.slice(-8)}`
   );
 }

@@ -147,6 +147,7 @@ import {
   logVoicePeerRepairFrozen,
   logVoicePeerRepairSuppressInboundReconnect,
   recordVoicePeerRepairAction,
+  refreshVoicePeerHealthConfirmFlags,
   shouldSuppressInboundHealthReconnectRequest,
   updateVoicePeerHealthObservations,
   VOICE_PEER_HEALTH_REPAIR_COOLDOWN_MS,
@@ -10029,11 +10030,8 @@ export function usePeerConnections({
         return false;
       }
 
-      const marks = getPeerPipelineMarks(remoteId);
-      const health = remotePlaybackHealthRef.current.get(remoteId) ?? null;
-      const hasPlaybackEvidence = hasRemotePlaybackEvidence(remoteId);
-      const audioConfirmedStrict =
-        marks.audio_confirmed_strict || health?.audioConfirmedStrict === true;
+      const marksBefore = getPeerPipelineMarks(remoteId);
+      const healthBefore = remotePlaybackHealthRef.current.get(remoteId) ?? null;
 
       const pc = pcsRef.current.get(remoteId) ?? null;
       const media = getPeerMedia(remoteId);
@@ -10053,15 +10051,33 @@ export function usePeerConnections({
         outboundDeltaBytes = stats.deltaOutboundBytes;
       }
 
+      // Re-read confirm state after stats await — strict may land mid-await.
+      const marks = getPeerPipelineMarks(remoteId);
+      const health = remotePlaybackHealthRef.current.get(remoteId) ?? null;
+      const confirmFlags = refreshVoicePeerHealthConfirmFlags({
+        marksAudioConfirmedStrict:
+          marks.audio_confirmed_strict || marksBefore.audio_confirmed_strict,
+        healthAudioConfirmedStrict:
+          health?.audioConfirmedStrict === true ||
+          healthBefore?.audioConfirmedStrict === true,
+        hasPlaybackEvidence: hasRemotePlaybackEvidence(remoteId),
+        autoRecoveryFrozen: peerAutoRecoveryFrozenRef.current.has(remoteId),
+        lastAudioConfirmedAt: entry.lastAudioConfirmedAt,
+      });
+      const audioConfirmedStrict = confirmFlags.audioConfirmedStrict;
+      const hasPlaybackEvidence = confirmFlags.hasPlaybackEvidence;
+      const autoRecoveryFrozen = confirmFlags.autoRecoveryFrozen;
+
       updateVoicePeerHealthObservations(entry, {
-        nowMs,
+        nowMs: Date.now(),
         audioConfirmedStrict,
         remoteTrackReceived:
           marks.remote_track_received || media.remoteTracksCount > 0,
         inboundDeltaPackets,
       });
 
-      const peerAgeMs = nowMs - entry.firstSeenAt;
+      const nowMsAfter = Date.now();
+      const peerAgeMs = nowMsAfter - entry.firstSeenAt;
       const iceConnected =
         pc != null &&
         isTransportMediaConnected(pc.connectionState, pc.iceConnectionState);
@@ -10072,9 +10088,9 @@ export function usePeerConnections({
           currentConnectionId;
 
       const snapshot = {
-        nowMs,
+        nowMs: nowMsAfter,
         remoteId,
-        joinAgeMs: nowMs - joinEpoch.startedAt,
+        joinAgeMs: nowMsAfter - joinEpoch.startedAt,
         peerAgeMs,
         audioConfirmedStrict,
         hasPlaybackEvidence,
@@ -10100,7 +10116,7 @@ export function usePeerConnections({
         softResetBlocked: shouldBlockSoftResetForJoinPhase(
           remoteJoinPhaseRef.current.get(remoteId)
         ),
-        autoRecoveryFrozen: peerAutoRecoveryFrozenRef.current.has(remoteId),
+        autoRecoveryFrozen,
         negotiationComplete:
           marks.answer_received &&
           marks.remote_track_received &&
@@ -10117,7 +10133,7 @@ export function usePeerConnections({
           connectStartedAt: connectStartedAtRef.current.get(remoteId) ?? null,
           p2pDirectFailedAt:
             p2pDirectFailedSignalAtRef.current.get(remoteId) ?? null,
-          nowMs,
+          nowMs: nowMsAfter,
           awaitingRemoteAnswer: isPeerAwaitingRemoteAnswer(remoteId),
         }),
       };
@@ -10127,10 +10143,10 @@ export function usePeerConnections({
       if (
         entry.lastHealthLogKey !== healthLogKey ||
         entry.lastHealthLogAt == null ||
-        nowMs - entry.lastHealthLogAt >= 4_000
+        nowMsAfter - entry.lastHealthLogAt >= 4_000
       ) {
         entry.lastHealthLogKey = healthLogKey;
-        entry.lastHealthLogAt = nowMs;
+        entry.lastHealthLogAt = nowMsAfter;
         logVoicePeerHealth({
           remoteId,
           state: classification.state,
@@ -10141,7 +10157,7 @@ export function usePeerConnections({
 
       if (classification.state === "healthy") {
         if (audioConfirmedStrict && entry.repairStage !== "observe") {
-          clearVoicePeerHealthOnAudioConfirmedStrict(entry, nowMs);
+          clearVoicePeerHealthOnAudioConfirmedStrict(entry, nowMsAfter);
           logVoicePeerRepairClear({
             remoteId,
             reason: "audio_confirmed_strict",
@@ -10162,7 +10178,7 @@ export function usePeerConnections({
         stage: action.stage,
         reason: action.reason,
       });
-      recordVoicePeerRepairAction(entry, action, nowMs);
+      recordVoicePeerRepairAction(entry, action, nowMsAfter);
       emitPeerStates();
 
       switch (action.stage) {
@@ -10199,7 +10215,7 @@ export function usePeerConnections({
               sentAt: null,
               retryUsed: false,
               retryTimerId: null,
-              hardResetAt: nowMs,
+              hardResetAt: nowMsAfter,
             });
             const sent = await sendReconnectRequest(
               remoteId,
@@ -10210,10 +10226,10 @@ export function usePeerConnections({
               passiveReconnectStateRef.current.set(remoteId, {
                 connectionId,
                 reconnectReason,
-                sentAt: nowMs,
+                sentAt: nowMsAfter,
                 retryUsed: false,
                 retryTimerId: null,
-                hardResetAt: nowMs,
+                hardResetAt: nowMsAfter,
               });
             }
             schedulePassiveReconnectRequestRetry(remoteId);
@@ -12009,9 +12025,15 @@ export function usePeerConnections({
 
         const offerMarks = getPeerPipelineMarks(remoteId);
         const playbackHealth = remotePlaybackHealthRef.current.get(remoteId) ?? null;
-        const audioConfirmedStrict =
-          offerMarks.audio_confirmed_strict ||
-          playbackHealth?.audioConfirmedStrict === true;
+        const healthEntry = voicePeerHealthRef.current.get(remoteId) ?? null;
+        const confirmFlags = refreshVoicePeerHealthConfirmFlags({
+          marksAudioConfirmedStrict: offerMarks.audio_confirmed_strict === true,
+          healthAudioConfirmedStrict:
+            playbackHealth?.audioConfirmedStrict === true,
+          hasPlaybackEvidence: hasRemotePlaybackEvidence(remoteId),
+          autoRecoveryFrozen: peerAutoRecoveryFrozenRef.current.has(remoteId),
+          lastAudioConfirmedAt: healthEntry?.lastAudioConfirmedAt ?? null,
+        });
         const currentConnectionId = getCurrentConnectionId(remoteId);
         const existingPc = pcsRef.current.get(remoteId) ?? null;
         const suppressInboundReconnect =
@@ -12019,20 +12041,23 @@ export function usePeerConnections({
             resetReason: requestReason,
             incomingConnectionId,
             currentConnectionId,
-            audioConfirmedStrict,
-            autoRecoveryFrozen: peerAutoRecoveryFrozenRef.current.has(remoteId),
-            hasPlaybackEvidence: hasRemotePlaybackEvidence(remoteId),
+            audioConfirmedStrict: confirmFlags.audioConfirmedStrict,
+            autoRecoveryFrozen: confirmFlags.autoRecoveryFrozen,
+            hasPlaybackEvidence: confirmFlags.hasPlaybackEvidence,
             transportDead: isPeerTransportDead(
               existingPc?.connectionState ?? "-",
               existingPc?.iceConnectionState ?? "-"
             ),
           });
 
-        if (suppressInboundReconnect) {
+        if (suppressInboundReconnect.suppress) {
           logVoicePeerRepairSuppressInboundReconnect({
             remoteId,
-            reason: "already_audio_confirmed",
+            reason:
+              suppressInboundReconnect.reason ?? "already_audio_confirmed",
             resetReason: requestReason,
+            incomingConnectionId,
+            currentConnectionId,
           });
           return;
         }
