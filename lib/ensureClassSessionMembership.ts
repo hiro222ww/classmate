@@ -12,7 +12,10 @@ import { isValidUuid } from "@/lib/userIdentity";
 import {
   membershipFilterForActor,
 } from "@/lib/actorIdentity";
-import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
+import {
+  ENSURE_MEMBERSHIP_ROOM_SOURCE,
+} from "@/lib/presenceRoomOverwriteGuard";
+import { upsertClassPresenceGuarded } from "@/lib/presenceRoomUpsert";
 
 export type JoinStateSource = "invite" | "normal_join" | "rejoin" | "restore";
 
@@ -402,36 +405,26 @@ export async function ensureClassSessionMembership(
   const presenceAction = existingPresence ? "refresh_class_presence" : "upsert_class_presence";
 
   {
-    logPresenceScreenWrite({
-      source: "ensureClassSessionMembership.upsert",
-      reason: presenceAction,
-      screen: "room",
+    const result = await upsertClassPresenceGuarded({
+      sb,
       classId: ids.classId,
-      sessionId: ids.sessionId,
       deviceId: ids.deviceId,
+      sessionId: ids.sessionId,
+      screen: "room",
+      status: presenceStatus,
+      source: ENSURE_MEMBERSHIP_ROOM_SOURCE,
+      reason: presenceAction,
+      explicitLeave: false,
       visibilityState: "server",
       pathname: "ensureClassSessionMembership",
-      explicitLeave: false,
     });
-    const { error } = await sb.from("class_presence").upsert(
-      {
-        class_id: ids.classId,
-        device_id: ids.deviceId,
-        session_id: ids.sessionId,
-        screen: "room",
-        status: presenceStatus,
-        last_seen_at: now,
-        updated_at: now,
-      },
-      { onConflict: "class_id,device_id" }
-    );
 
-    if (error) {
+    if (!result.ok) {
       steps.push({
         step: "class_presence",
         status: "failed",
         action: presenceAction,
-        error: error.message,
+        error: result.error,
       });
       return {
         ok: false,
@@ -439,19 +432,27 @@ export async function ensureClassSessionMembership(
         status: "partial",
         steps,
         failedStep: "class_presence",
-        details: [error.message],
+        details: [result.error],
       };
     }
 
-    presenceUpserted = true;
-    steps.push({
-      step: "class_presence",
-      status: "applied",
-      action: presenceAction,
-    });
-    console.log(
-      `[join-state] step=class_presence applied class=${tailJoinId(ids.classId)} session=${tailJoinId(ids.sessionId)} device=${tailJoinId(ids.deviceId)}`
-    );
+    if (!result.applied && result.ignored) {
+      steps.push({
+        step: "class_presence",
+        status: "skipped",
+        action: "keep_in_call_presence",
+      });
+    } else {
+      presenceUpserted = true;
+      steps.push({
+        step: "class_presence",
+        status: "applied",
+        action: presenceAction,
+      });
+      console.log(
+        `[join-state] step=class_presence applied class=${tailJoinId(ids.classId)} session=${tailJoinId(ids.sessionId)} device=${tailJoinId(ids.deviceId)}`
+      );
+    }
   }
 
   await pruneSplitClassSessionMemberships({

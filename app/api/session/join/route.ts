@@ -32,7 +32,10 @@ import {
   shouldBypassJoinAgeGates,
   shouldBypassRecruitmentTimeGates,
 } from "@/lib/opsTestModeShared";
-import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
+import {
+  SESSION_JOIN_REFRESH_ROOM_SOURCE,
+} from "@/lib/presenceRoomOverwriteGuard";
+import { upsertClassPresenceGuarded } from "@/lib/presenceRoomUpsert";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -127,32 +130,25 @@ async function refreshRoomPresence(params: {
   deviceId: string;
   sessionStatus: string;
 }) {
-  const now = new Date().toISOString();
   const presenceStatus =
     params.sessionStatus === "active" ? "active" : "waiting";
-  logPresenceScreenWrite({
-    source: "api.session.join.refreshRoomPresence",
-    reason: "session_join",
-    screen: "room",
+
+  const result = await upsertClassPresenceGuarded({
     classId: params.classId,
-    sessionId: params.sessionId,
     deviceId: params.deviceId,
+    sessionId: params.sessionId,
+    screen: "room",
+    status: presenceStatus,
+    source: SESSION_JOIN_REFRESH_ROOM_SOURCE,
+    reason: "session_join",
+    explicitLeave: false,
     visibilityState: "server",
     pathname: "/api/session/join",
-    explicitLeave: false,
   });
-  await supabaseAdmin.from("class_presence").upsert(
-    {
-      class_id: params.classId,
-      device_id: params.deviceId,
-      session_id: params.sessionId,
-      screen: "room",
-      status: presenceStatus,
-      last_seen_at: now,
-      updated_at: now,
-    },
-    { onConflict: "class_id,device_id" }
-  );
+
+  if (!result.ok) {
+    console.warn("[session/join] refreshRoomPresence failed", result.error);
+  }
 }
 
 export async function POST(req: Request) {

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
-import { decideRoomPresenceOverwrite } from "@/lib/presenceRoomOverwriteGuard";
+import { upsertClassPresenceGuarded } from "@/lib/presenceRoomUpsert";
 
 function normalizePresenceStatus(
   value: string
@@ -21,26 +19,6 @@ function normalizePresenceStatus(
   }
 
   return "offline";
-}
-
-async function lookupSessionMemberInCall(params: {
-  sessionId: string;
-  deviceId: string;
-}): Promise<boolean | null> {
-  const { data, error } = await supabaseAdmin
-    .from("session_members")
-    .select("is_in_call")
-    .eq("session_id", params.sessionId)
-    .eq("device_id", params.deviceId)
-    .maybeSingle();
-
-  if (error) {
-    console.warn("[presence POST] in_call lookup failed", error.message);
-    return null;
-  }
-
-  if (!data) return null;
-  return data.is_in_call === true;
 }
 
 export async function POST(req: NextRequest) {
@@ -70,89 +48,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let sessionMemberInCall: boolean | null = null;
-    if (screen === "room" && sessionId && !explicitLeave) {
-      sessionMemberInCall = await lookupSessionMemberInCall({
-        sessionId,
-        deviceId,
-      });
-    }
-
-    const overwrite = decideRoomPresenceOverwrite({
-      screen,
-      source,
-      explicitLeave,
-      sessionId,
-      sessionMemberInCall,
-    });
-
-    if (overwrite.ignore) {
-      console.log(
-        `[presence-screen] ignore screen=room source=${source} ` +
-          `reason=${overwrite.reason ?? "guard"} ` +
-          `sessionId=${sessionId?.slice(-8) ?? "-"} ` +
-          `deviceId=${deviceId.slice(-6)} ` +
-          `visibilityState=${visibilityState} ` +
-          `pathname=${pathname} explicitLeave=0`
-      );
-      return NextResponse.json({
-        ok: true,
-        ignored: true,
-        reason: overwrite.reason,
-      });
-    }
-
     const status = normalizePresenceStatus(screen);
 
-    const payload: Record<string, unknown> = {
-      class_id: classId,
-      device_id: deviceId,
+    if (screen !== "room") {
+      console.log("[presence POST]", {
+        class_id: classId,
+        device_id: deviceId,
+        screen,
+        status,
+        session_id: sessionId,
+        source,
+        reason,
+        visibilityState,
+        pathname,
+      });
+    }
+
+    const result = await upsertClassPresenceGuarded({
+      classId,
+      deviceId,
+      sessionId,
       screen,
       status,
-      last_seen_at: new Date().toISOString(),
-    };
-
-    // nullで既存session_idを消さない
-    if (sessionId) {
-      payload.session_id = sessionId;
-    }
-
-    if (screen === "room") {
-      logPresenceScreenWrite({
-        source,
-        reason,
-        screen: "room",
-        classId,
-        sessionId,
-        deviceId,
-        visibilityState,
-        pathname,
-        explicitLeave,
-      });
-    } else {
-      console.log("[presence POST]", {
-        ...payload,
-        source,
-        reason,
-        visibilityState,
-        pathname,
-      });
-    }
-
-    const { error } = await supabaseAdmin.from("class_presence").upsert(payload, {
-      onConflict: "class_id,device_id",
+      source,
+      reason,
+      explicitLeave,
+      visibilityState,
+      pathname,
     });
 
-    if (error) {
-      console.error("[presence POST] error", error);
-
+    if (!result.ok) {
+      console.error("[presence POST] error", result.error);
       return NextResponse.json(
         {
           ok: false,
-          error: error.message,
+          error: result.error,
         },
         { status: 500 }
       );
+    }
+
+    if (!result.applied && result.ignored) {
+      return NextResponse.json({
+        ok: true,
+        ignored: true,
+        reason: result.reason,
+      });
     }
 
     return NextResponse.json({
@@ -188,9 +129,9 @@ export async function GET(req: NextRequest) {
     }
 
     const now = Date.now();
-
     const activeMs = 1000 * 60 * 2;
 
+    const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
     const { data, error } = await supabaseAdmin
       .from("class_presence")
       .select("*")
@@ -210,7 +151,6 @@ export async function GET(req: NextRequest) {
 
     const filtered = (data ?? []).map((row: Record<string, unknown>) => {
       const last = new Date(String(row.last_seen_at ?? "")).getTime();
-
       const active = now - last <= activeMs;
 
       return {
