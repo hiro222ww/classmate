@@ -111,6 +111,12 @@ import {
   getBackgroundSyncIntervalMs,
   logAppLife,
 } from "@/lib/appLifecycle";
+import {
+  buildCallActivePresenceBody,
+  isCallForegroundResumeEvent,
+  shouldPostRoomPresenceOnCallEffectCleanup,
+  shouldPublishCallPresence,
+} from "@/lib/callPresenceForeground";
 import { fetchWithRetry, isIntentionalAbortError } from "@/lib/retryableFetch";
 import {
   logVoicePerfPipeline,
@@ -1375,19 +1381,6 @@ export default function CallClient() {
   }, [deviceId, fetchMembers, sessionId]);
 
   useEffect(() => {
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void fetchMembers("visibility_resume");
-      }
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [fetchMembers]);
-
-  useEffect(() => {
     debugConsoleLog("[call] members state", {
       count: members.length,
       deviceId,
@@ -1402,65 +1395,135 @@ export default function CallClient() {
   useEffect(() => {
     if (!classId || !sessionId || !deviceId) return;
 
-    async function sendPresence() {
-      if (typeof document !== "undefined" && document.hidden) return;
-      if (selfLeftCallRef.current) return;
-      await fetch("/api/class/presence", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          classId,
-          deviceId,
-          screen: "call",
-          sessionId,
-        }),
-        cache: "no-store",
-      }).catch((e) => {
+    let cancelled = false;
+    let heartbeatTimer: number | null = null;
+    let initialRetryTimer: number | null = null;
+    let resumeInFlight: Promise<void> | null = null;
+
+    async function publishCallActivePresence(reason: string): Promise<boolean> {
+      if (
+        !shouldPublishCallPresence({
+          documentHidden:
+            typeof document !== "undefined" ? document.hidden : false,
+          selfLeftCall: selfLeftCallRef.current,
+        })
+      ) {
+        return false;
+      }
+
+      const body = buildCallActivePresenceBody({
+        classId,
+        deviceId,
+        sessionId,
+      });
+
+      try {
+        const res = await fetch("/api/class/presence", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          debugVoiceRetryable("call:presence", "presence_heartbeat_failed", {
+            message: `status=${res.status}`,
+            reason,
+          });
+          return false;
+        }
+      } catch (e) {
         debugVoiceRetryable("call:presence", "presence_heartbeat_failed", {
           message: e instanceof Error ? e.message : String(e),
+          reason,
         });
-      });
-      void supabase
+        return false;
+      }
+
+      if (cancelled || selfLeftCallRef.current) return false;
+
+      const { error } = await supabase
         .from("session_members")
         .update({ is_in_call: true })
         .eq("session_id", sessionId)
-        .eq("device_id", deviceId)
-        .then(({ error }) => {
-          if (error) {
-            debugVoiceRetryable("call:presence", "session_members_in_call_failed", {
-              message: error.message,
-            });
-          }
+        .eq("device_id", deviceId);
+      if (error) {
+        debugVoiceRetryable("call:presence", "session_members_in_call_failed", {
+          message: error.message,
+          reason,
         });
+      }
+
+      return !cancelled && !selfLeftCallRef.current;
     }
 
-    void sendPresence();
+    async function resumeCallPresence(reason: string) {
+      if (resumeInFlight) {
+        await resumeInFlight;
+        return;
+      }
 
-    window.setTimeout(() => {
-      void sendPresence();
+      resumeInFlight = (async () => {
+        const ok = await publishCallActivePresence(reason);
+        if (!ok || cancelled) return;
+        // Refresh local member SoT after presence is call-active again so
+        // remotes (and this client) converge on fresh screen=call.
+        void fetchMembers(`presence_${reason}`);
+      })();
+
+      try {
+        await resumeInFlight;
+      } finally {
+        resumeInFlight = null;
+      }
+    }
+
+    void resumeCallPresence("mount");
+
+    initialRetryTimer = window.setTimeout(() => {
+      void resumeCallPresence("mount_retry");
     }, 500);
 
-    let timer: number | null = null;
     const schedulePresence = () => {
-      if (timer) window.clearInterval(timer);
-      timer = window.setInterval(() => {
-        void sendPresence();
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      heartbeatTimer = window.setInterval(() => {
+        void publishCallActivePresence("heartbeat");
       }, getBackgroundSyncIntervalMs(10_000, 30_000));
     };
     schedulePresence();
 
-    const onPresenceVisibility = () => {
+    const onForeground = (type: "visibilitychange" | "pageshow" | "focus") => {
       schedulePresence();
-      if (document.visibilityState === "visible") {
-        void sendPresence();
+      if (
+        !isCallForegroundResumeEvent({
+          type,
+          visibilityState:
+            typeof document !== "undefined"
+              ? document.visibilityState
+              : undefined,
+        })
+      ) {
+        return;
       }
+      void resumeCallPresence(type);
     };
-    document.addEventListener("visibilitychange", onPresenceVisibility);
+
+    const onVisibilityChange = () => onForeground("visibilitychange");
+    const onPageShow = () => onForeground("pageshow");
+    const onFocus = () => onForeground("focus");
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("focus", onFocus);
 
     return () => {
-      document.removeEventListener("visibilitychange", onPresenceVisibility);
-      if (timer) window.clearInterval(timer);
-      if (classId && sessionId && deviceId) {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("focus", onFocus);
+      if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+      if (initialRetryTimer) window.clearTimeout(initialRetryTimer);
+      // Intentionally skip screen=room here — see shouldPostRoomPresenceOnCallEffectCleanup.
+      if (shouldPostRoomPresenceOnCallEffectCleanup()) {
         void fetch("/api/class/presence", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1474,8 +1537,10 @@ export default function CallClient() {
         }).catch(() => {});
       }
     };
-  }, [classId, sessionId, deviceId]);
+  }, [classId, sessionId, deviceId, fetchMembers]);
 
+  // Removed standalone visibility→fetchMembers: presence resume publishes
+  // screen=call first, then refetches members so SoT is not read stale.
   useEffect(() => {
     if (!sessionId) return;
 
