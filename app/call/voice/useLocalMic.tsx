@@ -6,6 +6,7 @@ import {
   hasCallMicEverUnmuted,
   markCallMicEverUnmuted,
   readCallMutePreference,
+  resolveSessionMountMicAction,
   shouldReleaseMicOnMute,
 } from "@/lib/callLifecycle";
 import { applyUserMutedToTrack } from "@/lib/localMicMuteState";
@@ -1180,6 +1181,47 @@ export function useLocalMic({
 
       if (releaseOnMute && getUserMuted()) {
         if (!mounted) return;
+
+        const cached = getCachedMic(sessionId).cache;
+        if (cached) {
+          localStreamRef.current = cached.stream;
+          localAudioTrackRef.current = cached.track;
+        }
+        const liveTrack = localAudioTrackRef.current;
+        const liveStream = localStreamRef.current;
+        const hasLiveSessionMic =
+          !!liveStream && isAudioTrackUsable(liveTrack);
+        const mountAction = resolveSessionMountMicAction({
+          releaseOnMute,
+          userMuted: true,
+          hasLiveSessionMic,
+        });
+
+        if (mountAction === "reuse_live" && liveTrack && liveStream) {
+          // Gate already acquired a live mic; keep it for voice bootstrap.
+          // Mute via enabled=false — do not stop/release before offer path.
+          applyUserMutedToTrack(
+            liveTrack,
+            true,
+            "session_mount_reuse_muted",
+            "useLocalMic"
+          );
+          bindMicCaptureState({ hasTrack: true, mutedWithoutTrack: false });
+          onLocalTrackMutedAppliedRef.current?.({
+            userMuted: true,
+            trackEnabled: liveTrack.enabled,
+            reason: "session_mount_reuse_muted",
+          });
+          syncSelectedMicFromTrack(liveTrack);
+          notifyLocalMicTrackChange(liveTrack, "session_mount_reuse_muted");
+          console.log(
+            `[local-mic] session_mount reuse_live trackId=${liveTrack.id.slice(-6)} ` +
+              `readyState=${liveTrack.readyState} enabled=${liveTrack.enabled ? 1 : 0} ` +
+              `${formatVoiceModeSuffix()}`
+          );
+          return;
+        }
+
         releaseLocalMicCapture({
           sessionId,
           streamRef: localStreamRef,

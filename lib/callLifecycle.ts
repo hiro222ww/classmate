@@ -469,6 +469,21 @@ export function shouldReleaseMicOnMute(params: {
   return true;
 }
 
+/**
+ * VoiceLayer session_mount when safety-muted + releaseMicOnMute:
+ * reuse a gate-acquired live track instead of stopping it before bootstrap.
+ */
+export type SessionMountMicAction = "reuse_live" | "release_muted" | "keep_or_acquire";
+
+export function resolveSessionMountMicAction(params: {
+  releaseOnMute: boolean;
+  userMuted: boolean;
+  hasLiveSessionMic: boolean;
+}): SessionMountMicAction {
+  if (!params.releaseOnMute || !params.userMuted) return "keep_or_acquire";
+  return params.hasLiveSessionMic ? "reuse_live" : "release_muted";
+}
+
 export function readCallMutePreference(
   sessionId: string,
   deviceId: string
