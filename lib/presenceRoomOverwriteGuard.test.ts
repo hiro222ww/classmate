@@ -74,4 +74,43 @@ describe("decideRoomPresenceOverwrite", () => {
       })
     ).toEqual({ ignore: false, reason: null });
   });
+
+  it("call → explicit leave → is_in_call=false → room heartbeat allowed", () => {
+    const sessionId = "session-leave-flow";
+
+    // Still on call: delayed room heartbeat must not win.
+    expect(
+      decideRoomPresenceOverwrite({
+        screen: "room",
+        source: ROOM_PRESENCE_HEARTBEAT_SOURCE,
+        explicitLeave: false,
+        sessionId,
+        sessionMemberInCall: true,
+      }).ignore
+    ).toBe(true);
+
+    // Exit button → markSelfLeftCall posts room with explicitLeave=true
+    // (allowed even before session_members.is_in_call flips).
+    expect(
+      decideRoomPresenceOverwrite({
+        screen: "room",
+        source: "CallClient.markSelfLeftCall",
+        explicitLeave: true,
+        sessionId,
+        sessionMemberInCall: true,
+      }).ignore
+    ).toBe(false);
+
+    // After markSelfLeftCall's session_members.is_in_call=false lands,
+    // normal RoomClient heartbeats must be allowed again.
+    expect(
+      decideRoomPresenceOverwrite({
+        screen: "room",
+        source: ROOM_PRESENCE_HEARTBEAT_SOURCE,
+        explicitLeave: false,
+        sessionId,
+        sessionMemberInCall: false,
+      })
+    ).toEqual({ ignore: false, reason: null });
+  });
 });
