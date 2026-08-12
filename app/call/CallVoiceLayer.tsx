@@ -1,7 +1,8 @@
 "use client";
 
-import { debugConsoleLog } from "@/lib/debugVoiceLog";
+import { debugConsoleLog, voiceProdLog } from "@/lib/debugVoiceLog";
 import { logAppLife } from "@/lib/appLifecycle";
+import { peekLocalCallEntryGeneration } from "@/lib/voiceLocalCallEntry";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import RemoteAudio, {
   type RemotePlaybackHealth,
@@ -85,6 +86,8 @@ type CallVoiceLayerProps = {
     reason: VoiceSoftResetTriggerReason
   ) => void;
   listenOnly?: boolean;
+  /** Logging only: CallClient voice entry mode when this layer is mounted. */
+  voiceEntryMode?: string;
   autoAcquireOnMount?: boolean;
   presenceMembers?: Member[];
   onExplicitRemoteLeave?: (remoteId: string) => void;
@@ -114,6 +117,7 @@ export default function CallVoiceLayer({
   onMicRetryReady,
   onSoftResetExhausted,
   listenOnly = false,
+  voiceEntryMode,
   autoAcquireOnMount = true,
   presenceMembers,
   onExplicitRemoteLeave,
@@ -191,6 +195,16 @@ export default function CallVoiceLayer({
 
   useEffect(() => {
     onVoiceLayerMountedChange?.(true);
+    const entryGeneration = peekLocalCallEntryGeneration(sessionId);
+    const entryMode =
+      String(voiceEntryMode ?? "").trim() ||
+      (listenOnly ? "listen_only" : "mic");
+    voiceProdLog(
+      `[voice-bootstrap] layer-mount session=${compactSessionId(sessionId)} ` +
+        `device=${compactDeviceId(deviceId)} instance=${instanceId} ` +
+        `voiceEpoch=${entryGeneration} localCallEntryGeneration=${entryGeneration} ` +
+        `voiceEntryMode=${entryMode} members=${membersRef.current.length}`
+    );
     logAppLife("voice-layer-mount", {
       instance: instanceId,
       session: compactSessionId(sessionId),
@@ -217,7 +231,14 @@ export default function CallVoiceLayer({
       );
       releaseSessionMic("voice_layer_unmount", sessionId);
     };
-  }, [deviceId, instanceId, onVoiceLayerMountedChange, sessionId]);
+  }, [
+    deviceId,
+    instanceId,
+    listenOnly,
+    onVoiceLayerMountedChange,
+    sessionId,
+    voiceEntryMode,
+  ]);
 
   useEffect(() => {
     logVoiceClientEnv("voice-layer-mount");

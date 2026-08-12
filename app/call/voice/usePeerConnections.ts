@@ -4,6 +4,7 @@ import {
   debugConsoleLog,
   debugConsoleInfo,
   voiceProdLog,
+  voiceProdLogOnStateChange,
   voiceProdLogUntilDeadline,
 } from "@/lib/debugVoiceLog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -165,6 +166,8 @@ import {
   type RemoteJoinPhase,
 } from "@/lib/voiceRemoteJoinPhase";
 import { bumpLocalCallEntryGeneration } from "@/lib/voiceLocalCallEntry";
+import { formatVoiceBootstrapMemberSummary } from "@/lib/voiceBootstrapLog";
+import { hasLocalLeftCall } from "@/lib/localCallExit";
 import {
   buildVoiceConnectionLogSnapshot,
   formatVoiceFailureConnectionState,
@@ -7604,6 +7607,15 @@ export function usePeerConnections({
       }
 
       if (!canSendVoiceOffer() && isOfferOwner) {
+        voiceProdLogOnStateChange(
+          `voice-bootstrap:offer-blocked:${remoteId}`,
+          `mic|${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)}|${reason}`,
+          `[voice-bootstrap] action=skip remote=${compactDeviceId(remoteId)} ` +
+            `skipReason=local_track_not_live hasUsablePc=${isUsablePeerConnection(pcsRef.current.get(remoteId)) ? 1 : 0} ` +
+            `isOfferOwner=1 canSendVoiceOffer=0 ` +
+            `localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} ` +
+            `reason=${reason}`
+        );
         logMicOfferBlocked(remoteId);
         return;
       }
@@ -13006,11 +13018,61 @@ export function usePeerConnections({
       })),
     });
 
+    const localExitedIds = new Set<string>();
+    for (const member of members) {
+      const id = String(member.device_id ?? "").trim();
+      if (!id || id === deviceId) continue;
+      if (hasLocalLeftCall(sessionId, id)) localExitedIds.add(id);
+    }
+    const memberSummary = formatVoiceBootstrapMemberSummary(members, {
+      selfDeviceId: deviceId,
+      remoteIds,
+      localExitedIds,
+      explicitRemovedIds: remotePeerGraceRefsRef.current.explicitRemoved,
+    });
+    const localTrackLive = isLocalTrackLive(
+      localAudioTrackRef,
+      localStreamRef
+    );
+    const localTrackState = getLocalTrackReadyState(
+      localAudioTrackRef,
+      localStreamRef
+    );
+    const canOfferNow = canSendVoiceOffer();
+    voiceProdLogOnStateChange(
+      `voice-bootstrap:offer-effect:${sessionId}:${deviceId}`,
+      [
+        signalReady ? 1 : 0,
+        micReady ? 1 : 0,
+        remoteIds.length,
+        remoteIds.map((id) => id.slice(-4)).join(","),
+        memberSummary,
+        canOfferNow ? 1 : 0,
+        localTrackState,
+        localCallEntryGenerationRef.current,
+      ].join("|"),
+      `[voice-bootstrap] offer-effect session=${sessionId.slice(-6)} ` +
+        `device=${compactDeviceId(deviceId)} ` +
+        `generation=${localCallEntryGenerationRef.current} ` +
+        `signalReady=${signalReady ? 1 : 0} micReady=${micReady ? 1 : 0} ` +
+        `canSendVoiceOffer=${canOfferNow ? 1 : 0} localTrack=${localTrackState} ` +
+        `remoteIds=${remoteIds.length}` +
+        `[${remoteIds.map((id) => compactDeviceId(id)).join(",") || "-"}] ` +
+        `members=${memberSummary || "-"}`
+    );
+
     if (!signalReady) {
       for (const remoteId of remoteIds) {
         emitVoiceStartCheck(remoteId);
         logVoiceStartBlocked(remoteId, "signal_not_ready");
       }
+      voiceProdLogOnStateChange(
+        `voice-bootstrap:signal-not-ready:${sessionId}:${deviceId}`,
+        `0|${remoteIds.length}`,
+        `[voice-bootstrap] gate=signalReady_false session=${sessionId.slice(-6)} ` +
+          `device=${compactDeviceId(deviceId)} remoteIds=${remoteIds.length}` +
+          `[${remoteIds.map((id) => compactDeviceId(id)).join(",") || "-"}]`
+      );
       voiceDebugLog("[voice-peer] offer effect stop", {
         reason: "signalReady_false",
       });
@@ -13019,6 +13081,13 @@ export function usePeerConnections({
 
     if (remoteIds.length < 1) {
       const strict = getStrictRemoteIds();
+      voiceProdLogOnStateChange(
+        `voice-bootstrap:no-remoteIds:${sessionId}:${deviceId}`,
+        `0|${strict.length}|${memberSummary}`,
+        `[voice-bootstrap] gate=remoteIds_empty session=${sessionId.slice(-6)} ` +
+          `device=${compactDeviceId(deviceId)} strictCount=${strict.length} ` +
+          `members=${memberSummary || "-"}`
+      );
       debugConsoleLog(
         `[voice-peer] offer-effect-stop class=A reason=no_remoteIds strictCount=${strict.length} ` +
           `members=${members
@@ -13046,10 +13115,6 @@ export function usePeerConnections({
       listenOnly,
       voicePolicy.releaseMicOnMute,
       userMutedRef
-    );
-    const localTrackLive = isLocalTrackLive(
-      localAudioTrackRef,
-      localStreamRef
     );
     const settingsTurnSignalReady = isVoiceJoinTransportReady({
       signalReady,
@@ -13139,6 +13204,14 @@ export function usePeerConnections({
         if (localReentryResetSentRef.current.has(remoteId)) continue;
         localReentryResetSentRef.current.add(remoteId);
         rejoiningRemoteIds.add(remoteId);
+        const oldConnectionId = getCurrentConnectionId(remoteId);
+        voiceProdLog(
+          `[voice-bootstrap] peer-state-reset reason=local_rejoin ` +
+            `remote=${compactDeviceId(remoteId)} ` +
+            `voiceEpoch=${localCallEntryGenerationRef.current} ` +
+            `connectionId=${compactConnectionId(oldConnectionId)} ` +
+            `role=${deviceId < remoteId ? "active" : "passive"}`
+        );
         void resetRemotePeerForRejoin(
           remoteId,
           "local_rejoin",
@@ -13148,7 +13221,19 @@ export function usePeerConnections({
     }
 
     for (const remoteId of remoteIds) {
-      if (rejoiningRemoteIds.has(remoteId)) continue;
+      if (rejoiningRemoteIds.has(remoteId)) {
+        voiceProdLogOnStateChange(
+          `voice-bootstrap:action:${remoteId}`,
+          `skip|local_rejoin_in_flight|${localCallEntryGenerationRef.current}`,
+          `[voice-bootstrap] action=skip remote=${compactDeviceId(remoteId)} ` +
+            `skipReason=local_rejoin_in_flight ` +
+            `isOfferOwner=${deviceId < remoteId ? 1 : 0} ` +
+            `hasUsablePc=${isUsablePeerConnection(pcsRef.current.get(remoteId)) ? 1 : 0} ` +
+            `canSendVoiceOffer=${canSendVoiceOffer() ? 1 : 0} ` +
+            `localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)}`
+        );
+        continue;
+      }
 
       if (!remoteJoinPhaseRef.current.has(remoteId)) {
         remoteJoinPhaseRef.current.set(remoteId, "initial_connect");
@@ -13163,6 +13248,22 @@ export function usePeerConnections({
         hasUsablePc,
         isEstablishedHealthy: establishedSkip != null,
       });
+      const isOfferOwner = deviceId < remoteId;
+      const logBootstrapAction = (
+        action: "ensure" | "offer" | "skip",
+        skipReason: string
+      ) => {
+        voiceProdLogOnStateChange(
+          `voice-bootstrap:action:${remoteId}`,
+          `${action}|${skipReason}|${hasUsablePc ? 1 : 0}|${canSendVoiceOffer() ? 1 : 0}|${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)}|${phase}`,
+          `[voice-bootstrap] action=${action} remote=${compactDeviceId(remoteId)} ` +
+            `skipReason=${skipReason} hasUsablePc=${hasUsablePc ? 1 : 0} ` +
+            `isOfferOwner=${isOfferOwner ? 1 : 0} ` +
+            `canSendVoiceOffer=${canSendVoiceOffer() ? 1 : 0} ` +
+            `localTrack=${getLocalTrackReadyState(localAudioTrackRef, localStreamRef)} ` +
+            `phase=${phase}`
+        );
+      };
 
       // Late joiner must not force recreate / re-offer existing healthy peers.
       if (!shouldEnsure) {
@@ -13170,9 +13271,16 @@ export function usePeerConnections({
           if (!isNewRemote && shouldSuppressPassiveOfferReschedule(phase)) {
             passiveJoinSettledRef.current.add(remoteId);
           }
+          logBootstrapAction(
+            "skip",
+            establishedSkip
+              ? `established_${establishedSkip}`
+              : `phase_${phase}`
+          );
           continue;
         }
         if (hasUsablePc) {
+          logBootstrapAction("skip", "has_usable_pc");
           continue;
         }
       }
@@ -13182,6 +13290,7 @@ export function usePeerConnections({
         !isNewRemote
       ) {
         passiveJoinSettledRef.current.add(remoteId);
+        logBootstrapAction("skip", `phase_${phase}`);
         continue;
       }
 
@@ -13197,23 +13306,29 @@ export function usePeerConnections({
         );
       }
 
-      const isOfferOwner = deviceId < remoteId;
       if (isOfferOwner) {
         if (!activeCanOffer) {
+          let skipReason = "active_cannot_offer";
           if (!voiceSettingsReadyRef.current) {
+            skipReason = "settings_not_ready";
             logVoiceStartBlocked(remoteId, "settings_not_ready");
           } else if (!signalReady) {
+            skipReason = "signal_not_ready";
             logVoiceStartBlocked(remoteId, "signal_not_ready");
           } else if (
             relayForcedRef.current &&
             !hasTurnIceServer(iceServersRef.current)
           ) {
+            skipReason = "turn_not_loaded";
             logVoiceStartBlocked(remoteId, "turn_not_loaded");
           } else if (!micReady) {
+            skipReason = "mic_not_ready";
             logVoiceStartBlocked(remoteId, "mic_not_ready");
           } else if (!localTrackLive && !receiveOnly) {
+            skipReason = "local_track_not_live";
             logVoiceStartBlocked(remoteId, "local_track_not_live");
           }
+          logBootstrapAction("skip", skipReason);
           continue;
         }
         if (!activeOfferJoinLoggedRef.current.has(remoteId)) {
@@ -13225,29 +13340,38 @@ export function usePeerConnections({
               `signalReady=${signalReady ? 1 : 0} micReady=${micReady ? 1 : 0}`
           );
         }
+        logBootstrapAction("offer", "maybe_start_offer");
         void maybeStartOffer(remoteId);
       } else {
         if (shouldSuppressPassiveOfferReschedule(phase)) {
           passiveJoinSettledRef.current.add(remoteId);
+          logBootstrapAction("skip", `phase_${phase}`);
           continue;
         }
         if (phase === "idle_unnegotiated") {
           if (passiveCanWait) {
+            logBootstrapAction("ensure", "passive_on_join_wait");
             beginPassiveOfferWait(remoteId, "passive_on_join", {
               initialJoin: true,
             });
           } else if (!voiceSettingsReadyRef.current) {
             logVoiceStartBlocked(remoteId, "settings_not_ready");
+            logBootstrapAction("skip", "settings_not_ready");
           } else if (!signalReady) {
             logVoiceStartBlocked(remoteId, "signal_not_ready");
+            logBootstrapAction("skip", "signal_not_ready");
           } else if (
             relayForcedRef.current &&
             !hasTurnIceServer(iceServersRef.current)
           ) {
             logVoiceStartBlocked(remoteId, "turn_not_loaded");
+            logBootstrapAction("skip", "turn_not_loaded");
+          } else {
+            logBootstrapAction("skip", "passive_cannot_wait");
           }
           continue;
         }
+        logBootstrapAction("ensure", "passive_on_join");
         const ok = ensurePeerConnection(remoteId, "passive_on_join", {
           // Never force-reset existing peers just because the member list grew.
           force: false,
@@ -13273,6 +13397,7 @@ export function usePeerConnections({
     deviceId,
     assignConnectionId,
     beginPassiveOfferWait,
+    canSendVoiceOffer,
     closePeer,
     emitMeshSummary,
     emitPeerStates,
@@ -13292,6 +13417,7 @@ export function usePeerConnections({
     members,
     resetRemotePeerForRejoin,
     scheduleDeferredHealPeerConnections,
+    sessionId,
     userMutedRef,
     voicePolicy.releaseMicOnMute,
   ]);

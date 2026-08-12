@@ -3034,6 +3034,7 @@ export default function CallClient() {
       userMuted={userMuted}
       userMutedRef={userMutedRef}
       listenOnly={voiceEntryMode === "listen_only"}
+      voiceEntryMode={voiceEntryMode}
       autoAcquireOnMount={voiceEntryMode === "mic"}
       presenceMembers={members}
       onLocalTrackMutedApplied={handleLocalTrackMutedApplied}

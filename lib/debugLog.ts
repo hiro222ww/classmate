@@ -211,6 +211,8 @@ const PROD_LOG_INCLUDE: RegExp[] = [
   /auto-hard-reset-give-up|auto_hard_reset_give_up/,
   /reconnect.*(?:give.?up|max_attempt|exhausted)/i,
   /\[voice-peer\].*\b(?:failed|error|give-up|give_up)\b/i,
+  // Rejoin bootstrap gate diagnostics (mount / remoteIds / mic / signal).
+  /\[voice-bootstrap\]/,
 ];
 
 export function shouldEmitProductionLogLine(line: string): boolean {

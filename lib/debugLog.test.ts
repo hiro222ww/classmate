@@ -9,6 +9,11 @@ describe("shouldEmitProductionLogLine", () => {
     expect(
       shouldEmitProductionLogLine("[remote-audio] audio_confirmed_strict remote=abcd")
     ).toBe(true);
+    expect(
+      shouldEmitProductionLogLine(
+        "[voice-bootstrap] gate=remoteIds_empty session=abcdef remoteIds=0"
+      )
+    ).toBe(true);
   });
 
   it("suppresses routine diagnostics in production", () => {
