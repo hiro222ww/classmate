@@ -9,11 +9,21 @@ import {
   lookupEntitlements,
   resolveUserIdForDevice,
 } from "@/lib/userIdentityMigration";
-import {
-  isSlotBillingEnabled,
-  SLOT_BILLING_OFF_EFFECTIVE_LIMIT,
-} from "@/lib/billingAvailability";
 import { isRetryableNetworkError } from "@/lib/retryableFetch";
+
+/** Free-tier default when entitlements are missing or invalid. */
+export const FREE_CLASS_SLOT_LIMIT = 1;
+
+/** Slot limit from entitlements only — independent of slot_billing_enabled. */
+export function resolveClassSlotLimitFromEntitlement(
+  classSlots: unknown
+): number {
+  const n = Number(classSlots ?? FREE_CLASS_SLOT_LIMIT);
+  if (!Number.isFinite(n) || n < FREE_CLASS_SLOT_LIMIT) {
+    return FREE_CLASS_SLOT_LIMIT;
+  }
+  return Math.floor(n);
+}
 
 export type ApiActor = UserIdentity & {
   userId: string;
@@ -126,8 +136,13 @@ export async function profileExistsForActor(
   return Boolean(data?.device_id);
 }
 
+/**
+ * Class slot limit for join / mine / match / invite.
+ * Always from user_entitlements.class_slots (default Free=1).
+ * slot_billing_enabled only gates purchase/checkout UI — never this limit.
+ */
 export async function getClassSlotsForActor(
-  sb: SupabaseClient,
+  _sb: SupabaseClient,
   actor: ActorLookup
 ): Promise<
   | { ok: true; classSlots: number }
@@ -139,10 +154,6 @@ export async function getClassSlotsForActor(
   }
 
   try {
-    if (!(await isSlotBillingEnabled())) {
-      return { ok: true, classSlots: SLOT_BILLING_OFF_EFFECTIVE_LIMIT };
-    }
-
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -153,7 +164,7 @@ export async function getClassSlotsForActor(
 
         return {
           ok: true,
-          classSlots: Math.max(1, Number(ent?.class_slots ?? 1)),
+          classSlots: resolveClassSlotLimitFromEntitlement(ent?.class_slots),
         };
       } catch (error) {
         lastError = error;

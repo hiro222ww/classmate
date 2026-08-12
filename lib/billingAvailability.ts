@@ -11,7 +11,11 @@ export const SLOT_BILLING_DISABLED_MESSAGE =
 export const THEME_BILLING_DISABLED_MESSAGE =
   "現在、テーマ課金は停止中です。公開中のテーマは無料で利用できます。";
 
-/** When slot billing is off, do not enforce paid class limits. */
+/**
+ * @deprecated Slot billing off no longer relaxes class-slot enforcement.
+ * Entitlements (`user_entitlements.class_slots`) remain the slot limit source of truth.
+ * Kept only so older imports do not break; do not use for enforcement.
+ */
 export const SLOT_BILLING_OFF_EFFECTIVE_LIMIT = 999;
 
 export type BillingCategoryFlags = {
