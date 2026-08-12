@@ -12,6 +12,7 @@ export type PostClassPresenceParams = {
   source: string;
   reason: string;
   explicitLeave?: boolean;
+  signal?: AbortSignal;
 };
 
 /**
@@ -26,6 +27,8 @@ export async function postClassPresence(
   const sessionId = String(params.sessionId ?? "").trim() || null;
   const screen = params.screen;
   if (!classId || !deviceId) return null;
+
+  if (params.signal?.aborted) return null;
 
   if (screen === "room") {
     logPresenceScreenWrite({
@@ -57,8 +60,16 @@ export async function postClassPresence(
         explicitLeave: params.explicitLeave === true,
       }),
       cache: "no-store",
+      signal: params.signal,
     });
-  } catch {
+  } catch (error) {
+    if (
+      params.signal?.aborted ||
+      (error instanceof DOMException && error.name === "AbortError") ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
+      return null;
+    }
     return null;
   }
 }

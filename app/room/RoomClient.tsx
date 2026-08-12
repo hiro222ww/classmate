@@ -2418,9 +2418,15 @@ if (!res.ok || !json?.ok) {
     if (pathname !== "/room") return;
     if (!roomSessionReady || sessionResolving) return;
 
+    const presenceAbort = new AbortController();
+
     async function sendPresence() {
+      if (presenceAbort.signal.aborted) return;
       if (isClassLeftLocally(classId)) {
         logRoomAsyncIgnored(classId, "class_left", "presence");
+        return;
+      }
+      if (typeof window !== "undefined" && window.location.pathname !== "/room") {
         return;
       }
       const res = await postClassPresence({
@@ -2434,7 +2440,9 @@ if (!res.ok || !json?.ok) {
             ? "room_heartbeat_hidden"
             : "room_heartbeat",
         explicitLeave: false,
+        signal: presenceAbort.signal,
       }).catch((e) => {
+        if (presenceAbort.signal.aborted) return null;
         console.warn("[room] presence update failed", {
           screen: "room",
           sessionId: sessionId.slice(-6),
@@ -2478,6 +2486,7 @@ if (!res.ok || !json?.ok) {
     document.addEventListener("visibilitychange", onPresenceVisibility);
 
     return () => {
+      presenceAbort.abort();
       document.removeEventListener("visibilitychange", onPresenceVisibility);
       if (timer) window.clearInterval(timer);
     };

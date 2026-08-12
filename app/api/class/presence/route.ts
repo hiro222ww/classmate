@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
+import { decideRoomPresenceOverwrite } from "@/lib/presenceRoomOverwriteGuard";
 
 function normalizePresenceStatus(
   value: string
@@ -20,6 +21,26 @@ function normalizePresenceStatus(
   }
 
   return "offline";
+}
+
+async function lookupSessionMemberInCall(params: {
+  sessionId: string;
+  deviceId: string;
+}): Promise<boolean | null> {
+  const { data, error } = await supabaseAdmin
+    .from("session_members")
+    .select("is_in_call")
+    .eq("session_id", params.sessionId)
+    .eq("device_id", params.deviceId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[presence POST] in_call lookup failed", error.message);
+    return null;
+  }
+
+  if (!data) return null;
+  return data.is_in_call === true;
 }
 
 export async function POST(req: NextRequest) {
@@ -47,6 +68,38 @@ export async function POST(req: NextRequest) {
         },
         { status: 400 }
       );
+    }
+
+    let sessionMemberInCall: boolean | null = null;
+    if (screen === "room" && sessionId && !explicitLeave) {
+      sessionMemberInCall = await lookupSessionMemberInCall({
+        sessionId,
+        deviceId,
+      });
+    }
+
+    const overwrite = decideRoomPresenceOverwrite({
+      screen,
+      source,
+      explicitLeave,
+      sessionId,
+      sessionMemberInCall,
+    });
+
+    if (overwrite.ignore) {
+      console.log(
+        `[presence-screen] ignore screen=room source=${source} ` +
+          `reason=${overwrite.reason ?? "guard"} ` +
+          `sessionId=${sessionId?.slice(-8) ?? "-"} ` +
+          `deviceId=${deviceId.slice(-6)} ` +
+          `visibilityState=${visibilityState} ` +
+          `pathname=${pathname} explicitLeave=0`
+      );
+      return NextResponse.json({
+        ok: true,
+        ignored: true,
+        reason: overwrite.reason,
+      });
     }
 
     const status = normalizePresenceStatus(screen);
