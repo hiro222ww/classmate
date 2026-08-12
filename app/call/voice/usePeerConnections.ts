@@ -230,9 +230,14 @@ import {
   getRemoteIdsWithMemberGrace,
   isPresenceConfirmedRemoteLeave,
   markRemotePeerExplicitRemoved,
+  REMOTE_PEER_MEMBER_GRACE_MS,
+  shouldApplyPresenceConfirmedLeaveCleanup,
   shouldCloseRemotePeerNow,
+  shouldEnsurePeerOnMemberListChange,
+  shouldSuppressVoiceEpochResetForHealthyPeer,
 } from "@/lib/callRemotePeerGrace";
 import {
+  CALL_JOIN_TRANSITION_GRACE_MS,
   CALL_LIVE_MEMBER_ABSENT_GRACE_MS,
   logCallPeerAddRemote,
   logCallPeerRemoveRemote,
@@ -2136,11 +2141,8 @@ export function usePeerConnections({
       const id = String(member.device_id ?? "").trim();
       if (!id || id === selfId) continue;
 
-      if (isConfirmedLeftCallScreen(member)) {
-        remoteJoinTransitionSinceRef.current.delete(id);
-        continue;
-      }
-
+      // Clear only once call-active / still on call screen. Do not clear on a
+      // brief room/home flicker — presence leave gate needs this hold.
       if (isMemberCallActive(member) || isMemberActiveOnCallScreen(member)) {
         remoteJoinTransitionSinceRef.current.delete(id);
         continue;
@@ -5393,6 +5395,25 @@ export function usePeerConnections({
       }
       if (now - absentSince < CALL_LIVE_MEMBER_ABSENT_GRACE_MS) continue;
 
+      const joinSince = remoteJoinTransitionSinceRef.current.get(id) ?? null;
+      if (
+        joinSince != null &&
+        now - joinSince < CALL_JOIN_TRANSITION_GRACE_MS
+      ) {
+        continue;
+      }
+      const establishedSkip = getEstablishedPeerSkipReasonForPeer(id);
+      if (establishedSkip) continue;
+      const pc = pcsRef.current.get(id) ?? null;
+      if (
+        pc &&
+        isUsablePeerConnection(pc) &&
+        (pc.connectionState === "connected" ||
+          pc.connectionState === "connecting")
+      ) {
+        continue;
+      }
+
       voiceSessionMemberIdsRef.current.delete(id);
       voiceSessionMemberAbsentSinceRef.current.delete(id);
       markRemotePeerExplicitRemoved(remotePeerGraceRefsRef.current, id);
@@ -5415,7 +5436,14 @@ export function usePeerConnections({
       maybeClosePeerForMemberRemoval(id, "session_member_pruned");
       emitPeerStates();
     }
-  }, [deviceId, emitPeerStates, members, membersSyncRevision, maybeClosePeerForMemberRemoval]);
+  }, [
+    deviceId,
+    emitPeerStates,
+    getEstablishedPeerSkipReasonForPeer,
+    members,
+    membersSyncRevision,
+    maybeClosePeerForMemberRemoval,
+  ]);
 
   const attemptSignalingRecoverRef = useRef<
     (remoteId: string, source: string) => Promise<boolean>
@@ -12949,11 +12977,12 @@ export function usePeerConnections({
   useEffect(() => {
     const remoteIds = getRemoteIds();
     const membersFingerprint = voiceMembersFingerprint;
-    const membersChanged =
-      offerEffectMembersFingerprintRef.current !== membersFingerprint;
     offerEffectMembersFingerprintRef.current = membersFingerprint;
 
     const prevTracked = offerEffectTrackedRemoteIdsRef.current;
+    const newlyJoinedRemoteIds = new Set(
+      remoteIds.filter((remoteId) => !prevTracked.includes(remoteId))
+    );
     for (const remoteId of remoteIds) {
       if (prevTracked.includes(remoteId)) continue;
       logCallPeerAddRemote({
@@ -13057,6 +13086,30 @@ export function usePeerConnections({
     const rejoiningRemoteIds = new Set<string>();
 
     for (const change of epochChanges) {
+      const establishedSkip = getEstablishedPeerSkipReasonForPeer(
+        change.remoteId
+      );
+      if (
+        shouldSuppressVoiceEpochResetForHealthyPeer({
+          isEstablishedHealthy: establishedSkip != null,
+        })
+      ) {
+        const track = remoteVoiceEpochTracksRef.current.get(change.remoteId);
+        if (track) {
+          remoteVoiceEpochTracksRef.current.set(change.remoteId, {
+            ...track,
+            epoch: change.oldEpoch,
+            lastInCall: true,
+            lastScreen: "call",
+          });
+        }
+        voiceProdLog(
+          `[voice-peer] voice-epoch-change-suppressed remote=${compactDeviceId(change.remoteId)} ` +
+            `old=${change.oldEpoch} new=${change.newEpoch} reason=${change.reason} ` +
+            `hold=${establishedSkip}`
+        );
+        continue;
+      }
       voiceProdLog(
         `[voice-peer] voice-epoch-changed remote=${compactDeviceId(change.remoteId)} ` +
           `old=${change.oldEpoch} new=${change.newEpoch} reason=${change.reason}`
@@ -13103,15 +13156,36 @@ export function usePeerConnections({
 
       const phase = getPeerNegotiationPhase(remoteId);
       const hasUsablePc = isUsablePeerConnection(pcsRef.current.get(remoteId));
+      const isNewRemote = newlyJoinedRemoteIds.has(remoteId);
+      const establishedSkip = getEstablishedPeerSkipReasonForPeer(remoteId);
+      const shouldEnsure = shouldEnsurePeerOnMemberListChange({
+        isNewlyJoinedRemote: isNewRemote,
+        hasUsablePc,
+        isEstablishedHealthy: establishedSkip != null,
+      });
+
+      // Late joiner must not force recreate / re-offer existing healthy peers.
+      if (!shouldEnsure) {
+        if (establishedSkip || shouldSuppressPassiveOfferReschedule(phase)) {
+          if (!isNewRemote && shouldSuppressPassiveOfferReschedule(phase)) {
+            passiveJoinSettledRef.current.add(remoteId);
+          }
+          continue;
+        }
+        if (hasUsablePc) {
+          continue;
+        }
+      }
+
       if (
         shouldSuppressPassiveOfferReschedule(phase) &&
-        !membersChanged
+        !isNewRemote
       ) {
         passiveJoinSettledRef.current.add(remoteId);
         continue;
       }
 
-      if (!hasUsablePc || membersChanged) {
+      if (!hasUsablePc || isNewRemote) {
         emitVoiceStartCheck(remoteId);
       }
 
@@ -13175,7 +13249,8 @@ export function usePeerConnections({
           continue;
         }
         const ok = ensurePeerConnection(remoteId, "passive_on_join", {
-          force: membersChanged,
+          // Never force-reset existing peers just because the member list grew.
+          force: false,
         });
         if (
           ok &&
@@ -13204,6 +13279,7 @@ export function usePeerConnections({
     emitReadinessSnapshot,
     emitVoiceStartCheck,
     ensurePeerConnection,
+    getEstablishedPeerSkipReasonForPeer,
     getPeerNegotiationPhase,
     getCurrentConnectionId,
     getRemoteIds,
@@ -13235,10 +13311,46 @@ export function usePeerConnections({
 
   useEffect(() => {
     const selfId = String(deviceId ?? "").trim();
+    const nowMs = Date.now();
     for (const member of members) {
       const remoteId = String(member.device_id ?? "").trim();
       if (!remoteId || remoteId === selfId) continue;
       if (!isPresenceConfirmedRemoteLeave(member)) continue;
+
+      const pc = pcsRef.current.get(remoteId) ?? null;
+      const hasLivePeerEvidence =
+        getEstablishedPeerSkipReasonForPeer(remoteId) != null ||
+        hasLiveRemoteAudioStream(remoteId) ||
+        (pc != null &&
+          isUsablePeerConnection(pc) &&
+          (pc.connectionState === "connected" ||
+            pc.connectionState === "connecting" ||
+            isTransportMediaConnected(
+              pc.connectionState,
+              pc.iceConnectionState
+            )));
+
+      const leaveDecision = shouldApplyPresenceConfirmedLeaveCleanup({
+        isPresenceLeave: true,
+        nowMs,
+        joinTransitionSinceMs:
+          remoteJoinTransitionSinceRef.current.get(remoteId) ?? null,
+        joinTransitionGraceMs: CALL_JOIN_TRANSITION_GRACE_MS,
+        lastStrictInCallAt:
+          remotePeerGraceRefsRef.current.lastStrictInCallAt.get(remoteId) ??
+          null,
+        recentStrictGraceMs: REMOTE_PEER_MEMBER_GRACE_MS,
+        hasLivePeerEvidence,
+      });
+
+      if (!leaveDecision.apply) {
+        debugConsoleLog(
+          `[voice-peer] presence-leave-hold remote=${compactDeviceId(remoteId)} ` +
+            `skip=${leaveDecision.skipReason ?? "-"} ` +
+            `inCall=${member.is_in_call === true ? 1 : 0} screen=${String(member.screen ?? "-")}`
+        );
+        continue;
+      }
 
       voiceSessionMemberIdsRef.current.delete(remoteId);
       voiceSessionMemberAbsentSinceRef.current.delete(remoteId);
@@ -13264,7 +13376,14 @@ export function usePeerConnections({
         maybeClosePeerForMemberRemoval(remoteId, "presence_confirmed_leave");
       }
     }
-  }, [closePeer, deviceId, members, maybeClosePeerForMemberRemoval]);
+  }, [
+    closePeer,
+    deviceId,
+    getEstablishedPeerSkipReasonForPeer,
+    hasLiveRemoteAudioStream,
+    members,
+    maybeClosePeerForMemberRemoval,
+  ]);
 
   useEffect(() => {
     const localStreamReady = isLocalTrackLive(

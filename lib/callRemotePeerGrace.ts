@@ -184,6 +184,75 @@ export function isPresenceConfirmedRemoteLeave(member: {
   return Date.now() - t < 60_000;
 }
 
+export type PresenceLeaveCleanupSkipReason =
+  | "not_presence_leave"
+  | "join_transition_hold"
+  | "live_peer_evidence"
+  | "recent_strict_in_call";
+
+/**
+ * Gate presence→explicit_removed / peer cleanup.
+ * Leave signals still bypass this (handled separately).
+ * Protects late joiners in join_transition and established live peers
+ * from brief presence / session_members flicker.
+ */
+export function shouldApplyPresenceConfirmedLeaveCleanup(params: {
+  isPresenceLeave: boolean;
+  nowMs: number;
+  joinTransitionSinceMs: number | null;
+  joinTransitionGraceMs: number;
+  lastStrictInCallAt: number | null;
+  recentStrictGraceMs: number;
+  hasLivePeerEvidence: boolean;
+}): { apply: boolean; skipReason?: PresenceLeaveCleanupSkipReason } {
+  if (!params.isPresenceLeave) {
+    return { apply: false, skipReason: "not_presence_leave" };
+  }
+
+  if (params.hasLivePeerEvidence) {
+    return { apply: false, skipReason: "live_peer_evidence" };
+  }
+
+  if (params.joinTransitionSinceMs != null) {
+    const elapsed = params.nowMs - params.joinTransitionSinceMs;
+    if (elapsed >= 0 && elapsed < params.joinTransitionGraceMs) {
+      return { apply: false, skipReason: "join_transition_hold" };
+    }
+  }
+
+  if (params.lastStrictInCallAt != null) {
+    const elapsed = params.nowMs - params.lastStrictInCallAt;
+    if (elapsed >= 0 && elapsed < params.recentStrictGraceMs) {
+      return { apply: false, skipReason: "recent_strict_in_call" };
+    }
+  }
+
+  return { apply: true };
+}
+
+/**
+ * When the member list grows (late joiner), only the new remote should be
+ * forced into ensure/offer. Established healthy peers must not be reset.
+ */
+export function shouldEnsurePeerOnMemberListChange(params: {
+  isNewlyJoinedRemote: boolean;
+  hasUsablePc: boolean;
+  isEstablishedHealthy: boolean;
+}): boolean {
+  if (params.isEstablishedHealthy && !params.isNewlyJoinedRemote) {
+    return false;
+  }
+  if (params.isNewlyJoinedRemote) return true;
+  return !params.hasUsablePc;
+}
+
+/** Suppress voiceEpoch-driven peer reset for already-healthy peers (presence flicker). */
+export function shouldSuppressVoiceEpochResetForHealthyPeer(params: {
+  isEstablishedHealthy: boolean;
+}): boolean {
+  return params.isEstablishedHealthy;
+}
+
 export function getClosePeerEvidence(
   remoteId: string,
   refs: RemotePeerGraceRefs,
