@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
 
 function normalizePresenceStatus(
   value: string
@@ -10,12 +11,6 @@ function normalizePresenceStatus(
     return "calling";
   }
 
-  // 修正前:
-  // if (normalized === "room" || normalized === "home") {
-  //   return "waiting";
-  // }
-
-  // 修正後:
   if (normalized === "room") {
     return "waiting";
   }
@@ -31,26 +26,18 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    const classId = String(
-      body.class_id ?? body.classId ?? ""
-    ).trim();
-
-    const deviceId = String(
-      body.device_id ?? body.deviceId ?? ""
-    ).trim();
-
-    // 修正前:
-    // const screen =
-    //   String(body.screen ?? "").trim() || "room";
-
-    // 修正後:
-    const screen =
-      String(body.screen ?? "").trim() || "home";
-
+    const classId = String(body.class_id ?? body.classId ?? "").trim();
+    const deviceId = String(body.device_id ?? body.deviceId ?? "").trim();
+    const screen = String(body.screen ?? "").trim() || "home";
     const sessionId =
-      String(
-        body.session_id ?? body.sessionId ?? ""
-      ).trim() || null;
+      String(body.session_id ?? body.sessionId ?? "").trim() || null;
+    const source =
+      String(body.source ?? "").trim() || "api.class.presence.unattributed";
+    const reason = String(body.reason ?? "").trim() || "unspecified";
+    const visibilityState =
+      String(body.visibilityState ?? "").trim() || "unknown";
+    const pathname = String(body.pathname ?? "").trim() || "unknown";
+    const explicitLeave = body.explicitLeave === true;
 
     if (!classId || !deviceId) {
       return NextResponse.json(
@@ -62,32 +49,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const status =
-      normalizePresenceStatus(screen);
+    const status = normalizePresenceStatus(screen);
 
-    // 修正前:
-    /*
-    const payload = {
+    const payload: Record<string, unknown> = {
       class_id: classId,
       device_id: deviceId,
       screen,
       status,
-      session_id: sessionId,
       last_seen_at: new Date().toISOString(),
-    };
-    */
-
-    // 修正後:
-    const payload: Record<
-      string,
-      any
-    > = {
-      class_id: classId,
-      device_id: deviceId,
-      screen,
-      status,
-      last_seen_at:
-        new Date().toISOString(),
     };
 
     // nullで既存session_idを消さない
@@ -95,24 +64,34 @@ export async function POST(req: NextRequest) {
       payload.session_id = sessionId;
     }
 
-    console.log(
-      "[presence POST]",
-      payload
-    );
+    if (screen === "room") {
+      logPresenceScreenWrite({
+        source,
+        reason,
+        screen: "room",
+        classId,
+        sessionId,
+        deviceId,
+        visibilityState,
+        pathname,
+        explicitLeave,
+      });
+    } else {
+      console.log("[presence POST]", {
+        ...payload,
+        source,
+        reason,
+        visibilityState,
+        pathname,
+      });
+    }
 
-    const { error } =
-      await supabaseAdmin
-        .from("class_presence")
-        .upsert(payload, {
-          onConflict:
-            "class_id,device_id",
-        });
+    const { error } = await supabaseAdmin.from("class_presence").upsert(payload, {
+      onConflict: "class_id,device_id",
+    });
 
     if (error) {
-      console.error(
-        "[presence POST] error",
-        error
-      );
+      console.error("[presence POST] error", error);
 
       return NextResponse.json(
         {
@@ -126,18 +105,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
     });
-  } catch (e: any) {
-    console.error(
-      "[presence POST] fatal",
-      e
-    );
+  } catch (e: unknown) {
+    console.error("[presence POST] fatal", e);
 
     return NextResponse.json(
       {
         ok: false,
-        error:
-          e?.message ??
-          "unknown_error",
+        error: e instanceof Error ? e.message : "unknown_error",
       },
       { status: 500 }
     );
@@ -146,11 +120,9 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } =
-      new URL(req.url);
+    const { searchParams } = new URL(req.url);
 
-    const classId =
-      searchParams.get("classId");
+    const classId = searchParams.get("classId");
 
     if (!classId) {
       return NextResponse.json(
@@ -164,20 +136,15 @@ export async function GET(req: NextRequest) {
 
     const now = Date.now();
 
-    const activeMs =
-      1000 * 60 * 2;
+    const activeMs = 1000 * 60 * 2;
 
-    const { data, error } =
-      await supabaseAdmin
-        .from("class_presence")
-        .select("*")
-        .eq("class_id", classId);
+    const { data, error } = await supabaseAdmin
+      .from("class_presence")
+      .select("*")
+      .eq("class_id", classId);
 
     if (error) {
-      console.error(
-        "[presence GET] error",
-        error
-      );
+      console.error("[presence GET] error", error);
 
       return NextResponse.json(
         {
@@ -188,22 +155,15 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const filtered = (
-      data ?? []
-    ).map((row: any) => {
-      const last = new Date(
-        row.last_seen_at
-      ).getTime();
+    const filtered = (data ?? []).map((row: Record<string, unknown>) => {
+      const last = new Date(String(row.last_seen_at ?? "")).getTime();
 
-      const active =
-        now - last <= activeMs;
+      const active = now - last <= activeMs;
 
       return {
         ...row,
         active,
-        effective_status: active
-          ? row.status
-          : "offline",
+        effective_status: active ? row.status : "offline",
       };
     });
 
@@ -212,18 +172,13 @@ export async function GET(req: NextRequest) {
       items: filtered,
       presence: filtered,
     });
-  } catch (e: any) {
-    console.error(
-      "[presence GET] fatal",
-      e
-    );
+  } catch (e: unknown) {
+    console.error("[presence GET] fatal", e);
 
     return NextResponse.json(
       {
         ok: false,
-        error:
-          e?.message ??
-          "unknown_error",
+        error: e instanceof Error ? e.message : "unknown_error",
       },
       { status: 500 }
     );

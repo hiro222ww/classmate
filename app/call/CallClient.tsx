@@ -117,6 +117,7 @@ import {
   shouldPostRoomPresenceOnCallEffectCleanup,
   shouldPublishCallPresence,
 } from "@/lib/callPresenceForeground";
+import { postClassPresence } from "@/lib/postClassPresence";
 import { fetchWithRetry, isIntentionalAbortError } from "@/lib/retryableFetch";
 import {
   logVoicePerfPipeline,
@@ -869,16 +870,14 @@ export default function CallClient() {
       });
 
     if (classId) {
-      void fetch("/api/class/presence", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          classId,
-          deviceId: did,
-          screen: "room",
-          sessionId,
-        }),
-        cache: "no-store",
+      void postClassPresence({
+        classId,
+        deviceId: did,
+        sessionId,
+        screen: "room",
+        source: "CallClient.markSelfLeftCall",
+        reason: "explicit_leave",
+        explicitLeave: true,
       }).catch((e) => {
         console.warn("[call] optimistic room presence failed", e);
       });
@@ -1524,16 +1523,14 @@ export default function CallClient() {
       if (initialRetryTimer) window.clearTimeout(initialRetryTimer);
       // Intentionally skip screen=room here — see shouldPostRoomPresenceOnCallEffectCleanup.
       if (shouldPostRoomPresenceOnCallEffectCleanup()) {
-        void fetch("/api/class/presence", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            classId,
-            deviceId,
-            screen: "room",
-            sessionId,
-          }),
-          cache: "no-store",
+        void postClassPresence({
+          classId,
+          deviceId,
+          sessionId,
+          screen: "room",
+          source: "CallClient.presenceEffectCleanup",
+          reason: "effect_cleanup",
+          explicitLeave: false,
         }).catch(() => {});
       }
     };

@@ -76,6 +76,7 @@ import CallRequestSection from "@/components/CallRequestSection";
 import { HelpTip } from "@/components/HelpTip";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { fetchWithRetry } from "@/lib/retryableFetch";
+import { postClassPresence } from "@/lib/postClassPresence";
 import {
   compactMemberDeviceIds,
   diffMemberDeviceIds,
@@ -2422,16 +2423,17 @@ if (!res.ok || !json?.ok) {
         logRoomAsyncIgnored(classId, "class_left", "presence");
         return;
       }
-      const res = await fetch("/api/class/presence", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          classId,
-          deviceId,
-          screen: "room",
-          sessionId,
-        }),
-        cache: "no-store",
+      const res = await postClassPresence({
+        classId,
+        deviceId,
+        sessionId,
+        screen: "room",
+        source: "RoomClient.presenceHeartbeat",
+        reason:
+          typeof document !== "undefined" && document.hidden
+            ? "room_heartbeat_hidden"
+            : "room_heartbeat",
+        explicitLeave: false,
       }).catch((e) => {
         console.warn("[room] presence update failed", {
           screen: "room",

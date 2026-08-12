@@ -32,6 +32,7 @@ import {
   shouldBypassJoinAgeGates,
   shouldBypassRecruitmentTimeGates,
 } from "@/lib/opsTestModeShared";
+import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -129,6 +130,17 @@ async function refreshRoomPresence(params: {
   const now = new Date().toISOString();
   const presenceStatus =
     params.sessionStatus === "active" ? "active" : "waiting";
+  logPresenceScreenWrite({
+    source: "api.session.join.refreshRoomPresence",
+    reason: "session_join",
+    screen: "room",
+    classId: params.classId,
+    sessionId: params.sessionId,
+    deviceId: params.deviceId,
+    visibilityState: "server",
+    pathname: "/api/session/join",
+    explicitLeave: false,
+  });
   await supabaseAdmin.from("class_presence").upsert(
     {
       class_id: params.classId,

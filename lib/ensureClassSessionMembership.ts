@@ -12,6 +12,7 @@ import { isValidUuid } from "@/lib/userIdentity";
 import {
   membershipFilterForActor,
 } from "@/lib/actorIdentity";
+import { logPresenceScreenWrite } from "@/lib/presenceScreenWriteLog";
 
 export type JoinStateSource = "invite" | "normal_join" | "rejoin" | "restore";
 
@@ -401,6 +402,17 @@ export async function ensureClassSessionMembership(
   const presenceAction = existingPresence ? "refresh_class_presence" : "upsert_class_presence";
 
   {
+    logPresenceScreenWrite({
+      source: "ensureClassSessionMembership.upsert",
+      reason: presenceAction,
+      screen: "room",
+      classId: ids.classId,
+      sessionId: ids.sessionId,
+      deviceId: ids.deviceId,
+      visibilityState: "server",
+      pathname: "ensureClassSessionMembership",
+      explicitLeave: false,
+    });
     const { error } = await sb.from("class_presence").upsert(
       {
         class_id: ids.classId,

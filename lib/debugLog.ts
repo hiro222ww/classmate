@@ -213,6 +213,8 @@ const PROD_LOG_INCLUDE: RegExp[] = [
   /\[voice-peer\].*\b(?:failed|error|give-up|give_up)\b/i,
   // Rejoin bootstrap gate diagnostics (mount / remoteIds / mic / signal).
   /\[voice-bootstrap\]/,
+  // Presence screen=room/call writer attribution (diagnose false room drops).
+  /\[presence-screen\]/,
 ];
 
 export function shouldEmitProductionLogLine(line: string): boolean {
