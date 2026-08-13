@@ -215,6 +215,8 @@ const PROD_LOG_INCLUDE: RegExp[] = [
   /\[voice-bootstrap\]/,
   // Presence screen=room/call writer attribution (diagnose false room drops).
   /\[presence-screen\]/,
+  // session_members.is_in_call=false writer attribution.
+  /\[session-in-call\]/,
 ];
 
 export function shouldEmitProductionLogLine(line: string): boolean {

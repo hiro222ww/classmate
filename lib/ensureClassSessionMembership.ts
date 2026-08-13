@@ -16,6 +16,8 @@ import {
   ENSURE_MEMBERSHIP_ROOM_SOURCE,
 } from "@/lib/presenceRoomOverwriteGuard";
 import { upsertClassPresenceGuarded } from "@/lib/presenceRoomUpsert";
+import { logSessionInCallFalseWrite } from "@/lib/sessionInCallWriteLog";
+import { decideSessionMemberEnsureInCall } from "@/lib/sessionMemberInCallPreserve";
 
 export type JoinStateSource = "invite" | "normal_join" | "rejoin" | "restore";
 
@@ -345,15 +347,35 @@ export async function ensureClassSessionMembership(
   }
 
   {
+    const inCallDecision = decideSessionMemberEnsureInCall({
+      existingRow: Boolean(existingSessionMember),
+    });
+
+    if (inCallDecision.logFalseWrite) {
+      logSessionInCallFalseWrite({
+        source: "ensureClassSessionMembership.upsert",
+        reason: `join_source=${source};insert`,
+        sessionId: ids.sessionId,
+        deviceId: ids.deviceId,
+        visibilityState: "server",
+        pathname: "ensureClassSessionMembership",
+        explicitLeave: false,
+      });
+    }
+
+    const sessionMemberPayload: Record<string, unknown> = {
+      session_id: ids.sessionId,
+      device_id: ids.deviceId,
+      user_id: userId,
+      display_name: displayName,
+      joined_at: now,
+    };
+    if (inCallDecision.writeIsInCall) {
+      sessionMemberPayload.is_in_call = inCallDecision.isInCall;
+    }
+
     const { error } = await sb.from("session_members").upsert(
-      {
-        session_id: ids.sessionId,
-        device_id: ids.deviceId,
-        user_id: userId,
-        display_name: displayName,
-        joined_at: now,
-        is_in_call: false,
-      },
+      sessionMemberPayload,
       { onConflict: "session_id,device_id" }
     );
 

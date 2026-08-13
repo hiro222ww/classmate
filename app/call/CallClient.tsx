@@ -118,6 +118,7 @@ import {
   shouldPublishCallPresence,
 } from "@/lib/callPresenceForeground";
 import { postClassPresence } from "@/lib/postClassPresence";
+import { logSessionInCallFalseWrite } from "@/lib/sessionInCallWriteLog";
 import { fetchWithRetry, isIntentionalAbortError } from "@/lib/retryableFetch";
 import {
   logVoicePerfPipeline,
@@ -857,6 +858,14 @@ export default function CallClient() {
           console.warn("[call] leave signal insert failed", error);
         }
       });
+
+    logSessionInCallFalseWrite({
+      source: "CallClient.markSelfLeftCall",
+      reason: "explicit_leave",
+      sessionId,
+      deviceId: did,
+      explicitLeave: true,
+    });
 
     void supabase
       .from("session_members")

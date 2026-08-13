@@ -175,6 +175,8 @@ export function mapMatchJoinAtomicV3RpcError(error: unknown) {
 }
 
 export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
+  // RPC: INSERT defaults is_in_call=false; ON CONFLICT preserves existing is_in_call.
+  // Do not log a blanket is_in_call=false write here — conflict must not demote call state.
   const { data, error } = await supabase.rpc("match_join_atomic_v3", {
     p_device_id: params.deviceId,
     p_display_name: params.joinDisplayName,
