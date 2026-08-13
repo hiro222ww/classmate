@@ -217,6 +217,8 @@ const PROD_LOG_INCLUDE: RegExp[] = [
   /\[presence-screen\]/,
   // session_members.is_in_call=false writer attribution.
   /\[session-in-call\]/,
+  // Call grid sticky-leave vs server rejoin visibility.
+  /\[call-member-visibility\]/,
 ];
 
 export function shouldEmitProductionLogLine(line: string): boolean {

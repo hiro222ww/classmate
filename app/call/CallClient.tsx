@@ -133,6 +133,13 @@ import {
 import "@/lib/voiceConnectionDiagnostics";
 import { isStableVoiceJoinMode, shouldUseFastSessionStatus } from "@/lib/stableVoiceJoin";
 import { buildVoiceConnectionMembers } from "@/lib/voiceSessionMembers";
+import {
+  clearCallLeaveStickyForDevice,
+  logCallMemberVisibility,
+  resolveCallMemberUiExcludeReason,
+  resolveConfirmedLeftCallFlag,
+  shouldClearStickyLeaveOnServerRejoin,
+} from "@/lib/callMemberVisibilityLog";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import {
@@ -206,6 +213,7 @@ type Member = {
   lastSpokeAt?: number;
   is_in_call?: boolean;
   screen?: string | null;
+  presence_session_id?: string | null;
   joined_at?: string | null;
   last_seen_at?: string | null;
 };
@@ -274,6 +282,7 @@ type SessionStatusResponse = {
     joined_at?: string | null;
     is_in_call?: boolean | null;
     screen?: string | null;
+    presence_session_id?: string | null;
     last_seen_at?: string | null;
   }>;
   memberCount?: number;
@@ -441,6 +450,8 @@ export default function CallClient() {
     (remoteId: string) => void | Promise<void>
   >(() => {});
   const localExitedPeersRef = useRef<Set<string>>(new Set());
+  /** Leave-signal sticky (mirrors voice explicitRemoved for UI diagnosis). */
+  const explicitRemovedPeersRef = useRef<Set<string>>(new Set());
   /** Blocks presence heartbeat from re-marking screen=call after explicit leave. */
   const selfLeftCallRef = useRef(false);
   const membersSyncRevisionRef = useRef(0);
@@ -898,6 +909,7 @@ export default function CallClient() {
       const id = String(remoteId ?? "").trim();
       if (!id || id === String(deviceId ?? "").trim()) return;
       localExitedPeersRef.current.add(id);
+      explicitRemovedPeersRef.current.add(id);
       recentlyDepartedUntilRef.current.delete(id);
       memberLastInCallAtRef.current.delete(id);
       memberJoinTransitionSinceRef.current.delete(id);
@@ -993,23 +1005,61 @@ export default function CallClient() {
         const incoming = Array.isArray(json.members) ? json.members : [];
         logMemberDisplayNamesFromApi("call:session/status", incoming);
         const nextMembers: Member[] = [];
+        const visibilityProbe: Array<{
+          raw: Member;
+          overridden: Member;
+          stickyBefore: boolean;
+          clearEligibleByRaw: boolean;
+        }> = [];
 
         for (const m of incoming) {
           const did = String(m.device_id ?? "").trim();
           if (!did) continue;
 
-          nextMembers.push(
-            applyLocalLeftCallOverride({
-              device_id: did,
-              display_name: formatMemberDisplayName(m),
-              photo_path: String(m.photo_path ?? "").trim() || null,
-              avatar_url: String(m.avatar_url ?? "").trim() || null,
-              is_in_call: m.is_in_call === true,
-              screen: String(m.screen ?? "").trim() || null,
-              joined_at: String(m.joined_at ?? "").trim() || null,
-              last_seen_at: String(m.last_seen_at ?? "").trim() || null,
-            })
-          );
+          const rawMember: Member = {
+            device_id: did,
+            display_name: formatMemberDisplayName(m),
+            photo_path: String(m.photo_path ?? "").trim() || null,
+            avatar_url: String(m.avatar_url ?? "").trim() || null,
+            is_in_call: m.is_in_call === true,
+            screen: String(m.screen ?? "").trim() || null,
+            presence_session_id:
+              String(m.presence_session_id ?? "").trim() || null,
+            joined_at: String(m.joined_at ?? "").trim() || null,
+            last_seen_at: String(m.last_seen_at ?? "").trim() || null,
+          };
+          const stickyBefore =
+            localExitedPeersRef.current.has(did) ||
+            explicitRemovedPeersRef.current.has(did) ||
+            hasLocalLeftCall(sessionId, did);
+
+          // Server-confirmed rejoin: clear leave sticky BEFORE local override.
+          const clearEligibleByRaw = shouldClearStickyLeaveOnServerRejoin({
+            viewerSessionId: sessionId,
+            presenceSessionId: rawMember.presence_session_id,
+            is_in_call: rawMember.is_in_call,
+            screen: rawMember.screen,
+            last_seen_at: rawMember.last_seen_at,
+          });
+          if (clearEligibleByRaw) {
+            clearCallLeaveStickyForDevice(
+              {
+                localExitedPeers: localExitedPeersRef.current,
+                explicitRemovedPeers: explicitRemovedPeersRef.current,
+              },
+              did
+            );
+            clearLocalLeftCall(sessionId, did);
+          }
+
+          const overridden = applyLocalLeftCallOverride(rawMember);
+          visibilityProbe.push({
+            raw: rawMember,
+            overridden,
+            stickyBefore,
+            clearEligibleByRaw,
+          });
+          nextMembers.push(overridden);
         }
 
         const nextApiIds = new Set(nextMembers.map((m) => m.device_id));
@@ -1097,16 +1147,73 @@ export default function CallClient() {
             `session=${String(sessionId).slice(-6)} fast=${useFast}`
         );
 
-        // Rejoin clears explicit-leave hold for remotes that are back on call.
-        for (const m of nextMembers) {
-          const id = String(m.device_id ?? "").trim();
+        const visibilityNow = Date.now();
+        for (const probe of visibilityProbe) {
+          const id = String(probe.raw.device_id ?? "").trim();
           if (!id) continue;
-          if (
-            m.is_in_call === true &&
-            String(m.screen ?? "").trim() === "call"
-          ) {
-            localExitedPeersRef.current.delete(id);
-          }
+          const rawInCall = probe.raw.is_in_call === true;
+          const rawScreen = String(probe.raw.screen ?? "").trim() || "-";
+          const afterInCall = probe.overridden.is_in_call === true;
+          const afterScreen =
+            String(probe.overridden.screen ?? "").trim() || "-";
+          const localExited = localExitedPeersRef.current.has(id);
+          const explicitRemoved = explicitRemovedPeersRef.current.has(id);
+          const sessionStorageLeft = hasLocalLeftCall(sessionId, id);
+          const clearEligibleByRaw = probe.clearEligibleByRaw;
+          const stickyAfter =
+            localExited || explicitRemoved || sessionStorageLeft;
+          const stickyCleared = probe.stickyBefore && !stickyAfter;
+          const localExitedCall = localExited || sessionStorageLeft;
+          const isInCall = afterInCall && !localExitedCall;
+          const participation = evaluateCallParticipationPriority({
+            nowMs: visibilityNow,
+            explicitLeft: localExitedCall,
+            inApiSessionMembers: nextApiIds.has(id),
+            absentSinceMs: memberAbsentSinceRef.current.get(id) ?? null,
+            joinTransitionSinceMs:
+              memberJoinTransitionSinceRef.current.get(id) ?? null,
+            isInCall,
+            lastSeenAt: probe.overridden.last_seen_at,
+            lastInCallAtMs: memberLastInCallAtRef.current.get(id) ?? null,
+            screen: probe.overridden.screen,
+          });
+          const includedInGrid = shouldIncludeMemberInCallGrid({
+            priority: participation.priority,
+            recentlyDepartedUntilMs:
+              recentlyDepartedUntilRef.current.get(id) ?? null,
+            nowMs: visibilityNow,
+            isInCall,
+          });
+          const excludeReason = resolveCallMemberUiExcludeReason({
+            rawInCall,
+            rawScreen,
+            localExitedPeers: localExited,
+            explicitRemoved,
+            sessionStorageLeft,
+            afterOverrideInCall: afterInCall,
+            afterOverrideScreen: afterScreen,
+            participationPriority: participation.priority,
+            includedInGrid,
+            clearEligibleByRaw,
+          });
+
+          logCallMemberVisibility({
+            deviceId: id,
+            sessionId,
+            reason,
+            rawInCall,
+            rawScreen,
+            afterOverrideInCall: afterInCall,
+            afterOverrideScreen: afterScreen,
+            localExitedPeers: localExited,
+            explicitRemoved,
+            sessionStorageLeft,
+            confirmedLeftCall: resolveConfirmedLeftCallFlag(probe.overridden),
+            clearEligibleByRaw,
+            stickyCleared,
+            inVisibleMembers: includedInGrid,
+            excludeReason,
+          });
         }
 
         let redirectRemoved = false;
