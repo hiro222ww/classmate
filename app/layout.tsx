@@ -10,27 +10,12 @@ import AppAccountNav from "@/components/AppAccountNav";
 import SiteFooter from "@/components/SiteFooter";
 import LineInAppBrowserGate from "@/components/LineInAppBrowserGate";
 import PageVisitTracker from "@/components/PageVisitTracker";
-import { resolveAppOrigin } from "@/lib/appOrigin";
+import { buildHomeMetadata } from "@/lib/seo";
 import "./globals.css";
 
-const appOrigin = resolveAppOrigin();
-
 export const metadata: Metadata = {
-  metadataBase: new URL(appOrigin),
-  title: "classmate",
-  description: "大人になっても自然と仲間ができる場所",
+  ...buildHomeMetadata(),
   manifest: "/manifest.webmanifest",
-  alternates: {
-    canonical: "/",
-  },
-  openGraph: {
-    title: "classmate",
-    description: "大人になっても自然と仲間ができる場所",
-    url: appOrigin,
-    siteName: "classmate",
-    locale: "ja_JP",
-    type: "website",
-  },
 };
 
 export default function RootLayout({

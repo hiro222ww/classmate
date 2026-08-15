@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import AuthCallbackClient from "./AuthCallbackClient";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
+
+export const metadata: Metadata = {
+  title: "認証",
+  robots: NOINDEX_ROBOTS,
+};
 
 export default function AuthCallbackPage() {
   return (

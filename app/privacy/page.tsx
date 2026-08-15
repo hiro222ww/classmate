@@ -1,5 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import LegalPageShell from "@/components/legal/LegalPageShell";
+import { buildPublicPageMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = buildPublicPageMetadata({
+  title: "プライバシーポリシー",
+  description:
+    "Classmate（クラスメイト）のプライバシーポリシーです。取得する情報、利用目的、外部委託、保存期間など個人情報の取扱いを定めています。",
+  path: "/privacy",
+  secondary: true,
+});
 
 export default function PrivacyPage() {
   return (
@@ -91,8 +101,11 @@ export default function PrivacyPage() {
       </p>
       <p style={{ marginBottom: 16 }}>
         関連ページ：
-        <Link href="/terms"> 利用規約</Link> /
-        <Link href="/guidelines"> コミュニティガイドライン</Link>
+        <Link href="/">Classmateトップ</Link>
+        {" / "}
+        <Link href="/terms">利用規約</Link>
+        {" / "}
+        <Link href="/guidelines">コミュニティガイドライン</Link>
       </p>
     </LegalPageShell>
   );

@@ -1,5 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import LegalPageShell from "@/components/legal/LegalPageShell";
+import { buildPublicPageMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = buildPublicPageMetadata({
+  title: "利用規約",
+  description:
+    "Classmate（クラスメイト）の利用規約です。対象者、禁止事項、アカウント、有料プランなどサービスの利用条件を定めています。",
+  path: "/terms",
+  secondary: true,
+});
 
 export default function TermsPage() {
   return (
@@ -94,6 +104,14 @@ export default function TermsPage() {
       </p>
 
       <p>classmate.app.team@gmail.com</p>
+
+      <p style={{ marginTop: 24, marginBottom: 0 }}>
+        <Link href="/">Classmateトップへ戻る</Link>
+        {" · "}
+        <Link href="/privacy">プライバシーポリシー</Link>
+        {" · "}
+        <Link href="/guidelines">コミュニティガイドライン</Link>
+      </p>
     </LegalPageShell>
   );
 }

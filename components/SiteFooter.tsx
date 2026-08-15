@@ -29,16 +29,16 @@ export default function SiteFooter() {
           flexWrap: "wrap",
         }}
       >
-        <Link href="/">Home</Link>
-        <Link href="/about">About</Link>
-        <Link href="/terms">Terms</Link>
-        <Link href="/privacy">Privacy</Link>
-        <Link href="/guidelines">Guidelines</Link>
-        <Link href="/legal/commercial-disclosure">Legal</Link>
+        <Link href="/">Classmateトップ</Link>
+        <Link href="/about">Classmateについて</Link>
+        <Link href="/terms">利用規約</Link>
+        <Link href="/privacy">プライバシーポリシー</Link>
+        <Link href="/guidelines">ガイドライン</Link>
+        <Link href="/legal/commercial-disclosure">特定商取引法に基づく表記</Link>
       </div>
 
       <div className="cm-site-footer-copy" style={{ marginTop: 8 }}>
-        © {new Date().getFullYear()} classmate
+        © {new Date().getFullYear()} Classmate
       </div>
     </footer>
   );

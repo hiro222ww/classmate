@@ -1,18 +1,28 @@
+import type { Metadata } from "next";
+import Link from "next/link";
 import {
   CLASS_SLOT_MONTHLY_YEN,
   formatTopicPlanLine,
 } from "@/lib/planTiers";
 import LegalPageShell from "@/components/legal/LegalPageShell";
+import { buildPublicPageMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = buildPublicPageMetadata({
+  title: "Classmateについて",
+  description:
+    "Classmateは、同年代と気軽に話せる音声通話コミュニティです。テーマ別のクラスで友だちづくりができるサービスの概要と有料プランを紹介します。",
+  path: "/about",
+});
 
 export default function AboutPage() {
   return (
     <LegalPageShell>
       <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 16 }}>
-        classmate について
+        Classmateについて
       </h1>
 
       <p style={{ marginBottom: 16 }}>
-        classmateは、オンライン上で複数人がクラス形式で音声通話を行い、交流できるWebサービスです。
+        Classmateは、同年代と気軽に話せる音声コミュニティです。オンライン上で複数人がクラス形式で音声通話を行い、交流できます。
       </p>
 
       <p style={{ marginBottom: 16 }}>
@@ -98,6 +108,14 @@ export default function AboutPage() {
         <a href="mailto:classmate.app.team@gmail.com">
           classmate.app.team@gmail.com
         </a>
+      </p>
+
+      <p style={{ marginTop: 24, marginBottom: 0 }}>
+        <Link href="/">Classmateトップへ戻る</Link>
+        {" · "}
+        <Link href="/terms">利用規約</Link>
+        {" · "}
+        <Link href="/privacy">プライバシーポリシー</Link>
       </p>
     </LegalPageShell>
   );

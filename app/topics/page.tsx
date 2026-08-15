@@ -1,5 +1,13 @@
 // app/topics/page.tsx
+import type { Metadata } from "next";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
+
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "テーマ",
+  robots: NOINDEX_ROBOTS,
+};
 
 type Topic = {
   topic_key: string;

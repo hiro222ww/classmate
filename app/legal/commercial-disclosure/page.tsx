@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import LegalPageShell from "@/components/legal/LegalPageShell";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
 
 export const metadata: Metadata = {
-  title: "Commercial disclosure",
-  robots: {
-    index: false,
-    follow: false,
+  title: "特定商取引法に基づく表記",
+  description:
+    "Classmate（クラスメイト）の特定商取引法に基づく表記です。販売事業者、料金、提供時期などの情報を掲載しています。",
+  alternates: {
+    canonical: "/legal/commercial-disclosure",
   },
+  robots: NOINDEX_ROBOTS,
 };
 
 export default function CommercialDisclosurePage() {

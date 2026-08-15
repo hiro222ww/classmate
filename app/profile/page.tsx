@@ -1,6 +1,13 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import ProfileClient from "./ProfileClient";
 import { ClientErrorBoundary } from "@/components/ClientErrorBoundary";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
+
+export const metadata: Metadata = {
+  title: "プロフィール",
+  robots: NOINDEX_ROBOTS,
+};
 
 export default function ProfilePage() {
   return (

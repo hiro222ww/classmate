@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import UserLoginClient, { LoginRouteGuard } from "@/components/auth/UserLoginClient";
+import { NOINDEX_ROBOTS } from "@/lib/seo";
+
+export const metadata: Metadata = {
+  title: "ログイン",
+  robots: NOINDEX_ROBOTS,
+};
 
 export default function LoginPage() {
   return (

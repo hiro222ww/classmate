@@ -1,5 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import LegalPageShell from "@/components/legal/LegalPageShell";
+import { buildPublicPageMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = buildPublicPageMetadata({
+  title: "コミュニティガイドライン",
+  description:
+    "Classmate（クラスメイト）のコミュニティガイドラインです。安心して同年代と話せる場を保つためのルールをまとめています。",
+  path: "/guidelines",
+  secondary: true,
+});
 
 export default function GuidelinesPage() {
   return (
@@ -52,6 +62,14 @@ export default function GuidelinesPage() {
       <p style={{ marginBottom: 16 }}>
         お問い合わせ：
         <a href="mailto:classmate.app.team@gmail.com">classmate.app.team@gmail.com</a>
+      </p>
+
+      <p style={{ marginBottom: 0 }}>
+        <Link href="/">Classmateトップへ戻る</Link>
+        {" · "}
+        <Link href="/terms">利用規約</Link>
+        {" · "}
+        <Link href="/privacy">プライバシーポリシー</Link>
       </p>
     </LegalPageShell>
   );
