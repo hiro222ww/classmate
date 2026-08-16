@@ -15,7 +15,7 @@ export const HOME_DESCRIPTION =
 export const HOME_H1 = "Classmate";
 
 export const HOME_INTRO =
-  "同年代と気軽に話せる音声コミュニティ。テーマ別のクラスで、音声通話を通じた友だちづくりができます。";
+  "Classmate（クラスメイト）は、同年代と気軽に話せる音声コミュニティです。テーマ別のクラスで、音声通話を通じた友だちづくりができます。";
 
 const PUBLIC_OG_IMAGE = `${SITE_ORIGIN}/brand/classmate-emblem.png`;
 
@@ -112,7 +112,7 @@ export function buildWebsiteJsonLd() {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: SITE_NAME,
-    alternateName: ["classmate", "クラスメイト"],
+    alternateName: ["Classmate（クラスメイト）", "classmate", "クラスメイト"],
     url: `${SITE_ORIGIN}/`,
     description: HOME_DESCRIPTION,
     inLanguage: "ja-JP",

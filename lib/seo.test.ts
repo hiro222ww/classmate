@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   HOME_DESCRIPTION,
+  HOME_INTRO,
   HOME_TITLE,
   buildHomeMetadata,
   buildPublicPageMetadata,
@@ -16,6 +17,8 @@ describe("seo metadata", () => {
     expect(HOME_DESCRIPTION.length).toBeLessThanOrEqual(160);
     expect(HOME_DESCRIPTION).toContain("音声通話");
     expect(HOME_DESCRIPTION).toMatch(/友[だだ]ち/);
+    expect(HOME_DESCRIPTION).toContain("Classmate（クラスメイト）");
+    expect(HOME_INTRO).toContain("Classmate（クラスメイト）");
   });
 
   it("home metadata sets canonical and social cards", () => {
@@ -37,7 +40,9 @@ describe("seo metadata", () => {
   });
 
   it("emits Website and WebApplication JSON-LD", () => {
-    expect(buildWebsiteJsonLd()["@type"]).toBe("WebSite");
+    const website = buildWebsiteJsonLd();
+    expect(website["@type"]).toBe("WebSite");
+    expect(website.alternateName).toContain("Classmate（クラスメイト）");
     expect(buildWebApplicationJsonLd()["@type"]).toBe("WebApplication");
   });
 });
