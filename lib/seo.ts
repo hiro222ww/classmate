@@ -14,10 +14,17 @@ export const HOME_DESCRIPTION =
 
 export const HOME_H1 = "Classmate";
 
+/** Visible home intro near the brand logo (通話 for search intent). */
 export const HOME_INTRO =
-  "Classmate（クラスメイト）は、同年代と気軽に話せる音声コミュニティです。テーマ別のクラスで、音声通話を通じた友だちづくりができます。";
+  "Classmate（クラスメイト）は、同年代と気軽に通話できる音声コミュニティです。";
 
-const PUBLIC_OG_IMAGE = `${SITE_ORIGIN}/brand/classmate-emblem.png`;
+/** Wide brand logo used as the representative Classmate image. */
+export const BRAND_LOGO_PATH = "/brand/classmate-logo.png";
+export const BRAND_LOGO_URL = `${SITE_ORIGIN}${BRAND_LOGO_PATH}`;
+export const BRAND_LOGO_WIDTH = 1024;
+export const BRAND_LOGO_HEIGHT = 341;
+export const BRAND_LOGO_ALT =
+  "Classmate（クラスメイト）のロゴ。同年代と気軽に通話できる音声コミュニティ";
 
 export function buildHomeMetadata(): Metadata {
   return {
@@ -40,16 +47,18 @@ export function buildHomeMetadata(): Metadata {
       type: "website",
       images: [
         {
-          url: PUBLIC_OG_IMAGE,
-          alt: "Classmate",
+          url: BRAND_LOGO_URL,
+          width: BRAND_LOGO_WIDTH,
+          height: BRAND_LOGO_HEIGHT,
+          alt: BRAND_LOGO_ALT,
         },
       ],
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title: HOME_TITLE,
       description: HOME_DESCRIPTION,
-      images: [PUBLIC_OG_IMAGE],
+      images: [BRAND_LOGO_URL],
     },
     robots: {
       index: true,
@@ -84,11 +93,20 @@ export function buildPublicPageMetadata(params: {
       siteName: SITE_NAME,
       locale: "ja_JP",
       type: "website",
+      images: [
+        {
+          url: BRAND_LOGO_URL,
+          width: BRAND_LOGO_WIDTH,
+          height: BRAND_LOGO_HEIGHT,
+          alt: BRAND_LOGO_ALT,
+        },
+      ],
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
       title: fullTitle,
       description: params.description,
+      images: [BRAND_LOGO_URL],
     },
     robots: {
       index: true,
@@ -107,6 +125,19 @@ export const NOINDEX_ROBOTS: Metadata["robots"] = {
   },
 };
 
+export function buildOrganizationJsonLd() {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: SITE_NAME,
+    alternateName: ["Classmate（クラスメイト）", "classmate", "クラスメイト"],
+    url: `${SITE_ORIGIN}/`,
+    logo: BRAND_LOGO_URL,
+    image: BRAND_LOGO_URL,
+    description: HOME_DESCRIPTION,
+  };
+}
+
 export function buildWebsiteJsonLd() {
   return {
     "@context": "https://schema.org",
@@ -116,6 +147,17 @@ export function buildWebsiteJsonLd() {
     url: `${SITE_ORIGIN}/`,
     description: HOME_DESCRIPTION,
     inLanguage: "ja-JP",
+    image: BRAND_LOGO_URL,
+    publisher: {
+      "@type": "Organization",
+      name: SITE_NAME,
+      logo: {
+        "@type": "ImageObject",
+        url: BRAND_LOGO_URL,
+        width: BRAND_LOGO_WIDTH,
+        height: BRAND_LOGO_HEIGHT,
+      },
+    },
   };
 }
 
@@ -129,6 +171,8 @@ export function buildWebApplicationJsonLd() {
     operatingSystem: "Web",
     description: HOME_DESCRIPTION,
     inLanguage: "ja-JP",
+    image: BRAND_LOGO_URL,
+    logo: BRAND_LOGO_URL,
     offers: {
       "@type": "Offer",
       price: "0",
