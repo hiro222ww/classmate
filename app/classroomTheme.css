@@ -453,25 +453,36 @@
   box-shadow: 0 0 0 3px rgba(76, 107, 87, 0.15);
 }
 
+/* ========== Home hero top (brand + account menu + welcome + join CTA) ========== */
+.cm-classroom-scope .cm-home-hero-top {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 10px;
+  padding: 14px 12px 12px;
+  border-radius: 22px;
+  background: linear-gradient(
+    180deg,
+    rgba(238, 246, 255, 0.92) 0%,
+    rgba(204, 251, 241, 0.62) 100%
+  );
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.03);
+  backdrop-filter: blur(6px);
+}
+
 .cm-classroom-scope .cm-home-welcome {
   position: relative;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: rgba(255, 253, 250, 0.72);
-  border: 1px dashed rgba(47, 109, 181, 0.18);
-  box-shadow: var(--cm-shadow-soft);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .cm-classroom-scope .cm-home-welcome::before {
   content: "";
-  position: absolute;
-  left: 14px;
-  top: -5px;
-  width: 36px;
-  height: 12px;
-  border-radius: 2px;
-  background: rgba(47, 109, 181, 0.18);
-  transform: rotate(-3deg);
+  display: none;
 }
 
 /* ========== CTA depth ========== */
@@ -490,7 +501,7 @@
 }
 
 .cm-classroom-scope .cm-cta-primary:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.98);
   filter: brightness(0.97);
 }
 
@@ -1878,6 +1889,148 @@
   .cm-classroom-scope .cm-consent-panel,
   .cm-classroom-scope .cm-consent-check {
     animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ========== Bottom Sheet ========== */
+.cm-bottom-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(15, 23, 42, 0);
+  pointer-events: none;
+  transition: background 280ms ease;
+}
+.cm-bottom-sheet-backdrop--open {
+  background: rgba(15, 23, 42, 0.35);
+  pointer-events: auto;
+}
+
+.cm-bottom-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 910;
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: #fff;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.12);
+  transform: translateY(100%);
+  transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  pointer-events: none;
+}
+.cm-bottom-sheet--open {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.cm-bottom-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 8px;
+}
+.cm-bottom-sheet-title {
+  font-size: 17px;
+  font-weight: 900;
+  color: #111827;
+}
+.cm-bottom-sheet-close {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: #f3f4f6;
+  border-radius: 50%;
+  font-size: 16px;
+  color: #374151;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.cm-bottom-sheet-close:hover {
+  background: #e5e7eb;
+}
+
+.cm-bottom-sheet-body {
+  padding: 4px 20px 16px;
+}
+
+/* ========== Hamburger button ========== */
+.cm-hamburger-btn {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease;
+}
+.cm-hamburger-btn:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+.cm-hamburger-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 1.5px solid #fff;
+}
+
+/* ========== Staggered entrance ========== */
+@keyframes cm-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cm-stagger-1,
+.cm-stagger-2,
+.cm-stagger-3,
+.cm-stagger-4,
+.cm-stagger-5 {
+  animation: cm-fade-up 420ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+.cm-stagger-1 { animation-delay: 0ms; }
+.cm-stagger-2 { animation-delay: 60ms; }
+.cm-stagger-3 { animation-delay: 120ms; }
+.cm-stagger-4 { animation-delay: 180ms; }
+.cm-stagger-5 { animation-delay: 240ms; }
+
+.cm-classroom-scope .cm-cta-secondary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-stagger-1,
+  .cm-stagger-2,
+  .cm-stagger-3,
+  .cm-stagger-4,
+  .cm-stagger-5 {
+    animation: none !important;
+  }
+  .cm-bottom-sheet-backdrop,
+  .cm-bottom-sheet {
     transition: none !important;
   }
 }

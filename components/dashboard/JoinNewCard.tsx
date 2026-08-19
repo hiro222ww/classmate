@@ -34,14 +34,18 @@ export function JoinNewCard({
           display: "flex",
           alignItems: "center",
           gap: 6,
-          marginBottom: 12,
+          marginBottom: 10,
         }}
       >
         <strong
-          className="cm-section-title"
-          style={{ fontSize: 15, fontWeight: 900, color: "#111827" }}
+          style={{
+            fontSize: 14,
+            fontWeight: 900,
+            color: "#111827",
+            letterSpacing: "0.01em",
+          }}
         >
-          新しく参加する
+          ● 新しく参加する　？
         </strong>
         <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
       </div>

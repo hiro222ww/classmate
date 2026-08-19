@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
@@ -45,9 +46,13 @@ import NotificationPermissionPrompt from "@/components/NotificationPermissionPro
 import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
-import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useAuth } from "@/components/AuthProvider";
+import { buildShellAwareLoginUrl, buildShellAwareSettingsUrl } from "@/lib/appShellNavigation";
+import { isAppShellContext } from "@/lib/appShellContext";
+import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
@@ -101,6 +106,15 @@ import {
   logHomeOpenClassPerf,
   logHomePerf,
 } from "@/lib/homePerf";
+
+const HOME_CTA_GREEN_OVERRIDES_CSS = `
+/* Home page CTA should be green-ish (without changing disabled/loading logic). */
+.cm-home-body .cm-cta-primary:hover:not(:disabled) {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.35) inset,
+    0 12px 26px rgba(16, 185, 129, 0.34) !important;
+}
+`;
 
 type Profile = {
   device_id: string;
@@ -397,7 +411,8 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
-  const { adminAuthenticated, opsTestFlags } = useDashboardAccountStatus(deviceId);
+  const { adminAuthenticated, opsTestFlags, loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const [menuOpen, setMenuOpen] = useState(false);
   const {
     enabled: notificationsEnabled,
     toggle: toggleNotifications,
@@ -2458,22 +2473,20 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
     !currentClassLoading
   ) {
     return (
-      <div className={homeStateClass} style={{ display: "grid", gap: 24 }}>
-        <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
-        <DashboardPageHeader>
-          <DashboardHeaderNav
-            returnPath="/"
-            deviceId={deviceId}
-            hasProfile={profileComplete}
-            withDev={withDev}
-            notificationsEnabled={notificationsEnabled}
-            notificationsBusy={notificationsBusy}
-            notificationsFeedback={notificationsFeedback}
-            onToggleNotifications={toggleNotifications}
-            iosInstallGuideOpen={iosInstallGuideOpen}
-            onDismissIosInstallGuide={dismissIosInstallGuide}
-          />
-        </DashboardPageHeader>
+      <div
+        className={homeStateClass}
+        style={
+          {
+            display: "grid",
+            gap: 24,
+            ["--dash-primary-bg-full" as any]:
+              "linear-gradient(180deg, #6ee7b7 0%, #34d399 42%, #10b981 100%)",
+            ["--dash-primary-shadow" as any]:
+              "0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 10px 22px rgba(16, 185, 129, 0.28)",
+          } as any
+        }
+      >
+        <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_GREEN_OVERRIDES_CSS}</style>
         <p
           className="cm-home-loading-line"
           style={{ margin: 0, color: "var(--cm-muted, #6b7280)" }}
@@ -2485,26 +2498,65 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
   }
 
   return (
-    <div className={homeStateClass} style={{ display: "grid", gap: 24 }}>
-      <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
+    <div
+      className={homeStateClass}
+      style={
+        {
+          display: "grid",
+          gap: 24,
+          ["--dash-primary-bg-full" as any]:
+            "linear-gradient(180deg, #6ee7b7 0%, #34d399 42%, #10b981 100%)",
+          ["--dash-primary-shadow" as any]:
+            "0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 10px 22px rgba(16, 185, 129, 0.28)",
+        } as any
+      }
+    >
+      <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_GREEN_OVERRIDES_CSS}</style>
 
-      <DashboardPageHeader>
-        <DashboardHeaderNav
-          returnPath="/"
-          deviceId={deviceId}
-          hasProfile={profileComplete}
-          withDev={withDev}
-          notificationsEnabled={notificationsEnabled}
-          notificationsBusy={notificationsBusy}
-          notificationsFeedback={notificationsFeedback}
-          onToggleNotifications={toggleNotifications}
-          iosInstallGuideOpen={iosInstallGuideOpen}
-          onDismissIosInstallGuide={dismissIosInstallGuide}
+      {/* Hamburger menu button — absolute over brand visual */}
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          className="cm-hamburger-btn"
+          aria-label="メニューを開く"
+          onClick={() => setMenuOpen(true)}
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" aria-hidden>
+            <line x1="3" y1="5" x2="17" y2="5" />
+            <line x1="3" y1="10" x2="17" y2="10" />
+            <line x1="3" y1="15" x2="17" y2="15" />
+          </svg>
+          {!notificationsEnabled && !isAppShellContext() ? (
+            <span className="cm-hamburger-dot" />
+          ) : null}
+        </button>
+      </div>
+
+      <HomeMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isAppShellContext()}
+        profileHref={withDev(buildProfileEditPath("/"))}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={loggedIn ? withDev(buildShellAwareSettingsUrl()) : withDev(buildShellAwareLoginUrl("/"))}
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+      />
+
+      {iosInstallGuideOpen && dismissIosInstallGuide ? (
+        <IosWebPushInstallGuide
+          open={iosInstallGuideOpen}
+          onClose={dismissIosInstallGuide}
         />
-      </DashboardPageHeader>
+      ) : null}
 
-      <div className="cm-home-welcome">
-        <p style={{ margin: 0, fontSize: 15, color: "var(--cm-text, #374151)" }}>
+      {/* Welcome — directly on background, no card */}
+      <div className="cm-home-welcome cm-stagger-3">
+        <p style={{ margin: 0, fontSize: 14, color: "var(--cm-text, #374151)" }}>
           {authLoading || (authStatus === "authenticated" && !profileName) ? (
             <>
               ようこそ、<AuthTextSkeleton width={96} /> さん
@@ -2544,7 +2596,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         {joinWindowText ? (
           <div
             style={{
-              marginTop: 12,
+              marginTop: 8,
               display: "flex",
               gap: 8,
               flexWrap: "wrap",
@@ -2594,10 +2646,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         </div>
       ) : null}
 
+      {/* Join CTA — the hero card */}
       <div
-        className={
-          !hasJoinedClasses && !loading ? "cm-home-empty-emblem-wrap" : undefined
-        }
+        className={[
+          "cm-stagger-4",
+          !hasJoinedClasses && !loading ? "cm-home-empty-emblem-wrap" : undefined,
+        ].filter(Boolean).join(" ")}
         style={{
           display: "grid",
           gap: 16,
@@ -2630,19 +2684,30 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       </div>
 
       {hasJoinedClasses ? (
-        <section style={{ display: "grid", gap: 14 }}>
-          <h3
-            className="cm-section-title"
-            style={{
-              margin: 0,
-              fontSize: 15,
-              fontWeight: 900,
-              color: "var(--cm-text, #374151)",
-              width: "fit-content",
-            }}
-          >
-            所属クラス
-          </h3>
+        <section className="cm-stagger-5" style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3
+              style={{
+                margin: 0,
+                fontSize: 15,
+                fontWeight: 900,
+                color: "var(--cm-text, #374151)",
+              }}
+            >
+              クラス
+            </h3>
+            <Link
+              href={withDev("/class/select")}
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: "var(--cm-blue, #2f6db5)",
+                textDecoration: "none",
+              }}
+            >
+              クラスを見る ›
+            </Link>
+          </div>
           <div style={{ display: "grid", gap: 14 }}>
             {visible.map((c) => {
               const leaving =

@@ -23,6 +23,10 @@ type Props = {
   onToggleNotifications?: () => void | Promise<void>;
   iosInstallGuideOpen?: boolean;
   onDismissIosInstallGuide?: () => void;
+  /**
+   * UI variants are visual-only. Navigation destinations and side effects stay the same.
+   */
+  variant?: "default" | "homeIconMenu";
 };
 
 export function DashboardHeaderNav({
@@ -36,6 +40,7 @@ export function DashboardHeaderNav({
   onToggleNotifications,
   iosInstallGuideOpen = false,
   onDismissIosInstallGuide,
+  variant = "default",
 }: Props) {
   const { ready, loggedIn, accountLabel, adminAuthenticated, opsTestFlags } =
     useDashboardAccountStatus(deviceId);
@@ -50,6 +55,292 @@ export function DashboardHeaderNav({
   const accountHref = loggedIn
     ? withDev(buildShellAwareSettingsUrl())
     : withDev(buildShellAwareLoginUrl(returnPath));
+
+  if (variant === "homeIconMenu") {
+    const settingUp =
+      notificationsBusy &&
+      !notificationsEnabled &&
+      notificationsFeedback === "通知を設定しています…";
+    const notificationSecondLine = settingUp
+      ? "設定中…"
+      : notificationsEnabled
+        ? "ON"
+        : "OFF";
+
+    function GlyphBell({ enabled }: { enabled: boolean }) {
+      return (
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          {!enabled ? (
+            <path d="M2 2l20 20" strokeOpacity="0.25" strokeWidth="1.6" />
+          ) : null}
+        </svg>
+      );
+    }
+
+    function GlyphUser() {
+      return (
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+      );
+    }
+
+    function GlyphCrown() {
+      return (
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M3 7l4 4 5-8 5 8 4-4v14H3V7z" />
+        </svg>
+      );
+    }
+
+    function GlyphCard() {
+      return (
+        <svg
+          width="22"
+          height="22"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <rect x="2" y="5" width="20" height="14" rx="2" />
+          <line x1="2" y1="10" x2="22" y2="10" />
+        </svg>
+      );
+    }
+
+    function GlyphGoogle() {
+      return (
+        <span
+          aria-hidden
+          style={{
+            width: 22,
+            height: 22,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 6,
+            background:
+              "conic-gradient(from 45deg, #ea4335, #fbbc05, #34a853, #4285f4, #ea4335)",
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 900, color: "#fff" }}>G</span>
+        </span>
+      );
+    }
+
+    const profileHref = withDev(buildProfileEditPath(returnPath));
+    const planHref = withDev("/premium");
+    const billingHref = withDev("/billing");
+    const googleLabel = loggedIn ? accountLabel : "ログイン";
+
+    return (
+      <div style={{ display: "grid", gap: 10, width: "100%" }}>
+        {onDismissIosInstallGuide ? (
+          <IosWebPushInstallGuide
+            open={iosInstallGuideOpen}
+            onClose={onDismissIosInstallGuide}
+          />
+        ) : null}
+
+        {status === "loading" ? (
+          <div style={{ minWidth: 200, maxWidth: 280 }}>
+            <AuthLoadingBanner
+              compact
+              slow={slow}
+              error={error}
+              onReload={() => {
+                window.location.reload();
+              }}
+            />
+          </div>
+        ) : (
+          <nav
+            aria-label="アカウント操作"
+            style={{
+              width: "100%",
+              display: "flex",
+              gap: 6,
+              padding: "10px 10px",
+              borderRadius: 16,
+              background: "rgba(255, 255, 255, 0.68)",
+              border: "1px solid rgba(17, 24, 39, 0.06)",
+              boxShadow: "0 10px 22px rgba(15, 23, 42, 0.04)",
+              backdropFilter: "blur(6px)",
+              alignItems: "stretch",
+            }}
+          >
+            {onToggleNotifications && !hideWebPush ? (
+              <button
+                type="button"
+                onClick={() => void onToggleNotifications()}
+                disabled={notificationsBusy}
+                aria-pressed={notificationsEnabled}
+                aria-label={
+                  notificationsEnabled
+                    ? "通知をオフにする"
+                    : "通知をオンにする"
+                }
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: "grid",
+                  justifyItems: "center",
+                  gap: 4,
+                  background: "transparent",
+                  border: "none",
+                  padding: 6,
+                  cursor: notificationsBusy ? "not-allowed" : "pointer",
+                  color: "var(--cm-text, #111827)",
+                }}
+              >
+                <span style={{ display: "inline-flex", color: "#0f172a" }}>
+                  <GlyphBell enabled={notificationsEnabled} />
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 900, lineHeight: 1.05 }}>
+                  <span style={{ display: "block" }}>通知</span>
+                  <span
+                    style={{
+                      display: "block",
+                      color: "var(--cm-muted, #4b5563)",
+                    }}
+                  >
+                    {notificationSecondLine}
+                  </span>
+                </span>
+              </button>
+            ) : (
+              <span style={{ flex: 1, minWidth: 0 }} />
+            )}
+
+            <Link
+              href={profileHref}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                textDecoration: "none",
+                color: "var(--cm-text, #111827)",
+                display: "grid",
+                justifyItems: "center",
+                gap: 4,
+                padding: 6,
+              }}
+            >
+              <GlyphUser />
+              <span style={{ fontSize: 11, fontWeight: 900, color: "#0f172a" }}>
+                <span style={{ display: "block" }}>プロフィール</span>
+              </span>
+            </Link>
+
+            <Link
+              href={planHref}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                textDecoration: "none",
+                color: "var(--cm-text, #111827)",
+                display: "grid",
+                justifyItems: "center",
+                gap: 4,
+                padding: 6,
+              }}
+            >
+              <GlyphCrown />
+              <span style={{ fontSize: 11, fontWeight: 900, color: "#0f172a" }}>
+                <span style={{ display: "block" }}>プラン</span>
+              </span>
+            </Link>
+
+            <Link
+              href={billingHref}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                textDecoration: "none",
+                color: "var(--cm-text, #111827)",
+                display: "grid",
+                justifyItems: "center",
+                gap: 4,
+                padding: 6,
+              }}
+            >
+              <GlyphCard />
+              <span style={{ fontSize: 11, fontWeight: 900, color: "#0f172a" }}>
+                <span style={{ display: "block" }}>お支払い</span>
+              </span>
+            </Link>
+
+            <Link
+              href={accountHref}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                textDecoration: "none",
+                color: "var(--cm-text, #111827)",
+                display: "grid",
+                justifyItems: "center",
+                gap: 4,
+                padding: 6,
+                overflow: "hidden",
+              }}
+            >
+              <GlyphGoogle />
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 900,
+                  color: "#0f172a",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  width: "100%",
+                  textAlign: "center",
+                }}
+              >
+                {googleLabel}
+              </span>
+            </Link>
+          </nav>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -248,8 +539,10 @@ export function DashboardHeaderNav({
 
 export function DashboardPageHeader({
   children,
+  showBrand = true,
 }: {
   children: React.ReactNode;
+  showBrand?: boolean;
 }) {
   return (
     <header
@@ -265,20 +558,22 @@ export function DashboardPageHeader({
         boxSizing: "border-box",
       }}
     >
-      <div className="cm-emblem-heading" style={{ minWidth: 0, maxWidth: "100%" }}>
-        <ClassmateEmblem size="sm" decorative />
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 22,
-            fontWeight: 900,
-            color: "#111",
-            letterSpacing: 0.5,
-          }}
-        >
-          classmate
-        </h1>
-      </div>
+      {showBrand ? (
+        <div className="cm-emblem-heading" style={{ minWidth: 0, maxWidth: "100%" }}>
+          <ClassmateEmblem size="sm" decorative />
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 900,
+              color: "#111",
+              letterSpacing: 0.5,
+            }}
+          >
+            classmate
+          </h1>
+        </div>
+      ) : null}
       {children}
     </header>
   );

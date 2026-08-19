@@ -13,13 +13,19 @@ import {
 export function HomeBrandVisual() {
   return (
     <div
-      className="cm-home-brand-visual"
+      className="cm-home-brand-visual cm-stagger-1"
       style={{
         display: "grid",
-        gap: 12,
-        marginBottom: 20,
+        gap: 10,
+        marginBottom: 14,
         minWidth: 0,
         maxWidth: "100%",
+        padding: "14px 12px 10px",
+        borderRadius: 22,
+        background:
+          "linear-gradient(180deg, rgba(238,246,255,0.88) 0%, rgba(204,251,241,0.62) 100%)",
+        border: "none",
+        boxShadow: "none",
       }}
     >
       <div
@@ -30,9 +36,9 @@ export function HomeBrandVisual() {
           margin: "0 auto",
           borderRadius: 18,
           overflow: "hidden",
-          background: "#000",
-          border: "1px solid rgba(17, 24, 39, 0.12)",
-          boxShadow: "0 10px 28px rgba(17, 24, 39, 0.10)",
+          background: "transparent",
+          border: "none",
+          boxShadow: "none",
         }}
       >
         <img
@@ -53,12 +59,12 @@ export function HomeBrandVisual() {
         className="cm-home-brand-visual-intro"
         style={{
           margin: 0,
-          fontSize: 15,
-          lineHeight: 1.7,
-          fontWeight: 600,
+          fontSize: 14,
+          lineHeight: 1.6,
+          fontWeight: 700,
           color: "var(--cm-text, #374151)",
           textAlign: "center",
-          maxWidth: "36rem",
+          maxWidth: "34rem",
           justifySelf: "center",
         }}
       >

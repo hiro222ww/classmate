@@ -16,6 +16,12 @@ import "./globals.css";
 export const metadata: Metadata = {
   ...buildHomeMetadata(),
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32 48x48", type: "image/x-icon" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export default function RootLayout({
