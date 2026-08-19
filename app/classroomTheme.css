@@ -485,6 +485,29 @@
   display: none;
 }
 
+/* ========== Home cards — minimal style (strip paper decorations) ========== */
+.cm-home-body .cm-paper-card,
+.cm-home-body .home-dash-join,
+.cm-home-body .cm-class-card {
+  background: rgba(255, 253, 250, 0.92) !important;
+  border: 1px solid rgba(17, 24, 39, 0.07) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04) !important;
+  padding-left: 16px !important;
+}
+
+/* Hide tape, left stripe, heading tab on home */
+.cm-home-body .cm-paper-card::before,
+.cm-home-body .cm-paper-card::after,
+.cm-home-body .home-dash-join::before,
+.cm-home-body .home-dash-join::after,
+.cm-home-body .cm-class-card::before,
+.cm-home-body .cm-class-card::after,
+.cm-home-body .home-dash-join > div:first-child::before,
+.cm-home-body .cm-class-card > div:first-child::before {
+  display: none !important;
+}
+
 /* ========== CTA depth ========== */
 .cm-classroom-scope .cm-cta-primary {
   background: var(--dash-primary-bg-full) !important;
@@ -1983,12 +2006,12 @@
 }
 .cm-hamburger-dot {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #ef4444;
+  background: #f97316;
   border: 1.5px solid #fff;
 }
 

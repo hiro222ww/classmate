@@ -45,7 +45,7 @@ export function JoinNewCard({
             letterSpacing: "0.01em",
           }}
         >
-          ● 新しく参加する　？
+          新しく参加する
         </strong>
         <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
       </div>

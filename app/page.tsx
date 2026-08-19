@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import HomeClient from "./HomeClient";
 import { ClientErrorBoundary } from "@/components/ClientErrorBoundary";
-import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import {
   buildHomeMetadata,
   buildOrganizationJsonLd,
@@ -20,10 +19,8 @@ export default function HomePage() {
   return (
     <main
       className="cm-classroom-scope"
-      style={{ padding: "28px 20px", maxWidth: 960, margin: "0 auto" }}
+      style={{ padding: "16px 16px 28px", maxWidth: 960, margin: "0 auto" }}
     >
-      <HomeBrandVisual />
-
       <ClientErrorBoundary label="home">
         <Suspense fallback={<p style={{ margin: 0 }}>読み込み中...</p>}>
           <HomeClient />

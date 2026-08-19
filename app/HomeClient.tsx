@@ -48,6 +48,7 @@ import InAppToastStack, {
 } from "@/components/InAppToastStack";
 import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
+import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useAuth } from "@/components/AuthProvider";
 import { buildShellAwareLoginUrl, buildShellAwareSettingsUrl } from "@/lib/appShellNavigation";
@@ -2478,11 +2479,11 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         style={
           {
             display: "grid",
-            gap: 24,
+            gap: 16,
             ["--dash-primary-bg-full" as any]:
-              "linear-gradient(180deg, #6ee7b7 0%, #34d399 42%, #10b981 100%)",
+              "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
             ["--dash-primary-shadow" as any]:
-              "0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 10px 22px rgba(16, 185, 129, 0.28)",
+              "0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3)",
           } as any
         }
       >
@@ -2503,34 +2504,35 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       style={
         {
           display: "grid",
-          gap: 24,
+          gap: 16,
           ["--dash-primary-bg-full" as any]:
-            "linear-gradient(180deg, #6ee7b7 0%, #34d399 42%, #10b981 100%)",
+            "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
           ["--dash-primary-shadow" as any]:
-            "0 1px 0 rgba(255, 255, 255, 0.28) inset, 0 10px 22px rgba(16, 185, 129, 0.28)",
+            "0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3)",
         } as any
       }
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_GREEN_OVERRIDES_CSS}</style>
 
-      {/* Hamburger menu button — absolute over brand visual */}
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          className="cm-hamburger-btn"
-          aria-label="メニューを開く"
-          onClick={() => setMenuOpen(true)}
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" aria-hidden>
-            <line x1="3" y1="5" x2="17" y2="5" />
-            <line x1="3" y1="10" x2="17" y2="10" />
-            <line x1="3" y1="15" x2="17" y2="15" />
-          </svg>
-          {!notificationsEnabled && !isAppShellContext() ? (
-            <span className="cm-hamburger-dot" />
-          ) : null}
-        </button>
-      </div>
+      <HomeBrandVisual
+        menuButton={
+          <button
+            type="button"
+            className="cm-hamburger-btn"
+            aria-label="メニューを開く"
+            onClick={() => setMenuOpen(true)}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" aria-hidden>
+              <line x1="3" y1="5" x2="17" y2="5" />
+              <line x1="3" y1="10" x2="17" y2="10" />
+              <line x1="3" y1="15" x2="17" y2="15" />
+            </svg>
+            {!notificationsEnabled && !isAppShellContext() ? (
+              <span className="cm-hamburger-dot" />
+            ) : null}
+          </button>
+        }
+      />
 
       <HomeMenuSheet
         open={menuOpen}
