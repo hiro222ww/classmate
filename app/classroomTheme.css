@@ -11,24 +11,33 @@
   --cm-blue-light: #5b8fc9;
   --cm-pink: #f39bb2;
   --cm-pink-soft: #fde7ee;
-  --cm-page-bg: #fff7f2;
-  --cm-card-bg: #fffdfa;
-  --cm-card-bg-soft: #fff4ec;
+  --cm-page-bg: #f8fafb;
+  --cm-card-bg: rgba(255, 253, 250, 0.92);
+  --cm-card-bg-soft: #f1f5f9;
   --cm-beige: #eedfc9;
   --cm-board: #4c6b57;
   --cm-gold: #d4a574;
-  --cm-text: #2c2a28;
-  --cm-muted: #6b6560;
-  --cm-border: #e8d8c4;
-  --cm-border-strong: #d9c4a8;
-  --cm-success: #3d8b66;
-  --cm-danger: #c45c5c;
-  --cm-radius: 20px;
+  --cm-text: #1e293b;
+  --cm-muted: #64748b;
+  --cm-border: rgba(17, 24, 39, 0.08);
+  --cm-border-strong: rgba(17, 24, 39, 0.12);
+  --cm-success: #059669;
+  --cm-danger: #dc2626;
+  --cm-radius: 18px;
   --cm-radius-sm: 14px;
   --cm-radius-pill: 999px;
-  --cm-shadow: 0 14px 36px rgba(47, 109, 181, 0.12);
-  --cm-shadow-soft: 0 8px 22px rgba(44, 42, 40, 0.07);
+  --cm-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --cm-shadow-soft: 0 1px 4px rgba(15, 23, 42, 0.04);
   --cm-focus: 0 0 0 3px rgba(47, 109, 181, 0.28);
+
+  /* Primary action green */
+  --cm-primary: #059669;
+  --cm-primary-hover: #047857;
+  --cm-primary-bg: linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%);
+  --cm-primary-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3);
+
+  /* Brand gradient */
+  --cm-brand-gradient: linear-gradient(180deg, rgba(238,246,255,0.92) 0%, rgba(204,251,241,0.55) 100%);
 
   /* Brand motif (swappable later via .cm-room-theme[data-room-theme=...]) */
   --emblem-image: url("/brand/classmate-emblem.png");
@@ -436,21 +445,19 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px 6px 10px;
-  border-radius: 999px;
-  background: rgba(76, 107, 87, 0.1);
-  border: 1px solid rgba(76, 107, 87, 0.22);
-  color: var(--cm-board) !important;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  color: var(--cm-text) !important;
+  box-shadow: none;
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: 0.01em;
 }
 
 .cm-classroom-scope .cm-section-title::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--cm-board);
-  box-shadow: 0 0 0 3px rgba(76, 107, 87, 0.15);
+  display: none;
 }
 
 /* ========== Home hero top (brand + account menu + welcome + join CTA) ========== */
@@ -510,17 +517,18 @@
 
 /* ========== CTA depth ========== */
 .cm-classroom-scope .cm-cta-primary {
-  background: var(--dash-primary-bg-full) !important;
+  background: var(--dash-primary-bg-full, var(--cm-primary-bg)) !important;
   border-radius: 16px !important;
   letter-spacing: 0.02em;
   transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+  box-shadow: var(--dash-primary-shadow, var(--cm-primary-shadow)) !important;
 }
 
 .cm-classroom-scope .cm-cta-primary:hover:not(:disabled) {
   filter: brightness(1.04);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.35) inset,
-    0 12px 26px rgba(47, 109, 181, 0.34) !important;
+    0 1px 0 rgba(255, 255, 255, 0.38) inset,
+    0 12px 26px rgba(5, 150, 105, 0.28) !important;
 }
 
 .cm-classroom-scope .cm-cta-primary:active:not(:disabled) {
@@ -1896,6 +1904,46 @@
   border-radius: 4px;
 }
 
+/* Footer: mobile accordion */
+.cm-site-footer-desktop {
+  display: flex;
+  justify-content: center;
+}
+
+.cm-site-footer-mobile {
+  display: none;
+}
+
+.cm-site-footer-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 12px;
+  color: var(--cm-muted, #6b7280);
+}
+
+@media (max-width: 720px) {
+  .cm-site-footer-desktop {
+    display: none;
+  }
+  .cm-site-footer-mobile {
+    display: block;
+    text-align: center;
+  }
+
+  .cm-site-footer-links--mobile a {
+    text-align: left;
+    width: 100%;
+  }
+}
+
 @media (max-width: 720px) {
   .cm-classroom-scope .cm-legal-doc {
     padding: 16px 14px 22px;
@@ -2056,4 +2104,36 @@
   .cm-bottom-sheet {
     transition: none !important;
   }
+}
+
+/* ========== Classmate design system (global) ========== */
+/* Paper-card legacy decorations (tape/stripe/tabs) are removed to unify UI. */
+.cm-classroom-scope .cm-paper-card,
+.cm-classroom-scope .home-dash-join,
+.cm-classroom-scope .home-dash-return,
+.cm-classroom-scope .home-dash-age {
+  background: var(--cm-card-bg) !important;
+  border: 1px solid var(--cm-border) !important;
+  border-radius: var(--cm-radius) !important;
+  box-shadow: var(--cm-shadow-soft) !important;
+  padding-left: 16px !important;
+}
+
+.cm-classroom-scope .cm-paper-card::before,
+.cm-classroom-scope .cm-paper-card::after,
+.cm-classroom-scope .home-dash-join::before,
+.cm-classroom-scope .home-dash-join::after,
+.cm-classroom-scope .home-dash-return::before,
+.cm-classroom-scope .home-dash-return::after,
+.cm-classroom-scope .home-dash-age::before,
+.cm-classroom-scope .home-dash-age::after,
+.cm-classroom-scope .cm-class-card::after,
+.cm-classroom-scope .cm-board-card::after,
+.cm-classroom-scope .home-dash-join > div:first-child::before,
+.cm-classroom-scope .cm-class-card > div:first-child::before,
+.cm-classroom-scope .home-dash-return > div:first-child::before,
+.cm-classroom-scope .home-dash-age > div:first-child::before,
+.cm-classroom-scope .cm-board-card > div:first-child::before {
+  content: none !important;
+  display: none !important;
 }

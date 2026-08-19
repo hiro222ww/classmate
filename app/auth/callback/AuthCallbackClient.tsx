@@ -11,6 +11,7 @@ import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { readOAuthCallbackError } from "@/lib/authProviderErrors";
 import { markAuthCallbackActive } from "@/lib/oauthCallbackDedupe";
 import { withDev } from "@/lib/withDev";
+import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 
 export default function AuthCallbackClient() {
   const searchParams = useSearchParams();
@@ -88,6 +89,9 @@ export default function AuthCallbackClient() {
       data-cm-auth={error ? (hint ? "restore" : "error") : "processing"}
       style={{ maxWidth: 520, margin: "0 auto", padding: 24 }}
     >
+      <div style={{ marginBottom: 12 }}>
+        <HomeBrandVisual />
+      </div>
       <div className="cm-paper-card cm-auth-card" style={{ padding: 16, display: "grid", gap: 12 }}>
         <h1
           className="cm-section-title"

@@ -30,6 +30,7 @@ import { withDev } from "@/lib/withDev";
 import { HelpTip } from "@/components/HelpTip";
 import AppShellPage from "@/components/app-shell/AppShellPage";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
+import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 
 function GoogleLoginButton({
   busy,
@@ -185,6 +186,10 @@ export default function UserLoginClient() {
           className="cm-classroom-scope cm-auth-root cm-auth-root--app"
           data-cm-auth={busy ? "busy" : error ? "error" : "idle"}
         >
+          <div style={{ marginBottom: 12 }}>
+            <HomeBrandVisual />
+          </div>
+
           <header>
             <h1 className="app-shell-title cm-section-title">ログイン</h1>
             <p className="app-shell-subtitle">
@@ -240,6 +245,10 @@ export default function UserLoginClient() {
         gap: 16,
       }}
     >
+      <div style={{ marginBottom: 6 }}>
+        <HomeBrandVisual />
+      </div>
+
       <header
         className="cm-auth-header"
         style={{

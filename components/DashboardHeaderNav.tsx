@@ -560,18 +560,47 @@ export function DashboardPageHeader({
     >
       {showBrand ? (
         <div className="cm-emblem-heading" style={{ minWidth: 0, maxWidth: "100%" }}>
-          <ClassmateEmblem size="sm" decorative />
-          <h1
+          <img
+            src="/apple-touch-icon.png"
+            alt=""
+            width={36}
+            height={36}
+            aria-hidden
+            decoding="async"
             style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 900,
-              color: "#111",
-              letterSpacing: 0.5,
+              borderRadius: 18,
+              border: "2px solid rgba(255,255,255,0.85)",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
+              background: "transparent",
+              flexShrink: 0,
             }}
-          >
-            classmate
-          </h1>
+          />
+
+          <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 20,
+                fontWeight: 900,
+                color: "#0f172a",
+                letterSpacing: 0.2,
+                lineHeight: 1.1,
+              }}
+            >
+              Classmate
+            </h1>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 800,
+                color: "var(--cm-muted, #64748b)",
+                letterSpacing: "0.04em",
+                lineHeight: 1.2,
+              }}
+            >
+              クラスメイト
+            </div>
+          </div>
         </div>
       ) : null}
       {children}
