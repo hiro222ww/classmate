@@ -174,7 +174,7 @@ export default function ClassMessages({
         type="button"
         onClick={() => setOpen((v) => !v)}
         style={{
-          border: "1px solid #d1d5db",
+          border: "1px solid #cbd5e1",
           background: "#fff",
           borderRadius: 10,
           padding: "8px 12px",
@@ -253,8 +253,8 @@ export default function ClassMessages({
                         maxWidth: "85%",
                         padding: "8px 10px",
                         borderRadius: 12,
-                        background: isMe ? "#dcfce7" : "#f3f4f6",
-                        border: "1px solid #e5e7eb",
+                  background: isMe ? "#ecfdf5" : "#f8fafc",
+                  border: "1px solid #e2e8f0",
                         fontSize: 13,
                         lineHeight: 1.5,
                         whiteSpace: "pre-wrap",
@@ -299,7 +299,7 @@ export default function ClassMessages({
                 border: "none",
                 borderRadius: 10,
                 padding: "10px 14px",
-                background: sending || !draft.trim() ? "#d1d5db" : "#22c55e",
+                background: sending || !draft.trim() ? "#d1d5db" : "#059669",
                 color: "#fff",
                 fontWeight: 900,
                 cursor: sending || !draft.trim() ? "not-allowed" : "pointer",

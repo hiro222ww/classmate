@@ -298,8 +298,8 @@ function actionButtonStyle(disabled: boolean) {
   return {
     padding: "8px 10px",
     borderRadius: 8,
-    border: "1px solid #111827",
-    background: "#111827",
+    border: "1px solid #059669",
+    background: "#059669",
     color: "#fff",
     fontWeight: 900,
     fontSize: 12,

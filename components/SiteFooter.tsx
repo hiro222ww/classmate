@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { isAppShellContext } from "@/lib/appShellContext";
 
 export default function SiteFooter() {
@@ -10,6 +11,13 @@ export default function SiteFooter() {
   }
 
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  const showLegalLinks = Boolean(
+    pathname &&
+      ["/about", "/terms", "/privacy", "/guidelines", "/legal/commercial-disclosure"].some(
+        (p) => pathname === p || pathname.startsWith(`${p}/`)
+      )
+  );
 
   const links = (
     <>
@@ -34,7 +42,8 @@ export default function SiteFooter() {
         background: "#fff",
       }}
     >
-      {/* Mobile: compact accordion */}
+      {/* Mobile: compact accordion (only on public/legal pages) */}
+      {showLegalLinks ? (
       <div className="cm-site-footer-mobile">
         <button
           type="button"
@@ -85,8 +94,10 @@ export default function SiteFooter() {
           </div>
         ) : null}
       </div>
+      ) : null}
 
       {/* Desktop: horizontal links */}
+      {showLegalLinks ? (
       <div className="cm-site-footer-desktop">
         <div
           className="cm-site-footer-links"
@@ -100,8 +111,9 @@ export default function SiteFooter() {
           {links}
         </div>
       </div>
+      ) : null}
 
-      <div className="cm-site-footer-copy" style={{ marginTop: 8 }}>
+      <div className="cm-site-footer-copy" style={{ marginTop: showLegalLinks ? 8 : 0 }}>
         © {new Date().getFullYear()} Classmate
       </div>
     </footer>

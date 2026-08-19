@@ -113,16 +113,16 @@ export default function CallRequestSection({
           marginTop: compact ? 0 : 10,
           padding: compact ? "10px 12px" : "12px 14px",
           borderRadius: 12,
-          border: "2px solid #f59e0b",
-          background: "linear-gradient(180deg, #fffbeb 0%, #fef3c7 100%)",
-          boxShadow: "0 2px 8px rgba(245, 158, 11, 0.15)",
+          border: "1px solid rgba(5, 150, 105, 0.28)",
+          background: "linear-gradient(180deg, #f8fffb 0%, #ecfdf5 100%)",
+          boxShadow: "0 1px 4px rgba(5, 150, 105, 0.08)",
         }}
       >
         <div
           style={{
             fontSize: compact ? 12 : 13,
             fontWeight: 900,
-            color: "#92400e",
+            color: "#065f46",
             lineHeight: 1.45,
           }}
         >
@@ -210,14 +210,14 @@ function createButtonStyle(disabled: boolean) {
   return {
     padding: "10px 14px",
     borderRadius: 10,
-    border: "1px solid #f59e0b",
-    background: "#fbbf24",
-    color: "#78350f",
+    border: "1px solid #cbd5e1",
+    background: "#fff",
+    color: "#0f172a",
     fontWeight: 900,
     fontSize: 13,
     cursor: disabled ? "default" : "pointer",
     opacity: disabled ? 0.7 : 1,
-    boxShadow: "0 1px 3px rgba(245, 158, 11, 0.25)",
+    boxShadow: "0 1px 2px rgba(15, 23, 42, 0.05)",
   } as const;
 }
 
@@ -225,8 +225,8 @@ function enterButtonStyle(disabled: boolean) {
   return {
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #d97706",
-    background: "#f59e0b",
+    border: "1px solid #059669",
+    background: "#059669",
     color: "#fff",
     fontWeight: 900,
     fontSize: 12,

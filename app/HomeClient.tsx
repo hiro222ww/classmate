@@ -439,6 +439,25 @@ export default function HomeClient() {
   const [quickBusy, setQuickBusy] = useState(false);
   const [joinWindowOpen, setJoinWindowOpen] = useState(true);
   const [joinWindowText, setJoinWindowText] = useState("");
+
+  function formatAdmissionRange(startRaw?: string, endRaw?: string) {
+    const start = String(startRaw ?? "").trim();
+    const end = String(endRaw ?? "").trim();
+    if (!start || !end) return "";
+    const mStart = /^(\d{1,2}):(\d{2})$/.exec(start);
+    const mEnd = /^(\d{1,2}):(\d{2})$/.exec(end);
+    if (!mStart || !mEnd) return `${start}〜${end}`;
+    const sh = Number(mStart[1]);
+    const sm = mStart[2];
+    const eh = Number(mEnd[1]);
+    const em = mEnd[2];
+    const crossDay = eh < sh || (eh === sh && Number(em) <= Number(sm));
+    const left = `${String(sh).padStart(2, "0")}:${sm}`;
+    const right = crossDay
+      ? `翌${eh}:${em}`
+      : `${String(eh).padStart(2, "0")}:${em}`;
+    return `${left}〜${right}`;
+  }
   const adminCanBypassAdmission =
     adminAuthenticated && opsTestFlags.ignoreAdmission && !joinWindowOpen;
   const opsTestActive =
@@ -836,8 +855,16 @@ export default function HomeClient() {
           return;
         }
 
-        setJoinWindowOpen(Boolean(json.open));
-        setJoinWindowText(String(json.text ?? ""));
+        const isOpen = Boolean(json.open);
+        const rangeText = formatAdmissionRange(
+          json?.window?.start,
+          json?.window?.end
+        );
+        const statusText = isOpen ? "受付中" : "受付時間外";
+        setJoinWindowOpen(isOpen);
+        setJoinWindowText(
+          rangeText ? `${statusText} ｜ 受付 ${rangeText}` : statusText
+        );
       } catch (e) {
         console.warn("[home] admission status load failed", e);
         if (!cancelled) {
@@ -2547,6 +2574,12 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         accountHref={loggedIn ? withDev(buildShellAwareSettingsUrl()) : withDev(buildShellAwareLoginUrl("/"))}
         accountLabel={accountLabel}
         loggedIn={loggedIn}
+        topHref={withDev("/")}
+        aboutHref={withDev("/about")}
+        termsHref={withDev("/terms")}
+        privacyHref={withDev("/privacy")}
+        guidelinesHref={withDev("/guidelines")}
+        commercialHref={withDev("/legal/commercial-disclosure")}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
@@ -2605,23 +2638,19 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               alignItems: "center",
             }}
           >
-            {joinWindowOpen ? (
-              <StatusPill>
-                <span
-                  aria-hidden
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    background: "#22c55e",
-                    display: "inline-block",
-                  }}
-                />
-                {joinWindowText}
-              </StatusPill>
-            ) : (
-              <StatusPill>受付時間外</StatusPill>
-            )}
+            <StatusPill>
+              <span
+                aria-hidden
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 999,
+                  background: joinWindowOpen ? "#16a34a" : "#94a3b8",
+                  display: "inline-block",
+                }}
+              />
+              {joinWindowText}
+            </StatusPill>
             {opsTestActive ? <StatusPill>運営テスト中</StatusPill> : null}
           </div>
         ) : null}

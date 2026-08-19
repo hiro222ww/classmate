@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import BottomSheet from "@/components/BottomSheet";
-import { BRAND_LOGO_PATH, HOME_INTRO } from "@/lib/seo";
+import { HOME_INTRO } from "@/lib/seo";
 
 type HomeMenuSheetProps = {
   open: boolean;
@@ -17,6 +17,12 @@ type HomeMenuSheetProps = {
   accountHref: string;
   accountLabel: string;
   loggedIn: boolean;
+  topHref: string;
+  aboutHref: string;
+  termsHref: string;
+  privacyHref: string;
+  guidelinesHref: string;
+  commercialHref: string;
 };
 
 function GlyphBell({ enabled }: { enabled: boolean }) {
@@ -155,10 +161,27 @@ export default function HomeMenuSheet({
   accountHref,
   accountLabel,
   loggedIn,
+  topHref,
+  aboutHref,
+  termsHref,
+  privacyHref,
+  guidelinesHref,
+  commercialHref,
 }: HomeMenuSheetProps) {
   return (
     <BottomSheet open={open} onClose={onClose} title="メニュー">
-      <nav aria-label="設定メニュー" style={{ display: "grid" }}>
+      <nav aria-label="ホームメニュー" style={{ display: "grid" }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 800,
+            color: "#6b7280",
+            padding: "4px 8px 6px",
+            letterSpacing: "0.04em",
+          }}
+        >
+          アカウント
+        </div>
         {onToggleNotifications && !hideWebPush ? (
           <button
             type="button"
@@ -226,15 +249,55 @@ export default function HomeMenuSheet({
         <Link
           href={accountHref}
           onClick={onClose}
-          style={{ ...rowStyle, borderBottom: "none" }}
+          style={{ ...rowStyle }}
         >
           <GlyphGoogle />
           <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
           <span style={chevron}>›</span>
         </Link>
+
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 800,
+            color: "#6b7280",
+            padding: "14px 8px 6px",
+            letterSpacing: "0.04em",
+          }}
+        >
+          Classmate
+        </div>
+
+        <Link href={topHref} onClick={onClose} style={rowStyle}>
+          <span>Classmateトップ</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={aboutHref} onClick={onClose} style={rowStyle}>
+          <span>Classmateについて</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={termsHref} onClick={onClose} style={rowStyle}>
+          <span>利用規約</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={privacyHref} onClick={onClose} style={rowStyle}>
+          <span>プライバシーポリシー</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={guidelinesHref} onClick={onClose} style={rowStyle}>
+          <span>ガイドライン</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link
+          href={commercialHref}
+          onClick={onClose}
+          style={{ ...rowStyle, borderBottom: "none" }}
+        >
+          <span>特定商取引法に基づく表記</span>
+          <span style={chevron}>›</span>
+        </Link>
       </nav>
 
-      {/* Brand footer in sheet */}
       <div
         style={{
           display: "flex",
@@ -246,14 +309,15 @@ export default function HomeMenuSheet({
         }}
       >
         <img
-          src={BRAND_LOGO_PATH}
-          alt="Classmate"
-          width={120}
+          src="/apple-touch-icon.png"
+          alt=""
+          width={40}
           height={40}
+          aria-hidden
           style={{
-            borderRadius: 10,
-            background: "#000",
-            objectFit: "cover",
+            borderRadius: "50%",
+            border: "2px solid rgba(255,255,255,0.85)",
+            boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
             flexShrink: 0,
           }}
         />

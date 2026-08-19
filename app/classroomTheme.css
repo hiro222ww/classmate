@@ -677,23 +677,11 @@
 
 .cm-classroom-scope .cm-board-card {
   position: relative;
-  padding-left: 18px !important;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.7), transparent 42%),
-    repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 22px,
-      rgba(47, 109, 181, 0.04) 23px
-    ),
-    var(--cm-card-bg) !important;
-  border: 1px solid var(--cm-border-strong) !important;
+  padding-left: 16px !important;
+  background: var(--cm-card-bg) !important;
+  border: 1px solid var(--cm-border) !important;
   border-radius: var(--cm-radius) !important;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.75) inset,
-    0 0 0 1px rgba(232, 216, 196, 0.55),
-    0 5px 0 rgba(238, 223, 201, 0.5),
-    var(--cm-shadow-soft) !important;
+  box-shadow: var(--cm-shadow-soft) !important;
   overflow: visible;
   max-width: 100%;
   min-width: 0;
@@ -702,42 +690,24 @@
 }
 
 .cm-classroom-scope .cm-board-card::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 12px;
-  bottom: 12px;
-  width: 5px;
-  border-radius: 0 6px 6px 0;
-  background: linear-gradient(180deg, var(--cm-board), var(--cm-blue));
-  opacity: 0.9;
+  content: none;
 }
 
 .cm-classroom-scope .cm-board-card::after {
-  content: "";
-  position: absolute;
-  top: -6px;
-  right: 28px;
-  left: auto;
-  width: 40px;
-  height: 13px;
-  border-radius: 3px;
-  background: rgba(243, 155, 178, 0.35);
-  box-shadow: 0 1px 2px rgba(44, 42, 40, 0.1);
-  transform: rotate(4deg);
+  content: none;
 }
 
 .cm-classroom-scope .cm-board-card-title {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px 5px 9px;
-  border-radius: 999px;
-  background: rgba(76, 107, 87, 0.1);
-  border: 1px solid rgba(76, 107, 87, 0.2);
-  color: var(--cm-board) !important;
+  gap: 6px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  color: var(--cm-text) !important;
   font-size: 14px !important;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.65) inset;
+  box-shadow: none;
 }
 
 .cm-classroom-scope .cm-board-meta {
@@ -746,8 +716,8 @@
   color: var(--cm-muted);
   padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(238, 223, 201, 0.65);
-  border: 1px solid rgba(217, 196, 168, 0.7);
+  background: rgba(241, 245, 249, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.35);
 }
 
 .cm-classroom-scope .cm-board-enter:not(:disabled) {
@@ -950,15 +920,7 @@
 }
 
 .cm-classroom-scope .cm-room-member-row::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  border-radius: 0 4px 4px 0;
-  background: linear-gradient(180deg, var(--cm-blue), var(--cm-board));
-  opacity: 0.85;
+  content: none;
 }
 
 .cm-classroom-scope .cm-room-member-highlighted {
