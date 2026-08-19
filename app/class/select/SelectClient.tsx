@@ -47,7 +47,6 @@ import {
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
-import { DashboardPageHeader } from "@/components/DashboardHeaderNav";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
@@ -1109,7 +1108,58 @@ export default function SelectClient() {
       }
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
-      <DashboardPageHeader>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          width: "100%",
+          minWidth: 0,
+          marginBottom: 2,
+        }}
+      >
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <img
+            src="/apple-touch-icon.png"
+            alt=""
+            width={52}
+            height={52}
+            aria-hidden
+            decoding="async"
+            style={{
+              borderRadius: "50%",
+              border: "2px solid rgba(255,255,255,0.85)",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
+              flexShrink: 0,
+            }}
+          />
+          <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 32 / 1.6,
+                fontWeight: 900,
+                color: "#0f172a",
+                letterSpacing: 0.2,
+                lineHeight: 1.1,
+              }}
+            >
+              Classmate
+            </h1>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 800,
+                color: "var(--cm-muted, #64748b)",
+                letterSpacing: "0.04em",
+                lineHeight: 1.2,
+              }}
+            >
+              クラスメイト
+            </div>
+          </div>
+        </div>
         <button
           type="button"
           className="cm-hamburger-btn"
@@ -1132,7 +1182,7 @@ export default function SelectClient() {
           </svg>
           {!notificationsEnabled && !isApp ? <span className="cm-hamburger-dot" /> : null}
         </button>
-      </DashboardPageHeader>
+      </header>
 
       <HomeMenuSheet
         open={menuOpen}
