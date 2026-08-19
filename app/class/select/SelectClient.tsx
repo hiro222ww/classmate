@@ -47,11 +47,17 @@ import {
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
-import { DashboardHeaderNav, DashboardPageHeader } from "@/components/DashboardHeaderNav";
+import { DashboardPageHeader } from "@/components/DashboardHeaderNav";
 import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 
 type World = {
   world_key: string;
@@ -207,7 +213,14 @@ export default function SelectClient() {
   };
 
   const [deviceId, setDeviceId] = useState("");
-  const { adminAuthenticated, opsTestFlags } = useDashboardAccountStatus(deviceId);
+  const {
+    adminAuthenticated,
+    opsTestFlags,
+    loggedIn,
+    accountLabel,
+  } = useDashboardAccountStatus(deviceId);
+
+  const [menuOpen, setMenuOpen] = useState(false);
   const opsTestActive =
     adminAuthenticated &&
     (opsTestFlags.ignoreAdmission ||
@@ -1001,11 +1014,9 @@ export default function SelectClient() {
       <div
         className="cm-board-card"
         style={{
-          border: "1px solid #ddd",
-          borderRadius: 16,
-          padding: 14,
-          background: "#fff",
-          color: "#111",
+          paddingTop: 14,
+          paddingRight: 14,
+          paddingBottom: 14,
           opacity: locked ? 0.7 : 1,
           filter: locked ? "grayscale(0.35)" : "none",
         }}
@@ -1045,31 +1056,19 @@ export default function SelectClient() {
 
         <button
           type="button"
-          className={["cm-board-enter", enterReady ? "cm-cta-primary" : ""]
-            .filter(Boolean)
-            .join(" ")}
+          className={["cm-board-enter", enterReady ? "cm-cta-primary" : "cm-cta-secondary"].join(
+            " "
+          )}
           onClick={() => void joinMatchedBoard(b)}
           disabled={joinDisabled}
           style={{
             marginTop: 14,
             width: "100%",
             padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid #ccc",
-            background:
-              profileMissing || (admissionClosed && !opsTestFlags.ignoreAdmission)
-                ? "#e5e5e5"
-                : locked
-                  ? "#f3f3f3"
-                  : "#111",
-            color:
-              profileMissing || (admissionClosed && !opsTestFlags.ignoreAdmission)
-                ? "#666"
-                : locked
-                  ? "#111"
-                  : "#fff",
+            color: "var(--cm-text, #0f172a)",
             fontWeight: 900,
             cursor: joinDisabled ? "not-allowed" : "pointer",
+            opacity: joinDisabled ? 0.62 : 1,
           }}
         >
           {profileMissing
@@ -1106,24 +1105,66 @@ export default function SelectClient() {
       style={
         isApp
           ? { color: "#111" }
-          : { padding: "28px 20px", maxWidth: 960, margin: "0 auto", color: "#111" }
+          : { padding: "16px 16px 28px", maxWidth: 960, margin: "0 auto", color: "#111" }
       }
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
       <DashboardPageHeader>
-        <DashboardHeaderNav
-          returnPath="/class/select"
-          deviceId={deviceId}
-          hasProfile={hasProfile === true}
-          withDev={withDev}
-          notificationsEnabled={notificationsEnabled}
-          notificationsBusy={notificationsBusy}
-          notificationsFeedback={notificationsFeedback}
-          onToggleNotifications={toggleNotifications}
-          iosInstallGuideOpen={iosInstallGuideOpen}
-          onDismissIosInstallGuide={dismissIosInstallGuide}
-        />
+        <button
+          type="button"
+          className="cm-hamburger-btn"
+          aria-label="メニューを開く"
+          onClick={() => setMenuOpen(true)}
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="#374151"
+            strokeWidth="2"
+            strokeLinecap="round"
+            aria-hidden
+          >
+            <line x1="3" y1="5" x2="17" y2="5" />
+            <line x1="3" y1="10" x2="17" y2="10" />
+            <line x1="3" y1="15" x2="17" y2="15" />
+          </svg>
+          {!notificationsEnabled && !isApp ? <span className="cm-hamburger-dot" /> : null}
+        </button>
       </DashboardPageHeader>
+
+      <HomeMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isApp}
+        profileHref={withDev(buildProfileEditPath("/class/select"))}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/class/select"))
+        }
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+        topHref={withDev("/")}
+        aboutHref={withDev("/about")}
+        termsHref={withDev("/terms")}
+        privacyHref={withDev("/privacy")}
+        guidelinesHref={withDev("/guidelines")}
+        commercialHref={withDev("/legal/commercial-disclosure")}
+      />
+
+      {iosInstallGuideOpen && dismissIosInstallGuide ? (
+        <IosWebPushInstallGuide
+          open={iosInstallGuideOpen}
+          onClose={dismissIosInstallGuide}
+        />
+      ) : null}
 
       {isDevFeatureEnabled() && (
         <section

@@ -730,6 +730,13 @@
   box-shadow: var(--dash-primary-shadow) !important;
 }
 
+.cm-classroom-scope .cm-board-enter.cm-cta-secondary:not(:disabled) {
+  border: 1px solid var(--cm-border) !important;
+  color: var(--cm-text) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: var(--cm-shadow-soft) !important;
+}
+
 .cm-classroom-scope .cm-select-filters select {
   border: 1px solid var(--cm-border-strong);
   background: linear-gradient(180deg, #fff, rgba(255, 247, 242, 0.95));
