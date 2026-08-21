@@ -26,6 +26,8 @@ type AgeFilterCardProps = {
   hasProfile: boolean | null;
   disabled?: boolean;
   className?: string;
+  /** compact = chip row for /class/select; card = full paper card (default) */
+  variant?: "card" | "compact";
   onPrefsChange?: (prefs: MatchPrefs) => void;
   onPrefsLoadedChange?: (loaded: boolean) => void;
   onProfileRequired?: () => void;
@@ -39,6 +41,7 @@ export function AgeFilterCard({
   hasProfile,
   disabled = false,
   className,
+  variant = "card",
   onPrefsChange,
   onPrefsLoadedChange,
   onProfileRequired,
@@ -243,6 +246,207 @@ export function AgeFilterCard({
     !prefsLoaded ||
     hasProfile === false;
 
+  const toggleGroup = (
+    <div
+      style={{
+        display: "inline-flex",
+        border: "1px solid #e5e7eb",
+        borderRadius: 10,
+        overflow: "hidden",
+        flexShrink: 0,
+        opacity: !prefsLoaded ? 0.55 : 1,
+      }}
+      role="group"
+      aria-label="年齢絞り込み"
+    >
+      <button
+        type="button"
+        onClick={() => void handleAgeFilterToggle(false)}
+        disabled={controlsDisabled}
+        style={{
+          padding: variant === "compact" ? "5px 10px" : "7px 12px",
+          border: "none",
+          background: !ageFilterEnabled ? "#111827" : "#fff",
+          color: !ageFilterEnabled ? "#fff" : "#374151",
+          fontWeight: 900,
+          fontSize: 12,
+          cursor: controlsDisabled ? "default" : "pointer",
+        }}
+      >
+        OFF
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleAgeFilterToggle(true)}
+        disabled={controlsDisabled}
+        style={{
+          padding: variant === "compact" ? "5px 10px" : "7px 12px",
+          border: "none",
+          borderLeft: "1px solid #e5e7eb",
+          background: ageFilterEnabled ? "#111827" : "#fff",
+          color: ageFilterEnabled ? "#fff" : "#374151",
+          fontWeight: 900,
+          fontSize: 12,
+          cursor: controlsDisabled ? "default" : "pointer",
+        }}
+      >
+        ON
+      </button>
+    </div>
+  );
+
+  const editor = ageFilterEnabled && hasProfile !== false && editing ? (
+    <div style={{ marginTop: variant === "compact" ? 8 : 12, display: "grid", gap: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#374151" }}>
+        {draftMinAge}〜{draftMaxAge}歳
+      </div>
+
+      <input
+        type="range"
+        aria-label="最小年齢"
+        min={sliderBounds.sliderMin}
+        max={sliderBounds.sliderMax}
+        value={draftMinAge}
+        onChange={(e) => {
+          const v = clampAge(
+            Number(e.target.value),
+            sliderBounds.sliderMin,
+            sliderBounds.sliderMax
+          );
+          setDraftPrefs((p) => ({
+            min_age: v,
+            max_age: Math.max(v, p.max_age),
+          }));
+        }}
+        style={{ width: "100%" }}
+      />
+      <input
+        type="range"
+        aria-label="最大年齢"
+        min={sliderBounds.sliderMin}
+        max={sliderBounds.sliderMax}
+        value={draftMaxAge}
+        onChange={(e) => {
+          const v = clampAge(
+            Number(e.target.value),
+            sliderBounds.sliderMin,
+            sliderBounds.sliderMax
+          );
+          setDraftPrefs((p) => ({
+            min_age: Math.min(p.min_age, v),
+            max_age: v,
+          }));
+        }}
+        style={{ width: "100%" }}
+      />
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => void finishEditing()}
+          disabled={savingPrefs}
+          style={{
+            flex: 1,
+            padding: "9px 12px",
+            borderRadius: 10,
+            border: "none",
+            background: "#059669",
+            color: "#fff",
+            fontWeight: 900,
+            fontSize: 13,
+            cursor: savingPrefs ? "default" : "pointer",
+            opacity: savingPrefs ? 0.7 : 1,
+          }}
+        >
+          完了
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          disabled={savingPrefs}
+          style={{
+            padding: "9px 12px",
+            borderRadius: 10,
+            border: "1px solid #e5e7eb",
+            background: "#fff",
+            color: "#6b7280",
+            fontWeight: 800,
+            fontSize: 13,
+            cursor: savingPrefs ? "default" : "pointer",
+          }}
+        >
+          キャンセル
+        </button>
+      </div>
+    </div>
+  ) : null;
+
+  if (variant === "compact") {
+    return (
+      <div
+        className={className}
+        style={{
+          display: "grid",
+          gap: 8,
+          minWidth: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 800,
+              color: "#64748b",
+            }}
+          >
+            年齢
+          </span>
+          <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />
+          {toggleGroup}
+          {ageFilterEnabled && hasProfile !== false && !editing ? (
+            <>
+              <span
+                style={{
+                  ...CHIP,
+                  background: "rgba(236, 253, 245, 0.95)",
+                  border: "1px solid rgba(16, 185, 129, 0.25)",
+                  color: "#065f46",
+                }}
+              >
+                {displayMinAge}〜{displayMaxAge}歳
+              </span>
+              <button
+                type="button"
+                onClick={openEditor}
+                disabled={controlsDisabled}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #e5e7eb",
+                  background: "#fff",
+                  color: "#6b7280",
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: controlsDisabled ? "default" : "pointer",
+                }}
+              >
+                変更
+              </button>
+            </>
+          ) : null}
+        </div>
+        {editor}
+      </div>
+    );
+  }
+
   const sectionClass = ["cm-paper-card", className].filter(Boolean).join(" ");
 
   return (
@@ -264,53 +468,7 @@ export function AgeFilterCard({
           </strong>
           <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />
         </div>
-
-        <div
-          style={{
-            display: "inline-flex",
-            border: "1px solid #e5e7eb",
-            borderRadius: 10,
-            overflow: "hidden",
-            flexShrink: 0,
-            opacity: !prefsLoaded ? 0.55 : 1,
-          }}
-          role="group"
-          aria-label="年齢絞り込み"
-        >
-          <button
-            type="button"
-            onClick={() => void handleAgeFilterToggle(false)}
-            disabled={controlsDisabled}
-            style={{
-              padding: "7px 12px",
-              border: "none",
-              background: !ageFilterEnabled ? "#111827" : "#fff",
-              color: !ageFilterEnabled ? "#fff" : "#374151",
-              fontWeight: 900,
-              fontSize: 12,
-              cursor: controlsDisabled ? "default" : "pointer",
-            }}
-          >
-            OFF
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleAgeFilterToggle(true)}
-            disabled={controlsDisabled}
-            style={{
-              padding: "7px 12px",
-              border: "none",
-              borderLeft: "1px solid #e5e7eb",
-              background: ageFilterEnabled ? "#111827" : "#fff",
-              color: ageFilterEnabled ? "#fff" : "#374151",
-              fontWeight: 900,
-              fontSize: 12,
-              cursor: controlsDisabled ? "default" : "pointer",
-            }}
-          >
-            ON
-          </button>
-        </div>
+        {toggleGroup}
       </div>
 
       {ageFilterEnabled && hasProfile !== false && !editing ? (
@@ -345,91 +503,7 @@ export function AgeFilterCard({
         </div>
       ) : null}
 
-      {ageFilterEnabled && hasProfile !== false && editing ? (
-        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#374151" }}>
-            {draftMinAge}〜{draftMaxAge}歳
-          </div>
-
-          <input
-            type="range"
-            aria-label="最小年齢"
-            min={sliderBounds.sliderMin}
-            max={sliderBounds.sliderMax}
-            value={draftMinAge}
-            onChange={(e) => {
-              const v = clampAge(
-                Number(e.target.value),
-                sliderBounds.sliderMin,
-                sliderBounds.sliderMax
-              );
-              setDraftPrefs((p) => ({
-                min_age: v,
-                max_age: Math.max(v, p.max_age),
-              }));
-            }}
-            style={{ width: "100%" }}
-          />
-          <input
-            type="range"
-            aria-label="最大年齢"
-            min={sliderBounds.sliderMin}
-            max={sliderBounds.sliderMax}
-            value={draftMaxAge}
-            onChange={(e) => {
-              const v = clampAge(
-                Number(e.target.value),
-                sliderBounds.sliderMin,
-                sliderBounds.sliderMax
-              );
-              setDraftPrefs((p) => ({
-                min_age: Math.min(p.min_age, v),
-                max_age: v,
-              }));
-            }}
-            style={{ width: "100%" }}
-          />
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              onClick={() => void finishEditing()}
-              disabled={savingPrefs}
-              style={{
-                flex: 1,
-                padding: "9px 12px",
-                borderRadius: 10,
-                border: "none",
-                background: "#111827",
-                color: "#fff",
-                fontWeight: 900,
-                fontSize: 13,
-                cursor: savingPrefs ? "default" : "pointer",
-                opacity: savingPrefs ? 0.7 : 1,
-              }}
-            >
-              完了
-            </button>
-            <button
-              type="button"
-              onClick={() => setEditing(false)}
-              disabled={savingPrefs}
-              style={{
-                padding: "9px 12px",
-                borderRadius: 10,
-                border: "1px solid #e5e7eb",
-                background: "#fff",
-                color: "#6b7280",
-                fontWeight: 800,
-                fontSize: 13,
-                cursor: savingPrefs ? "default" : "pointer",
-              }}
-            >
-              キャンセル
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {editor}
     </section>
   );
 }

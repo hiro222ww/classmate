@@ -30,11 +30,7 @@ import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import { bootstrapAuthSession } from "@/lib/authClient";
 import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
-import { HelpTip } from "@/components/HelpTip";
 import { AgeFilterCard } from "@/components/dashboard/AgeFilterCard";
-import { DashboardStatusBar } from "@/components/dashboard/DashboardStatusBar";
-import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
-import { ReturnClassCard } from "@/components/dashboard/ReturnClassCard";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
   AGE_FILTER_OFF_PREFS,
@@ -47,7 +43,7 @@ import {
   HOME_DASHBOARD_LAYOUT_CSS,
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
-import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
+import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
@@ -122,6 +118,86 @@ type EntryBoard = {
   is_sensitive: boolean;
   monthly_price: number;
 };
+
+/** Display-only grouping for existing topics (no dummy themes). */
+type ThemeCategoryId =
+  | "chat"
+  | "hobby"
+  | "game"
+  | "travel"
+  | "school"
+  | "night"
+  | "other";
+
+const THEME_CATEGORIES: {
+  id: ThemeCategoryId;
+  label: string;
+  tint: string;
+  border: string;
+}[] = [
+  {
+    id: "chat",
+    label: "雑談・交流",
+    tint: "linear-gradient(180deg, rgba(236,253,245,0.9), rgba(255,255,255,0.95))",
+    border: "rgba(16, 185, 129, 0.22)",
+  },
+  {
+    id: "hobby",
+    label: "趣味",
+    tint: "linear-gradient(180deg, rgba(255,247,237,0.95), rgba(255,255,255,0.95))",
+    border: "rgba(251, 146, 60, 0.22)",
+  },
+  {
+    id: "game",
+    label: "ゲーム",
+    tint: "linear-gradient(180deg, rgba(245,243,255,0.95), rgba(255,255,255,0.95))",
+    border: "rgba(167, 139, 250, 0.25)",
+  },
+  {
+    id: "travel",
+    label: "旅行",
+    tint: "linear-gradient(180deg, rgba(240,249,255,0.95), rgba(255,255,255,0.95))",
+    border: "rgba(56, 189, 248, 0.28)",
+  },
+  {
+    id: "school",
+    label: "学校・仕事",
+    tint: "linear-gradient(180deg, rgba(239,246,255,0.95), rgba(255,255,255,0.95))",
+    border: "rgba(96, 165, 250, 0.28)",
+  },
+  {
+    id: "night",
+    label: "夜・まったり",
+    tint: "linear-gradient(180deg, rgba(238,242,255,0.95), rgba(255,255,255,0.95))",
+    border: "rgba(129, 140, 248, 0.28)",
+  },
+  {
+    id: "other",
+    label: "その他のテーマ",
+    tint: "linear-gradient(180deg, rgba(248,250,252,0.95), rgba(255,255,255,0.95))",
+    border: "rgba(148, 163, 184, 0.3)",
+  },
+];
+
+const FREE_TINT =
+  "linear-gradient(180deg, rgba(236,253,245,0.95) 0%, rgba(239,246,255,0.9) 100%)";
+
+function categorizeTheme(title: string, description: string): ThemeCategoryId {
+  const s = `${title} ${description}`.toLowerCase();
+  if (/ゲーム|game|esports|eスポーツ/.test(s)) return "game";
+  if (/旅行|travel|旅|観光/.test(s)) return "travel";
+  if (/夜|まったり|深夜|おやすみ|night/.test(s)) return "night";
+  if (
+    /男子校|女子校|学校|部活|スポーツ|仕事|職業|sports|work|identity|属性/.test(
+      s
+    )
+  ) {
+    return "school";
+  }
+  if (/趣味|hobby|創作|音楽|映画|アニメ|イラスト|漫画/.test(s)) return "hobby";
+  if (/雑談|交流|フリー|talk|chat|おしゃべり/.test(s)) return "chat";
+  return "other";
+}
 
 async function readJsonOrThrow(r: Response, label: string) {
   const raw = await r.text();
@@ -230,28 +306,25 @@ export default function SelectClient() {
     enabled: notificationsEnabled,
     toggle: toggleNotifications,
     busy: notificationsBusy,
-    feedback: notificationsFeedback,
+    feedback: _notificationsFeedback,
     iosInstallGuideOpen,
     dismissIosInstallGuide,
   } = useWebPushNotifications(deviceId, "select");
   const { refresh: refreshCurrentClass } = useCurrentClass(deviceId);
 
   const [worlds, setWorlds] = useState<World[]>([]);
+  void worlds;
   const [topics, setTopics] = useState<Topic[]>([]);
   const [, setClasses] = useState<ClassRow[]>([]);
 
   const [prefs, setPrefs] = useState<MatchPrefs>(AGE_FILTER_OFF_PREFS);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
 
-  const [wFilter, setWFilter] = useState<string>("all");
-  const [tFilter, setTFilter] = useState<string>("all");
-
   const [ent, setEnt] = useState<Entitlements | null>(null);
   const { themeBillingEnabled, slotBillingEnabled } = useBillingCopy();
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const [showNarrow, setShowNarrow] = useState(false);
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
   const [joinWindowOpen, setJoinWindowOpen] = useState(true);
@@ -675,22 +748,18 @@ export default function SelectClient() {
     const maxA = Math.max(prefs.min_age, prefs.max_age);
     const result: EntryBoard[] = [];
 
-    if ((wFilter === "all" || wFilter === "default") && tFilter === "all") {
-      result.push({
-        key: "free",
-        title: "フリー",
-        description: "",
-        world_key: "default",
-        topic_key: null,
-        is_sensitive: false,
-        monthly_price: 0,
-      });
-    }
+    result.push({
+      key: "free",
+      title: "フリー",
+      description: "テーマを決めずに、気軽に同年代と話せるクラスです。",
+      world_key: "default",
+      topic_key: null,
+      is_sensitive: false,
+      monthly_price: 0,
+    });
 
     for (const t of topics) {
       if (t.is_sensitive && maxA < 18) continue;
-      if (wFilter !== "all" && wFilter !== "default") continue;
-      if (tFilter !== "all" && t.topic_key !== tFilter) continue;
 
       result.push({
         key: t.topic_key,
@@ -714,7 +783,22 @@ export default function SelectClient() {
       }
       return a.title.localeCompare(b.title);
     });
-  }, [topics, prefs, wFilter, tFilter]);
+  }, [topics, prefs]);
+
+  const freeBoards = useMemo(
+    () => boards.filter((b) => b.monthly_price <= 0),
+    [boards]
+  );
+
+  const themeGroups = useMemo(() => {
+    const paid = boards.filter((b) => b.monthly_price > 0);
+    return THEME_CATEGORIES.map((cat) => ({
+      ...cat,
+      boards: paid.filter(
+        (b) => categorizeTheme(b.title, b.description) === cat.id
+      ),
+    })).filter((g) => g.boards.length > 0);
+  }, [boards]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
     if (!themeBillingEnabled) return true;
@@ -976,21 +1060,15 @@ export default function SelectClient() {
     }
   }
 
-  async function enterQuickFreeTheme() {
-    const freeBoard: EntryBoard = {
-      key: "free",
-      title: "フリー",
-      description: "",
-      world_key: "default",
-      topic_key: null,
-      is_sensitive: false,
-      monthly_price: 0,
-    };
-
-    await joinMatchedBoard(freeBoard);
-  }
-
-  function BoardCard({ b }: { b: EntryBoard }) {
+  function BoardCard({
+    b,
+    accent,
+    emphasizeFree = false,
+  }: {
+    b: EntryBoard;
+    accent?: { tint: string; border: string };
+    emphasizeFree?: boolean;
+  }) {
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
     const admissionClosed = !joinWindowOpen;
@@ -1009,15 +1087,19 @@ export default function SelectClient() {
       !profileMissing &&
       (!admissionClosed || opsTestFlags.ignoreAdmission);
 
+    const isFree = b.monthly_price <= 0;
+    const tint = accent?.tint ?? (isFree ? FREE_TINT : undefined);
+    const border = accent?.border ?? (isFree ? "rgba(16, 185, 129, 0.28)" : undefined);
+
     return (
       <div
-        className="cm-board-card"
+        className="cm-board-card cm-select-theme-card"
         style={{
-          paddingTop: 14,
-          paddingRight: 14,
-          paddingBottom: 14,
-          opacity: locked ? 0.7 : 1,
-          filter: locked ? "grayscale(0.35)" : "none",
+          padding: emphasizeFree ? 16 : 12,
+          background: tint,
+          border: border ? `1px solid ${border}` : undefined,
+          borderRadius: 16,
+          boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
         }}
       >
         <div
@@ -1025,69 +1107,159 @@ export default function SelectClient() {
             display: "flex",
             justifyContent: "space-between",
             gap: 10,
-            alignItems: "baseline",
+            alignItems: "flex-start",
           }}
         >
-          <strong className="cm-board-card-title" style={{ fontSize: 15 }}>
-            {b.title}
-          </strong>
-          <span className="cm-board-meta" style={{ fontSize: 12, opacity: 0.9 }}>
-            {profileMissing && "🧑未登録 "}
-            {themeBillingEnabled ? (locked ? "🔒" : "🔓") : "🔓"}{" "}
-            {b.is_sensitive ? "🔞" : "🟢"}
-          </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <strong
+              className="cm-board-card-title"
+              style={{
+                fontSize: emphasizeFree ? 17 : 15,
+                display: "block",
+                color: "#0f172a",
+              }}
+            >
+              {isFree ? "テーマフリー" : b.title}
+            </strong>
+            {isFree ? (
+              <span
+                style={{
+                  display: "inline-block",
+                  marginTop: 4,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: "#059669",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                無料で入れる
+              </span>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 4,
+              flexShrink: 0,
+            }}
+          >
+            {!isFree && themeBillingEnabled ? (
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: locked ? "#7c3aed" : "#059669",
+                  background: locked
+                    ? "rgba(237, 233, 254, 0.9)"
+                    : "rgba(236, 253, 245, 0.95)",
+                  border: locked
+                    ? "1px solid rgba(167, 139, 250, 0.35)"
+                    : "1px solid rgba(16, 185, 129, 0.25)",
+                  borderRadius: 999,
+                  padding: "3px 8px",
+                }}
+              >
+                {locked ? "🔒 テーマプラン" : "利用可"}
+              </span>
+            ) : null}
+            {b.is_sensitive ? (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+                🔞
+              </span>
+            ) : null}
+            {profileMissing ? (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e" }}>
+                プロフィール未登録
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {b.description ? (
           <p
             style={{
-              marginTop: 14,
+              margin: "8px 0 0",
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
               wordBreak: "break-word",
-              color: "#222",
+              color: "#475569",
               lineHeight: 1.5,
+              fontSize: 13,
             }}
           >
             {b.description}
           </p>
         ) : null}
 
-        <button
-          type="button"
-          className={["cm-board-enter", enterReady ? "cm-cta-primary" : "cm-cta-secondary"].join(
-            " "
-          )}
-          onClick={() => void joinMatchedBoard(b)}
-          disabled={joinDisabled}
-          style={{
-            marginTop: 14,
-            width: "100%",
-            padding: "10px 12px",
-            color: "var(--cm-text, #0f172a)",
-            fontWeight: 900,
-            cursor: joinDisabled ? "not-allowed" : "pointer",
-            opacity: joinDisabled ? 0.62 : 1,
-          }}
-        >
-          {profileMissing
-            ? "プロフィール登録が必要"
-            : adminTestJoin
-              ? "管理者としてテスト入室"
-              : admissionClosed
-                ? "入校受付時間外"
-                : locked
-                  ? `参加（要：${tierName(b.monthly_price)}以上）`
+        {!isFree && locked && themeBillingEnabled ? (
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#6d28d9",
+            }}
+          >
+            テーマプランで利用可能 · {tierName(b.monthly_price)}以上
+          </p>
+        ) : null}
+
+        {locked && themeBillingEnabled ? (
+          <Link
+            href={withDev("/premium")}
+            className="cm-cta-secondary"
+            style={{
+              marginTop: 12,
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              textDecoration: "none",
+              fontWeight: 900,
+              boxSizing: "border-box",
+            }}
+          >
+            テーマプランを見る
+          </Link>
+        ) : (
+          <button
+            type="button"
+            className={[
+              "cm-board-enter",
+              enterReady ? "cm-cta-primary" : "cm-cta-secondary",
+            ].join(" ")}
+            onClick={() => void joinMatchedBoard(b)}
+            disabled={joinDisabled}
+            style={{
+              marginTop: 12,
+              width: "100%",
+              padding: "10px 12px",
+              color: "var(--cm-text, #0f172a)",
+              fontWeight: 900,
+              cursor: joinDisabled ? "not-allowed" : "pointer",
+              opacity: joinDisabled ? 0.62 : 1,
+            }}
+          >
+            {profileMissing
+              ? "プロフィール登録が必要"
+              : adminTestJoin
+                ? "管理者としてテスト入室"
+                : admissionClosed
+                  ? "入校受付時間外"
                   : "入る"}
-        </button>
+          </button>
+        )}
       </div>
     );
   }
 
   const debugProfileDeviceId = profile?.device_id ?? "-";
   const debugDisplayName = profile?.display_name ?? "-";
-  const showJoinedClassesCard =
-    joinedClassesLoading || joinedClassCount > 0;
+  const showJoinedStrip = joinedClassCount > 0;
   const isApp = isAppShellContext();
 
   const selectScopeClass = [
@@ -1098,6 +1270,31 @@ export default function SelectClient() {
     .filter(Boolean)
     .join(" ");
 
+  const menuButton = (
+    <button
+      type="button"
+      className="cm-hamburger-btn"
+      aria-label="メニューを開く"
+      onClick={() => setMenuOpen(true)}
+    >
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 20 20"
+        fill="none"
+        stroke="#374151"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden
+      >
+        <line x1="3" y1="5" x2="17" y2="5" />
+        <line x1="3" y1="10" x2="17" y2="10" />
+        <line x1="3" y1="15" x2="17" y2="15" />
+      </svg>
+      {!notificationsEnabled && !isApp ? <span className="cm-hamburger-dot" /> : null}
+    </button>
+  );
+
   return (
     <main
       className={selectScopeClass}
@@ -1106,8 +1303,6 @@ export default function SelectClient() {
           ...(isApp
             ? { color: "#111" }
             : { padding: "16px 16px 28px", maxWidth: 960, margin: "0 auto", color: "#111" }),
-          // Primary CTA (cm-cta-primary) source of truth:
-          // Home sets these CSS vars; select needs the same so "入る" matches green.
           ["--dash-primary-bg-full" as any]:
             "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
           ["--dash-primary-shadow" as any]:
@@ -1116,81 +1311,8 @@ export default function SelectClient() {
       }
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          width: "100%",
-          minWidth: 0,
-          marginBottom: 2,
-        }}
-      >
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <img
-            src="/apple-touch-icon.png"
-            alt=""
-            width={54}
-            height={54}
-            aria-hidden
-            decoding="async"
-            style={{
-              borderRadius: "50%",
-              border: "2px solid rgba(255,255,255,0.85)",
-              boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
-              flexShrink: 0,
-            }}
-          />
-          <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: 32 / 1.6,
-                fontWeight: 900,
-                color: "#0f172a",
-                letterSpacing: 0.2,
-                lineHeight: 1.1,
-              }}
-            >
-              Classmate
-            </h1>
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 800,
-                color: "var(--cm-muted, #64748b)",
-                letterSpacing: "0.04em",
-                lineHeight: 1.2,
-              }}
-            >
-              クラスメイト
-            </div>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="cm-hamburger-btn"
-          aria-label="メニューを開く"
-          onClick={() => setMenuOpen(true)}
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke="#374151"
-            strokeWidth="2"
-            strokeLinecap="round"
-            aria-hidden
-          >
-            <line x1="3" y1="5" x2="17" y2="5" />
-            <line x1="3" y1="10" x2="17" y2="10" />
-            <line x1="3" y1="15" x2="17" y2="15" />
-          </svg>
-          {!notificationsEnabled && !isApp ? <span className="cm-hamburger-dot" /> : null}
-        </button>
-      </div>
+
+      <HomeBrandVisual menuButton={menuButton} />
 
       <HomeMenuSheet
         open={menuOpen}
@@ -1255,7 +1377,7 @@ export default function SelectClient() {
       {hasProfile === false ? (
         <section
           className="cm-profile-needed"
-          style={{ ...DASH_CARD, marginTop: 20, borderColor: "#fde68a" }}
+          style={{ ...DASH_CARD, marginTop: 16, borderColor: "#fde68a" }}
         >
           <div style={{ fontWeight: 900, fontSize: 15, color: "#92400e" }}>
             プロフィール登録が必要です
@@ -1351,38 +1473,136 @@ export default function SelectClient() {
         </div>
       ) : null}
 
-      <div style={{ marginTop: 20, display: "grid", gap: 16, gridTemplateColumns: "1fr" }}>
-        {showJoinedClassesCard ? (
-          <ReturnClassCard
-            className="home-dash-return"
-            loading={joinedClassesLoading && joinedClassCount === 0}
-            listHref={withDev(resolveShellDashboardPath())}
-            listLabel="ホームで選ぶ"
-          />
-        ) : null}
+      <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
+        <div>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 22,
+              fontWeight: 900,
+              color: "#0f172a",
+              letterSpacing: 0.01,
+              lineHeight: 1.25,
+            }}
+          >
+            今日はどのクラスにする？
+          </h2>
+          <p
+            style={{
+              margin: "6px 0 0",
+              fontSize: 13,
+              fontWeight: 600,
+              color: "#64748b",
+            }}
+          >
+            気になるクラスをのぞいてみよう
+          </p>
+        </div>
 
-        <DashboardStatusBar
-          slots={slots}
-          planLabel={
-            themeBillingEnabled
-              ? tierName(topicPlan)
-              : slotBillingEnabled
-                ? `${slots}クラス枠`
-                : "制限なし"
-          }
-          joinWindowOpen={joinWindowOpen}
-          joinWindowText={joinWindowText}
-          adminMode={adminAuthenticated}
-          opsTestActive={opsTestActive}
-          loading={loading}
-          onReload={() => {
-            void reloadCatalog();
-            void refreshCurrentClass();
-            if (deviceId) {
-              void refreshJoinedClassCount(deviceId);
-            }
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            alignItems: "center",
           }}
-        />
+        >
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 10px",
+              borderRadius: 999,
+              background: joinWindowOpen
+                ? "rgba(236, 253, 245, 0.95)"
+                : "rgba(241, 245, 249, 0.95)",
+              border: "1px solid rgba(148, 163, 184, 0.28)",
+              fontSize: 12,
+              fontWeight: 800,
+              color: "#334155",
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: joinWindowOpen ? "#16a34a" : "#94a3b8",
+              }}
+            />
+            {joinWindowText || (joinWindowOpen ? "受付中" : "受付時間外")}
+          </span>
+          {themeBillingEnabled || slotBillingEnabled ? (
+            <span
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.85)",
+                border: "1px solid rgba(148, 163, 184, 0.28)",
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#64748b",
+              }}
+            >
+              {themeBillingEnabled
+                ? `プラン: ${tierName(topicPlan)}`
+                : `${slots}クラス枠`}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              void reloadCatalog();
+              void refreshCurrentClass();
+              if (deviceId) void refreshJoinedClassCount(deviceId);
+              void reloadJoinWindow();
+            }}
+            disabled={loading}
+            style={{
+              marginLeft: "auto",
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: "1px solid #e2e8f0",
+              background: "#fff",
+              fontSize: 12,
+              fontWeight: 800,
+              color: "#64748b",
+              cursor: loading ? "default" : "pointer",
+            }}
+          >
+            更新
+          </button>
+        </div>
+
+        {showJoinedStrip ? (
+          <Link
+            href={withDev(resolveShellDashboardPath())}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              padding: "10px 12px",
+              borderRadius: 14,
+              background: "rgba(255,255,255,0.88)",
+              border: "1px solid rgba(148, 163, 184, 0.28)",
+              textDecoration: "none",
+              color: "#0f172a",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 800 }}>
+              所属中のクラス
+              <span style={{ marginLeft: 8, color: "#059669" }}>
+                {joinedClassCount}件
+              </span>
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
+              ホームで見る ›
+            </span>
+          </Link>
+        ) : null}
 
         {!joinWindowOpen && opsTestFlags.ignoreAdmission ? (
           <p
@@ -1397,118 +1617,119 @@ export default function SelectClient() {
           </p>
         ) : null}
 
-        <div className="home-dash-bottom">
-          <JoinNewCard
-            className="home-dash-join"
-            quickJoinBusy={busy}
-            quickJoinDisabled={
-              !deviceId ||
-              hasProfile === false ||
-              (!joinWindowOpen && !opsTestFlags.ignoreAdmission) ||
-              !prefsLoaded
-            }
-            quickJoinLabel={
-              !joinWindowOpen && opsTestFlags.ignoreAdmission
-                ? "管理者としてテスト入室"
-                : "今すぐ入る"
-            }
-            pickPlaceLabel={showNarrow ? "閉じる" : "入る場所を選ぶ"}
-            onQuickJoin={() => void enterQuickFreeTheme()}
-            onPickPlace={() => setShowNarrow((v) => !v)}
-          />
+        <AgeFilterCard
+          variant="compact"
+          deviceId={deviceId}
+          hasProfile={hasProfile}
+          disabled={loading}
+          onPrefsChange={setPrefs}
+          onPrefsLoadedChange={setPrefsLoaded}
+          onProfileRequired={() => {
+            goProfileIfNeeded("profile_required");
+          }}
+        />
 
-          <AgeFilterCard
-            className="home-dash-age"
-            deviceId={deviceId}
-            hasProfile={hasProfile}
-            disabled={loading}
-            onPrefsChange={setPrefs}
-            onPrefsLoadedChange={setPrefsLoaded}
-            onProfileRequired={() => {
-              goProfileIfNeeded("profile_required");
-            }}
-          />
-        </div>
-      </div>
-
-      {showNarrow && (
-        <>
-          <section
-            className="cm-select-filters"
+        <section style={{ display: "grid", gap: 10 }}>
+          <h3
             style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-              alignItems: "center",
+              margin: 0,
+              fontSize: 16,
+              fontWeight: 900,
+              color: "#0f172a",
             }}
           >
-            <select
-              value={wFilter}
-              onChange={(e) => setWFilter(e.target.value)}
-              style={{ padding: 10, borderRadius: 10 }}
-            >
-              <option value="all">世界観: すべて</option>
-              {worlds.map((w) => (
-                <option key={w.world_key} value={w.world_key}>
-                  {w.title} {w.is_sensitive ? "🔞" : ""}
-                </option>
-              ))}
-            </select>
+            テーマフリー
+          </h3>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#64748b",
+            }}
+          >
+            無料で今すぐ入れる場所。まずはここから。
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {freeBoards.map((b) => (
+              <BoardCard key={b.key} b={b} emphasizeFree />
+            ))}
+          </div>
+        </section>
 
-            <select
-              value={tFilter}
-              onChange={(e) => setTFilter(e.target.value)}
-              style={{ padding: 10, borderRadius: 10 }}
-            >
-              <option value="all">テーマ: すべて</option>
-              {topics.map((t) => (
-                <option key={t.topic_key} value={t.topic_key}>
-                  {t.title} {t.is_sensitive ? "🔞" : ""}{" "}
-                  {themeBillingEnabled && t.monthly_price
-                    ? `（要:${tierName(t.monthly_price)}以上）`
-                    : ""}
-                </option>
-              ))}
-            </select>
-          </section>
-
-          <section style={{ marginTop: 14 }}>
-            <h2
-              className="cm-section-title cm-emblem-heading"
-              style={{
-                margin: "10px 0",
-                fontSize: 16,
-                fontWeight: 900,
-                width: "fit-content",
-              }}
-            >
-              <ClassmateEmblem size="xs" variant="muted" decorative />
-              テーマ
-            </h2>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                gap: 12,
-              }}
-            >
-              {boards.map((b) => (
-                <BoardCard key={b.key} b={b} />
-              ))}
+        {themeGroups.length > 0 ? (
+          <section style={{ display: "grid", gap: 16 }}>
+            <div>
+              <h3
+                style={{
+                  margin: 0,
+                  fontSize: 16,
+                  fontWeight: 900,
+                  color: "#0f172a",
+                }}
+              >
+                テーマから探す
+              </h3>
+              <p
+                style={{
+                  margin: "4px 0 0",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "#64748b",
+                }}
+              >
+                契約すると、こんなクラスにも入れます
+              </p>
             </div>
 
-            {boards.length === 0 && !loading ? (
-              <div
-                className="cm-select-empty"
-                style={{ marginTop: 10, fontSize: 12, color: "#666" }}
-              >
-                条件に合うテーマがありません
+            {themeGroups.map((group) => (
+              <div key={group.id} style={{ display: "grid", gap: 8 }}>
+                <h4
+                  style={{
+                    margin: 0,
+                    fontSize: 13,
+                    fontWeight: 900,
+                    color: "#475569",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {group.label}
+                </h4>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                    gap: 10,
+                  }}
+                >
+                  {group.boards.map((b) => (
+                    <BoardCard
+                      key={b.key}
+                      b={b}
+                      accent={{ tint: group.tint, border: group.border }}
+                    />
+                  ))}
+                </div>
               </div>
-            ) : null}
+            ))}
           </section>
-        </>
-      )}
+        ) : null}
+
+        {!loading && boards.length === 0 ? (
+          <div
+            className="cm-select-empty"
+            style={{ marginTop: 4, fontSize: 12, color: "#666" }}
+          >
+            条件に合うテーマがありません
+          </div>
+        ) : null}
+      </div>
 
       <div style={{ height: 24 }} />
       <DevModeSwitcher />

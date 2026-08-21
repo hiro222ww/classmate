@@ -737,6 +737,22 @@
   box-shadow: var(--cm-shadow-soft) !important;
 }
 
+.cm-classroom-scope .cm-select-theme-card {
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.cm-classroom-scope .cm-select-theme-card:active {
+  transform: scale(0.99);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-classroom-scope .cm-select-theme-card,
+  .cm-classroom-scope .cm-select-theme-card:active {
+    transition: none;
+    transform: none;
+  }
+}
+
 .cm-classroom-scope .cm-select-filters select {
   border: 1px solid var(--cm-border-strong);
   background: linear-gradient(180deg, #fff, rgba(255, 247, 242, 0.95));
