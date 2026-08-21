@@ -1121,20 +1121,6 @@ export default function SelectClient() {
             >
               {isFree ? "テーマフリー" : b.title}
             </strong>
-            {isFree ? (
-              <span
-                style={{
-                  display: "inline-block",
-                  marginTop: 4,
-                  fontSize: 11,
-                  fontWeight: 800,
-                  color: "#059669",
-                  letterSpacing: "0.02em",
-                }}
-              >
-                無料で入れる
-              </span>
-            ) : null}
           </div>
           <div
             style={{
@@ -1150,18 +1136,14 @@ export default function SelectClient() {
                 style={{
                   fontSize: 11,
                   fontWeight: 800,
-                  color: locked ? "#7c3aed" : "#059669",
-                  background: locked
-                    ? "rgba(237, 233, 254, 0.9)"
-                    : "rgba(236, 253, 245, 0.95)",
-                  border: locked
-                    ? "1px solid rgba(167, 139, 250, 0.35)"
-                    : "1px solid rgba(16, 185, 129, 0.25)",
+                  color: "#64748b",
+                  background: "rgba(248, 250, 252, 0.95)",
+                  border: "1px solid rgba(148, 163, 184, 0.35)",
                   borderRadius: 999,
                   padding: "3px 8px",
                 }}
               >
-                {locked ? "🔒 テーマプラン" : "利用可"}
+                🔒 テーマプラン対象
               </span>
             ) : null}
             {b.is_sensitive ? (
@@ -1193,66 +1175,32 @@ export default function SelectClient() {
           </p>
         ) : null}
 
-        {!isFree && locked && themeBillingEnabled ? (
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#6d28d9",
-            }}
-          >
-            テーマプランで利用可能 · {tierName(b.monthly_price)}以上
-          </p>
-        ) : null}
-
-        {locked && themeBillingEnabled ? (
-          <Link
-            href={withDev("/premium")}
-            className="cm-cta-secondary"
-            style={{
-              marginTop: 12,
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              textDecoration: "none",
-              fontWeight: 900,
-              boxSizing: "border-box",
-            }}
-          >
-            テーマプランを見る
-          </Link>
-        ) : (
-          <button
-            type="button"
-            className={[
-              "cm-board-enter",
-              enterReady ? "cm-cta-primary" : "cm-cta-secondary",
-            ].join(" ")}
-            onClick={() => void joinMatchedBoard(b)}
-            disabled={joinDisabled}
-            style={{
-              marginTop: 12,
-              width: "100%",
-              padding: "10px 12px",
-              color: "var(--cm-text, #0f172a)",
-              fontWeight: 900,
-              cursor: joinDisabled ? "not-allowed" : "pointer",
-              opacity: joinDisabled ? 0.62 : 1,
-            }}
-          >
-            {profileMissing
-              ? "プロフィール登録が必要"
-              : adminTestJoin
-                ? "管理者としてテスト入室"
-                : admissionClosed
-                  ? "入校受付時間外"
-                  : "入る"}
-          </button>
-        )}
+        <button
+          type="button"
+          className={[
+            "cm-board-enter",
+            enterReady ? "cm-cta-primary" : "cm-cta-secondary",
+          ].join(" ")}
+          onClick={() => void joinMatchedBoard(b)}
+          disabled={joinDisabled}
+          style={{
+            marginTop: 12,
+            width: "100%",
+            padding: "10px 12px",
+            color: "var(--cm-text, #0f172a)",
+            fontWeight: 900,
+            cursor: joinDisabled ? "not-allowed" : "pointer",
+            opacity: joinDisabled ? 0.62 : 1,
+          }}
+        >
+          {profileMissing
+            ? "プロフィール登録が必要"
+            : adminTestJoin
+              ? "管理者としてテスト入室"
+              : admissionClosed
+                ? "入校受付時間外"
+                : "入る"}
+        </button>
       </div>
     );
   }
@@ -1648,7 +1596,7 @@ export default function SelectClient() {
               color: "#64748b",
             }}
           >
-            無料で今すぐ入れる場所。まずはここから。
+            テーマを決めずに、気軽に入れるクラス
           </p>
           <div
             style={{
@@ -1684,7 +1632,7 @@ export default function SelectClient() {
                   color: "#64748b",
                 }}
               >
-                契約すると、こんなクラスにも入れます
+                気になるテーマのクラスをのぞいてみよう
               </p>
             </div>
 
