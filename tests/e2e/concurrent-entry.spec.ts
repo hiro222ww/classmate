@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { apiMatchJoin } from "./helpers/join";
 import { skipWithoutBackend } from "./helpers/server";
 
-test.describe("E. 複数ユーザー同時入校", () => {
+test.describe("E. 複数ユーザー同時入学", () => {
   test.setTimeout(60_000);
 
   test("3 device 同時 match-join API（dev 51-53）", async () => {

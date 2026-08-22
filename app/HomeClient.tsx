@@ -860,7 +860,7 @@ export default function HomeClient() {
           json?.window?.start,
           json?.window?.end
         );
-        const statusText = isOpen ? "受付中" : "受付時間外";
+        const statusText = isOpen ? "入学受付中" : "入学受付時間外";
         setJoinWindowOpen(isOpen);
         setJoinWindowText(
           rangeText ? `${statusText} ｜ 受付 ${rangeText}` : statusText
@@ -2102,7 +2102,7 @@ return () => {
         if (json?.error === "admission_closed") {
           alert(
             json?.message ??
-              "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
+              "現在は入学受付時間外です。受付時間になったら、もう一度お試しください。"
           );
           return;
         }
@@ -2286,7 +2286,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           json?.error === "recruitment_closed"
         ) {
           if (json?.error === "admission_closed") {
-            alert("現在入校受付時間外です。");
+            alert("現在入学受付時間外です。");
             return;
           }
 
@@ -2663,7 +2663,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               color: "#78716c",
             }}
           >
-            現在は入校受付時間外です。運営テストモードでテスト入室できます。
+            現在は入学受付時間外です。運営テストモードでテスト入室できます。
           </p>
         ) : null}
       </div>

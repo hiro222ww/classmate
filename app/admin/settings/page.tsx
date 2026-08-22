@@ -164,7 +164,7 @@ export default function AdminSettingsPage() {
         <header style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>運用設定</h1>
           <p style={{ margin: "8px 0 0", fontSize: 13, color: "#667085" }}>
-            課金・入校受付時間・募集締切・未成年登録を管理します。
+            課金・入学受付時間・募集締切・未成年登録を管理します。
           </p>
         </header>
 
@@ -339,7 +339,7 @@ export default function AdminSettingsPage() {
         </section>
 
         <section style={{ ...adminCard, marginTop: 12 }}>
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>入校受付時間</h2>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>入学受付時間</h2>
 
           <div
             style={{
@@ -363,7 +363,7 @@ export default function AdminSettingsPage() {
                 checked={globalJoinEnabled}
                 onChange={(e) => setGlobalJoinEnabled(e.target.checked)}
               />
-              入校受付時間を有効にする
+              入学受付時間を有効にする
             </label>
 
             <label style={{ fontSize: 12, color: "#666" }}>

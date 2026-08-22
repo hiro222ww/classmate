@@ -116,7 +116,7 @@ function resolveOpenClassError(json: Record<string, unknown>): string {
   if (code === "admission_closed") {
     return (
       (typeof json?.message === "string" && json.message) ||
-      "現在は入校受付時間外です。"
+      "現在は入学受付時間外です。"
     );
   }
 

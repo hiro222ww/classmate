@@ -957,7 +957,7 @@ export default function SelectClient() {
         ) {
           alert(
             matchJson?.message ??
-              "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。"
+              "現在は入学受付時間外です。受付時間になったら、もう一度お試しください。"
           );
           logMatchJoinClientFailed(deviceId, errorCode, matchJson?.message);
           void reloadJoinWindow();
@@ -1198,7 +1198,7 @@ export default function SelectClient() {
             : adminTestJoin
               ? "管理者としてテスト入室"
               : admissionClosed
-                ? "入校受付時間外"
+                ? "入学受付時間外"
                 : "入る"}
         </button>
       </div>
@@ -1479,7 +1479,7 @@ export default function SelectClient() {
                 background: joinWindowOpen ? "#16a34a" : "#94a3b8",
               }}
             />
-            {joinWindowText || (joinWindowOpen ? "受付中" : "受付時間外")}
+            {joinWindowText || (joinWindowOpen ? "入学受付中" : "入学受付時間外")}
           </span>
           {themeBillingEnabled || slotBillingEnabled ? (
             <span
@@ -1561,7 +1561,7 @@ export default function SelectClient() {
               color: "#78716c",
             }}
           >
-            現在は入校受付時間外です。運営テストモードでテスト入室できます。
+            現在は入学受付時間外です。運営テストモードでテスト入室できます。
           </p>
         ) : null}
 

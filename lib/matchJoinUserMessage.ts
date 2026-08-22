@@ -1,5 +1,5 @@
 const DEFAULT_ENTRY_FAILURE_MESSAGE =
-  "入校に失敗しました。通信環境または端末情報の状態が原因の可能性があります。時間をおいて再試行するか、端末情報をリセットして入り直してください。";
+  "入学に失敗しました。通信環境または端末情報の状態が原因の可能性があります。時間をおいて再試行するか、端末情報をリセットして入り直してください。";
 
 export function resolveMatchJoinUserMessage(
   error: string | null | undefined,
@@ -20,7 +20,7 @@ export function resolveMatchJoinUserMessage(
       return "参加できるクラス数の上限に達しています。";
     case "admission_closed":
     case "match_deadline_passed":
-      return "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。";
+      return "現在は入学受付時間外です。受付時間になったら、もう一度お試しください。";
     case "recruitment_closed":
       return "このクラスは現在募集していません。";
     case "gender_restricted_topic":

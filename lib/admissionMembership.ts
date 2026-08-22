@@ -8,7 +8,7 @@ import {
 } from "@/lib/actorIdentity";
 
 export const ADMISSION_CLOSED_MESSAGE =
-  "現在は入校受付時間外です。受付時間になったら、もう一度お試しください。";
+  "現在は入学受付時間外です。受付時間になったら、もう一度お試しください。";
 
 export type RejoinEligibility = {
   existingClassMember: boolean;

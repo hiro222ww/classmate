@@ -16,7 +16,7 @@ const TOGGLES: Array<{
   {
     key: "ignoreAdmission",
     label: "受付時間を無視",
-    help: "入校受付時間外でも、管理者本人だけ通常フローで新規入室できます。",
+    help: "入学受付時間外でも、管理者本人だけ通常フローで新規入室できます。",
   },
   {
     key: "ignoreAge",

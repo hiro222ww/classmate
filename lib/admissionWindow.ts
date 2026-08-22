@@ -79,7 +79,7 @@ export function evaluateGlobalJoinWindow(
       admissionWindowEnabled: false,
       current,
       window: null,
-      text: "入校受付中！",
+      text: "入学受付中！",
     };
   }
 
@@ -94,7 +94,7 @@ export function evaluateGlobalJoinWindow(
       admissionWindowEnabled: false,
       current,
       window: null,
-      text: "入校受付中！",
+      text: "入学受付中！",
     };
   }
 
@@ -112,8 +112,8 @@ export function evaluateGlobalJoinWindow(
       end: window.end,
     },
     text: open
-      ? `入校受付中！（受付時間：${rangeLabel}）`
-      : `ただいま入校受付時間外です（受付時間：${rangeLabel}）`,
+      ? `入学受付中！（受付時間：${rangeLabel}）`
+      : `ただいま入学受付時間外です（受付時間：${rangeLabel}）`,
   };
 }
 

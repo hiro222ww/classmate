@@ -5,7 +5,7 @@ import { OPS_TEST_COOKIE_NAME, createOpsTestToken } from "./opsTestMode";
 vi.mock("@/lib/admissionWindow", () => ({
   getAdmissionStatus: vi.fn(async () => ({
     open: false,
-    text: "ただいま入校受付時間外です",
+    text: "ただいま入学受付時間外です",
     enabled: true,
     start: "21:00",
     end: "21:30",

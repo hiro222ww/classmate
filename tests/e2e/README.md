@@ -28,7 +28,7 @@ npm run e2e:report    # HTMLレポート
 
 | ファイル | 内容 |
 |---------|------|
-| `browser-entry.spec.ts` | 新規ブラウザ・dev 入校 |
+| `browser-entry.spec.ts` | 新規ブラウザ・dev 入学 |
 | `legacy-device.spec.ts` | 旧 deviceId 自動置換 |
 | `mic-permission.spec.ts` | マイク拒否/許可・聞き専 |
 | `in-app-browser.spec.ts` | LINE/X/Instagram 等 UA |
@@ -44,7 +44,7 @@ npm run e2e:report    # HTMLレポート
 
 | Project | 結果 | 備考 |
 |---------|------|------|
-| chromium | 19/19 pass | 入校・マイク・URL・再入室すべて通過 |
+| chromium | 19/19 pass | 入学・マイク・URL・再入室すべて通過 |
 | webkit | pass | concurrent / mic-grant は project 設定で除外または skip |
 | iphone | pass | マイク拒否・聞き専は通過。GUM grant は Chromium のみ検証 |
 | android | pass | concurrent は除外 |
@@ -58,12 +58,12 @@ npm run e2e:report    # HTMLレポート
 ### 旧 deviceId 自動置換
 
 - `1710000000-abc123` 等の legacy id は UUID に置換
-- 入校 API は `invalid_deviceId` で壊れない
+- 入学 API は `invalid_deviceId` で壊れない
 
 ### match-join 失敗時 rollback
 
 - `concurrent-entry.spec.ts` で 3 device 同時 API join を検証（2 件以上成功、同一 classId）
-- UI 入校は `[match-join] success` コンソールログで確認（レスポンス body はクライアント側で消費されるため）
+- UI 入学は `[match-join] success` コンソールログで確認（レスポンス body はクライアント側で消費されるため）
 
 ### URL 統一
 

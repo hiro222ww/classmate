@@ -340,7 +340,7 @@ export function countConnectedPeers(snapshot) {
 }
 
 /**
- * 入校時間外でも E2E を通す。global_join_window.enabled=false（常時 open）に一時変更し restore を返す。
+ * 入学時間外でも E2E を通す。global_join_window.enabled=false（常時 open）に一時変更し restore を返す。
  * test-device-* や本番ユーザーには触らない。
  */
 export async function ensureE2eAdmissionOpen(apiBase, sbConfig) {

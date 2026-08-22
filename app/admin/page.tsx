@@ -42,7 +42,7 @@ const cards = [
   },
   {
     title: "運用設定",
-    desc: "スロット/テーマ課金ON/OFF・入校受付時間・募集締切・未成年登録",
+    desc: "スロット/テーマ課金ON/OFF・入学受付時間・募集締切・未成年登録",
     href: "/admin/settings",
   },
   {

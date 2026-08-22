@@ -4,7 +4,7 @@ import { HelpTip } from "@/components/HelpTip";
 import { CHIP } from "@/components/dashboard/dashboardStyles";
 
 const ADMISSION_WINDOW_HELP_TEXT =
-  "新規入校は受付時間内のみ可能です。所属中のクラスへの再入室はいつでもできます。";
+  "新規入学は受付時間内のみ可能です。所属中のクラスへの再入室はいつでもできます。";
 
 const PLAN_HELP_TEXT =
   "テーマプランの料金や変更は「プランを見る」から確認できます。";
@@ -62,10 +62,10 @@ export function DashboardStatusBar({
               display: "inline-block",
             }}
           />
-          {joinWindowText?.includes("入校") ? joinWindowText : "入校受付中"}
+          {joinWindowText && (joinWindowText.includes("入学") || joinWindowText.includes("入校")) ? joinWindowText : "入学受付中"}
         </span>
       ) : (
-        <HelpTip label="入校受付時間について" content={ADMISSION_WINDOW_HELP_TEXT}>
+        <HelpTip label="入学受付時間について" content={ADMISSION_WINDOW_HELP_TEXT}>
           <span className="cm-status-chip" style={CHIP}>
             受付時間外
           </span>
