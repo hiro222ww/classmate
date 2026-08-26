@@ -13,7 +13,7 @@ type EntryFailurePanelProps = {
 };
 
 export function EntryFailurePanel({
-  title = "入学に失敗しました",
+  title = "参加できませんでした",
   message = ENTRY_FAILURE_DEFAULT_MESSAGE,
   errorCode,
   onRetry,

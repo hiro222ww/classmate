@@ -1,5 +1,5 @@
 const DEFAULT_ENTRY_FAILURE_MESSAGE =
-  "入学に失敗しました。通信環境または端末情報の状態が原因の可能性があります。時間をおいて再試行するか、端末情報をリセットして入り直してください。";
+  "参加できませんでした。通信環境または端末情報の状態が原因の可能性があります。時間をおいて再試行するか、端末情報をリセットして入り直してください。";
 
 export function resolveMatchJoinUserMessage(
   error: string | null | undefined,
