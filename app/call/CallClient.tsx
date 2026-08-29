@@ -12,6 +12,8 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logCallEntryBlocked } from "@/lib/entryFlowLog";
 import { buildInviteRoomUrl } from "@/lib/appOrigin";
+import { shareOrCopyInviteUrl } from "@/lib/inviteShare";
+import { buildCallRecruitmentView } from "@/lib/callRecruitmentUi";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallRoomView from "./CallRoomView";
 import CallVoiceLayer from "./CallVoiceLayer";
@@ -273,6 +275,9 @@ type SessionStatusResponse = {
     status?: "forming" | "active" | "closed";
     capacity?: number;
     created_at?: string | null;
+    lobby_extended_once?: boolean;
+    join_open_until?: string | null;
+    members_locked_at?: string | null;
   };
   members?: Array<{
     device_id?: string;
@@ -431,6 +436,13 @@ export default function CallClient() {
   const remoteAudioHealthRef = useRef(remoteAudioHealth);
   remoteAudioHealthRef.current = remoteAudioHealth;
   const [capacity, setCapacity] = useState(5);
+  const [sessionCreatedAt, setSessionCreatedAt] = useState<string | null>(null);
+  const [joinOpenUntil, setJoinOpenUntil] = useState<string | null>(null);
+  const [membersLockedAt, setMembersLockedAt] = useState<string | null>(null);
+  const [lobbyExtendedOnce, setLobbyExtendedOnce] = useState(false);
+  const [lobbyExtendBusy, setLobbyExtendBusy] = useState(false);
+  const [lobbyQuitBusy, setLobbyQuitBusy] = useState(false);
+  const [lobbyExtendError, setLobbyExtendError] = useState<string | null>(null);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
   const [nowMs, setNowMs] = useState(0);
   const [classVoteCount, setClassVoteCount] = useState(0);
@@ -843,6 +855,58 @@ export default function CallClient() {
       setClassVoteBusy(false);
     }
   }, [sessionId, deviceId, classId, classVoteBusy, classVoteSelfVoted]);
+
+  const extendAloneWait = useCallback(async () => {
+    if (lobbyExtendBusy || lobbyExtendedOnce || !sessionId || !deviceId) return;
+    setLobbyExtendBusy(true);
+    setLobbyExtendError(null);
+    try {
+      const res = await fetch("/api/session/lobby-extend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId, deviceId }),
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (json?.error === "already_extended") {
+          setLobbyExtendedOnce(true);
+          setLobbyExtendError("すでに延長済みです");
+        } else {
+          setLobbyExtendError("延長に失敗しました。もう一度お試しください。");
+        }
+        return;
+      }
+      setLobbyExtendedOnce(true);
+      if (json.created_at) {
+        setSessionCreatedAt(String(json.created_at));
+      }
+    } catch {
+      setLobbyExtendError("延長に失敗しました。通信環境を確認してください。");
+    } finally {
+      setLobbyExtendBusy(false);
+    }
+  }, [deviceId, lobbyExtendBusy, lobbyExtendedOnce, sessionId]);
+
+  const quitAloneWaitAndGoHome = useCallback(async () => {
+    if (lobbyQuitBusy) return;
+    setLobbyQuitBusy(true);
+    try {
+      if (sessionId && deviceId) {
+        await fetch("/api/session/leave", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId, deviceId }),
+          cache: "no-store",
+        }).catch(() => null);
+      }
+      logNavigationIntent("alone_wait_quit", "CallClient.alone_wait_quit");
+      releaseSessionMic("alone_wait_quit", sessionId);
+      router.push(withDev(resolveShellDashboardPath()));
+    } finally {
+      setLobbyQuitBusy(false);
+    }
+  }, [deviceId, lobbyQuitBusy, router, sessionId]);
 
   const membersDisplayedRef = useRef(false);
 
@@ -1485,6 +1549,26 @@ export default function CallClient() {
 
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
+        }
+        if (json.session?.created_at) {
+          setSessionCreatedAt(String(json.session.created_at));
+        }
+        if (typeof json.session?.lobby_extended_once === "boolean") {
+          setLobbyExtendedOnce(json.session.lobby_extended_once);
+        }
+        if ("join_open_until" in (json.session ?? {})) {
+          setJoinOpenUntil(
+            json.session?.join_open_until
+              ? String(json.session.join_open_until)
+              : null
+          );
+        }
+        if ("members_locked_at" in (json.session ?? {})) {
+          setMembersLockedAt(
+            json.session?.members_locked_at
+              ? String(json.session.members_locked_at)
+              : null
+          );
         }
       } catch (e: unknown) {
         const message =
@@ -2562,6 +2646,7 @@ export default function CallClient() {
   }, [micReady]);
 
   const hasOtherMember = members.some((m) => m.device_id !== deviceId);
+  void hasOtherMember;
 
   const speakingMemberId = useMemo(() => {
     const SPEAKING_MS = 1500;
@@ -3350,6 +3435,170 @@ export default function CallClient() {
       promoted: classVotePromoted,
     });
 
+  const recruitmentView = buildCallRecruitmentView({
+    memberCount: Math.max(members.length, filled),
+    capacity,
+    membersLockedAt: membersLockedAt ?? (classVoteMembersLocked ? "locked" : null),
+    joinOpenUntil,
+    sessionCreatedAt,
+    lobbyExtendedOnce,
+    nowMs: nowMs || Date.now(),
+  });
+
+  const recruitmentBanner =
+    membersSyncRevision > 0 ? (
+      <div
+        className="cm-call-banner cm-call-recruitment"
+        style={{
+          marginTop: 12,
+          padding: "12px 14px",
+          borderRadius: 12,
+          background:
+            recruitmentView.phase === "closed"
+              ? "#f8fafc"
+              : recruitmentView.phase === "closing_soon"
+                ? "#fff7ed"
+                : "#ecfdf5",
+          color:
+            recruitmentView.phase === "closed"
+              ? "#475569"
+              : recruitmentView.phase === "closing_soon"
+                ? "#9a3412"
+                : "#065f46",
+          border:
+            recruitmentView.phase === "closed"
+              ? "1px solid #e2e8f0"
+              : recruitmentView.phase === "closing_soon"
+                ? "1px solid #fed7aa"
+                : "1px solid #a7f3d0",
+          fontSize: 13,
+          fontWeight: 800,
+          display: "grid",
+          gap: 8,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <span>
+            {recruitmentView.label}
+            <span style={{ marginLeft: 8, fontWeight: 700, opacity: 0.85 }}>
+              {recruitmentView.memberCount}/{recruitmentView.capacity}人
+            </span>
+          </span>
+          {recruitmentView.recruitingOpen ? (
+            <button
+              type="button"
+              className="cm-cta-primary cm-call-invite-prominent"
+              onClick={() => {
+                void (async () => {
+                  if (!sessionId || !classId) {
+                    alert("まだ招待リンクを作れません。");
+                    return;
+                  }
+                  const inviteUrl = buildInviteRoomUrl({ classId, sessionId });
+                  const result = await shareOrCopyInviteUrl({
+                    url: inviteUrl,
+                    title: "Classmate",
+                    text: "通話に参加しませんか？",
+                  });
+                  if (result.ok && result.method === "clipboard") {
+                    alert("招待リンクをコピーしました");
+                  } else if (!result.ok) {
+                    alert("招待リンクを共有できませんでした");
+                  }
+                })();
+              }}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "1px solid #047857",
+                background: "#059669",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: 13,
+                cursor: "pointer",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+              }}
+            >
+              友達を招待する
+            </button>
+          ) : null}
+        </div>
+        {recruitmentView.detail ? (
+          <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>
+            {recruitmentView.detail}
+          </div>
+        ) : null}
+        {recruitmentView.aloneWaitTimedOut ? (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              paddingTop: 4,
+            }}
+          >
+            {recruitmentView.canExtendAloneWait ? (
+              <button
+                type="button"
+                disabled={lobbyExtendBusy || lobbyQuitBusy}
+                onClick={() => {
+                  void extendAloneWait();
+                }}
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  border: "1px solid #111827",
+                  background: "#111827",
+                  color: "#fff",
+                  fontWeight: 900,
+                  fontSize: 13,
+                  cursor:
+                    lobbyExtendBusy || lobbyQuitBusy ? "not-allowed" : "pointer",
+                  opacity: lobbyExtendBusy || lobbyQuitBusy ? 0.6 : 1,
+                }}
+              >
+                {lobbyExtendBusy ? "延長中…" : "待機を続ける"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={lobbyExtendBusy || lobbyQuitBusy}
+              onClick={() => {
+                void quitAloneWaitAndGoHome();
+              }}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "1px solid #d1d5db",
+                background: "#fff",
+                color: "#374151",
+                fontWeight: 900,
+                fontSize: 13,
+                cursor:
+                  lobbyExtendBusy || lobbyQuitBusy ? "not-allowed" : "pointer",
+                opacity: lobbyExtendBusy || lobbyQuitBusy ? 0.6 : 1,
+              }}
+            >
+              {lobbyQuitBusy ? "退出中…" : "今回はやめる"}
+            </button>
+          </div>
+        ) : null}
+        {lobbyExtendError ? (
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
+            {lobbyExtendError}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
   const classVoteSlot = showClassVotePanel ? (
     <div
       className="cm-call-banner cm-call-class-vote"
@@ -3439,14 +3688,15 @@ export default function CallClient() {
           sessionId,
         });
 
-        try {
-          await navigator.clipboard.writeText(inviteUrl);
+        const result = await shareOrCopyInviteUrl({
+          url: inviteUrl,
+          title: "Classmate",
+          text: "通話に参加しませんか？",
+        });
+        if (result.ok && result.method === "clipboard") {
           alert("招待リンクをコピーしました");
-        } catch {
-          window.prompt(
-            "コピーできませんでした。下のリンクをコピーしてください。",
-            inviteUrl
-          );
+        } else if (!result.ok) {
+          alert("招待リンクを共有できませんでした");
         }
       }}
       onHome={() => {
@@ -3465,9 +3715,8 @@ export default function CallClient() {
         router.push(roomHref);
       }}
       fetchErrorCount={fetchErrorCount}
-      showWaitingForOthers={
-        !hasOtherMember && membersSyncRevision > 0 && members.length > 0
-      }
+      showWaitingForOthers={false}
+      bannerSlot={recruitmentBanner}
       visibleMembers={visibleMembers}
       deviceId={deviceId}
       classId={classId}

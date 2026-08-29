@@ -32,17 +32,24 @@ export function consumeAutoCallOnce(sessionId: string, deviceId: string): boolea
   }
 }
 
-/** Minimum members required before auto-starting a call from Room. */
-export const AUTO_CALL_MIN_MEMBERS = 3;
+/**
+ * Minimum members required before auto-starting a call from Room.
+ * Random-call: enter the call screen immediately even with 1 person
+ * (no separate wait-for-3 lobby).
+ */
+export const AUTO_CALL_MIN_MEMBERS = 1;
 
-/** First lobby wait window before extend/quit choice (under AUTO_CALL_MIN_MEMBERS). */
+/** Soft-close threshold: after this many members, join_open_until starts (~30s). */
+export const RECRUIT_SOFT_CLOSE_AT_MEMBERS = 3;
+
+/** First alone-wait window before extend/quit choice (under soft-close count). */
 export const LOBBY_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Extra wait granted once via POST /api/session/lobby-extend. */
 export const LOBBY_EXTEND_MS = 5 * 60 * 1000;
 
 /** Delay after readiness before navigating to Call (initial match only). */
-export const AUTO_CALL_STABLE_DELAY_MS = 2000;
+export const AUTO_CALL_STABLE_DELAY_MS = 400;
 
 /** Minimum time member count must hold before arming auto-call timer. */
 export const AUTO_CALL_MEMBERS_STABLE_MS = 1500;

@@ -1041,8 +1041,8 @@ export default function SelectClient() {
       }
 
       const roomUrl =
-        `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-        `&sessionId=${encodeURIComponent(sessionId)}` +
+        `/call?sessionId=${encodeURIComponent(sessionId)}` +
+        `&classId=${encodeURIComponent(classId)}` +
         (devQuery ? `&${devQuery}` : "");
 
       pushRecentClass(

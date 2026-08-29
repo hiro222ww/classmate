@@ -4,6 +4,7 @@ const ALLOWED_RETURN_PREFIXES = [
   "/class/mine",
   "/room",
   "/call",
+  "/onboarding",
   "/app/home",
   "/app/settings",
   "/app/login",
@@ -47,6 +48,13 @@ export function sanitizeReturnTo(raw: unknown): string {
 export function buildProfileEditPath(returnTo: string): string {
   const safe = sanitizeReturnTo(returnTo);
   return `/profile?returnTo=${encodeURIComponent(safe)}`;
+}
+
+/** Min-profile onboarding; after save, navigate to `next` (invite room/call, etc.). */
+export function buildOnboardingPath(next?: string): string {
+  const safe = sanitizeReturnTo(next ?? "/");
+  if (safe === "/") return "/onboarding";
+  return `/onboarding?next=${encodeURIComponent(safe)}`;
 }
 
 export function buildCurrentPathReturnTo(pathname: string, search: string): string {

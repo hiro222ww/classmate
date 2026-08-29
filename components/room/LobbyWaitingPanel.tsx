@@ -1,6 +1,6 @@
 "use client";
 
-import { AUTO_CALL_MIN_MEMBERS } from "@/lib/autoCallOnce";
+import { RECRUIT_SOFT_CLOSE_AT_MEMBERS } from "@/lib/autoCallOnce";
 
 type Props = {
   memberCount: number;
@@ -44,10 +44,10 @@ export function LobbyWaitingPanel({
         メンバーを待っています
       </div>
       <div style={{ fontSize: 14, fontWeight: 800, color: "#78350f" }}>
-        現在 {count} / {AUTO_CALL_MIN_MEMBERS} 人
+        現在 {count} / {RECRUIT_SOFT_CLOSE_AT_MEMBERS} 人
       </div>
       <div style={{ fontSize: 13, fontWeight: 700, color: "#a16207" }}>
-        {AUTO_CALL_MIN_MEMBERS}人集まると通話開始
+        通話画面で募集を続けています
       </div>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#78716c" }}>
         待機時間 {elapsedLabel}
@@ -65,8 +65,8 @@ export function LobbyWaitingPanel({
         >
           <div style={{ fontSize: 13, fontWeight: 800, color: "#78350f" }}>
             {alreadyExtended
-              ? "まだ3人揃っていません。今回はやめますか？"
-              : "5分経っても3人揃いませんでした。どうしますか？"}
+              ? "まだ人が集まりません。今回はやめますか？"
+              : "5分経っても集まりませんでした。どうしますか？"}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {!alreadyExtended ? (

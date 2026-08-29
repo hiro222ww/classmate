@@ -42,7 +42,7 @@ describe("formatInviteJoinApiError", () => {
   });
 
   it("maps unified failure codes", () => {
-    expect(formatInviteJoinApiError("expired_invite")).toContain("期限切れ");
+    expect(formatInviteJoinApiError("expired_invite")).toContain("募集");
     expect(formatInviteJoinApiError("needs_profile")).toContain("プロフィール");
     expect(formatInviteJoinApiError("age_restricted")).toContain("年齢");
   });

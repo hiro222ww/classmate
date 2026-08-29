@@ -32,6 +32,8 @@ import {
 } from "@/lib/joinByInviteTypes";
 import { buildLoginUrl } from "@/lib/authAccount";
 import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
+import { ensureSessionMembersLockedIfDue } from "@/lib/sessionJoinLock";
+import { recruitmentClosedUserMessage } from "@/lib/callRecruitmentUi";
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -305,6 +307,11 @@ export async function executeJoinByInvite(
   });
 
   if (!hasProfile) {
+    const inviteReturn = buildInviteRoomRedirect({
+      classId,
+      sessionId: requestedSessionId,
+      invite: true,
+    });
     return {
       httpStatus: 409,
       result: failure(requestId, {
@@ -312,7 +319,7 @@ export async function executeJoinByInvite(
         message: joinByInviteUserMessage("needs_profile"),
         classId,
         sessionId: requestedSessionId,
-        redirectTo: "/profile",
+        redirectTo: `/onboarding?next=${encodeURIComponent(inviteReturn)}`,
       }),
     };
   }
@@ -504,6 +511,30 @@ export async function executeJoinByInvite(
 
   const sessionId = resolved.sessionId;
   const displayName = await resolveDisplayName(sb, actor);
+
+  const { data: existingSessionMember } = await sb
+    .from("session_members")
+    .select("device_id")
+    .eq("session_id", sessionId)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  const alreadyInSession = Boolean(existingSessionMember);
+  if (!alreadyInSession) {
+    const lockState = await ensureSessionMembersLockedIfDue(sessionId);
+    if (lockState.locked) {
+      return {
+        httpStatus: 403,
+        result: failure(requestId, {
+          code: "expired_invite",
+          message: recruitmentClosedUserMessage("session_members_locked"),
+          classId,
+          sessionId,
+          detail: "session_members_locked",
+        }),
+      };
+    }
+  }
 
   await backfillMembershipUserIdIfSafe(sb, actor, classId);
 
