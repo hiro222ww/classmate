@@ -4,13 +4,15 @@
  * Soft close: after 3 members, join_open_until ≈ now+30s.
  * Hard close: at capacity (5) or after join window elapses → members_locked_at.
  * Under 3 members: keep recruiting until the 5-minute (+ optional extend) wait ends.
+ *
+ * Keep this module free of server-only imports (supabaseAdmin, etc.) so call/home
+ * client bundles stay browser-safe.
  */
 
 import {
   LOBBY_EXTEND_MS,
   LOBBY_WAIT_TIMEOUT_MS,
 } from "@/lib/autoCallOnce";
-import { isSessionOpenForMatchJoin } from "@/lib/sessionJoinLock";
 
 export const RECRUIT_SOFT_CLOSE_MEMBER_COUNT = 3;
 export const RECRUIT_HARD_CLOSE_MEMBER_COUNT = 5;
@@ -47,6 +49,19 @@ function formatRemaining(ms: number): string {
   return `${sec}秒`;
 }
 
+/** Client-safe mirror of isSessionOpenForMatchJoin (no server imports). */
+function isRecruitingWindowOpen(params: {
+  membersLockedAt: string | null | undefined;
+  joinOpenUntil: string | null | undefined;
+  nowMs: number;
+}): boolean {
+  if (params.membersLockedAt) return false;
+  if (!params.joinOpenUntil) return true;
+  const openUntil = new Date(String(params.joinOpenUntil)).getTime();
+  if (!Number.isFinite(openUntil)) return true;
+  return params.nowMs < openUntil;
+}
+
 export function buildCallRecruitmentView(params: {
   memberCount: number;
   capacity?: number | null;
@@ -64,7 +79,7 @@ export function buildCallRecruitmentView(params: {
       ? Math.floor(capacityRaw)
       : RECRUIT_HARD_CLOSE_MEMBER_COUNT;
 
-  const recruitingOpen = isSessionOpenForMatchJoin({
+  const recruitingOpen = isRecruitingWindowOpen({
     membersLockedAt: params.membersLockedAt,
     joinOpenUntil: params.joinOpenUntil,
     nowMs: now,
@@ -170,8 +185,18 @@ export function recruitmentClosedUserMessage(detail?: string | null): string {
   if (code === "join_window_elapsed" || code === "join_open_until_elapsed") {
     return "募集時間が終了したため、この通話には参加できません。";
   }
-  if (code === "recruitment_closed" || code === "session_not_joinable") {
+  if (
+    code === "recruitment_closed" ||
+    code === "session_not_joinable" ||
+    code === "session_closed" ||
+    code === "invite_expired" ||
+    code === "expired_invite" ||
+    code === "match_deadline_passed"
+  ) {
     return "この通話は現在募集していません。募集終了後は途中参加できません。";
   }
-  return "この招待リンクでは参加できません。募集が終了している可能性があります。";
+  if (code === "invalid_invite") {
+    return "招待リンクが無効です。もう一度招待してもらってください。";
+  }
+  return "この通話は現在募集していません。募集終了後は途中参加できません。";
 }

@@ -25,10 +25,15 @@ describe("sessionMembersSnapshot", () => {
   const classId = "22222222-2222-2222-2222-222222222222";
 
   beforeEach(() => {
+    const storage = createSessionStorageMock();
     Object.defineProperty(globalThis, "window", {
       value: {
-        sessionStorage: createSessionStorageMock(),
+        sessionStorage: storage,
       },
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "sessionStorage", {
+      value: storage,
       configurable: true,
     });
   });
