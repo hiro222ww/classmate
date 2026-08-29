@@ -30,6 +30,7 @@ import {
 import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import { rollbackPartialJoinState } from "@/lib/joinStateRollback";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
+import { hasMinimumProfile, resolveEffectiveProfileAge } from "@/lib/profileClient";
 import { resolveOpenJoinedClassSession } from "@/lib/openJoinedClassSession";
 import { closeEmptySessionIfNeeded } from "@/lib/sessionLifecycle";
 import {
@@ -87,24 +88,6 @@ function normalizeAge(v: unknown, fallback: number) {
   return Math.max(0, Math.floor(n));
 }
 
-function calcAgeFromBirthDate(birthDate: string | null | undefined) {
-  const s = String(birthDate ?? "").trim();
-  if (!s) return null;
-
-  const d = new Date(s);
-  if (!Number.isFinite(d.getTime())) return null;
-
-  const now = new Date();
-  let age = now.getFullYear() - d.getFullYear();
-  const m = now.getMonth() - d.getMonth();
-
-  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) {
-    age -= 1;
-  }
-
-  return age >= 0 ? age : null;
-}
-
 function deadlineError(matchDeadlineAt?: string | null) {
   return NextResponse.json(
     {
@@ -122,6 +105,8 @@ type ProfileRow = {
   display_name?: string | null;
   birth_date?: string | null;
   gender?: string | null;
+  declared_age?: number | null;
+  declared_age_as_of?: string | null;
 };
 
 type ClassDeadlineRow = {
@@ -236,7 +221,7 @@ async function getProfile(actor: { userId?: string | null; deviceId: string }) {
   if (userId) {
     const byUser = await supabase
       .from("user_profiles")
-      .select("device_id,display_name,birth_date,gender")
+      .select("device_id,display_name,birth_date,gender,declared_age,declared_age_as_of")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -260,7 +245,7 @@ async function getProfile(actor: { userId?: string | null; deviceId: string }) {
   if (!data) {
     const byDevice = await supabase
       .from("user_profiles")
-      .select("device_id,display_name,birth_date,gender")
+      .select("device_id,display_name,birth_date,gender,declared_age,declared_age_as_of")
       .eq("device_id", deviceId)
       .maybeSingle();
 
@@ -286,6 +271,20 @@ async function getProfile(actor: { userId?: string | null; deviceId: string }) {
       ok: false as const,
       response: NextResponse.json(
         { ok: false, error: "profile_required" },
+        { status: 400 }
+      ),
+    };
+  }
+
+  if (!hasMinimumProfile(data)) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          ok: false,
+          error: "profile_required",
+          message: "名前と年齢の登録が必要です。",
+        },
         { status: 400 }
       ),
     };
@@ -808,7 +807,7 @@ export async function matchJoinV2Post(req: Request) {
 
     const selfProfile = profileRes.profile;
     const joinDisplayName = resolveJoinDisplayName(selfProfile);
-    const selfAge = calcAgeFromBirthDate(selfProfile.birth_date);
+    const selfAge = resolveEffectiveProfileAge(selfProfile);
 
     const ageMode: AgeMode = await getEffectiveAgeMode();
     if (!shouldBypassJoinAgeGates(opsTest)) {

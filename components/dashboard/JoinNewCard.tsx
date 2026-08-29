@@ -11,6 +11,7 @@ type JoinNewCardProps = {
   quickJoinDisabled?: boolean;
   quickJoinBusy?: boolean;
   quickJoinLabel?: string;
+  quickJoinHint?: string;
   pickPlaceLabel?: string;
   onQuickJoin: () => void;
   onPickPlace: () => void;
@@ -20,7 +21,8 @@ export function JoinNewCard({
   className,
   quickJoinDisabled = false,
   quickJoinBusy = false,
-  quickJoinLabel = "今すぐ入る",
+  quickJoinLabel = "最大5人で話す",
+  quickJoinHint = "3人集まると通話開始",
   pickPlaceLabel = "入る場所を選ぶ",
   onQuickJoin,
   onPickPlace,
@@ -64,6 +66,19 @@ export function JoinNewCard({
         >
           {quickJoinBusy ? "参加中…" : quickJoinLabel}
         </button>
+        {quickJoinHint ? (
+          <p
+            style={{
+              margin: 0,
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#6b7280",
+              textAlign: "center",
+            }}
+          >
+            {quickJoinHint}
+          </p>
+        ) : null}
 
         <button
           type="button"

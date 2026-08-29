@@ -15,6 +15,7 @@ import {
 import { DevPanel } from "@/components/DevPanel";
 import { HelpTip } from "@/components/HelpTip";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
+import { trackFunnelEvent } from "@/lib/funnelEvents";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
   CLASS_ENTER_BTN,
@@ -80,7 +81,7 @@ import {
   readHomeClassSessionHint,
   storeHomeClassSessionHint,
 } from "@/lib/homeClassSessionHint";
-import { isUserProfileComplete } from "@/lib/profileClient";
+import { hasMinimumProfile } from "@/lib/profileClient";
 import {
   logParticipationStatusDecision,
   mapPresenceApiRow,
@@ -122,6 +123,11 @@ type Profile = {
   display_name: string;
   birth_date?: string | null;
   gender?: string | null;
+  declared_age?: number | null;
+  declared_age_as_of?: string | null;
+  age?: number | null;
+  minimum_profile?: boolean;
+  profile_complete?: boolean;
 };
 
 type MineClass = {
@@ -430,6 +436,7 @@ export default function HomeClient() {
   } = useCurrentClass(deviceId);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileChecked, setProfileChecked] = useState(false);
   const [classes, setClasses] = useState<MineClass[]>([]);
   const [recruitmentSessionTtlMinutes, setRecruitmentSessionTtlMinutes] =
     useState<number | null>(5);
@@ -796,6 +803,7 @@ export default function HomeClient() {
     const result = await fetchSelfProfile(id);
     if (result.ok) {
       setProfile(result.profile);
+      setProfileChecked(true);
       logProfileExists(
         id,
         Boolean(
@@ -810,6 +818,7 @@ export default function HomeClient() {
     }
 
     setProfile(null);
+    setProfileChecked(true);
     logProfileExists(id, false);
   }, []);
 
@@ -836,6 +845,13 @@ export default function HomeClient() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted || authStatus === "loading" || !profileChecked) return;
+    if (!hasMinimumProfile(profile)) {
+      router.replace("/onboarding");
+    }
+  }, [mounted, authStatus, profileChecked, profile, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1899,7 +1915,6 @@ return () => {
     (authLoading || (authStatus === "authenticated" && !profile)
       ? ""
       : "ゲスト");
-  const profileComplete = isUserProfileComplete(profile);
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
 
   function joinedClassEnterLabel(opening: boolean) {
@@ -2238,6 +2253,11 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       const currentDeviceId = String(getDeviceId() ?? "").trim();
       if (!currentDeviceId) {
         alert("device_id_missing");
+        return;
+      }
+
+      if (!hasMinimumProfile(profile)) {
+        router.push("/onboarding");
         return;
       }
 
@@ -2704,11 +2724,28 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             (!joinWindowOpen && !opsTestFlags.ignoreAdmission) || authLoading
           }
           quickJoinLabel={
-            adminCanBypassAdmission ? "管理者としてテスト入室" : "今すぐ入る"
+            adminCanBypassAdmission
+              ? "管理者としてテスト入室"
+              : "最大5人で話す"
           }
-          onQuickJoin={quickJoinFreeAndOpen}
+          quickJoinHint="3人集まると通話開始"
+          onQuickJoin={() => {
+            if (!hasMinimumProfile(profile)) {
+              router.push("/onboarding");
+              return;
+            }
+            void trackFunnelEvent({
+              eventName: "talk_cta_clicked",
+              deviceId: getDeviceId(),
+            });
+            void quickJoinFreeAndOpen();
+          }}
           onPickPlace={() => {
             if (authLoading) return;
+            if (!hasMinimumProfile(profile)) {
+              router.push("/onboarding");
+              return;
+            }
             router.push(withDev("/class/select"));
           }}
         />

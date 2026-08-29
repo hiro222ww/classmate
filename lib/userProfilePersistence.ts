@@ -20,6 +20,15 @@ function stripLegalProfileFields(row: UserProfileRow) {
   return basePayload;
 }
 
+function stripDeclaredAgeFields(row: UserProfileRow) {
+  const {
+    declared_age: _declaredAge,
+    declared_age_as_of: _declaredAsOf,
+    ...rest
+  } = row;
+  return rest;
+}
+
 async function writeProfileRow(
   mode: ProfileWriteMode,
   payload: UserProfileRow
@@ -41,6 +50,14 @@ async function writeProfileRow(
 
   if (error && isMissingProfileColumnError(error.message)) {
     ({ error } = await run(stripLegalProfileFields(payload) as UserProfileRow));
+  }
+
+  if (error && isMissingProfileColumnError(error.message)) {
+    ({ error } = await run(
+      stripDeclaredAgeFields(
+        stripLegalProfileFields(payload) as UserProfileRow
+      ) as UserProfileRow
+    ));
   }
 
   return { error: error?.message ?? null };

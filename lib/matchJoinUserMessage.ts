@@ -12,7 +12,9 @@ export function resolveMatchJoinUserMessage(
     case "profile_required":
       return "プロフィール登録後にクラスへ参加できます。";
     case "profile_age_required":
-      return "生年月日が未設定です。プロフィールを登録してから再度お試しください。";
+      return "年齢が未設定です。名前と年齢を登録してから再度お試しください。";
+    case "session_members_locked":
+      return "この通話の参加受付は締め切られました。";
     case "invalid_deviceId":
     case "device_id_invalid":
       return "端末情報の形式が古い可能性があります。「端末情報をリセットして入り直す」をお試しください。";

@@ -12,6 +12,7 @@ function row(
     className: classId,
     joinedAt,
     isLegacy: !isBillable,
+    isProvisional: false,
     isBillable,
     classMissing: false,
   };

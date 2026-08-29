@@ -5,6 +5,8 @@ export type UserProfileRow = {
   display_name: string | null;
   birth_date: string | null;
   gender: string | null;
+  declared_age?: number | null;
+  declared_age_as_of?: string | null;
   photo_path: string | null;
   hobbies: string | null;
   bio: string | null;
@@ -17,6 +19,10 @@ export type UserProfileRow = {
 };
 
 export const USER_PROFILE_BASE_SELECT =
+  "device_id, display_name, birth_date, gender, declared_age, declared_age_as_of, photo_path, hobbies, bio, show_age, user_id";
+
+/** Pre-declared_age schema (migration not yet applied). */
+export const USER_PROFILE_BASE_SELECT_LEGACY =
   "device_id, display_name, birth_date, gender, photo_path, hobbies, bio, show_age, user_id";
 
 export const USER_PROFILE_LEGAL_SELECT =

@@ -52,6 +52,8 @@ export type CallRoomViewProps = {
   profileModalSlot?: ReactNode;
   /** Extra banners (e.g. demo scene messages) rendered after production banners. */
   bannerSlot?: ReactNode;
+  /** In-call class formation vote (provisional → official). */
+  classVoteSlot?: ReactNode;
 
   presenceToasts: CallPresenceToast[];
 
@@ -116,6 +118,7 @@ export default function CallRoomView({
   messagesSlot,
   profileModalSlot,
   bannerSlot,
+  classVoteSlot,
   presenceToasts,
   filled,
   capacity,
@@ -433,6 +436,8 @@ export default function CallRoomView({
       ) : null}
 
       {bannerSlot}
+
+      {classVoteSlot}
 
       <section
         className="cm-paper-card cm-call-members"

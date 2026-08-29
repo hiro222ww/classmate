@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   applyAgeModeToMatchRange,
   checkProfileRegistrationAge,
@@ -14,11 +14,13 @@ import { buildLegalConsentPayload } from "@/lib/legalConsent";
 import { scanContactRisk } from "@/lib/contentModeration";
 
 describe("agePolicy production lock", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("locks production admin persist when ALLOW_MINORS_EXPERIMENT is unset", () => {
-    const prevNode = process.env.NODE_ENV;
-    const prevAllow = process.env.ALLOW_MINORS_EXPERIMENT;
-    process.env.NODE_ENV = "production";
-    delete process.env.ALLOW_MINORS_EXPERIMENT;
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_MINORS_EXPERIMENT", "");
     expect(isProductionAgeLocked()).toBe(true);
     expect(
       canPersistMinorsOrAgeModeChange({
@@ -26,8 +28,6 @@ describe("agePolicy production lock", () => {
         nextAgeMode: "minor_separated_test",
       }).allowed
     ).toBe(false);
-    process.env.NODE_ENV = prevNode;
-    process.env.ALLOW_MINORS_EXPERIMENT = prevAllow;
   });
 
   it("blocks under-18 join in post_high_school_only", () => {

@@ -11,8 +11,13 @@ import {
   type LegalConsentFields,
 } from "@/lib/legalConsent";
 import {
+  hasMinimumProfile,
   isUserProfileComplete,
+  normalizeDeclaredAge,
   normalizeProfileAge,
+  resolveEffectiveProfileAge,
+  DECLARED_AGE_MAX,
+  DECLARED_AGE_MIN,
 } from "@/lib/profileClient";
 import { resolveRequestIdentity } from "@/lib/requestIdentity";
 import {
@@ -29,6 +34,7 @@ import { resolveOpsTestFlags } from "@/lib/opsTestMode";
 import { shouldBypassProfileAgeGates } from "@/lib/opsTestModeShared";
 import {
   USER_PROFILE_BASE_SELECT,
+  USER_PROFILE_BASE_SELECT_LEGACY,
   USER_PROFILE_LEGAL_CONSENT_SELECT,
   USER_PROFILE_LEGAL_SELECT,
   isMissingProfileColumnError,
@@ -67,12 +73,29 @@ async function fetchProfileRowByFilter(filter: {
     .eq(filter.column, filter.value)
     .maybeSingle();
 
-  if (fallback.error) {
+  if (!fallback.error) {
+    return {
+      data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+      error: null,
+    };
+  }
+
+  if (!isMissingProfileColumnError(fallback.error.message)) {
     return { data: null, error: fallback.error.message };
   }
 
+  const legacy = await supabaseAdmin
+    .from("user_profiles")
+    .select(USER_PROFILE_BASE_SELECT_LEGACY)
+    .eq(filter.column, filter.value)
+    .maybeSingle();
+
+  if (legacy.error) {
+    return { data: null, error: legacy.error.message };
+  }
+
   return {
-    data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+    data: (legacy.data as Partial<ProfileRow> | null) ?? null,
     error: null,
   };
 }
@@ -178,11 +201,15 @@ function normalizeShowAge(value: unknown, fallback = true): boolean {
 function toProfileResponse(row: Partial<ProfileRow> | null) {
   if (!row) return null;
 
+  const declaredAge = normalizeDeclaredAge(row.declared_age);
+
   return {
     device_id: normalizeString(row.device_id) || null,
     display_name: normalizeString(row.display_name) || null,
     birth_date: normalizeString(row.birth_date) || null,
     gender: normalizeString(row.gender) || null,
+    declared_age: declaredAge,
+    declared_age_as_of: normalizeString(row.declared_age_as_of) || null,
     photo_path: normalizePhotoPath(row.photo_path),
     hobbies: normalizeOptionalText(row.hobbies),
     bio: normalizeOptionalText(row.bio),
@@ -197,8 +224,7 @@ function calcAge(birthDateISO: string): number | null {
 function calcAgeFromProfile(
   profile: ReturnType<typeof toProfileResponse>
 ): number | null {
-  if (!profile?.birth_date) return null;
-  return normalizeProfileAge(calcAge(profile.birth_date));
+  return normalizeProfileAge(resolveEffectiveProfileAge(profile));
 }
 
 function toPublicProfileResponse(
@@ -326,6 +352,7 @@ export async function GET(req: Request) {
 
   const profile = toProfileResponse(data);
   const profileComplete = isUserProfileComplete(profile);
+  const minimumProfile = hasMinimumProfile(profile);
 
   if (!isSelf) {
     const allowed = await canViewMemberProfile({
@@ -398,6 +425,7 @@ export async function GET(req: Request) {
             ...profile,
             age: selfAge,
             profile_complete: profileComplete,
+            minimum_profile: minimumProfile,
             legal_consent: legalConsent,
           }
         : null,
@@ -413,9 +441,226 @@ export async function GET(req: Request) {
 /**
  * プロフィール保存（写真含む）
  * POST /api/profile
+ * mode=minimum: display_name + declared_age only (no birth_date invent)
+ */
+async function postMinimumProfile(req: Request, form: FormData) {
+  const device_id = normalizeString(form.get("device_id"));
+  const display_name = normalizeString(form.get("display_name"));
+  const declaredAge = normalizeDeclaredAge(form.get("declared_age"));
+
+  const termsAgreed = parseLegalAgreementFlag(form.get("terms_agreed"));
+  const privacyAgreed = parseLegalAgreementFlag(form.get("privacy_agreed"));
+  const guidelinesAgreed = parseLegalAgreementFlag(form.get("guidelines_agreed"));
+
+  if (!device_id || !display_name || declaredAge == null) {
+    return NextResponse.json(
+      { ok: false, error: "missing_fields" },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
+  }
+
+  if (declaredAge < DECLARED_AGE_MIN || declaredAge > DECLARED_AGE_MAX) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "invalid_declared_age",
+        message: `${DECLARED_AGE_MIN}歳以上で入力してください。`,
+      },
+      {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
+  }
+
+  let linkedUserId: string | null = null;
+  const identity = await resolveRequestIdentity({ req, deviceId: device_id });
+  if (identity.ok && identity.identity.userId) {
+    linkedUserId = identity.identity.userId;
+    try {
+      await bootstrapUserIdentity({
+        userId: linkedUserId,
+        deviceId: device_id,
+      });
+    } catch (bootstrapError) {
+      console.warn("[profile][POST minimum] identity bootstrap failed", bootstrapError);
+    }
+  }
+
+  const opsTest = resolveOpsTestFlags(req);
+  if (!shouldBypassProfileAgeGates(opsTest)) {
+    const ageGuard = await enforceProfileSaveAge({
+      age: declaredAge,
+      guardianConsent: false,
+    });
+    if (!ageGuard.ok) {
+      return joinAgeGuardResponse(ageGuard);
+    }
+  }
+
+  const moderation = await moderateUserText(display_name);
+  if (!moderation.ok && moderation.block) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "contact_exchange_blocked",
+        message: moderation.message,
+        field: "display_name",
+      },
+      { status: 400 }
+    );
+  }
+
+  const existingProfileRes = await fetchExistingProfileConsent(
+    device_id,
+    linkedUserId
+  );
+  const existingProfile = existingProfileRes.data;
+  const existingError = existingProfileRes.error;
+
+  if (existingError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "profile_existing_read_failed",
+        message: existingError,
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
+  }
+
+  const existingConsent = existingProfile as LegalConsentFields | null;
+  const alreadyValid = hasValidLegalConsent(existingConsent);
+
+  if (!alreadyValid) {
+    if (!termsAgreed || !privacyAgreed || !guidelinesAgreed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "legal_consent_required",
+          message:
+            "利用規約、プライバシーポリシー、コミュニティガイドラインへの同意が必要です。",
+        },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
+    }
+  }
+
+  const consentFields: LegalConsentFields = alreadyValid
+    ? {
+        terms_agreed_at: existingConsent?.terms_agreed_at ?? null,
+        privacy_agreed_at: existingConsent?.privacy_agreed_at ?? null,
+        guidelines_agreed_at: existingConsent?.guidelines_agreed_at ?? null,
+        legal_consent_version: existingConsent?.legal_consent_version ?? null,
+        terms_version:
+          existingConsent?.terms_version ??
+          existingConsent?.legal_consent_version ??
+          null,
+      }
+    : buildLegalConsentPayload();
+
+  const today = new Date();
+  const asOf = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+  const payload: ProfileRow = {
+    device_id,
+    user_id: linkedUserId ?? existingProfile?.user_id ?? null,
+    display_name,
+    birth_date: normalizeString(existingProfile?.birth_date) || null,
+    gender: normalizeString(existingProfile?.gender) || null,
+    declared_age: declaredAge,
+    declared_age_as_of: asOf,
+    photo_path: normalizePhotoPath(existingProfile?.photo_path),
+    hobbies: normalizeOptionalText(existingProfile?.hobbies),
+    bio: normalizeOptionalText(existingProfile?.bio),
+    show_age: normalizeShowAge(existingProfile?.show_age),
+    ...consentFields,
+  };
+
+  const { error: upsertError, writeMode } = await persistUserProfileRow({
+    deviceId: device_id,
+    linkedUserId,
+    existingProfile,
+    payload,
+  });
+
+  if (upsertError) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "profile_upsert_failed",
+        message: upsertError,
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
+  }
+
+  const confirmFilter = resolveProfileConfirmFilter({
+    deviceId: device_id,
+    linkedUserId,
+    writeMode,
+  });
+  const confirmResult = await fetchProfileRowByFilter(confirmFilter);
+  const profile = toProfileResponse(confirmResult.data);
+  const legalConsent = buildLegalConsentStatus(
+    confirmResult.data as LegalConsentFields
+  );
+
+  return NextResponse.json(
+    {
+      ok: true,
+      profile: profile
+        ? {
+            ...profile,
+            age: calcAgeFromProfile(profile),
+            profile_complete: isUserProfileComplete(profile),
+            minimum_profile: hasMinimumProfile(profile),
+            legal_consent: legalConsent,
+          }
+        : null,
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      },
+    }
+  );
+}
+
+/**
+ * プロフィール保存（写真含む）
+ * POST /api/profile
+ * mode=minimum: display_name + declared_age only (no birth_date invent)
  */
 export async function POST(req: Request) {
   const form = await req.formData();
+  const mode = normalizeString(form.get("mode"));
+
+  if (mode === "minimum") {
+    return postMinimumProfile(req, form);
+  }
 
   const device_id = normalizeString(form.get("device_id"));
   const display_name = normalizeString(form.get("display_name"));

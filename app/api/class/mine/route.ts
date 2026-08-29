@@ -135,8 +135,11 @@ export async function GET(req: Request) {
 
     for (const row of membershipRows) {
       if (row.isBillable) continue;
+      const reason = row.isProvisional
+        ? "provisional_class"
+        : "legacy_entry_class";
       console.log(
-        `[home] class-hidden reason=legacy_entry_class class=${tailId(row.classId)} name=${row.className ?? "-"}`
+        `[home] class-hidden reason=${reason} class=${tailId(row.classId)} name=${row.className ?? "-"}`
       );
     }
 

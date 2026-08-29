@@ -39,6 +39,7 @@ export type ActiveClassMembershipRow = {
   className: string | null;
   joinedAt: string | null;
   isLegacy: boolean;
+  isProvisional: boolean;
   isBillable: boolean;
   classMissing: boolean;
 };
@@ -203,20 +204,50 @@ export async function fetchActiveClassMembershipsForActor(
   }
 
   const { data: classRows, error: classErr } = await queryWithTransientRetry(
-    () => sb.from("classes").select("id, name").in("id", classIds)
+    () => sb.from("classes").select("id, name, lifecycle").in("id", classIds)
   );
 
+  let resolvedClassRows: Array<{
+    id?: unknown;
+    name?: unknown;
+    lifecycle?: unknown;
+  }> | null = (classRows as Array<{
+    id?: unknown;
+    name?: unknown;
+    lifecycle?: unknown;
+  }> | null) ?? null;
   if (classErr) {
-    logMembershipQueryFailed(classErr);
-    return { ok: false, error: classErr.message };
+    const msg = String(classErr.message ?? "").toLowerCase();
+    const missingLifecycle =
+      msg.includes("lifecycle") || msg.includes("does not exist");
+    if (!missingLifecycle) {
+      logMembershipQueryFailed(classErr);
+      return { ok: false, error: classErr.message };
+    }
+    const legacy = await queryWithTransientRetry(() =>
+      sb.from("classes").select("id, name").in("id", classIds)
+    );
+    if (legacy.error) {
+      logMembershipQueryFailed(legacy.error);
+      return { ok: false, error: legacy.error.message };
+    }
+    resolvedClassRows = (legacy.data as Array<{
+      id?: unknown;
+      name?: unknown;
+    }> | null) ?? null;
   }
 
-  const classById = new Map<string, { name: string | null }>();
-  for (const row of classRows ?? []) {
+  const classById = new Map<
+    string,
+    { name: string | null; lifecycle: string | null }
+  >();
+  for (const row of resolvedClassRows ?? []) {
     const id = String((row as { id?: unknown }).id ?? "").trim();
     if (!id) continue;
     classById.set(id, {
       name: String((row as { name?: unknown }).name ?? "").trim() || null,
+      lifecycle:
+        String((row as { lifecycle?: unknown }).lifecycle ?? "").trim() || null,
     });
   }
 
@@ -234,12 +265,15 @@ export async function fetchActiveClassMembershipsForActor(
     const classInfo = classById.get(classId);
     const className = classInfo?.name ?? null;
     const isLegacy = isLegacyEntryClassName(className);
+    const isProvisional =
+      String(classInfo?.lifecycle ?? "").trim().toLowerCase() === "provisional";
     return {
       classId,
       className,
       joinedAt: joinedAtByClass.get(classId) ?? null,
       isLegacy,
-      isBillable: isBillableClassName(className),
+      isProvisional,
+      isBillable: isBillableClassName(className) && !isProvisional,
       classMissing: !classInfo,
     };
   });
@@ -283,6 +317,10 @@ export function resolveHomeVisibleBillableClassIds(
   const excludedReasons: Record<string, string> = {};
 
   for (const row of rows) {
+    if (row.isProvisional) {
+      excludedReasons[row.classId] = "provisional_class";
+      continue;
+    }
     if (!row.isBillable) {
       excludedReasons[row.classId] = "legacy_entry_class";
       continue;

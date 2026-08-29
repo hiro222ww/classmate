@@ -117,13 +117,18 @@ import {
 } from "@/lib/localCallExit";
 import {
   AUTO_CALL_MEMBERS_STABLE_MS,
+  AUTO_CALL_MIN_MEMBERS,
   AUTO_CALL_STABLE_DELAY_MS,
+  LOBBY_WAIT_TIMEOUT_MS,
   RECENT_REMATCH_CALL_BLOCK_MS,
+  autoCallOnceStorageKey,
   consumeAutoCallOnce,
   hasAutoCallOnce,
   markAutoCallOnce,
   transferAutoCallOnce,
 } from "@/lib/autoCallOnce";
+import { trackFunnelEvent } from "@/lib/funnelEvents";
+import { LobbyWaitingPanel } from "@/components/room/LobbyWaitingPanel";
 import {
   getCurrentPath,
   getNavigationType,
@@ -209,6 +214,7 @@ type SessionStatusResponse = {
     status: "forming" | "active" | "closed";
     capacity: number;
     created_at: string | null;
+    lobby_extended_once?: boolean;
   };
   members?: MemberRow[];
   memberCount?: number;
@@ -794,6 +800,13 @@ export default function RoomClient() {
   const [memberCount, setMemberCount] = useState(0);
   const [status, setStatus] = useState("forming");
   const [capacity, setCapacity] = useState(5);
+  const [sessionCreatedAt, setSessionCreatedAt] = useState<string | null>(null);
+  const [lobbyExtendedOnce, setLobbyExtendedOnce] = useState(false);
+  const [lobbyNowMs, setLobbyNowMs] = useState(() => Date.now());
+  const [lobbyExtendBusy, setLobbyExtendBusy] = useState(false);
+  const [lobbyQuitBusy, setLobbyQuitBusy] = useState(false);
+  const [lobbyExtendError, setLobbyExtendError] = useState<string | null>(null);
+  const lobbyJoinedTrackedKeyRef = useRef<string | null>(null);
 
   const [deviceId, setDeviceId] = useState(() => getDeviceId());
   const [displayName, setDisplayName] = useState(() => {
@@ -1397,6 +1410,76 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
     router.push(withDev(resolveShellDashboardPath()));
   }, [bumpRoomAsync, cancelJoinRecoveryTimers, classId, deviceId, router, sessionId]);
+
+  const quitLobbyAndGoHome = useCallback(async () => {
+    if (lobbyQuitBusy) return;
+    setLobbyQuitBusy(true);
+    setLobbyExtendError(null);
+
+    const did = String(deviceId ?? "").trim();
+    const sid = String(sessionId ?? "").trim();
+
+    try {
+      if (sid && did) {
+        try {
+          sessionStorage.removeItem(autoCallOnceStorageKey(sid, did));
+        } catch {
+          // ignore
+        }
+        await fetch("/api/session/leave", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId: sid, deviceId: did }),
+          cache: "no-store",
+        }).catch(() => null);
+      }
+      goHome();
+    } finally {
+      setLobbyQuitBusy(false);
+    }
+  }, [deviceId, goHome, lobbyQuitBusy, sessionId]);
+
+  const extendLobbyWait = useCallback(async () => {
+    if (lobbyExtendBusy || lobbyExtendedOnce) return;
+    setLobbyExtendBusy(true);
+    setLobbyExtendError(null);
+
+    const did = String(deviceId ?? "").trim();
+    const sid = String(sessionId ?? "").trim();
+    if (!sid || !did) {
+      setLobbyExtendError("延長できませんでした");
+      setLobbyExtendBusy(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/session/lobby-extend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: sid, deviceId: did }),
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        if (json?.error === "already_extended") {
+          setLobbyExtendedOnce(true);
+          setLobbyExtendError("すでに延長済みです");
+        } else {
+          setLobbyExtendError("延長に失敗しました。もう一度お試しください。");
+        }
+        return;
+      }
+      setLobbyExtendedOnce(true);
+      if (json.created_at) {
+        setSessionCreatedAt(String(json.created_at));
+      }
+      setLobbyNowMs(Date.now());
+    } catch {
+      setLobbyExtendError("延長に失敗しました。通信環境を確認してください。");
+    } finally {
+      setLobbyExtendBusy(false);
+    }
+  }, [deviceId, lobbyExtendBusy, lobbyExtendedOnce, sessionId]);
 
   useEffect(() => {
     const id = String(getDeviceId() ?? "").trim();
@@ -2224,7 +2307,7 @@ if (!res.ok || !json?.ok) {
         lastSuccessfulFetchOpGenRef.current = roomOpGenRef.current;
         writeSessionMembersSnapshot(sessionId, classId, incomingMembers);
 
-        if (incomingMembers.length >= 2) {
+        if (incomingMembers.length >= AUTO_CALL_MIN_MEMBERS) {
           membersCount2StreakRef.current += 1;
           if (membersCount2SinceRef.current === null) {
             membersCount2SinceRef.current = Date.now();
@@ -2262,6 +2345,12 @@ if (!res.ok || !json?.ok) {
         if (json.session?.status) setStatus(String(json.session.status));
         if (Number.isFinite(Number(json.session?.capacity))) {
           setCapacity(Number(json.session?.capacity));
+        }
+        if (json.session?.created_at) {
+          setSessionCreatedAt(String(json.session.created_at));
+        }
+        if (typeof json.session?.lobby_extended_once === "boolean") {
+          setLobbyExtendedOnce(json.session.lobby_extended_once);
         }
 
         setMemberCount(Math.max(displayMemberCount, 0));
@@ -3887,7 +3976,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     const memberIds = autoCallMemberIdsRef.current;
     const selfJoined = memberIds.includes(myId);
     const remoteJoined = memberIds.some((id) => id !== myId);
-    const countReady = memberIds.length >= 2;
+    const countReady = memberIds.length >= AUTO_CALL_MIN_MEMBERS;
 
     if (!selfJoined || !remoteJoined || !countReady) {
       cancelAutoCallTimer("members_unstable");
@@ -3905,7 +3994,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       cancelAutoCallTimer("members_unstable");
       if (
         stableSince !== null &&
-        memberIds.length >= 2 &&
+        memberIds.length >= AUTO_CALL_MIN_MEMBERS &&
         autoCallTimerRef.current === null
       ) {
         const remaining =
@@ -3968,7 +4057,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       const viewerId = String(identity.deviceId).trim();
       const viewerJoined = ids.includes(viewerId);
       const peerJoined = ids.some((id) => id !== viewerId);
-      if (ids.length < 2 || !viewerJoined || !peerJoined) {
+      if (ids.length < AUTO_CALL_MIN_MEMBERS || !viewerJoined || !peerJoined) {
         roomLog("[room-auto-call] cancel reason=members_unstable");
         return;
       }
@@ -3990,6 +4079,14 @@ const name = rawName === "You" ? "参加者" : rawName;
 
       autoCallAttemptedRef.current = true;
       roomLog("[room-auto-call] allow reason=initial_match_stable");
+
+      void trackFunnelEvent({
+        eventName: "call_started",
+        deviceId: identity.deviceId,
+        sessionId: identity.sessionId,
+        classId: identity.classId,
+        meta: { source: "auto_call" },
+      });
 
       const callHref = withDev(
         `/call?sessionId=${encodeURIComponent(identity.sessionId)}&classId=${encodeURIComponent(
@@ -4122,6 +4219,67 @@ const name = rawName === "You" ? "参加者" : rawName;
     capacity,
   });
 
+  const lobbyMemberCount = Math.max(memberCount, visibleMembers.length);
+  const autoCallPending =
+    Boolean(sessionId && deviceId) &&
+    hasAutoCallOnce(sessionId, deviceId) &&
+    !autoCallAttemptedRef.current;
+  const showLobbyWaiting =
+    autoCallPending &&
+    !sessionResolving &&
+    roomSessionReady &&
+    !err &&
+    !invite &&
+    lobbyMemberCount < AUTO_CALL_MIN_MEMBERS;
+
+  const lobbyCreatedAtMs = sessionCreatedAt
+    ? new Date(sessionCreatedAt).getTime()
+    : NaN;
+  const lobbyElapsedMs = Number.isFinite(lobbyCreatedAtMs)
+    ? Math.max(0, lobbyNowMs - lobbyCreatedAtMs)
+    : 0;
+  const lobbyWaitTimedOut =
+    showLobbyWaiting &&
+    Number.isFinite(lobbyCreatedAtMs) &&
+    lobbyElapsedMs >= LOBBY_WAIT_TIMEOUT_MS;
+
+  const lobbyElapsedLabel = (() => {
+    const totalSec = Math.floor(lobbyElapsedMs / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return `${min}:${String(sec).padStart(2, "0")}`;
+  })();
+
+  useEffect(() => {
+    if (!showLobbyWaiting) return;
+    if (!sessionCreatedAt) {
+      setSessionCreatedAt(new Date().toISOString());
+    }
+    setLobbyNowMs(Date.now());
+    const id = window.setInterval(() => setLobbyNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [showLobbyWaiting, sessionCreatedAt]);
+
+  useEffect(() => {
+    if (!showLobbyWaiting || !sessionId || !deviceId) return;
+    const key = `${sessionId}:${deviceId}`;
+    if (lobbyJoinedTrackedKeyRef.current === key) return;
+    lobbyJoinedTrackedKeyRef.current = key;
+    void trackFunnelEvent({
+      eventName: "lobby_joined",
+      deviceId,
+      sessionId,
+      classId,
+      meta: { memberCount: lobbyMemberCount },
+    });
+  }, [
+    showLobbyWaiting,
+    sessionId,
+    deviceId,
+    classId,
+    lobbyMemberCount,
+  ]);
+
   const shellTitle = topicTitle || "ルーム";
   const shellSubtitle = classLabel
     ? `${classLabel} / ${subtitle}`
@@ -4201,6 +4359,14 @@ const name = rawName === "You" ? "参加者" : rawName;
                       : "このクラスに招待されています",
                     "参加中のメンバーと会話を始めましょう",
                   ]
+                : showLobbyWaiting
+                  ? [
+                      `現在 ${lobbyMemberCount} / ${AUTO_CALL_MIN_MEMBERS} 人`,
+                      `${AUTO_CALL_MIN_MEMBERS}人集まると通話開始`,
+                      lobbyWaitTimedOut
+                        ? "待機の続きか、今回やめるかを選べます"
+                        : `待機時間 ${lobbyElapsedLabel}`,
+                    ]
                 : autoCallAttemptedRef.current
                   ? ["通話開始ボタンを押して、通話を開始してください。"]
                   : status === "forming"
@@ -4222,6 +4388,13 @@ const name = rawName === "You" ? "参加者" : rawName;
               roomLog(`[room-call-start] blocked reason=${blockReason}`);
               return;
             }
+            void trackFunnelEvent({
+              eventName: "call_started",
+              deviceId,
+              sessionId,
+              classId,
+              meta: { source: "manual" },
+            });
             writeSessionMembersSnapshot(sessionId, classId, members);
             router.push(
               withDev(
@@ -4321,6 +4494,24 @@ const name = rawName === "You" ? "参加者" : rawName;
                 showCreateButton={false}
                 compact
                 onUpdated={setCallRequest}
+              />
+            ) : null}
+
+            {showLobbyWaiting ? (
+              <LobbyWaitingPanel
+                memberCount={lobbyMemberCount}
+                elapsedLabel={lobbyElapsedLabel}
+                showTimeoutChoice={lobbyWaitTimedOut}
+                alreadyExtended={lobbyExtendedOnce}
+                extendBusy={lobbyExtendBusy}
+                quitBusy={lobbyQuitBusy}
+                extendError={lobbyExtendError}
+                onExtend={() => {
+                  void extendLobbyWait();
+                }}
+                onQuit={() => {
+                  void quitLobbyAndGoHome();
+                }}
               />
             ) : null}
 

@@ -8,7 +8,9 @@ function createMockSb(params: {
   onClose?: (sessionId: string) => void;
 }) {
   const sessionUpdateEq = vi.fn(async () => ({ error: null }));
-  const sessionUpdate = vi.fn(() => ({ eq: sessionUpdateEq }));
+  const sessionUpdate = vi.fn((_payload?: { status: string }) => ({
+    eq: sessionUpdateEq,
+  }));
 
   const membersNeq = vi.fn(async () => ({
     data: params.remainingMembers,

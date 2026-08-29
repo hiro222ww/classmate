@@ -170,7 +170,7 @@ function sanitizeArg(arg: unknown): unknown {
   if (arg == null) return arg;
   if (typeof arg === "string") return arg;
   if (typeof arg === "number" || typeof arg === "boolean") return arg;
-  if (arg instanceof RTCPeerConnection) {
+  if (typeof RTCPeerConnection !== "undefined" && arg instanceof RTCPeerConnection) {
     return {
       _type: "RTCPeerConnection",
       connectionState: arg.connectionState,

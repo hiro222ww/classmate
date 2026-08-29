@@ -29,7 +29,9 @@ describe("seo metadata", () => {
     const meta = buildHomeMetadata();
     expect(meta.alternates?.canonical).toBe("/");
     expect(meta.openGraph?.url).toBe("https://classmate-room.com/");
-    expect(meta.twitter?.card).toBe("summary_large_image");
+    expect(
+      (meta.twitter as { card?: string } | undefined)?.card
+    ).toBe("summary_large_image");
     expect(meta.openGraph?.images).toEqual([
       expect.objectContaining({
         url: BRAND_LOGO_URL,

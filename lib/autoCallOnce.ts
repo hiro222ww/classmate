@@ -32,10 +32,19 @@ export function consumeAutoCallOnce(sessionId: string, deviceId: string): boolea
   }
 }
 
+/** Minimum members required before auto-starting a call from Room. */
+export const AUTO_CALL_MIN_MEMBERS = 3;
+
+/** First lobby wait window before extend/quit choice (under AUTO_CALL_MIN_MEMBERS). */
+export const LOBBY_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Extra wait granted once via POST /api/session/lobby-extend. */
+export const LOBBY_EXTEND_MS = 5 * 60 * 1000;
+
 /** Delay after readiness before navigating to Call (initial match only). */
 export const AUTO_CALL_STABLE_DELAY_MS = 2000;
 
-/** Minimum time count>=2 must hold before arming auto-call timer. */
+/** Minimum time member count must hold before arming auto-call timer. */
 export const AUTO_CALL_MEMBERS_STABLE_MS = 1500;
 
 /** Block manual/auto Call briefly after session resolve redirect. */

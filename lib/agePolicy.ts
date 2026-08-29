@@ -3,9 +3,9 @@
  * Client Components must import from `@/lib/agePolicyRules` instead.
  */
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getAgeFromBirthDate } from "@/lib/age";
 import { parseMinorsEnabledValue } from "@/lib/minorsSettings";
 import { clearMinorsEnabledCache } from "@/lib/minorsSettings";
+import { resolveEffectiveProfileAge } from "@/lib/profileClient";
 
 export { getMinorsEnabled } from "@/lib/minorsSettings";
 import {
@@ -84,26 +84,28 @@ export async function getProfileAge(
   deviceId: string,
   userId?: string | null
 ): Promise<number | null> {
+  const selectCols =
+    "birth_date, declared_age, declared_age_as_of, display_name, device_id";
   const normalizedUserId = String(userId ?? "").trim();
 
   if (normalizedUserId) {
     const { data, error } = await supabaseAdmin
       .from("user_profiles")
-      .select("birth_date")
+      .select(selectCols)
       .eq("user_id", normalizedUserId)
       .maybeSingle();
 
     if (!error && data) {
-      return getAgeFromBirthDate(String(data.birth_date ?? ""));
+      return resolveEffectiveProfileAge(data);
     }
   }
 
   const { data, error } = await supabaseAdmin
     .from("user_profiles")
-    .select("birth_date")
+    .select(selectCols)
     .eq("device_id", deviceId)
     .maybeSingle();
 
   if (error || !data) return null;
-  return getAgeFromBirthDate(String(data.birth_date ?? ""));
+  return resolveEffectiveProfileAge(data);
 }

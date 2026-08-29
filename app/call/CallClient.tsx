@@ -204,6 +204,7 @@ import {
   setMemberNameCache,
   type MemberNameCache,
 } from "@/lib/memberNameCache";
+import { shouldShowClassVoteUi } from "@/lib/sessionClassVote";
 
 type Member = {
   device_id: string;
@@ -432,6 +433,15 @@ export default function CallClient() {
   const [capacity, setCapacity] = useState(5);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
   const [nowMs, setNowMs] = useState(0);
+  const [classVoteCount, setClassVoteCount] = useState(0);
+  const [classVoteSelfVoted, setClassVoteSelfVoted] = useState(false);
+  const [classVotePromoted, setClassVotePromoted] = useState(false);
+  const [classVoteMembersLocked, setClassVoteMembersLocked] = useState(false);
+  const [classVoteLifecycle, setClassVoteLifecycle] = useState<string | null>(
+    null
+  );
+  const [classVoteBusy, setClassVoteBusy] = useState(false);
+  const [classVoteCanShow, setClassVoteCanShow] = useState(false);
 
   const retryTimerRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
@@ -753,6 +763,86 @@ export default function CallClient() {
       if (timer) window.clearInterval(timer);
     };
   }, [classId, deviceId]);
+
+  useEffect(() => {
+    if (!sessionId || !deviceId) return;
+
+    let cancelled = false;
+
+    async function loadClassVoteStatus() {
+      try {
+        const qs = new URLSearchParams({
+          sessionId,
+          deviceId,
+        });
+        const res = await fetch(
+          `/api/session/class-vote-status?${qs.toString()}`,
+          { cache: "no-store" }
+        );
+        const json = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok || !json?.ok) return;
+
+        setClassVoteCount(Number(json.voteCount ?? 0));
+        setClassVoteSelfVoted(json.selfVoted === true);
+        setClassVotePromoted(json.promoted === true);
+        setClassVoteMembersLocked(json.membersLocked === true);
+        setClassVoteLifecycle(
+          json.lifecycle != null ? String(json.lifecycle) : null
+        );
+        setClassVoteCanShow(
+          json.canShowVoteUi === true ||
+            shouldShowClassVoteUi({
+              memberCount: Number(json.memberCount ?? members.length),
+              membersLocked: json.membersLocked === true,
+              lifecycle: json.lifecycle != null ? String(json.lifecycle) : null,
+              promoted: json.promoted === true,
+            })
+        );
+      } catch {
+        // Keep last known vote status on transient errors.
+      }
+    }
+
+    void loadClassVoteStatus();
+    const timer = window.setInterval(loadClassVoteStatus, 8000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [sessionId, deviceId, members.length]);
+
+  const handleClassVote = useCallback(async () => {
+    if (!sessionId || !deviceId || classVoteBusy || classVoteSelfVoted) return;
+    setClassVoteBusy(true);
+    try {
+      const res = await fetch("/api/session/class-vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          deviceId,
+          classId: classId || undefined,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        console.warn("[call] class-vote failed", json?.error ?? res.status);
+        return;
+      }
+      setClassVoteCount(Number(json.voteCount ?? 0));
+      setClassVoteSelfVoted(true);
+      if (json.promoted === true) {
+        setClassVotePromoted(true);
+        setClassVoteLifecycle("official");
+        setClassVoteCanShow(true);
+      }
+    } catch (err) {
+      console.warn("[call] class-vote error", err);
+    } finally {
+      setClassVoteBusy(false);
+    }
+  }, [sessionId, deviceId, classId, classVoteBusy, classVoteSelfVoted]);
 
   const membersDisplayedRef = useRef(false);
 
@@ -3251,10 +3341,78 @@ export default function CallClient() {
     </>
   ) : null;
 
+  const showClassVotePanel =
+    classVoteCanShow ||
+    shouldShowClassVoteUi({
+      memberCount: members.length,
+      membersLocked: classVoteMembersLocked,
+      lifecycle: classVoteLifecycle,
+      promoted: classVotePromoted,
+    });
+
+  const classVoteSlot = showClassVotePanel ? (
+    <div
+      className="cm-call-banner cm-call-class-vote"
+      style={{
+        marginTop: 12,
+        padding: "12px 14px",
+        borderRadius: 12,
+        background: classVotePromoted ? "#ecfdf5" : "#f9fafb",
+        color: classVotePromoted ? "#065f46" : "#374151",
+        border: classVotePromoted ? "1px solid #a7f3d0" : "1px solid #e5e7eb",
+        fontSize: 13,
+        fontWeight: 800,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {classVotePromoted ? (
+          <span>クラスが成立しました</span>
+        ) : (
+          <>
+            <span>希望 {classVoteCount}人</span>
+            {classVoteSelfVoted ? (
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#6b7280" }}>
+                投票済みです
+              </span>
+            ) : null}
+          </>
+        )}
+      </div>
+      {!classVotePromoted && !classVoteSelfVoted ? (
+        <button
+          type="button"
+          className="cm-cta-primary cm-call-action-btn"
+          disabled={classVoteBusy}
+          onClick={() => {
+            void handleClassVote();
+          }}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid #111827",
+            background: classVoteBusy ? "#9ca3af" : "#111827",
+            color: "#fff",
+            fontWeight: 900,
+            fontSize: 13,
+            cursor: classVoteBusy ? "default" : "pointer",
+          }}
+        >
+          {classVoteBusy ? "送信中…" : "このメンバーでクラスを作る"}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+
   return (
     <CallRoomView
       voiceLayer={voiceLayerNode}
       entryGateSlot={entryGateSlot}
+      classVoteSlot={classVoteSlot}
       presenceToasts={presenceToasts}
       filled={filled}
       capacity={capacity}

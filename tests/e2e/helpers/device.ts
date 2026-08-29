@@ -45,6 +45,9 @@ export async function ensureTestProfile(
   form.append("display_name", displayName);
   form.append("birth_date", "2000-01-01");
   form.append("gender", "male");
+  form.append("terms_agreed", "true");
+  form.append("privacy_agreed", "true");
+  form.append("guidelines_agreed", "true");
 
   const res = await fetch(`${baseURL}/api/profile`, {
     method: "POST",
@@ -54,5 +57,34 @@ export async function ensureTestProfile(
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`profile_create_failed:${res.status}:${text.slice(0, 200)}`);
+  }
+}
+
+/** Minimum profile (name + declared age) for random-call flows. */
+export async function ensureMinimumTestProfile(
+  baseURL: string,
+  deviceId: string,
+  displayName: string,
+  declaredAge = 20
+) {
+  const form = new FormData();
+  form.append("mode", "minimum");
+  form.append("device_id", deviceId);
+  form.append("display_name", displayName);
+  form.append("declared_age", String(declaredAge));
+  form.append("terms_agreed", "true");
+  form.append("privacy_agreed", "true");
+  form.append("guidelines_agreed", "true");
+
+  const res = await fetch(`${baseURL}/api/profile`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `min_profile_create_failed:${res.status}:${text.slice(0, 200)}`
+    );
   }
 }

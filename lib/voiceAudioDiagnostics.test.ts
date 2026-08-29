@@ -96,6 +96,10 @@ describe("evaluateAudioConfirmedStrict", () => {
     inboundDeltaBytes: 0,
     inboundDeltaPackets: 0,
     playFailed: false,
+    volume: 1,
+    currentTime: 1,
+    readyState: 4,
+    networkState: 2,
   };
 
   it("does not confirm strict playback from currentTimeAdvanced alone", () => {

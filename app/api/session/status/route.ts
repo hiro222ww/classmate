@@ -38,6 +38,9 @@ type SessionRow = {
   status?: string | null;
   capacity?: number | null;
   created_at?: string | null;
+  lobby_extended_once?: boolean | null;
+  join_open_until?: string | null;
+  members_locked_at?: string | null;
 };
 
 type SessionMemberRow = {
@@ -107,9 +110,16 @@ function isFreshPresence(lastSeenAt: string | null, maxAgeMs = 20_000) {
 }
 
 async function getSession(sb: ReturnType<typeof admin>, sessionId: string) {
+  const { ensureSessionMembersLockedIfDue } = await import(
+    "@/lib/sessionJoinLock"
+  );
+  await ensureSessionMembersLockedIfDue(sessionId);
+
   const { data, error } = await sb
     .from("sessions")
-    .select("id,class_id,topic,status,capacity,created_at")
+    .select(
+      "id,class_id,topic,status,capacity,created_at,lobby_extended_once,join_open_until,members_locked_at"
+    )
     .eq("id", sessionId)
     .maybeSingle();
 
@@ -599,6 +609,7 @@ export async function GET(req: Request) {
           status: String(session.status ?? "forming"),
           capacity: Number(session.capacity ?? 5),
           created_at: session.created_at ?? null,
+          lobby_extended_once: session.lobby_extended_once === true,
         },
         members,
         memberCount: members.length,

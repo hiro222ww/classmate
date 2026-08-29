@@ -21,6 +21,17 @@ type Summary = {
   today_unique_visitors: number;
 };
 
+type FunnelEvent = {
+  id: string;
+  event_name: string;
+  device_id: string | null;
+  user_id: string | null;
+  session_id: string | null;
+  class_id: string | null;
+  meta: Record<string, unknown> | null;
+  created_at: string;
+};
+
 function fmtDateTime(iso: string | null) {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -50,6 +61,9 @@ export default function AdminVisitsPage() {
   });
   const [byPath, setByPath] = useState<PathCount[]>([]);
   const [recent, setRecent] = useState<RecentVisit[]>([]);
+  const [funnelBusy, setFunnelBusy] = useState(false);
+  const [funnelMsg, setFunnelMsg] = useState("");
+  const [funnelRecent, setFunnelRecent] = useState<FunnelEvent[]>([]);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -91,9 +105,42 @@ export default function AdminVisitsPage() {
     }
   }, []);
 
+  const loadFunnel = useCallback(async () => {
+    setFunnelBusy(true);
+    setFunnelMsg("");
+    try {
+      const res = await fetch("/api/admin/funnel-events?recentLimit=80", {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      const json = await res.json().catch(() => null);
+      if (res.status === 401) {
+        setFunnelMsg("未ログインまたは認証切れです。再ログインしてください。");
+        return;
+      }
+      if (!res.ok || !json?.ok) {
+        setFunnelMsg(
+          `取得エラー: ${json?.error ?? `HTTP ${res.status}`}${
+            json?.detail ? ` (${json.detail})` : ""
+          }`
+        );
+        return;
+      }
+      setFunnelRecent(Array.isArray(json.recent) ? json.recent : []);
+      setFunnelMsg(
+        `ファネル ${Array.isArray(json.recent) ? json.recent.length : 0} 件`
+      );
+    } catch (e: unknown) {
+      setFunnelMsg(e instanceof Error ? e.message : "load_failed");
+    } finally {
+      setFunnelBusy(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadFunnel();
+  }, [load, loadFunnel]);
 
   const card: React.CSSProperties = {
     border: "1px solid #ddd",
@@ -272,6 +319,84 @@ export default function AdminVisitsPage() {
                     </td>
                     <td style={{ padding: "8px 6px" }} title={row.device_id ?? ""}>
                       {shortId(row.device_id)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section style={{ ...card, marginTop: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900 }}>
+            ファネルイベント（直近）
+          </h2>
+          <button
+            type="button"
+            onClick={() => void loadFunnel()}
+            disabled={funnelBusy}
+            style={{ ...btnGhost, opacity: funnelBusy ? 0.6 : 1 }}
+          >
+            {funnelBusy ? "処理中…" : "再読み込み"}
+          </button>
+        </div>
+        {funnelMsg ? (
+          <p style={{ margin: "8px 0 0", fontSize: 12, fontWeight: 700, color: "#333" }}>
+            {funnelMsg}
+          </p>
+        ) : null}
+        <div style={{ marginTop: 12, overflowX: "auto" }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: 780,
+              borderCollapse: "collapse",
+              fontSize: 12,
+            }}
+          >
+            <thead>
+              <tr style={{ borderBottom: "1px solid #eee" }}>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>時刻</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>event</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>device</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>session</th>
+                <th style={{ textAlign: "left", padding: "8px 6px" }}>class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {funnelRecent.length === 0 ? (
+                <tr>
+                  <td colSpan={5} style={{ padding: 12, color: "#888" }}>
+                    ファネルイベントはまだありません
+                  </td>
+                </tr>
+              ) : (
+                funnelRecent.map((row) => (
+                  <tr key={row.id} style={{ borderBottom: "1px solid #f3f3f3" }}>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {fmtDateTime(row.created_at)}
+                    </td>
+                    <td style={{ padding: "8px 6px", fontWeight: 800 }}>
+                      {row.event_name}
+                    </td>
+                    <td style={{ padding: "8px 6px" }} title={row.device_id ?? ""}>
+                      {shortId(row.device_id)}
+                    </td>
+                    <td style={{ padding: "8px 6px" }} title={row.session_id ?? ""}>
+                      {shortId(row.session_id)}
+                    </td>
+                    <td style={{ padding: "8px 6px" }} title={row.class_id ?? ""}>
+                      {shortId(row.class_id)}
                     </td>
                   </tr>
                 ))
