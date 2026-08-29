@@ -1,10 +1,6 @@
 "use client";
 
-import { HelpTip } from "@/components/HelpTip";
-import { DASH_CARD, PRIMARY_BTN, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
-
-const JOIN_NEW_HELP_TEXT =
-  "別のクラスへ新規参加する導線です。すでに所属中のクラスに戻る場合は「所属クラス」から選んでください。";
+import { DASH_CARD, PRIMARY_BTN } from "@/components/dashboard/dashboardStyles";
 
 type JoinNewCardProps = {
   className?: string;
@@ -12,83 +8,64 @@ type JoinNewCardProps = {
   quickJoinBusy?: boolean;
   quickJoinLabel?: string;
   quickJoinHint?: string;
-  pickPlaceLabel?: string;
   onQuickJoin: () => void;
-  onPickPlace: () => void;
 };
 
+/** One-decision home CTA: single primary action, no secondary class browse. */
 export function JoinNewCard({
   className,
   quickJoinDisabled = false,
   quickJoinBusy = false,
   quickJoinLabel = "最大5人で話す",
   quickJoinHint = "3人集まると通話開始",
-  pickPlaceLabel = "入る場所を選ぶ",
   onQuickJoin,
-  onPickPlace,
 }: JoinNewCardProps) {
-  const sectionClass = ["cm-paper-card", className].filter(Boolean).join(" ");
+  const sectionClass = ["cm-paper-card", "cm-home-talk-cta", className]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <section className={sectionClass} style={DASH_CARD}>
-      <div
+    <section
+      className={sectionClass}
+      style={{
+        ...DASH_CARD,
+        padding: "20px 18px",
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <button
+        type="button"
+        className="cm-cta-primary"
+        onClick={onQuickJoin}
+        disabled={quickJoinDisabled || quickJoinBusy}
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 10,
+          ...PRIMARY_BTN,
+          padding: "18px 20px",
+          fontSize: 18,
+          borderRadius: 16,
+          minHeight: 56,
+          opacity: quickJoinDisabled || quickJoinBusy ? 0.55 : 1,
+          cursor:
+            quickJoinDisabled || quickJoinBusy ? "not-allowed" : "pointer",
         }}
       >
-        <strong
+        {quickJoinBusy ? "参加中…" : quickJoinLabel}
+      </button>
+      {quickJoinHint ? (
+        <p
           style={{
-            fontSize: 14,
-            fontWeight: 900,
-            color: "#111827",
-            letterSpacing: "0.01em",
+            margin: 0,
+            fontSize: 13,
+            fontWeight: 700,
+            color: "#6b7280",
+            textAlign: "center",
+            lineHeight: 1.45,
           }}
         >
-          新しく参加する
-        </strong>
-        <HelpTip label="新しく参加するについて" content={JOIN_NEW_HELP_TEXT} />
-      </div>
-
-      <div style={{ display: "grid", gap: 8 }}>
-        <button
-          type="button"
-          className="cm-cta-primary"
-          onClick={onQuickJoin}
-          disabled={quickJoinDisabled || quickJoinBusy}
-          style={{
-            ...PRIMARY_BTN,
-            opacity: quickJoinDisabled || quickJoinBusy ? 0.55 : 1,
-            cursor: quickJoinDisabled || quickJoinBusy ? "not-allowed" : "pointer",
-          }}
-        >
-          {quickJoinBusy ? "参加中…" : quickJoinLabel}
-        </button>
-        {quickJoinHint ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#6b7280",
-              textAlign: "center",
-            }}
-          >
-            {quickJoinHint}
-          </p>
-        ) : null}
-
-        <button
-          type="button"
-          className="cm-cta-secondary"
-          onClick={onPickPlace}
-          style={SECONDARY_BTN}
-        >
-          {pickPlaceLabel}
-        </button>
-      </div>
+          {quickJoinHint}
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -493,14 +493,37 @@
 }
 
 /* ========== Home cards — minimal style (strip paper decorations) ========== */
-.cm-home-body .cm-paper-card,
 .cm-home-body .home-dash-join,
-.cm-home-body .cm-class-card {
+.cm-home-body .cm-home-talk-cta {
   background: rgba(255, 253, 250, 0.92) !important;
   border: 1px solid rgba(17, 24, 39, 0.07) !important;
   border-radius: 18px !important;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04) !important;
   padding-left: 16px !important;
+}
+
+.cm-home-body .cm-home-talk-hero {
+  margin-top: 8px;
+}
+
+.cm-home-body .cm-home-talk-cta .cm-cta-primary {
+  font-size: 18px !important;
+  min-height: 56px;
+  padding: 18px 20px !important;
+}
+
+@media (min-width: 720px) {
+  .cm-home-body .cm-home-talk-hero {
+    max-width: 420px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+  }
+
+  .cm-home-body .cm-home-talk-cta .cm-cta-primary {
+    font-size: 20px !important;
+    min-height: 64px;
+  }
 }
 
 /* Hide tape, left stripe, heading tab on home */

@@ -1270,6 +1270,7 @@ export default function SelectClient() {
         onToggleNotifications={toggleNotifications}
         hideWebPush={isApp}
         profileHref={withDev(buildProfileEditPath("/class/select"))}
+        myClassesHref={withDev("/class/select")}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
@@ -13,12 +12,10 @@ import {
   logProfileExists,
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
-import { HelpTip } from "@/components/HelpTip";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import { trackFunnelEvent } from "@/lib/funnelEvents";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
-  CLASS_ENTER_BTN,
   HOME_DASHBOARD_LAYOUT_CSS,
 } from "@/components/dashboard/dashboardStyles";
 import MemberProfileModal from "@/components/MemberProfileModal";
@@ -36,13 +33,9 @@ import {
 } from "@/lib/joinedClassesRefresh";
 import {
   getMemberAvatarUrl,
-  LIST_MEMBER_AVATAR_PX,
   normalizeMemberDeviceId,
   type MemberProfileTarget,
 } from "@/lib/memberProfileView";
-import MeetingPlanSection from "@/components/MeetingPlanSection";
-import CallRequestSection from "@/components/CallRequestSection";
-import ClassMessages from "@/components/ClassMessages";
 import NotificationPermissionPrompt from "@/components/NotificationPermissionPrompt";
 import InAppToastStack, {
   type InAppToastItem,
@@ -1917,11 +1910,6 @@ return () => {
       : "ゲスト");
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
 
-  function joinedClassEnterLabel(opening: boolean) {
-    if (opening) return "入室中…";
-    return "入室する";
-  }
-
   async function tryOpenClassWithHintSession(params: {
     target: MineClass;
     hintSessionId: string;
@@ -2589,6 +2577,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         onToggleNotifications={toggleNotifications}
         hideWebPush={isAppShellContext()}
         profileHref={withDev(buildProfileEditPath("/"))}
+        myClassesHref={withDev("/class/select")}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={loggedIn ? withDev(buildShellAwareSettingsUrl()) : withDev(buildShellAwareLoginUrl("/"))}
@@ -2697,19 +2686,16 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         </div>
       ) : null}
 
-      {/* Join CTA — the hero card */}
+      {/* One-decision CTA — hero only */}
       <div
-        className={[
-          "cm-stagger-4",
-          !hasJoinedClasses && !loading ? "cm-home-empty-emblem-wrap" : undefined,
-        ].filter(Boolean).join(" ")}
+        className={["cm-stagger-4", "cm-home-empty-emblem-wrap", "cm-home-talk-hero"].join(" ")}
         style={{
           display: "grid",
           gap: 16,
           gridTemplateColumns: "1fr",
         }}
       >
-        {!hasJoinedClasses && !loading ? (
+        {!loading ? (
           <ClassmateEmblem
             size="lg"
             variant="watermark"
@@ -2740,473 +2726,10 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
             });
             void quickJoinFreeAndOpen();
           }}
-          onPickPlace={() => {
-            if (authLoading) return;
-            if (!hasMinimumProfile(profile)) {
-              router.push("/onboarding");
-              return;
-            }
-            router.push(withDev("/class/select"));
-          }}
         />
       </div>
 
-      {hasJoinedClasses ? (
-        <section className="cm-stagger-5" style={{ display: "grid", gap: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3
-              style={{
-                margin: 0,
-                fontSize: 15,
-                fontWeight: 900,
-                color: "var(--cm-text, #374151)",
-              }}
-            >
-              クラス
-            </h3>
-            <Link
-              href={withDev("/class/select")}
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: "var(--cm-blue, #2f6db5)",
-                textDecoration: "none",
-              }}
-            >
-              クラスを見る ›
-            </Link>
-          </div>
-          <div style={{ display: "grid", gap: 14 }}>
-            {visible.map((c) => {
-              const leaving =
-                leavingClassId === c.id || leavingClassIdsRef.current.has(c.id);
-              const opening = openingClassId === c.id;
-              const members = membersByClass[c.id] ?? [];
-              const membersLoading =
-                membersLoadingByClass[c.id] === true ||
-                (membersLoadingByClass[c.id] !== false &&
-                  !membersInitialLoadedRef.current.has(c.id));
-              const presenceMap = presenceByClass[c.id] ?? {};
-              const prevStatuses = prevMemberStatusRef.current[c.id] ?? {};
-              const lastInSessionAtMap =
-                lastInSessionAtByClassRef.current[c.id] ?? {};
-              const classLabel = formatClassLabel(c);
-              const sessionId = String(c.session_id ?? "").trim() || null;
-              const sessionMemberIds =
-                sessionMemberIdsByClassRef.current[c.id] ?? new Set<string>();
-              const participationLabel = deriveClassParticipationLabel(
-                sessionId,
-                members,
-                presenceMap,
-                prevStatuses,
-                lastInSessionAtMap,
-                sessionMemberIds
-              );
-              const classStatusLabel =
-                participationLabel ?? c.status_label ?? "所属中";
-              const classStatusPill = getClassStatusStyle(classStatusLabel);
-              const { inCall, waiting } = summarizeMemberParticipation(
-                members,
-                presenceMap,
-                sessionId,
-                prevStatuses,
-                lastInSessionAtMap,
-                sessionMemberIds
-              );
-              const onlineSummary =
-                inCall > 0
-                  ? `${inCall}人が通話中`
-                  : waiting > 0
-                    ? `${waiting}人が待機中`
-                    : "";
-              const avatarPreview = members.slice(0, 5);
-
-              return (
-                <div
-                  key={c.id}
-                  className="cm-paper-card cm-class-card"
-                  style={{
-                    textAlign: "left",
-                    padding: "16px",
-                    borderRadius: "var(--cm-radius, 16px)",
-                    border: "1px solid var(--cm-border, #e5e7eb)",
-                    background: "var(--cm-card-bg, #fafafa)",
-                    boxShadow: "var(--cm-shadow-soft, none)",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div
-                        style={{
-                          fontWeight: 900,
-                          color: "var(--cm-text, #111)",
-                          fontSize: 26,
-                          lineHeight: 1.2,
-                          letterSpacing: "0.02em",
-                        }}
-                      >
-                        {classLabel}
-                      </div>
-                      <div
-                        style={{
-                          marginTop: 6,
-                          fontSize: 13,
-                          color: "var(--cm-muted, #64748b)",
-                          fontWeight: 800,
-                        }}
-                      >
-                        {membersLoading
-                          ? "読み込み中…"
-                          : `参加者 ${members.length}人`}
-                        {!membersLoading && onlineSummary ? ` · ${onlineSummary}` : ""}
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 6,
-                        flexWrap: "wrap",
-                        justifyContent: "flex-end",
-                      }}
-                    >
-                      {Number(c.unread_count ?? 0) > 0 ? (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 900,
-                            padding: "4px 8px",
-                            borderRadius: 999,
-                            background: "var(--cm-pink-soft, #fee2e2)",
-                            color: "#b91c1c",
-                            border: "1px solid var(--cm-pink, #fecaca)",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          未読 {Number(c.unread_count)}件
-                        </span>
-                      ) : null}
-                      <span
-                        style={{
-                          ...classStatusPill,
-                          fontSize: 12,
-                          fontWeight: 900,
-                          padding: "6px 10px",
-                          borderRadius: 999,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {classStatusLabel}
-                      </span>
-                    </div>
-                  </div>
-
-                  {membersLoading ? (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        fontSize: 12,
-                        color: "#64748b",
-                        fontWeight: 700,
-                      }}
-                    >
-                      メンバーを読み込み中…
-                    </div>
-                  ) : avatarPreview.length > 0 ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        marginTop: 12,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {avatarPreview.map((m) => (
-                        <img
-                          key={`${c.id}-avatar-${m.device_id}`}
-                          src={getMemberAvatarUrl(m.photo_path)}
-                          alt={formatMemberDisplayName(m)}
-                          onError={(event) => {
-                            event.currentTarget.onerror = null;
-                            event.currentTarget.src = "/default-avatar.jpg";
-                          }}
-                          style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: "50%",
-                            objectFit: "cover",
-                            border: "2px solid #fff",
-                            boxShadow: "0 0 0 1px #e2e8f0",
-                          }}
-                        />
-                      ))}
-                      {members.length > avatarPreview.length ? (
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: "#64748b",
-                            fontWeight: 800,
-                          }}
-                        >
-                          +{members.length - avatarPreview.length}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {c.description ? (
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "#6b7280",
-                        fontWeight: 700,
-                        marginTop: 10,
-                      }}
-                    >
-                      {c.description}
-                    </div>
-                  ) : null}
-
-                  <MeetingPlanSection
-                    classId={c.id}
-                    deviceId={deviceId}
-                    plan={c.next_meeting_plan ?? null}
-                    onUpdated={(plan) => {
-                      setClasses((prev) =>
-                        prev.map((row) =>
-                          row.id === c.id ? { ...row, next_meeting_plan: plan } : row
-                        )
-                      );
-                    }}
-                  />
-
-                  <CallRequestSection
-                    classId={c.id}
-                    deviceId={deviceId}
-                    request={c.active_call_request ?? null}
-                    entering={opening}
-                    onEnter={() => void openClass(c)}
-                    onUpdated={(request) => {
-                      setClasses((prev) =>
-                        prev.map((row) =>
-                          row.id === c.id
-                            ? { ...row, active_call_request: request }
-                            : row
-                        )
-                      );
-                    }}
-                  />
-
-                  <ClassMessages classId={c.id} deviceId={deviceId} />
-
-                  <div style={{ marginTop: 14, display: "flex" }}>
-                    <button
-                      type="button"
-                      className="cm-cta-primary"
-                      onClick={() => void openClass(c)}
-                      disabled={opening || authLoading}
-                      style={{
-                        ...CLASS_ENTER_BTN,
-                        opacity: opening || authLoading ? 0.75 : 1,
-                        cursor: opening || authLoading ? "default" : "pointer",
-                      }}
-                    >
-                      {authLoading ? "確認中…" : joinedClassEnterLabel(opening)}
-                    </button>
-                  </div>
-
-                  <details style={{ marginTop: 12 }}>
-                    <summary
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 900,
-                        color: "#475569",
-                        cursor: "pointer",
-                        userSelect: "none",
-                      }}
-                    >
-                      クラスメートを見る（
-                      {membersLoading ? "読み込み中…" : `${members.length}人`}）
-                    </summary>
-
-                    {membersLoading ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#6b7280",
-                          marginTop: 8,
-                        }}
-                      >
-                        参加メンバーを確認しています…
-                      </div>
-                    ) : members.length === 0 ? (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#6b7280",
-                          marginTop: 8,
-                        }}
-                      >
-                        まだ表示できるクラスメートがいません
-                      </div>
-                    ) : (
-                      <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                        {members.map((m) => {
-                          const isMe = m.device_id === deviceId;
-                          const memberDeviceId = String(m.device_id ?? "").trim();
-                          const inSession =
-                            sessionMemberIds.has(memberDeviceId);
-                          const memberDisplay = resolveParticipationDisplay({
-                            source: mergeMemberPresenceSource(
-                              m,
-                              presenceMap[m.device_id]
-                            ),
-                            currentSessionId: sessionId,
-                            freshMs: PRESENCE_FRESH_MS_HOME,
-                            previous: prevStatuses[m.device_id] ?? null,
-                            previousInternal:
-                              prevMemberInternalRef.current[c.id]?.[
-                                m.device_id
-                              ] ?? null,
-                            context: "home",
-                            deviceId: memberDeviceId,
-                            inSessionMembers: inSession,
-                            inClassMembership: true,
-                            lastInSessionAt: inSession
-                              ? lastInSessionAtMap[m.device_id]
-                              : undefined,
-                            isMe,
-                          });
-                          const participation = memberDisplay.participation;
-                          const pill = participationStatusStyle(participation);
-
-                          return (
-                            <div
-                              key={`${c.id}-${m.device_id}`}
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                gap: 8,
-                                padding: "8px 10px",
-                                borderRadius: "var(--cm-radius-sm, 10px)",
-                                background: "var(--cm-card-bg-soft, #fafafa)",
-                                border: "1px solid var(--cm-border, #eee)",
-                              }}
-                            >
-                              <button
-                                type="button"
-                                disabled={!memberDeviceId || !deviceId}
-                                onClick={() => {
-                                  if (!memberDeviceId || !deviceId) return;
-                                  setProfileTarget({
-                                    deviceId: memberDeviceId,
-                                    viewerDeviceId: deviceId,
-                                    classId: c.id,
-                                    sessionId:
-                                      String(c.session_id ?? "").trim() || undefined,
-                                    displayName: m.display_name,
-                                    photoPath: m.photo_path ?? null,
-                                  });
-                                }}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  border: "none",
-                                  background: "transparent",
-                                  padding: 0,
-                                  margin: 0,
-                                  cursor: "pointer",
-                                  fontSize: 13,
-                                  fontWeight: 800,
-                                  color: "var(--cm-text, #111)",
-                                  textAlign: "left",
-                                  minWidth: 0,
-                                  flex: 1,
-                                }}
-                              >
-                                <img
-                                  src={getMemberAvatarUrl(m.photo_path)}
-                                  alt={formatMemberDisplayName(m)}
-                                  onError={(event) => {
-                                    event.currentTarget.onerror = null;
-                                    event.currentTarget.src = "/default-avatar.jpg";
-                                  }}
-                                  style={{
-                                    width: LIST_MEMBER_AVATAR_PX,
-                                    height: LIST_MEMBER_AVATAR_PX,
-                                    borderRadius: "50%",
-                                    objectFit: "cover",
-                                    border: "1px solid var(--cm-border, #e5e7eb)",
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <span>
-                                  {formatMemberDisplayName(m)}
-                                  {isMe ? "（あなた）" : ""}
-                                </span>
-                              </button>
-
-                              <span
-                                style={{
-                                  ...pill,
-                                  fontSize: 11,
-                                  fontWeight: 900,
-                                  padding: "4px 8px",
-                                  borderRadius: 999,
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {memberDisplay.label}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </details>
-
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      void leaveClass(c, {
-                        source: CLASS_LEAVE_CONFIRMED_SOURCE,
-                      });
-                    }}
-                    disabled={leaving}
-                    style={{
-                      marginTop: 10,
-                      padding: "8px 10px",
-                      borderRadius: "var(--cm-radius-sm, 8px)",
-                      border: "1px solid var(--cm-pink, #fecaca)",
-                      background: "var(--cm-card-bg, #fff)",
-                      color: "var(--cm-danger, #b91c1c)",
-                      fontWeight: 800,
-                      fontSize: 12,
-                      cursor: leaving ? "default" : "pointer",
-                      opacity: leaving ? 0.7 : 1,
-                    }}
-                  >
-                    {leaving ? "抜けています…" : "クラスから抜ける"}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
+      {/* Joined classes: メニュー → マイクラス (/class/select), not on home. */}
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 
