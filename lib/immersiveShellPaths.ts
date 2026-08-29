@@ -3,6 +3,7 @@ export const IMMERSIVE_SHELL_PATH_PREFIXES = [
   "/room",
   "/call",
   "/class/select",
+  "/class/mine",
   "/billing",
   "/premium",
 ] as const;

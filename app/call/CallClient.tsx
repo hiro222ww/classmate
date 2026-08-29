@@ -405,7 +405,7 @@ export default function CallClient() {
   );
 
   const returnTo = useMemo(() => {
-    return withDev("/class/select");
+    return withDev(resolveShellDashboardPath());
   }, []);
 
   const [members, setMembers] = useState<Member[]>([]);

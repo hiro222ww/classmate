@@ -25,7 +25,7 @@ const HIDDEN_PREFIXES = [
   "/about",
   "/legal",
 ];
-const DASHBOARD_HEADER_PATHS = new Set(["/", "/class/select"]);
+const DASHBOARD_HEADER_PATHS = new Set(["/", "/class/select", "/class/mine"]);
 
 function shouldHideNav(pathname: string) {
   if (isAppShellPath(pathname)) return true;

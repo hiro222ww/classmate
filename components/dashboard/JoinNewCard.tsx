@@ -1,6 +1,7 @@
 "use client";
 
-import { DASH_CARD, PRIMARY_BTN } from "@/components/dashboard/dashboardStyles";
+import Link from "next/link";
+import { DASH_CARD, PRIMARY_BTN, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
 
 type JoinNewCardProps = {
   className?: string;
@@ -8,16 +9,20 @@ type JoinNewCardProps = {
   quickJoinBusy?: boolean;
   quickJoinLabel?: string;
   quickJoinHint?: string;
+  themeSelectHref?: string;
+  themeSelectLabel?: string;
   onQuickJoin: () => void;
 };
 
-/** One-decision home CTA: single primary action, no secondary class browse. */
+/** One-decision home CTA: primary random talk + weaker theme-select link. */
 export function JoinNewCard({
   className,
   quickJoinDisabled = false,
   quickJoinBusy = false,
   quickJoinLabel = "最大5人で話す",
   quickJoinHint = "3人集まると通話開始",
+  themeSelectHref,
+  themeSelectLabel = "テーマを選んで話す",
   onQuickJoin,
 }: JoinNewCardProps) {
   const sectionClass = ["cm-paper-card", "cm-home-talk-cta", className]
@@ -65,6 +70,29 @@ export function JoinNewCard({
         >
           {quickJoinHint}
         </p>
+      ) : null}
+      {themeSelectHref ? (
+        <Link
+          href={themeSelectHref}
+          className="cm-cta-secondary cm-home-theme-select"
+          style={{
+            ...SECONDARY_BTN,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            textDecoration: "none",
+            padding: "12px 16px",
+            fontSize: 14,
+            fontWeight: 800,
+            borderRadius: 14,
+            border: "1px solid rgba(148, 163, 184, 0.45)",
+            background: "#fff",
+            color: "#475569",
+            boxShadow: "none",
+          }}
+        >
+          {themeSelectLabel}
+        </Link>
       ) : null}
     </section>
   );

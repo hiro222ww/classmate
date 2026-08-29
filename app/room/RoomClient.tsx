@@ -31,7 +31,7 @@ import {
 import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
-import { resolveShellDashboardPath, isAppShellContext } from "@/lib/appShellContext";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import {
   buildCurrentPathReturnTo,
@@ -4376,10 +4376,7 @@ const name = rawName === "You" ? "参加者" : rawName;
                       : []
           }
           onBack={() => {
-            const backPath = isAppShellContext()
-              ? resolveShellDashboardPath()
-              : "/class/select";
-            router.push(withDev(backPath));
+            router.push(withDev(resolveShellDashboardPath()));
           }}
           onHome={goHome}
           onStartCall={() => {

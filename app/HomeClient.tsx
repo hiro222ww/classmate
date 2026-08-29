@@ -2577,7 +2577,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         onToggleNotifications={toggleNotifications}
         hideWebPush={isAppShellContext()}
         profileHref={withDev(buildProfileEditPath("/"))}
-        myClassesHref={withDev("/class/select")}
+        myClassesHref={withDev("/class/mine")}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={loggedIn ? withDev(buildShellAwareSettingsUrl()) : withDev(buildShellAwareLoginUrl("/"))}
@@ -2715,6 +2715,8 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               : "最大5人で話す"
           }
           quickJoinHint="3人集まると通話開始"
+          themeSelectHref={withDev("/class/select")}
+          themeSelectLabel="テーマを選んで話す"
           onQuickJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
@@ -2729,7 +2731,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         />
       </div>
 
-      {/* Joined classes: メニュー → マイクラス (/class/select), not on home. */}
+      {/* Joined classes: メニュー → マイクラス (/class/mine). Theme pick: /class/select. */}
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 

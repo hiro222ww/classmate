@@ -11,7 +11,7 @@ import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
-import { isUserProfileComplete } from "@/lib/profileClient";
+import { hasMinimumProfile } from "@/lib/profileClient";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { tierName } from "@/lib/planTiers";
 import { DEVICE_RESET_CONFIRM_MESSAGE, resetClassmateDeviceState } from "@/lib/deviceReset";
@@ -128,6 +128,12 @@ type ThemeCategoryId =
   | "school"
   | "night"
   | "other";
+
+/**
+ * Paid / locked themes stay in data + entitlements; hide from select UI for now.
+ * Flip to true to re-show 「テーマから探す」 groups without schema changes.
+ */
+const SHOW_PAID_THEMES_IN_SELECT = false;
 
 const THEME_CATEGORIES: {
   id: ThemeCategoryId;
@@ -452,7 +458,7 @@ export default function SelectClient() {
       setProfileLoadError(false);
       const nextProfile: Profile | null = raw?.profile ?? null;
 
-      const exists = isUserProfileComplete(nextProfile);
+      const exists = hasMinimumProfile(nextProfile);
 
       setHasProfile(exists);
       setProfile(nextProfile);
@@ -1270,7 +1276,7 @@ export default function SelectClient() {
         onToggleNotifications={toggleNotifications}
         hideWebPush={isApp}
         profileHref={withDev(buildProfileEditPath("/class/select"))}
-        myClassesHref={withDev("/class/select")}
+        myClassesHref={withDev("/class/mine")}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={
@@ -1391,7 +1397,7 @@ export default function SelectClient() {
           {joinLimitMessage}
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Link
-              href={withDev(resolveShellDashboardPath())}
+              href={withDev("/class/mine")}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -1402,7 +1408,7 @@ export default function SelectClient() {
                 fontWeight: 900,
               }}
             >
-              所属クラス一覧へ
+              マイクラスへ
             </Link>
             <Link
               href={withDev("/premium")}
@@ -1434,7 +1440,7 @@ export default function SelectClient() {
               lineHeight: 1.25,
             }}
           >
-            今日はどのクラスにする？
+            テーマを選んで話す
           </h2>
           <p
             style={{
@@ -1444,7 +1450,7 @@ export default function SelectClient() {
               color: "#64748b",
             }}
           >
-            気になるクラスをのぞいてみよう
+            フリーテーマから、気軽に話せるクラスへ入れます
           </p>
         </div>
 
@@ -1482,7 +1488,8 @@ export default function SelectClient() {
             />
             {joinWindowText || (joinWindowOpen ? "入学受付中" : "入学受付時間外")}
           </span>
-          {themeBillingEnabled || slotBillingEnabled ? (
+          {SHOW_PAID_THEMES_IN_SELECT &&
+          (themeBillingEnabled || slotBillingEnabled) ? (
             <span
               style={{
                 padding: "6px 10px",
@@ -1497,6 +1504,20 @@ export default function SelectClient() {
               {themeBillingEnabled
                 ? `プラン: ${tierName(topicPlan)}`
                 : `${slots}クラス枠`}
+            </span>
+          ) : slotBillingEnabled ? (
+            <span
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.85)",
+                border: "1px solid rgba(148, 163, 184, 0.28)",
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#64748b",
+              }}
+            >
+              {`${slots}クラス枠`}
             </span>
           ) : null}
           <button
@@ -1526,7 +1547,7 @@ export default function SelectClient() {
 
         {showJoinedStrip ? (
           <Link
-            href={withDev(resolveShellDashboardPath())}
+            href={withDev("/class/mine")}
             style={{
               display: "flex",
               alignItems: "center",
@@ -1548,7 +1569,7 @@ export default function SelectClient() {
               </span>
             </span>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-              ホームで見る ›
+              マイクラスへ ›
             </span>
           </Link>
         ) : null}
@@ -1612,7 +1633,7 @@ export default function SelectClient() {
           </div>
         </section>
 
-        {themeGroups.length > 0 ? (
+        {SHOW_PAID_THEMES_IN_SELECT && themeGroups.length > 0 ? (
           <section style={{ display: "grid", gap: 16 }}>
             <div>
               <h3
@@ -1670,7 +1691,7 @@ export default function SelectClient() {
           </section>
         ) : null}
 
-        {!loading && boards.length === 0 ? (
+        {!loading && freeBoards.length === 0 ? (
           <div
             className="cm-select-empty"
             style={{ marginTop: 4, fontSize: 12, color: "#666" }}

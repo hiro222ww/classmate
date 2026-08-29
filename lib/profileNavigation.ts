@@ -1,6 +1,7 @@
 const ALLOWED_RETURN_PREFIXES = [
   "/",
   "/class/select",
+  "/class/mine",
   "/room",
   "/call",
   "/app/home",

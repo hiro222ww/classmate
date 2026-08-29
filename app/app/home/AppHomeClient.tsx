@@ -244,16 +244,8 @@ export default function AppHomeClient() {
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
               <p className="app-shell-muted" style={{ margin: 0 }}>
-                まだクラスに参加していません。新しいクラスを探してみましょう。
+                所属しているクラスはありません
               </p>
-              <button
-                type="button"
-                className="app-shell-btn app-shell-btn--primary"
-                disabled={actionsLocked}
-                onClick={() => router.push(withDev("/class/select"))}
-              >
-                新しく参加する
-              </button>
             </div>
           )}
         </AppShellSection>
@@ -263,16 +255,14 @@ export default function AppHomeClient() {
             <AuthCardSkeleton />
           ) : (
             <>
-              {hasMembership ? (
-                <button
-                  type="button"
-                  className="app-shell-btn"
-                  disabled={actionsLocked}
-                  onClick={() => router.push(withDev("/class/select"))}
-                >
-                  新しく参加する
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="app-shell-btn"
+                disabled={actionsLocked}
+                onClick={() => router.push(withDev("/class/select"))}
+              >
+                テーマを選んで話す
+              </button>
 
               <Link
                 href={withDev(buildProfileEditPath(returnPath))}

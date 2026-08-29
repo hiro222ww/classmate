@@ -512,6 +512,11 @@
   padding: 18px 20px !important;
 }
 
+.cm-home-body .cm-home-talk-cta .cm-home-theme-select {
+  min-height: 44px;
+  box-shadow: none !important;
+}
+
 @media (min-width: 720px) {
   .cm-home-body .cm-home-talk-hero {
     max-width: 420px;
