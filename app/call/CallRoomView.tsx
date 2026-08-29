@@ -343,19 +343,19 @@ export default function CallRoomView({
               inAppShell
                 ? undefined
                 : {
-                    padding: "10px 14px",
+                    padding: "12px 16px",
                     borderRadius: 12,
-                    border: "1px solid #111827",
-                    background: "#111827",
+                    border: "1px solid #047857",
+                    background: "#059669",
                     color: "#fff",
                     fontWeight: 900,
-                    fontSize: 13,
+                    fontSize: 14,
                     cursor: "pointer",
-                    boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                    boxShadow: "0 2px 8px rgba(5, 150, 105, 0.28)",
                   }
             }
           >
-            友達を招待
+            友達を招待する
           </button>
 
           {inAppShell && onHome ? (

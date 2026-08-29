@@ -20,7 +20,7 @@ export function JoinNewCard({
   quickJoinDisabled = false,
   quickJoinBusy = false,
   quickJoinLabel = "最大5人で話す",
-  quickJoinHint = "3人集まると通話開始",
+  quickJoinHint = "",
   themeSelectHref,
   themeSelectLabel = "テーマを選んで話す",
   onQuickJoin,

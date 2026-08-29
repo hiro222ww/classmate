@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { LegalConsentCheckbox } from "@/components/LegalDocumentLinks";
@@ -9,9 +9,15 @@ import { FormFieldLabel, FormSection } from "@/components/FormFieldLabel";
 import { DECLARED_AGE_MAX, DECLARED_AGE_MIN } from "@/lib/profileClient";
 import { adultOnlyUserMessage } from "@/lib/agePolicyRules";
 import { trackFunnelEvent } from "@/lib/funnelEvents";
+import { sanitizeReturnTo } from "@/lib/profileNavigation";
+import { withDev } from "@/lib/withDev";
 
 export function MinProfileOnboardingClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = sanitizeReturnTo(
+    searchParams.get("next") ?? searchParams.get("returnTo") ?? "/"
+  );
   const [deviceId, setDeviceId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [age, setAge] = useState("");
@@ -75,7 +81,7 @@ export function MinProfileOnboardingClient() {
         deviceId,
       });
 
-      router.replace("/");
+      router.replace(withDev(nextPath));
       router.refresh();
     } catch {
       setError("保存に失敗しました。通信環境を確認して再試行してください。");

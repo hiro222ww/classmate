@@ -35,8 +35,11 @@ import { resolveShellDashboardPath } from "@/lib/appShellContext";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import {
   buildCurrentPathReturnTo,
+  buildOnboardingPath,
   buildProfileEditPath,
 } from "@/lib/profileNavigation";
+import { shareOrCopyInviteUrl } from "@/lib/inviteShare";
+import { recruitmentClosedUserMessage } from "@/lib/callRecruitmentUi";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import {
   formatMemberDisplayName,
@@ -3210,7 +3213,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           });
           router.push(
             withDev(
-              buildProfileEditPath(
+              buildOnboardingPath(
                 buildCurrentPathReturnTo(pathname, searchParams.toString())
               )
             )
@@ -3975,10 +3978,9 @@ const name = rawName === "You" ? "参加者" : rawName;
     const myId = String(deviceId).trim();
     const memberIds = autoCallMemberIdsRef.current;
     const selfJoined = memberIds.includes(myId);
-    const remoteJoined = memberIds.some((id) => id !== myId);
     const countReady = memberIds.length >= AUTO_CALL_MIN_MEMBERS;
 
-    if (!selfJoined || !remoteJoined || !countReady) {
+    if (!selfJoined || !countReady) {
       cancelAutoCallTimer("members_unstable");
       return;
     }
@@ -4056,8 +4058,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       const ids = autoCallMemberIdsRef.current;
       const viewerId = String(identity.deviceId).trim();
       const viewerJoined = ids.includes(viewerId);
-      const peerJoined = ids.some((id) => id !== viewerId);
-      if (ids.length < AUTO_CALL_MIN_MEMBERS || !viewerJoined || !peerJoined) {
+      if (ids.length < AUTO_CALL_MIN_MEMBERS || !viewerJoined) {
         roomLog("[room-auto-call] cancel reason=members_unstable");
         return;
       }
@@ -4224,13 +4225,10 @@ const name = rawName === "You" ? "参加者" : rawName;
     Boolean(sessionId && deviceId) &&
     hasAutoCallOnce(sessionId, deviceId) &&
     !autoCallAttemptedRef.current;
-  const showLobbyWaiting =
-    autoCallPending &&
-    !sessionResolving &&
-    roomSessionReady &&
-    !err &&
-    !invite &&
-    lobbyMemberCount < AUTO_CALL_MIN_MEMBERS;
+  // Random-call: never hold users in a separate wait-for-3 lobby.
+  const showLobbyWaiting = false;
+  void autoCallPending;
+  void lobbyMemberCount;
 
   const lobbyCreatedAtMs = sessionCreatedAt
     ? new Date(sessionCreatedAt).getTime()
@@ -4359,18 +4357,10 @@ const name = rawName === "You" ? "参加者" : rawName;
                       : "このクラスに招待されています",
                     "参加中のメンバーと会話を始めましょう",
                   ]
-                : showLobbyWaiting
-                  ? [
-                      `現在 ${lobbyMemberCount} / ${AUTO_CALL_MIN_MEMBERS} 人`,
-                      `${AUTO_CALL_MIN_MEMBERS}人集まると通話開始`,
-                      lobbyWaitTimedOut
-                        ? "待機の続きか、今回やめるかを選べます"
-                        : `待機時間 ${lobbyElapsedLabel}`,
-                    ]
                 : autoCallAttemptedRef.current
                   ? ["通話開始ボタンを押して、通話を開始してください。"]
                   : status === "forming"
-                    ? ["メンバーがそろうと、そのまま自然に通話へ進みます。"]
+                    ? ["通話画面へ進みます。1人でも黒板と募集状態を確認できます。"]
                     : status === "active"
                       ? ["通話を開始できます。"]
                       : []
@@ -4554,15 +4544,17 @@ const name = rawName === "You" ? "参加者" : rawName;
                     inviter: inviterName,
                   });
 
-                  try {
-                    await navigator.clipboard.writeText(inviteUrl);
+                  const result = await shareOrCopyInviteUrl({
+                    url: inviteUrl,
+                    title: "Classmate",
+                    text: `${inviterName}さんから通話に招待されています`,
+                  });
+                  if (result.ok && result.method === "clipboard") {
                     alert("招待リンクをコピーしました");
-                  } catch (e) {
-                    console.warn("[invite] copy failed", e);
-                    window.prompt(
-                      "コピーできませんでした。下のリンクをコピーしてください。",
-                      inviteUrl
-                    );
+                  } else if (result.ok && result.method === "prompt") {
+                    // prompt already shown
+                  } else if (!result.ok) {
+                    alert("招待リンクを共有できませんでした");
                   }
                 }}
                 disabled={!sessionId || !classId}
@@ -4577,7 +4569,7 @@ const name = rawName === "You" ? "参加者" : rawName;
                   whiteSpace: "nowrap",
                 }}
               >
-                招待リンクをコピー
+                友達を招待する
               </button>
             </div>
 

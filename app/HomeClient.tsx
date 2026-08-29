@@ -410,6 +410,12 @@ export default function HomeClient() {
     );
   }
 
+  function buildCallUrl(classId: string, sessionId: string) {
+    return withDev(
+      `/call?sessionId=${encodeURIComponent(sessionId)}&classId=${encodeURIComponent(classId)}`
+    );
+  }
+
   const [deviceId, setDeviceId] = useState("");
   const { adminAuthenticated, opsTestFlags, loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -2338,7 +2344,14 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
 
       clearClassLeftLocally(classId);
       markAutoCallOnce(sessionId, currentDeviceId);
-      router.push(buildRoomUrl(classId, sessionId));
+      void trackFunnelEvent({
+        eventName: "call_started",
+        deviceId: currentDeviceId,
+        sessionId,
+        classId,
+        meta: { source: "quick_join_immediate" },
+      });
+      router.push(buildCallUrl(classId, sessionId));
     } catch (e: any) {
       console.error("[home quick free] error =", e);
       alert(e?.message || "quick_join_failed");
@@ -2714,7 +2727,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
               ? "管理者としてテスト入室"
               : "最大5人で話す"
           }
-          quickJoinHint="3人集まると通話開始"
+          quickJoinHint=""
           themeSelectHref={withDev("/class/select")}
           themeSelectLabel="テーマを選んで話す"
           onQuickJoin={() => {

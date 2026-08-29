@@ -610,6 +610,8 @@ export async function GET(req: Request) {
           capacity: Number(session.capacity ?? 5),
           created_at: session.created_at ?? null,
           lobby_extended_once: session.lobby_extended_once === true,
+          join_open_until: session.join_open_until ?? null,
+          members_locked_at: session.members_locked_at ?? null,
         },
         members,
         memberCount: members.length,

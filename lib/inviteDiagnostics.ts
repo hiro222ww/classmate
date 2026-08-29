@@ -1,11 +1,13 @@
 /** Client/server helpers for invite join diagnostics (no credentials). */
 
 import { isDebugLogEnabled, logInfo, logWarn } from "@/lib/debugLog";
+import { recruitmentClosedUserMessage } from "@/lib/callRecruitmentUi";
 
 export const INVITE_JOIN_GRACE_MS = 18_000;
 export const INVITE_MEMBER_EMPTY_STREAK_REQUIRED = 5;
-export const INVITE_LINK_EXPIRED_MESSAGE =
-  "この招待リンクは期限切れです。もう一度招待してもらってください";
+export const INVITE_LINK_EXPIRED_MESSAGE = recruitmentClosedUserMessage(
+  "recruitment_closed"
+);
 
 const INVITE_ROUTE_STATE_KEY = "classmate_invite_route_state";
 
@@ -195,9 +197,10 @@ export function formatInviteJoinApiError(
     code === "session_closed" ||
     code === "session_not_joinable" ||
     code === "recruitment_closed" ||
+    code === "session_members_locked" ||
     code === "match_deadline_passed"
   ) {
-    return INVITE_LINK_EXPIRED_MESSAGE;
+    return recruitmentClosedUserMessage(code);
   }
   if (
     code === "age_restricted" ||
