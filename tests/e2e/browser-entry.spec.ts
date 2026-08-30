@@ -51,7 +51,7 @@ test.describe("A. 新規ブラウザ状態", () => {
     await waitForEnabledEnterButton(page);
 
     await clickFirstEnterButton(page);
-    await page.waitForURL(/\/room/, { timeout: 60_000 });
+    await page.waitForURL(/\/(room|call)/, { timeout: 60_000 });
 
     await expect
       .poll(() => logs.some((line) => line.includes("[match-join] success")), {

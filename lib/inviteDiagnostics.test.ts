@@ -18,7 +18,10 @@ describe("isInviteJoinFailureMessage", () => {
 
   it("maps session_closed to invite expiry copy", () => {
     expect(formatInviteJoinApiError("session_closed")).toBe(
-      INVITE_LINK_EXPIRED_MESSAGE
+      "この通話には参加できません。新しい通話を探してください。"
+    );
+    expect(formatInviteJoinApiError("session_members_locked")).toBe(
+      "この通話には参加できません。新しい通話を探してください。"
     );
     expect(formatInviteJoinApiError("invite_expired")).toBe(
       INVITE_LINK_EXPIRED_MESSAGE

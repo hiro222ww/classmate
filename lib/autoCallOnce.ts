@@ -39,6 +39,9 @@ export function consumeAutoCallOnce(sessionId: string, deviceId: string): boolea
  */
 export const AUTO_CALL_MIN_MEMBERS = 1;
 
+/** Alias used by match-join entry paths (same threshold as AUTO_CALL_MIN_MEMBERS). */
+export const MATCH_CALL_ENTRY_MIN_MEMBERS = AUTO_CALL_MIN_MEMBERS;
+
 /** Soft-close threshold: after this many members, join_open_until starts (~30s). */
 export const RECRUIT_SOFT_CLOSE_AT_MEMBERS = 3;
 

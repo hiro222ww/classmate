@@ -171,14 +171,14 @@ async function main() {
       return b && !b.disabled;
     }, { timeout: 90000 });
     await Promise.all([
-      p1.page.waitForFunction(() => /\/room/.test(window.location.pathname), { timeout: 90000 }),
+      p1.page.waitForFunction(() => /\/call/.test(window.location.pathname), { timeout: 90000 }),
       p1.page.getByRole("button", { name: /最大5人で話す/ }).click(),
     ]);
-    const roomParams = new URL(p1.page.url());
-    created.classId = roomParams.searchParams.get("classId");
-    created.sessionId = roomParams.searchParams.get("sessionId");
+    const callParams = new URL(p1.page.url());
+    created.classId = callParams.searchParams.get("classId");
+    created.sessionId = callParams.searchParams.get("sessionId");
     if (!created.sessionId || !created.classId) throw new Error(`cta missing ids: ${p1.page.url()}`);
-    pass("cta_enters_room", created.sessionId.slice(0, 8));
+    pass("cta_enters_call", created.sessionId.slice(0, 8));
 
     const baseline = (await rest(`session_members?session_id=eq.${created.sessionId}&select=device_id`)).length;
     if (baseline !== 1) fail("cta_fresh_session", `count=${baseline}`);

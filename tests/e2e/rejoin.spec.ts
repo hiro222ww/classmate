@@ -19,7 +19,7 @@ test.describe("F. 再入室", () => {
     await page.goto(withDev("/class/select", "61"));
     await waitForEnabledEnterButton(page);
     await Promise.all([
-      page.waitForURL(/\/room/, { timeout: 60_000 }),
+      page.waitForURL(/\/(room|call)/, { timeout: 60_000 }),
       clickFirstEnterButton(page),
     ]);
 
@@ -58,7 +58,7 @@ test.describe("F. 再入室", () => {
     await page.goto(withDev("/class/select", "62"));
     await waitForEnabledEnterButton(page);
     await Promise.all([
-      page.waitForURL(/\/room/, { timeout: 60_000 }),
+      page.waitForURL(/\/(room|call)/, { timeout: 60_000 }),
       clickFirstEnterButton(page),
     ]);
 

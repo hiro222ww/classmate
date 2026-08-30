@@ -60,6 +60,8 @@ export type CallRoomViewProps = {
   filled: number;
   capacity: number;
   membersSyncRevision: number;
+  /** When true, recruitment is closed — show 参加人数 instead of メンバー募集中. */
+  membersLocked?: boolean;
   showCallStuckReconnect?: boolean;
   onCallStuckReconnect?: () => void;
   meetingPlanLabel?: string | null;
@@ -123,6 +125,7 @@ export default function CallRoomView({
   filled,
   capacity,
   membersSyncRevision,
+  membersLocked = false,
   showCallStuckReconnect = false,
   onCallStuckReconnect,
   meetingPlanLabel,
@@ -236,10 +239,13 @@ export default function CallRoomView({
                 : { marginTop: 6, fontSize: 13, color: "#666" }
             }
           >
-            参加人数{" "}
             {membersSyncRevision > 0
-              ? `${filled}/${capacity}`
-              : `--/${capacity}`}
+              ? membersLocked
+                ? `参加人数 ${filled}/${capacity}`
+                : `メンバー募集中 ${filled}/${capacity}`
+              : membersLocked
+                ? `参加人数 --/${capacity}`
+                : `メンバー募集中 --/${capacity}`}
           </div>
           {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
             <div

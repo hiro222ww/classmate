@@ -17,6 +17,8 @@ describe("invite join session fallback", () => {
     memberCount: 1,
     memberIds: ["device-1"],
     deviceIsMember: false,
+    membersLockedAt: null,
+    joinOpenUntil: null,
   };
 
   it("allows invite join to stale forming session while host is waiting alone", () => {
@@ -59,9 +61,32 @@ describe("invite join session fallback", () => {
     expect(reuse.reusable).toBe(false);
   });
 
-  it("normalizes terminal session statuses", () => {
-    expect(normalizeSessionStatus("ended")).toBe("ended");
-    expect(normalizeSessionStatus("expired")).toBe("expired");
-    expect(normalizeSessionStatus("closed")).toBe("closed");
+  it("rejects locked sessions for non-members", () => {
+    const locked: ClassSessionRow = {
+      ...staleFormingSession,
+      membersLockedAt: new Date().toISOString(),
+      joinOpenUntil: new Date(Date.now() - 1000).toISOString(),
+    };
+    const joinable = canJoinRequestedSession({
+      session: locked,
+      matchDeadlineAt: null,
+      recruitmentSessionTtlMinutes: 5,
+    });
+    expect(joinable.joinable).toBe(false);
+    expect(joinable.reason).toBe("session_members_locked");
+  });
+
+  it("allows locked session re-entry for existing members", () => {
+    const lockedMember: ClassSessionRow = {
+      ...staleFormingSession,
+      deviceIsMember: true,
+      membersLockedAt: new Date().toISOString(),
+    };
+    const joinable = canJoinRequestedSession({
+      session: lockedMember,
+      matchDeadlineAt: null,
+      recruitmentSessionTtlMinutes: 5,
+    });
+    expect(joinable.joinable).toBe(true);
   });
 });

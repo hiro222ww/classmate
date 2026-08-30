@@ -30,6 +30,11 @@ import {
   type JoinByInviteResult,
   type JoinByInviteSuccess,
 } from "@/lib/joinByInviteTypes";
+import { hasMinimumProfile } from "@/lib/profileClient";
+import {
+  buildOnboardingPath,
+  buildProfileEditPath,
+} from "@/lib/profileNavigation";
 import { buildLoginUrl } from "@/lib/authAccount";
 import { isJoinAllowedDeviceId } from "@/lib/deviceIdValidation";
 import { ensureSessionMembersLockedIfDue } from "@/lib/sessionJoinLock";
@@ -296,37 +301,9 @@ export async function executeJoinByInvite(
     }
   }
 
-  const hasProfile = await profileExistsForActor(sb, actor);
-  logInviteJoinServer("step", {
-    requestId,
-    classId,
-    deviceId,
-    userId: actor.userId,
-    hasProfile,
-    step: "profile_check",
-  });
-
-  if (!hasProfile) {
-    const inviteReturn = buildInviteRoomRedirect({
-      classId,
-      sessionId: requestedSessionId,
-      invite: true,
-    });
-    return {
-      httpStatus: 409,
-      result: failure(requestId, {
-        code: "needs_profile",
-        message: joinByInviteUserMessage("needs_profile"),
-        classId,
-        sessionId: requestedSessionId,
-        redirectTo: `/onboarding?next=${encodeURIComponent(inviteReturn)}`,
-      }),
-    };
-  }
-
   const { data: klass, error: classError } = await sb
     .from("classes")
-    .select("id,name,match_deadline_at")
+    .select("id,name,match_deadline_at,lifecycle")
     .eq("id", classId)
     .maybeSingle();
 
@@ -352,6 +329,123 @@ export async function executeJoinByInvite(
         classId,
         sessionId: requestedSessionId,
         detail: "class_not_found",
+      }),
+    };
+  }
+
+  const classLifecycle = String(
+    (klass as { lifecycle?: unknown }).lifecycle ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  const isOfficialClass = classLifecycle === "official";
+  const inviteReturnPath = buildInviteRoomRedirect({
+    classId,
+    sessionId: requestedSessionId,
+    invite: true,
+  });
+
+  if (isDeadlinePassed(klass.match_deadline_at ?? null)) {
+    return {
+      httpStatus: 403,
+      result: failure(requestId, {
+        code: "expired_invite",
+        message: joinByInviteUserMessage("expired_invite"),
+        classId,
+        sessionId: requestedSessionId,
+        detail: "match_deadline_passed",
+      }),
+    };
+  }
+
+  const recruitmentSessionTtlMinutesEarly = await getRecruitmentSessionTtlMinutes();
+  await ensureSessionMembersLockedIfDue(requestedSessionId);
+  const resolvedEarly = await resolveInviteJoinSession({
+    client: sb,
+    classId,
+    requestedSessionId,
+    deviceId,
+    matchDeadlineAt: klass.match_deadline_at ?? null,
+    recruitmentSessionTtlMinutes: recruitmentSessionTtlMinutesEarly,
+  });
+
+  logInviteJoinServer("step", {
+    requestId,
+    classId,
+    requestedSessionId,
+    deviceId,
+    userId: actor.userId,
+    inviteValid: resolvedEarly.ok,
+    step: "invite_session_resolve",
+    detail: resolvedEarly.ok ? resolvedEarly.reason : resolvedEarly.error,
+  });
+
+  if (!resolvedEarly.ok) {
+    const code = mapLegacyInviteError(resolvedEarly.error);
+    const httpStatus =
+      resolvedEarly.error === "session_members_locked" ||
+      resolvedEarly.error === "session_closed" ||
+      resolvedEarly.error === "recruitment_closed"
+        ? 403
+        : 400;
+    return {
+      httpStatus,
+      result: failure(requestId, {
+        code,
+        message: joinByInviteUserMessage(code),
+        classId,
+        sessionId: requestedSessionId,
+        detail: resolvedEarly.error,
+      }),
+    };
+  }
+
+  const profileRow = await (async () => {
+    const userId = String(actor.userId ?? "").trim();
+    if (userId) {
+      const { data } = await sb
+        .from("user_profiles")
+        .select(
+          "display_name,birth_date,gender,declared_age,declared_age_as_of"
+        )
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (data) return data;
+    }
+    const { data } = await sb
+      .from("user_profiles")
+      .select("display_name,birth_date,gender,declared_age,declared_age_as_of")
+      .eq("device_id", deviceId)
+      .maybeSingle();
+    return data;
+  })();
+
+  const hasProfileRow = await profileExistsForActor(sb, actor);
+  const hasMinProfile = hasMinimumProfile(profileRow);
+  const profileOk = isOfficialClass ? hasProfileRow : hasMinProfile;
+
+  logInviteJoinServer("step", {
+    requestId,
+    classId,
+    deviceId,
+    userId: actor.userId,
+    hasProfile: profileOk,
+    step: "profile_check",
+    detail: `lifecycle=${classLifecycle || "unknown"} official=${isOfficialClass ? 1 : 0} min=${hasMinProfile ? 1 : 0}`,
+  });
+
+  if (!profileOk) {
+    return {
+      httpStatus: 409,
+      result: failure(requestId, {
+        code: "needs_profile",
+        message: joinByInviteUserMessage("needs_profile"),
+        classId,
+        sessionId: requestedSessionId,
+        detail: isOfficialClass ? "official_profile" : "minimum_profile",
+        redirectTo: isOfficialClass
+          ? buildProfileEditPath(inviteReturnPath)
+          : buildOnboardingPath(inviteReturnPath),
       }),
     };
   }
@@ -461,55 +555,7 @@ export async function executeJoinByInvite(
     }
   }
 
-  if (isDeadlinePassed(klass.match_deadline_at ?? null)) {
-    return {
-      httpStatus: 403,
-      result: failure(requestId, {
-        code: "expired_invite",
-        message: joinByInviteUserMessage("expired_invite"),
-        classId,
-        sessionId: requestedSessionId,
-        detail: "match_deadline_passed",
-      }),
-    };
-  }
-
-  const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
-  const resolved = await resolveInviteJoinSession({
-    client: sb,
-    classId,
-    requestedSessionId,
-    deviceId,
-    matchDeadlineAt: klass.match_deadline_at ?? null,
-    recruitmentSessionTtlMinutes,
-  });
-
-  logInviteJoinServer("step", {
-    requestId,
-    classId,
-    requestedSessionId,
-    deviceId,
-    userId: actor.userId,
-    inviteValid: resolved.ok,
-    step: "invite_session_resolve",
-    detail: resolved.ok ? resolved.reason : resolved.error,
-  });
-
-  if (!resolved.ok) {
-    const code = mapLegacyInviteError(resolved.error);
-    return {
-      httpStatus: resolved.error === "recruitment_closed" ? 403 : 400,
-      result: failure(requestId, {
-        code,
-        message: joinByInviteUserMessage(code),
-        classId,
-        sessionId: requestedSessionId,
-        detail: resolved.error,
-      }),
-    };
-  }
-
-  const sessionId = resolved.sessionId;
+  const sessionId = resolvedEarly.sessionId;
   const displayName = await resolveDisplayName(sb, actor);
 
   const { data: existingSessionMember } = await sb
@@ -526,8 +572,8 @@ export async function executeJoinByInvite(
       return {
         httpStatus: 403,
         result: failure(requestId, {
-          code: "expired_invite",
-          message: recruitmentClosedUserMessage("session_members_locked"),
+          code: "session_members_locked",
+          message: joinByInviteUserMessage("session_members_locked"),
           classId,
           sessionId,
           detail: "session_members_locked",
@@ -586,7 +632,7 @@ export async function executeJoinByInvite(
     };
   }
 
-  let memberCount = resolved.memberCount;
+  let memberCount = resolvedEarly.memberCount;
   try {
     memberCount = await countSessionMembers(sb, sessionId);
   } catch (error) {
@@ -619,10 +665,10 @@ export async function executeJoinByInvite(
       userId: actor.userId,
       deviceId,
       memberCount,
-      sessionStatus: String(sessionRow?.status ?? resolved.sessionStatus ?? null),
-      sessionFallback: resolved.sessionFallback,
-      sessionReactivated: resolved.sessionReactivated,
-      sessionFallbackReason: resolved.reason ?? null,
+      sessionStatus: String(sessionRow?.status ?? resolvedEarly.sessionStatus ?? null),
+      sessionFallback: resolvedEarly.sessionFallback,
+      sessionReactivated: resolvedEarly.sessionReactivated,
+      sessionFallbackReason: resolvedEarly.reason ?? null,
     }),
   };
 }

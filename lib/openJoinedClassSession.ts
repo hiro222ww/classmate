@@ -206,6 +206,8 @@ async function loadHintSessionRow(
       memberCount: memberIds.length,
       memberIds,
       deviceIsMember: memberIds.includes(deviceId),
+      membersLockedAt: null,
+      joinOpenUntil: null,
     },
     sameClass,
     sessionClassId,

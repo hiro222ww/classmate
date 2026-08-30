@@ -9,6 +9,39 @@ export const INVITE_LINK_EXPIRED_MESSAGE = recruitmentClosedUserMessage(
   "recruitment_closed"
 );
 
+export const INVITE_RECRUITMENT_ENDED_TITLE = "この通話の募集は終了しました";
+export const INVITE_RECRUITMENT_ENDED_MESSAGE =
+  "この通話には参加できません。新しい通話を探してください。";
+
+/** Invite join failures that must show the recruitment-ended panel (no rematch / retry loop). */
+export function isInviteRecruitmentEndedError(
+  errorCode: string | null | undefined,
+  detail?: string | null
+): boolean {
+  const code = String(errorCode ?? "").trim();
+  const detailCode = String(detail ?? "").trim();
+  if (code === "session_closed" || code === "session_members_locked") {
+    return true;
+  }
+  if (
+    detailCode === "session_closed" ||
+    detailCode === "session_members_locked"
+  ) {
+    return true;
+  }
+  if (
+    (code === "expired_invite" || code === "invite_expired") &&
+    (detailCode === "closed" ||
+      detailCode === "ended" ||
+      detailCode === "expired" ||
+      detailCode === "session_closed" ||
+      detailCode === "session_members_locked")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 const INVITE_ROUTE_STATE_KEY = "classmate_invite_route_state";
 
 export type StoredInviteRouteState = {
@@ -163,7 +196,9 @@ export function isInviteJoinFailureMessage(message: string): boolean {
     value.includes("招待されたクラス") ||
     value === "参加に失敗しました" ||
     value.includes("参加できるクラス数") ||
-    value === INVITE_LINK_EXPIRED_MESSAGE
+    value === INVITE_LINK_EXPIRED_MESSAGE ||
+    value === INVITE_RECRUITMENT_ENDED_MESSAGE ||
+    value.includes("募集は終了")
   );
 }
 
@@ -172,6 +207,12 @@ export function formatInviteJoinApiError(
   message?: string | null
 ): string {
   const code = String(errorCode ?? "").trim();
+  if (
+    code === "session_closed" ||
+    code === "session_members_locked"
+  ) {
+    return INVITE_RECRUITMENT_ENDED_MESSAGE;
+  }
   if (message && String(message).trim()) {
     return String(message).trim();
   }
@@ -194,7 +235,6 @@ export function formatInviteJoinApiError(
     code === "invalid_invite" ||
     code === "invite_expired" ||
     code === "expired_invite" ||
-    code === "session_closed" ||
     code === "session_not_joinable" ||
     code === "recruitment_closed" ||
     code === "session_members_locked" ||

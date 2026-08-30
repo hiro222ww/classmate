@@ -37,9 +37,11 @@ import {
   buildCurrentPathReturnTo,
   buildOnboardingPath,
   buildProfileEditPath,
+  sanitizeReturnTo,
 } from "@/lib/profileNavigation";
 import { shareOrCopyInviteUrl } from "@/lib/inviteShare";
 import { recruitmentClosedUserMessage } from "@/lib/callRecruitmentUi";
+import { EntryFailurePanel } from "@/components/EntryFailurePanel";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
 import {
   formatMemberDisplayName,
@@ -101,8 +103,11 @@ import { logDeviceIdInit, logDeviceIdStability } from "@/lib/deviceDiagnostics";
 import {
   createEmptyInviteJoinApiTrace,
   formatInviteJoinApiError,
+  INVITE_RECRUITMENT_ENDED_MESSAGE,
+  INVITE_RECRUITMENT_ENDED_TITLE,
   isInviteJoinFailureMessage,
   isInviteJoinGraceActive,
+  isInviteRecruitmentEndedError,
   logInviteErrorUi,
   logInviteJoinClient,
   logInviteRoute,
@@ -121,6 +126,7 @@ import {
 import {
   AUTO_CALL_MEMBERS_STABLE_MS,
   AUTO_CALL_MIN_MEMBERS,
+  MATCH_CALL_ENTRY_MIN_MEMBERS,
   AUTO_CALL_STABLE_DELAY_MS,
   LOBBY_WAIT_TIMEOUT_MS,
   RECENT_REMATCH_CALL_BLOCK_MS,
@@ -862,6 +868,7 @@ export default function RoomClient() {
   >("idle");
   const [invitePrepSlow, setInvitePrepSlow] = useState(false);
   const [invitePrepVerySlow, setInvitePrepVerySlow] = useState(false);
+  const [inviteRecruitmentEnded, setInviteRecruitmentEnded] = useState(false);
   const [joinBanner, setJoinBanner] = useState<MemberJoinEvent | null>(null);
   const [highlightMemberIds, setHighlightMemberIds] = useState<Set<string>>(
     () => new Set()
@@ -2310,7 +2317,7 @@ if (!res.ok || !json?.ok) {
         lastSuccessfulFetchOpGenRef.current = roomOpGenRef.current;
         writeSessionMembersSnapshot(sessionId, classId, incomingMembers);
 
-        if (incomingMembers.length >= AUTO_CALL_MIN_MEMBERS) {
+        if (incomingMembers.length >= MATCH_CALL_ENTRY_MIN_MEMBERS) {
           membersCount2StreakRef.current += 1;
           if (membersCount2SinceRef.current === null) {
             membersCount2SinceRef.current = Date.now();
@@ -2672,7 +2679,7 @@ if (!res.ok || !json?.ok) {
             `sessionMembers=${sessionMemberIds.size}`
         );
 
-        if (sessionMemberIds.size >= 2) {
+        if (sessionMemberIds.size >= MATCH_CALL_ENTRY_MIN_MEMBERS) {
           presenceMapSeen2Ref.current = true;
         }
 
@@ -3089,6 +3096,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       setInvitePrepStage("invite_link");
       setInvitePrepSlow(false);
       setInvitePrepVerySlow(false);
+      setInviteRecruitmentEnded(false);
     }
 
   try {
@@ -3211,14 +3219,59 @@ const name = rawName === "You" ? "参加者" : rawName;
             error: responseCode,
             step: "needs_profile",
           });
+          const returnTo = buildCurrentPathReturnTo(
+            pathname,
+            searchParams.toString()
+          );
+          const apiRedirect = sanitizeReturnTo(
+            String(inviteResult.data.redirectTo ?? "").trim()
+          );
+          const detail = String(inviteResult.data.detail ?? "").trim();
+          const useOnboarding =
+            detail === "minimum_profile" ||
+            apiRedirect.startsWith("/onboarding");
+          setResolving(false);
+          setInvitePrepStage("idle");
           router.push(
             withDev(
-              buildOnboardingPath(
-                buildCurrentPathReturnTo(pathname, searchParams.toString())
-              )
+              useOnboarding
+                ? buildOnboardingPath(returnTo)
+                : buildProfileEditPath(returnTo)
             )
           );
           joinResultError = responseCode;
+          return;
+        }
+
+        if (
+          isInviteRecruitmentEndedError(
+            responseCode,
+            inviteResult.data.detail
+          )
+        ) {
+          logInviteRoute("join-failed", {
+            classId,
+            sessionId,
+            error: responseCode,
+            step: "recruitment_ended",
+          });
+          logInviteJoinClient("failed", {
+            classId,
+            sessionId,
+            deviceId,
+            step: "join-by-invite",
+            error: responseCode,
+          });
+          joinResultOk = false;
+          joinResultError = responseCode;
+          joinedSessionKeyRef.current = null;
+          setLifecycleReady(false);
+          setResolving(false);
+          setInvitePrepSlow(false);
+          setInvitePrepVerySlow(false);
+          setInvitePrepStage("error");
+          setInviteRecruitmentEnded(true);
+          setErr(INVITE_RECRUITMENT_ENDED_MESSAGE);
           return;
         }
 
@@ -3658,6 +3711,12 @@ const name = rawName === "You" ? "参加者" : rawName;
         setLifecycleReady(false);
         setResolving(false);
         setInvitePrepStage("error");
+        if (
+          message === INVITE_RECRUITMENT_ENDED_MESSAGE ||
+          message.includes("募集は終了")
+        ) {
+          setInviteRecruitmentEnded(true);
+        }
         setErr(message);
         return;
       }
@@ -3988,7 +4047,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     const stableSince = membersCount2SinceRef.current;
     const streak = membersCount2StreakRef.current;
     const membersStable =
-      streak >= 2 ||
+      streak >= 1 ||
       (stableSince !== null &&
         Date.now() - stableSince >= AUTO_CALL_MEMBERS_STABLE_MS);
 
@@ -3996,7 +4055,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       cancelAutoCallTimer("members_unstable");
       if (
         stableSince !== null &&
-        memberIds.length >= AUTO_CALL_MIN_MEMBERS &&
+        memberIds.length >= MATCH_CALL_ENTRY_MIN_MEMBERS &&
         autoCallTimerRef.current === null
       ) {
         const remaining =
@@ -4066,7 +4125,7 @@ const name = rawName === "You" ? "参加者" : rawName;
       const since = membersCount2SinceRef.current;
       const countStreak = membersCount2StreakRef.current;
       const stillStable =
-        countStreak >= 2 ||
+        countStreak >= 1 ||
         (since !== null && Date.now() - since >= AUTO_CALL_MEMBERS_STABLE_MS);
       if (!stillStable || !presenceMapSeen2Ref.current) {
         roomLog("[room-auto-call] cancel reason=members_unstable");
@@ -4402,10 +4461,23 @@ const name = rawName === "You" ? "参加者" : rawName;
         >
           <div style={{ display: "grid", gap: 12 }}>
             <InAppBrowserNotice compact />
-            {invite &&
-            (sessionResolving ||
-              invitePrepStage === "error" ||
-              invitePrepVerySlow) ? (
+            {invite && inviteRecruitmentEnded ? (
+              <EntryFailurePanel
+                title={INVITE_RECRUITMENT_ENDED_TITLE}
+                message={INVITE_RECRUITMENT_ENDED_MESSAGE}
+                errorCode={
+                  err?.includes("締め切") || err?.includes("参加できません")
+                    ? "session_members_locked"
+                    : "session_closed"
+                }
+                hideErrorCode
+                onHome={goHome}
+                homeLabel="ホームへ戻る"
+              />
+            ) : invite &&
+              (sessionResolving ||
+                invitePrepStage === "error" ||
+                invitePrepVerySlow) ? (
               <InviteJoinProgress
                 stage={
                   invitePrepStage === "idle" ? "invite_link" : invitePrepStage
@@ -4420,6 +4492,7 @@ const name = rawName === "You" ? "参加者" : rawName;
                   setInvitePrepStage("invite_link");
                   setInvitePrepSlow(false);
                   setInvitePrepVerySlow(false);
+                  setInviteRecruitmentEnded(false);
                   setErr("");
                   joinedSessionKeyRef.current = null;
                   void (async () => {
@@ -4521,7 +4594,7 @@ const name = rawName === "You" ? "参加者" : rawName;
                 content="この待機ルームに直接参加できるリンクをコピーします。"
               >
                 <span className="cm-section-title" style={{ fontWeight: 900 }}>
-                  友達を招待
+                  友達を招待する
                 </span>
               </HelpTip>
 

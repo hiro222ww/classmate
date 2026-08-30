@@ -57,7 +57,11 @@ import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { supabase } from "@/lib/supabaseClient";
-import { markAutoCallOnce } from "@/lib/autoCallOnce";
+import {
+  buildMatchedRoomPath,
+  prepareMatchedCallEntry,
+  resolveMatchJoinSessionIds,
+} from "@/lib/enterMatchedCallClient";
 import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import {
   clearLocallyHiddenClass,
@@ -402,12 +406,9 @@ export default function HomeClient() {
     sessionId: string,
     opts?: { openJoinedClass?: boolean }
   ) {
-    return withDev(
-      `/room?autojoin=1&classId=${encodeURIComponent(
-        classId
-      )}&sessionId=${encodeURIComponent(sessionId)}` +
-        (opts?.openJoinedClass ? "&openJoinedClass=1" : "")
-    );
+    return buildMatchedRoomPath(classId, sessionId, {
+      openJoinedClass: opts?.openJoinedClass,
+    });
   }
 
   function buildCallUrl(classId: string, sessionId: string) {
@@ -2317,25 +2318,11 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         return;
       }
 
-     const row = Array.isArray(json?.data) ? json.data[0] : json;
+      const { classId, sessionId } = resolveMatchJoinSessionIds(
+        json as Record<string, unknown>
+      );
 
-const classId = String(
-  json?.classId ??
-    json?.class_id ??
-    row?.classId ??
-    row?.class_id ??
-    ""
-).trim();
-
-const sessionId = String(
-  json?.sessionId ??
-    json?.session_id ??
-    row?.sessionId ??
-    row?.session_id ??
-    ""
-).trim();
-
-console.log("[home quick] resolved ids", { classId, sessionId, json });
+      console.log("[home quick] resolved ids", { classId, sessionId, json });
 
       if (!classId || !sessionId) {
         alert("quick_join_missing_ids");
@@ -2343,7 +2330,15 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
       }
 
       clearClassLeftLocally(classId);
-      markAutoCallOnce(sessionId, currentDeviceId);
+      const entry = prepareMatchedCallEntry({
+        classId,
+        sessionId,
+        deviceId: currentDeviceId,
+      });
+      if (!entry.ok) {
+        alert(entry.error);
+        return;
+      }
       void trackFunnelEvent({
         eventName: "call_started",
         deviceId: currentDeviceId,
@@ -2351,7 +2346,7 @@ console.log("[home quick] resolved ids", { classId, sessionId, json });
         classId,
         meta: { source: "quick_join_immediate" },
       });
-      router.push(buildCallUrl(classId, sessionId));
+      router.push(entry.callPath);
     } catch (e: any) {
       console.error("[home quick free] error =", e);
       alert(e?.message || "quick_join_failed");

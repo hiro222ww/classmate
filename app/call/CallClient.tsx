@@ -1569,6 +1569,9 @@ export default function CallClient() {
               ? String(json.session.members_locked_at)
               : null
           );
+          if (json.session?.members_locked_at) {
+            setClassVoteMembersLocked(true);
+          }
         }
       } catch (e: unknown) {
         const message =
@@ -3666,6 +3669,7 @@ export default function CallClient() {
       filled={filled}
       capacity={capacity}
       membersSyncRevision={membersSyncRevision}
+      membersLocked={classVoteMembersLocked}
       showCallStuckReconnect={showCallStuckReconnect}
       onCallStuckReconnect={() => handleCallStuckReconnect()}
       meetingPlanLabel={

@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { markAutoCallOnce } from "@/lib/autoCallOnce";
+import {
+  prepareMatchedCallEntry,
+  resolveMatchJoinSessionIds,
+} from "@/lib/enterMatchedCallClient";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { DevModeSwitcher } from "@/components/DevModeSwitcher";
@@ -989,8 +992,9 @@ export default function SelectClient() {
         return;
       }
 
-      const classId = safeTrim(matchJson?.classId);
-      const sessionId = safeTrim(matchJson?.sessionId);
+      const { classId, sessionId } = resolveMatchJoinSessionIds(
+        (matchJson ?? {}) as Record<string, unknown>
+      );
       const sessionStatus = safeTrim(matchJson?.sessionStatus);
       const sessionCreatedAt = safeTrim(matchJson?.sessionCreatedAt);
       const recruitmentSessionTtlUnlimited =
@@ -1033,28 +1037,47 @@ export default function SelectClient() {
 
       logMatchJoinClientSuccess(deviceId, classId, sessionId);
 
-      if (!matchBody.openJoinedClass) {
-        const autoCallDeviceId = String(deviceId || getDeviceId() || "").trim();
-        if (autoCallDeviceId) {
-          markAutoCallOnce(sessionId, autoCallDeviceId);
-        }
+      const autoCallDeviceId = String(deviceId || getDeviceId() || "").trim();
+
+      // Open joined class → room. Fresh theme match → /call immediately (solo OK).
+      if (matchBody.openJoinedClass) {
+        const roomWithDev = withDev(
+          `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
+            `&sessionId=${encodeURIComponent(sessionId)}&openJoinedClass=1`
+        );
+        pushRecentClass(
+          {
+            id: classId,
+            title: b.title,
+            url: roomWithDev,
+          },
+          20
+        );
+        window.location.href = roomWithDev;
+        return;
       }
 
-      const roomUrl =
-        `/call?sessionId=${encodeURIComponent(sessionId)}` +
-        `&classId=${encodeURIComponent(classId)}` +
-        (devQuery ? `&${devQuery}` : "");
+      const entry = prepareMatchedCallEntry({
+        classId,
+        sessionId,
+        deviceId: autoCallDeviceId,
+      });
+      if (!entry.ok) {
+        showEntryFailure(entry.error);
+        return;
+      }
 
+      // prepareMatchedCallEntry already applies lib withDev (preserves ?dev=).
       pushRecentClass(
         {
           id: classId,
           title: b.title,
-          url: roomUrl,
+          url: entry.callPath,
         },
         20
       );
 
-      window.location.href = roomUrl;
+      window.location.href = entry.callPath;
     } catch (e: any) {
       console.error(e);
       showEntryFailure(

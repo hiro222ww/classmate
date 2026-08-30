@@ -3,6 +3,8 @@ export type JoinByInviteSuccessCode = "joined" | "already_member";
 export type JoinByInviteFailureCode =
   | "invalid_invite"
   | "expired_invite"
+  | "session_closed"
+  | "session_members_locked"
   | "class_full"
   | "age_restricted"
   | "needs_profile"
@@ -73,6 +75,9 @@ export function joinByInviteUserMessage(code: JoinByInviteCode): string {
       return "招待リンクが無効です。もう一度招待してもらってください";
     case "expired_invite":
       return "この通話の参加受付は終了しています。募集終了後は途中参加できません。";
+    case "session_closed":
+    case "session_members_locked":
+      return "この通話には参加できません。新しい通話を探してください。";
     case "class_full":
       return "参加できるクラス数の上限に達しています";
     case "age_restricted":
@@ -94,9 +99,14 @@ export function joinByInviteUserMessage(code: JoinByInviteCode): string {
 
 export function mapLegacyInviteError(error: string): JoinByInviteFailureCode {
   const code = String(error ?? "").trim();
+  if (code === "session_members_locked") {
+    return "session_members_locked";
+  }
+  if (code === "session_closed") {
+    return "session_closed";
+  }
   if (
     code === "invite_expired" ||
-    code === "session_closed" ||
     code === "session_not_joinable" ||
     code === "recruitment_closed" ||
     code === "match_deadline_passed" ||

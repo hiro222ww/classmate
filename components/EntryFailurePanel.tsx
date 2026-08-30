@@ -8,8 +8,12 @@ type EntryFailurePanelProps = {
   errorCode?: string;
   onRetry?: () => void;
   onResetDevice?: () => void;
+  onHome?: () => void;
   retryLabel?: string;
   resetLabel?: string;
+  homeLabel?: string;
+  /** When true, hide the technical error code line (user-facing invite errors). */
+  hideErrorCode?: boolean;
 };
 
 export function EntryFailurePanel({
@@ -18,12 +22,16 @@ export function EntryFailurePanel({
   errorCode,
   onRetry,
   onResetDevice,
+  onHome,
   retryLabel = "もう一度試す",
   resetLabel = "端末情報をリセットして入り直す",
+  homeLabel = "ホームへ戻る",
+  hideErrorCode = false,
 }: EntryFailurePanelProps) {
   return (
     <div
       className="cm-entry-notice"
+      data-cm-entry-failure={errorCode || "1"}
       style={{
         marginTop: 12,
         padding: "14px 16px",
@@ -35,7 +43,7 @@ export function EntryFailurePanel({
     >
       <div style={{ fontWeight: 900, fontSize: 15 }}>{title}</div>
       <div style={{ marginTop: 8, lineHeight: 1.65, fontSize: 14 }}>{message}</div>
-      {errorCode ? (
+      {errorCode && !hideErrorCode ? (
         <div style={{ marginTop: 6, fontSize: 12, opacity: 0.85 }}>
           コード: {errorCode}
         </div>
@@ -48,6 +56,23 @@ export function EntryFailurePanel({
           flexWrap: "wrap",
         }}
       >
+        {onHome ? (
+          <button
+            type="button"
+            onClick={onHome}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 10,
+              border: "1px solid #d97706",
+              background: "#fff",
+              color: "#92400e",
+              fontWeight: 800,
+              cursor: "pointer",
+            }}
+          >
+            {homeLabel}
+          </button>
+        ) : null}
         {onRetry ? (
           <button
             type="button"

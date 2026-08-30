@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
@@ -15,8 +15,12 @@ import { withDev } from "@/lib/withDev";
 export function MinProfileOnboardingClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = sanitizeReturnTo(
-    searchParams.get("next") ?? searchParams.get("returnTo") ?? "/"
+  const nextPath = useMemo(
+    () =>
+      sanitizeReturnTo(
+        searchParams.get("next") ?? searchParams.get("returnTo") ?? "/"
+      ),
+    [searchParams]
   );
   const [deviceId, setDeviceId] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -173,7 +177,11 @@ export function MinProfileOnboardingClient() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "保存中…" : "ホームへ進む"}
+          {busy
+            ? "保存中…"
+            : nextPath && nextPath !== "/"
+              ? "保存して通話へ戻る"
+              : "ホームへ進む"}
         </button>
       </form>
     </main>

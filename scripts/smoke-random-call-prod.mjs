@@ -287,10 +287,10 @@ const out = ${JSON.stringify(outFile)};
     const btn = page.getByRole('button', { name: /最大5人で話す/ });
     await btn.waitFor({ timeout: 15000 });
     await btn.click();
-    await page.waitForFunction(() => /\\/room/.test(window.location.pathname), { timeout: 90000 });
+    await page.waitForFunction(() => /\\/call/.test(window.location.pathname), { timeout: 90000 });
     const url = page.url();
-    if (!url.includes('sessionId=') || !url.includes('autojoin=1')) {
-      throw new Error('expected room autojoin url: ' + url);
+    if (!url.includes('sessionId=') || !url.includes('/call')) {
+      throw new Error('expected call url after CTA: ' + url);
     }
     return { url };
   });
@@ -301,13 +301,13 @@ const out = ${JSON.stringify(outFile)};
       sessionStorage.setItem('classmate_auto_call_once:' + sid + ':' + id, '1');
     }, { id: d1, sid: sessionId, cid: classId });
     await page.goto(
-      BASE + '/room?autojoin=1&classId=' + classId + '&sessionId=' + sessionId,
+      BASE + '/call?classId=' + classId + '&sessionId=' + sessionId,
       { waitUntil: 'domcontentloaded', timeout: 60000 }
     );
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(3000);
     const url = page.url();
     if (!url.includes('/call')) {
-      throw new Error('expected auto redirect to /call, still at ' + url);
+      throw new Error('expected stay on /call, still at ' + url);
     }
     return { url };
   });
