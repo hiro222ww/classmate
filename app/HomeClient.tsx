@@ -13,6 +13,7 @@ import {
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
+import { buildThemeSelectPath } from "@/lib/joinMode";
 import { trackFunnelEvent } from "@/lib/funnelEvents";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
@@ -2261,6 +2262,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         topicKey: null,
         worldKey: "default",
         capacity: 5,
+        intentMode: "call",
       });
 
       console.log(
@@ -2713,19 +2715,17 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         ) : null}
         <JoinNewCard
           className="home-dash-join"
-          quickJoinBusy={quickBusy}
-          quickJoinDisabled={
+          callBusy={quickBusy}
+          callDisabled={
             (!joinWindowOpen && !opsTestFlags.ignoreAdmission) || authLoading
           }
-          quickJoinLabel={
+          callLabel={
             adminCanBypassAdmission
               ? "管理者としてテスト入室"
-              : "最大5人で話す"
+              : undefined
           }
-          quickJoinHint=""
-          themeSelectHref={withDev("/class/select")}
-          themeSelectLabel="テーマを選んで話す"
-          onQuickJoin={() => {
+          chatDisabled={authLoading}
+          onCallStart={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
               return;
@@ -2736,10 +2736,21 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             });
             void quickJoinFreeAndOpen();
           }}
+          onChatStart={() => {
+            if (!hasMinimumProfile(profile)) {
+              router.push("/onboarding");
+              return;
+            }
+            void trackFunnelEvent({
+              eventName: "chat_cta_clicked",
+              deviceId: getDeviceId(),
+            });
+            router.push(withDev(buildThemeSelectPath("chat", { dev: dev || null })));
+          }}
         />
       </div>
 
-      {/* Joined classes: メニュー → マイクラス (/class/mine). Theme pick: /class/select. */}
+      {/* Joined classes: メニュー → マイクラス (/class/mine). Theme pick: /class/select?mode=… */}
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 

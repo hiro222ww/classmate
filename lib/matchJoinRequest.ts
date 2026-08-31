@@ -1,3 +1,5 @@
+import type { JoinMode } from "@/lib/joinMode";
+
 export type MatchJoinRequestBody = {
   deviceId: string;
   worldKey: string;
@@ -8,6 +10,8 @@ export type MatchJoinRequestBody = {
   openJoinedClass?: boolean;
   classId?: string;
   sessionId?: string;
+  /** Client-only hint for future theme+mode match pools; server ignores today. */
+  intentMode?: JoinMode;
 };
 
 /**
@@ -23,6 +27,7 @@ export function buildMatchJoinRequestBody(params: {
   maxAge?: number;
   openJoinedClassId?: string | null;
   sessionId?: string | null;
+  intentMode?: JoinMode;
 }): MatchJoinRequestBody {
   const body: MatchJoinRequestBody = {
     deviceId: params.deviceId,
@@ -48,6 +53,10 @@ export function buildMatchJoinRequestBody(params: {
     if (sessionId) {
       body.sessionId = sessionId;
     }
+  }
+
+  if (params.intentMode) {
+    body.intentMode = params.intentMode;
   }
 
   return body;
