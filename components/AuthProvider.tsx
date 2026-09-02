@@ -26,6 +26,8 @@ import {
   type AuthAccountSnapshot,
   type AuthStatus,
 } from "@/lib/authStatus";
+import { shouldSkipAuthBootstrapForPath } from "@/lib/adminChromePath";
+import { usePathname } from "next/navigation";
 
 type AuthContextValue = {
   status: AuthStatus;
@@ -80,6 +82,7 @@ async function accountFromSupabaseSession(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [account, setAccount] = useState<AuthAccountSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
+        if (shouldSkipAuthBootstrapForPath(pathname)) {
+          if (gen !== refreshGenRef.current) return;
+          applyResolved(null);
+          return;
+        }
+
         if (isAuthCallbackInProgress()) {
           // OAuth / callback in flight — stay loading until session settles.
           if (!resolvedOnceRef.current) {
@@ -183,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [applyResolved]
+    [applyResolved, pathname]
   );
 
   useEffect(() => {

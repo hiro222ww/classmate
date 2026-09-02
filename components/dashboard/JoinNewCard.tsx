@@ -25,8 +25,28 @@ type JoinNewCardProps = {
   chatLabel?: string;
   themeSelectHref?: string;
   themeSelectLabel?: string;
+  /** When set (without navigating), renders a button instead of a Link. */
+  onThemeSelect?: () => void;
   onVoiceJoin: () => void;
   onChatJoin: () => void;
+};
+
+const THEME_SELECT_STYLE: React.CSSProperties = {
+  ...SECONDARY_BTN,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  textDecoration: "none",
+  padding: "12px 16px",
+  fontSize: 14,
+  fontWeight: 800,
+  borderRadius: 14,
+  border: "1px solid rgba(148, 163, 184, 0.45)",
+  background: "#fff",
+  color: "#475569",
+  boxShadow: "none",
+  width: "100%",
+  cursor: "pointer",
 };
 
 /** Home hero: voice + chat at equal priority, theme select as sub-link below. */
@@ -39,6 +59,7 @@ export function JoinNewCard({
   chatLabel = "💬 チャットから始める！",
   themeSelectHref,
   themeSelectLabel = "テーマを選んで始める",
+  onThemeSelect,
   onVoiceJoin,
   onChatJoin,
 }: JoinNewCardProps) {
@@ -94,25 +115,25 @@ export function JoinNewCard({
           {chatBusy ? "参加中…" : chatLabel}
         </button>
       </div>
-      {themeSelectHref ? (
+      {onThemeSelect ? (
+        <button
+          type="button"
+          className="cm-cta-secondary cm-home-theme-select"
+          onClick={onThemeSelect}
+          disabled={joinDisabled}
+          style={{
+            ...THEME_SELECT_STYLE,
+            opacity: joinDisabled ? 0.55 : 1,
+            cursor: joinDisabled ? "not-allowed" : "pointer",
+          }}
+        >
+          {themeSelectLabel}
+        </button>
+      ) : themeSelectHref ? (
         <Link
           href={themeSelectHref}
           className="cm-cta-secondary cm-home-theme-select"
-          style={{
-            ...SECONDARY_BTN,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            textDecoration: "none",
-            padding: "12px 16px",
-            fontSize: 14,
-            fontWeight: 800,
-            borderRadius: 14,
-            border: "1px solid rgba(148, 163, 184, 0.45)",
-            background: "#fff",
-            color: "#475569",
-            boxShadow: "none",
-          }}
+          style={THEME_SELECT_STYLE}
         >
           {themeSelectLabel}
         </Link>

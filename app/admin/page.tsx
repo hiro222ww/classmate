@@ -6,6 +6,11 @@ export const dynamic = "force-dynamic";
 
 const cards = [
   {
+    title: "初回登録プレビュー",
+    desc: "広告撮影用。最小プロフィール→ホーム二択をDB変更なしで確認",
+    href: "/admin/onboarding-preview",
+  },
+  {
     title: "撮影用デモ通話",
     desc: "広報録画・スクショ用。WebRTCなしで通話画面を再現",
     href: "/call/demo",
