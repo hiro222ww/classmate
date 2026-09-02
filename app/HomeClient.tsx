@@ -16,8 +16,10 @@ import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import { buildThemeSelectPath } from "@/lib/joinMode";
 import {
   canStartMatchJoin,
-  formatAdmissionClosedNotice,
   guardMatchJoinAdmission,
+  resolveAdmissionStatusNotice,
+  resolveAdmissionStatusPillText,
+  type AdmissionLoadState,
 } from "@/lib/admissionJoinGate";
 import { trackFunnelEvent } from "@/lib/funnelEvents";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
@@ -451,7 +453,8 @@ export default function HomeClient() {
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
   const [joinWindowOpen, setJoinWindowOpen] = useState(false);
-  const [joinWindowResolved, setJoinWindowResolved] = useState(false);
+  const [joinWindowLoadState, setJoinWindowLoadState] =
+    useState<AdmissionLoadState>("loading");
   const [joinWindowText, setJoinWindowText] = useState("");
 
   function formatAdmissionRange(startRaw?: string, endRaw?: string) {
@@ -473,18 +476,27 @@ export default function HomeClient() {
     return `${left}〜${right}`;
   }
   const adminCanBypassAdmission =
-    adminAuthenticated && opsTestFlags.ignoreAdmission && !joinWindowOpen;
+    adminAuthenticated &&
+    opsTestFlags.ignoreAdmission &&
+    joinWindowLoadState === "ready" &&
+    !joinWindowOpen;
   const matchJoinAdmissionGate = {
-    admissionResolved: joinWindowResolved,
+    loadState: joinWindowLoadState,
     joinWindowOpen,
     ignoreAdmission: opsTestFlags.ignoreAdmission,
   };
   const matchJoinBlocked =
     !canStartMatchJoin(matchJoinAdmissionGate) || authStatus === "loading";
-  const admissionClosedNotice = formatAdmissionClosedNotice(
+  const admissionStatusNotice = resolveAdmissionStatusNotice({
+    loadState: joinWindowLoadState,
     joinWindowOpen,
-    joinWindowText
-  );
+    admissionText: joinWindowText,
+  });
+  const admissionPillText = resolveAdmissionStatusPillText({
+    loadState: joinWindowLoadState,
+    joinWindowOpen,
+    admissionText: joinWindowText,
+  });
   const opsTestActive =
     adminAuthenticated &&
     (opsTestFlags.ignoreAdmission ||
@@ -871,40 +883,41 @@ export default function HomeClient() {
     }
   }, [mounted, authStatus, profileChecked, profile, router]);
 
+  const reloadJoinWindow = useCallback(async () => {
+    setJoinWindowLoadState("loading");
+    try {
+      const res = await fetch("/api/admission/status", { cache: "no-store" });
+      const json = await readJsonSafe(res);
+
+      console.log("[home] admission status =", json);
+
+      if (!res.ok || !json?.ok) {
+        setJoinWindowOpen(false);
+        setJoinWindowText("");
+        setJoinWindowLoadState("error");
+        return;
+      }
+
+      setJoinWindowOpen(Boolean(json.open));
+      setJoinWindowText(String(json.text ?? "").trim());
+      setJoinWindowLoadState("ready");
+    } catch (e) {
+      console.warn("[home] admission status load failed", e);
+      setJoinWindowOpen(false);
+      setJoinWindowText("");
+      setJoinWindowLoadState("error");
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
-    async function reloadJoinWindow() {
-      try {
-        const res = await fetch("/api/admission/status", { cache: "no-store" });
-        const json = await readJsonSafe(res);
-
-        console.log("[home] admission status =", json);
-
-        if (cancelled) return;
-
-        if (!res.ok || !json?.ok) {
-          setJoinWindowOpen(true);
-          setJoinWindowText("");
-          setJoinWindowResolved(true);
-          return;
-        }
-
-        const isOpen = Boolean(json.open);
-        setJoinWindowOpen(isOpen);
-        setJoinWindowText(String(json.text ?? "").trim());
-        setJoinWindowResolved(true);
-      } catch (e) {
-        console.warn("[home] admission status load failed", e);
-        if (!cancelled) {
-          setJoinWindowOpen(true);
-          setJoinWindowText("");
-          setJoinWindowResolved(true);
-        }
-      }
+    async function loadJoinWindow() {
+      await reloadJoinWindow();
+      if (cancelled) return;
     }
 
-    void reloadJoinWindow();
+    void loadJoinWindow();
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
@@ -913,14 +926,16 @@ export default function HomeClient() {
     };
 
     document.addEventListener("visibilitychange", onVisible);
-    const timer = window.setInterval(reloadJoinWindow, 60_000);
+    const timer = window.setInterval(() => {
+      void reloadJoinWindow();
+    }, 60_000);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, []);
+  }, [reloadJoinWindow]);
 
   
 
@@ -2259,7 +2274,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     try {
       if (
         !guardMatchJoinAdmission({
-          admissionResolved: joinWindowResolved,
+          loadState: joinWindowLoadState,
           joinWindowOpen,
           ignoreAdmission: opsTestFlags.ignoreAdmission,
         })
@@ -2684,7 +2699,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             アカウント情報を読み込んでいます
           </p>
         ) : null}
-        {joinWindowText ? (
+        {admissionPillText ? (
           <div
             style={{
               marginTop: 8,
@@ -2701,12 +2716,39 @@ console.log("[home] resolved ids", { classId, sessionId, json });
                   width: 7,
                   height: 7,
                   borderRadius: 999,
-                  background: joinWindowOpen ? "#16a34a" : "#94a3b8",
+                  background:
+                    joinWindowLoadState === "error"
+                      ? "#f59e0b"
+                      : joinWindowLoadState === "loading"
+                        ? "#94a3b8"
+                        : joinWindowOpen
+                          ? "#16a34a"
+                          : "#94a3b8",
                   display: "inline-block",
                 }}
               />
-              {joinWindowText}
+              {admissionPillText}
             </StatusPill>
+            {joinWindowLoadState === "error" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void reloadJoinWindow();
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #e2e8f0",
+                  background: "#fff",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  color: "#64748b",
+                  cursor: "pointer",
+                }}
+              >
+                更新
+              </button>
+            ) : null}
             {opsTestActive ? <StatusPill>運営テスト中</StatusPill> : null}
           </div>
         ) : null}
@@ -2755,7 +2797,10 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           voiceBusy={quickBusy}
           chatBusy={quickBusy}
           matchJoinDisabled={matchJoinBlocked}
-          admissionClosedNotice={admissionClosedNotice}
+          admissionStatusNotice={admissionStatusNotice}
+          onAdmissionRefresh={() => {
+            void reloadJoinWindow();
+          }}
           voiceLabel={
             adminCanBypassAdmission
               ? "管理者としてテスト入室（通話）"
@@ -2775,7 +2820,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             }
             if (
               !guardMatchJoinAdmission({
-                admissionResolved: joinWindowResolved,
+                loadState: joinWindowLoadState,
                 joinWindowOpen,
                 ignoreAdmission: opsTestFlags.ignoreAdmission,
               })
@@ -2796,7 +2841,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             }
             if (
               !guardMatchJoinAdmission({
-                admissionResolved: joinWindowResolved,
+                loadState: joinWindowLoadState,
                 joinWindowOpen,
                 ignoreAdmission: opsTestFlags.ignoreAdmission,
               })

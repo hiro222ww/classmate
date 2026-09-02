@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { DASH_CARD, PRIMARY_BTN, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
+import type { AdmissionStatusNotice } from "@/lib/admissionJoinGate";
 
 const EQUAL_CTA_STYLE: React.CSSProperties = {
   ...PRIMARY_BTN,
@@ -26,7 +27,8 @@ type JoinNewCardProps = {
   chatBusy?: boolean;
   voiceLabel?: string;
   chatLabel?: string;
-  admissionClosedNotice?: string | null;
+  admissionStatusNotice?: AdmissionStatusNotice | null;
+  onAdmissionRefresh?: () => void;
   themeSelectHref?: string;
   themeSelectLabel?: string;
   /** When set (without navigating), renders a button instead of a Link. */
@@ -62,7 +64,8 @@ export function JoinNewCard({
   chatBusy = false,
   voiceLabel = "🎙️ 通話から始める！",
   chatLabel = "💬 チャットから始める！",
-  admissionClosedNotice = null,
+  admissionStatusNotice = null,
+  onAdmissionRefresh,
   themeSelectHref,
   themeSelectLabel = "テーマを選んで始める",
   onThemeSelect,
@@ -87,21 +90,49 @@ export function JoinNewCard({
         gap: 12,
       }}
     >
-      {admissionClosedNotice ? (
-        <p
-          className="cm-home-admission-closed"
+      {admissionStatusNotice ? (
+        <div
+          className="cm-home-admission-status"
           role="status"
           style={{
-            margin: 0,
-            fontSize: 13,
-            fontWeight: 700,
-            color: "#78716c",
-            textAlign: "center",
-            lineHeight: 1.45,
+            display: "grid",
+            gap: 8,
+            justifyItems: "center",
           }}
         >
-          {admissionClosedNotice}
-        </p>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 13,
+              fontWeight: 700,
+              color:
+                admissionStatusNotice.kind === "error" ? "#b45309" : "#78716c",
+              textAlign: "center",
+              lineHeight: 1.45,
+            }}
+          >
+            {admissionStatusNotice.text}
+          </p>
+          {admissionStatusNotice.kind === "error" && onAdmissionRefresh ? (
+            <button
+              type="button"
+              className="cm-home-admission-refresh"
+              onClick={onAdmissionRefresh}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 999,
+                border: "1px solid rgba(148, 163, 184, 0.45)",
+                background: "#fff",
+                fontSize: 12,
+                fontWeight: 800,
+                color: "#475569",
+                cursor: "pointer",
+              }}
+            >
+              更新
+            </button>
+          ) : null}
+        </div>
       ) : null}
       <div
         className="cm-home-dual-cta-grid"

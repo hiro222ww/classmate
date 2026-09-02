@@ -4,20 +4,22 @@ import {
   formatAdmissionClosedNotice,
   guardMatchJoinAdmission,
   isMatchJoinBlockedByAdmission,
+  resolveAdmissionStatusNotice,
+  resolveAdmissionStatusPillText,
 } from "@/lib/admissionJoinGate";
 
 describe("canStartMatchJoin", () => {
   it("blocks voice and chat when admission is closed", () => {
     expect(
       canStartMatchJoin({
-        admissionResolved: true,
+        loadState: "ready",
         joinWindowOpen: false,
         ignoreAdmission: false,
       })
     ).toBe(false);
     expect(
       isMatchJoinBlockedByAdmission({
-        admissionResolved: true,
+        loadState: "ready",
         joinWindowOpen: false,
       })
     ).toBe(true);
@@ -26,17 +28,26 @@ describe("canStartMatchJoin", () => {
   it("allows voice and chat when admission is open", () => {
     expect(
       canStartMatchJoin({
-        admissionResolved: true,
+        loadState: "ready",
         joinWindowOpen: true,
       })
     ).toBe(true);
   });
 
-  it("blocks until admission status is resolved", () => {
+  it("blocks while admission status is loading", () => {
     expect(
       canStartMatchJoin({
-        admissionResolved: false,
+        loadState: "loading",
         joinWindowOpen: true,
+      })
+    ).toBe(false);
+  });
+
+  it("blocks when admission status fetch failed", () => {
+    expect(
+      canStartMatchJoin({
+        loadState: "error",
+        joinWindowOpen: false,
       })
     ).toBe(false);
   });
@@ -44,14 +55,14 @@ describe("canStartMatchJoin", () => {
   it("allows admin bypass when closed", () => {
     expect(
       canStartMatchJoin({
-        admissionResolved: true,
+        loadState: "ready",
         joinWindowOpen: false,
         ignoreAdmission: true,
       })
     ).toBe(true);
     expect(
       guardMatchJoinAdmission({
-        admissionResolved: true,
+        loadState: "ready",
         joinWindowOpen: false,
         ignoreAdmission: true,
       })
@@ -59,18 +70,73 @@ describe("canStartMatchJoin", () => {
   });
 });
 
+describe("resolveAdmissionStatusNotice", () => {
+  it("shows loading copy while unresolved", () => {
+    expect(
+      resolveAdmissionStatusNotice({
+        loadState: "loading",
+        joinWindowOpen: false,
+      })
+    ).toEqual({ kind: "loading", text: "受付状況を確認中…" });
+  });
+
+  it("shows error copy on fetch failure", () => {
+    expect(
+      resolveAdmissionStatusNotice({
+        loadState: "error",
+        joinWindowOpen: false,
+      })
+    ).toEqual({ kind: "error", text: "受付状況を確認できませんでした" });
+  });
+
+  it("shows closed copy only after ready with open=false", () => {
+    expect(
+      resolveAdmissionStatusNotice({
+        loadState: "ready",
+        joinWindowOpen: false,
+        admissionText: "ただいま入学受付時間外です（受付時間：21:00〜0:00）",
+      })
+    ).toEqual({
+      kind: "closed",
+      text: "ただいま受付時間外です（受付時間：21:00〜0:00）",
+    });
+  });
+
+  it("returns null while open", () => {
+    expect(
+      resolveAdmissionStatusNotice({
+        loadState: "ready",
+        joinWindowOpen: true,
+        admissionText: "入学受付中",
+      })
+    ).toBeNull();
+  });
+});
+
 describe("formatAdmissionClosedNotice", () => {
   it("normalizes API closed text", () => {
     expect(
       formatAdmissionClosedNotice(
-        false,
         "ただいま入学受付時間外です（受付時間：21:00〜0:00）"
       )
     ).toBe("ただいま受付時間外です（受付時間：21:00〜0:00）");
   });
+});
 
-  it("returns null while open", () => {
-    expect(formatAdmissionClosedNotice(true, "入学受付中")).toBeNull();
+describe("resolveAdmissionStatusPillText", () => {
+  it("uses loading and error labels", () => {
+    expect(
+      resolveAdmissionStatusPillText({
+        loadState: "loading",
+        joinWindowOpen: false,
+      })
+    ).toBe("受付状況を確認中…");
+    expect(
+      resolveAdmissionStatusPillText({
+        loadState: "error",
+        joinWindowOpen: false,
+      })
+    ).toBe("受付状況を確認できませんでした");
   });
 });
 
@@ -80,7 +146,7 @@ describe("guardMatchJoinAdmission", () => {
     const tryJoin = () => {
       if (
         guardMatchJoinAdmission({
-          admissionResolved: true,
+          loadState: "ready",
           joinWindowOpen: false,
         })
       ) {
@@ -92,12 +158,27 @@ describe("guardMatchJoinAdmission", () => {
     expect(matchJoinCalls).toBe(0);
   });
 
+  it("does not proceed while loading even if spam-clicked", () => {
+    let matchJoinCalls = 0;
+    for (let i = 0; i < 5; i += 1) {
+      if (
+        guardMatchJoinAdmission({
+          loadState: "loading",
+          joinWindowOpen: true,
+        })
+      ) {
+        matchJoinCalls += 1;
+      }
+    }
+    expect(matchJoinCalls).toBe(0);
+  });
+
   it("allows match-join for voice and chat when admission is open", () => {
     let matchJoinCalls = 0;
     for (const _mode of ["voice", "chat"] as const) {
       if (
         guardMatchJoinAdmission({
-          admissionResolved: true,
+          loadState: "ready",
           joinWindowOpen: true,
         })
       ) {

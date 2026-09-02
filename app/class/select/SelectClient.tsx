@@ -66,8 +66,10 @@ import {
 } from "@/lib/appShellNavigation";
 import {
   canStartMatchJoin,
-  formatAdmissionClosedNotice,
   guardMatchJoinAdmission,
+  resolveAdmissionStatusNotice,
+  resolveAdmissionStatusPillText,
+  type AdmissionLoadState,
 } from "@/lib/admissionJoinGate";
 
 type World = {
@@ -356,7 +358,8 @@ export default function SelectClient() {
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
   const [joinWindowOpen, setJoinWindowOpen] = useState(false);
-  const [joinWindowResolved, setJoinWindowResolved] = useState(false);
+  const [joinWindowLoadState, setJoinWindowLoadState] =
+    useState<AdmissionLoadState>("loading");
   const [joinWindowText, setJoinWindowText] = useState("");
 
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
@@ -390,32 +393,33 @@ export default function SelectClient() {
   }
 
   async function reloadJoinWindow() {
-  try {
-    const r = await fetch("/api/admission/status", {
-      cache: "no-store",
-    });
+    setJoinWindowLoadState("loading");
+    try {
+      const r = await fetch("/api/admission/status", {
+        cache: "no-store",
+      });
 
-    const j = await r.json().catch(() => null);
+      const j = await r.json().catch(() => null);
 
-    console.log("[class/select] admission status =", j);
+      console.log("[class/select] admission status =", j);
 
-    if (!r.ok || !j?.ok) {
-      setJoinWindowOpen(true);
+      if (!r.ok || !j?.ok) {
+        setJoinWindowOpen(false);
+        setJoinWindowText("");
+        setJoinWindowLoadState("error");
+        return;
+      }
+
+      setJoinWindowOpen(Boolean(j.open));
+      setJoinWindowText(String(j.text ?? ""));
+      setJoinWindowLoadState("ready");
+    } catch (e) {
+      console.error("[class/select] admission status load failed", e);
+      setJoinWindowOpen(false);
       setJoinWindowText("");
-      setJoinWindowResolved(true);
-      return;
+      setJoinWindowLoadState("error");
     }
-
-    setJoinWindowOpen(Boolean(j.open));
-    setJoinWindowText(String(j.text ?? ""));
-    setJoinWindowResolved(true);
-  } catch (e) {
-    console.error("[class/select] admission status load failed", e);
-    setJoinWindowOpen(true);
-    setJoinWindowText("");
-    setJoinWindowResolved(true);
   }
-}
 
   async function postSelectPresence(id: string) {
     if (!id) return;
@@ -823,10 +827,16 @@ export default function SelectClient() {
     [boards]
   );
 
-  const admissionClosedNotice = formatAdmissionClosedNotice(
+  const admissionStatusNotice = resolveAdmissionStatusNotice({
+    loadState: joinWindowLoadState,
     joinWindowOpen,
-    joinWindowText
-  );
+    admissionText: joinWindowText,
+  });
+  const admissionPillText = resolveAdmissionStatusPillText({
+    loadState: joinWindowLoadState,
+    joinWindowOpen,
+    admissionText: joinWindowText,
+  });
 
   const themeGroups = useMemo(() => {
     const paid = boards.filter((b) => b.monthly_price > 0);
@@ -882,7 +892,7 @@ export default function SelectClient() {
 
     if (
       !guardMatchJoinAdmission({
-        admissionResolved: joinWindowResolved,
+        loadState: joinWindowLoadState,
         joinWindowOpen,
         ignoreAdmission: opsTestFlags.ignoreAdmission,
       })
@@ -1169,12 +1179,13 @@ export default function SelectClient() {
 
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
-    const admissionClosed = !joinWindowOpen;
+    const admissionClosed =
+      joinWindowLoadState === "ready" && !joinWindowOpen;
     const adminTestJoin =
       admissionClosed && adminAuthenticated && opsTestFlags.ignoreAdmission;
     const prefsNotReady = !prefsLoaded;
     const matchJoinAdmissionGate = {
-      admissionResolved: joinWindowResolved,
+      loadState: joinWindowLoadState,
       joinWindowOpen,
       ignoreAdmission: opsTestFlags.ignoreAdmission,
     };
@@ -1205,9 +1216,13 @@ export default function SelectClient() {
         ? "プロフィール登録が必要"
         : adminTestJoin
           ? "テスト入室"
-          : admissionClosed
-            ? "入学受付時間外"
-            : null;
+          : joinWindowLoadState === "loading"
+            ? "受付状況を確認中…"
+            : joinWindowLoadState === "error"
+              ? "受付状況を確認できませんでした"
+              : admissionClosed
+                ? "入学受付時間外"
+                : null;
 
     const renderJoinButton = (mode: MatchEntryMode, label: string) => (
       <button
@@ -1632,10 +1647,17 @@ export default function SelectClient() {
                 width: 7,
                 height: 7,
                 borderRadius: "50%",
-                background: joinWindowOpen ? "#16a34a" : "#94a3b8",
+                background:
+                  joinWindowLoadState === "error"
+                    ? "#f59e0b"
+                    : joinWindowLoadState === "loading"
+                      ? "#94a3b8"
+                      : joinWindowOpen
+                        ? "#16a34a"
+                        : "#94a3b8",
               }}
             />
-            {joinWindowText || (joinWindowOpen ? "入学受付中" : "入学受付時間外")}
+            {admissionPillText}
           </span>
           {slotBillingEnabled ? (
             <span
@@ -1706,7 +1728,9 @@ export default function SelectClient() {
           </Link>
         ) : null}
 
-        {!joinWindowOpen && opsTestFlags.ignoreAdmission ? (
+        {!joinWindowOpen &&
+        joinWindowLoadState === "ready" &&
+        opsTestFlags.ignoreAdmission ? (
           <p
             style={{
               margin: 0,
@@ -1752,20 +1776,51 @@ export default function SelectClient() {
           >
             テーマを決めずに、気軽に入れるクラス
           </p>
-          {admissionClosedNotice ? (
-            <p
+          {admissionStatusNotice ? (
+            <div
               role="status"
-              className="cm-select-admission-closed"
+              className="cm-select-admission-status"
               style={{
-                margin: 0,
-                fontSize: 13,
-                fontWeight: 700,
-                color: "#78716c",
-                lineHeight: 1.45,
+                display: "grid",
+                gap: 8,
+                justifyItems: "start",
               }}
             >
-              {admissionClosedNotice}
-            </p>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color:
+                    admissionStatusNotice.kind === "error"
+                      ? "#b45309"
+                      : "#78716c",
+                  lineHeight: 1.45,
+                }}
+              >
+                {admissionStatusNotice.text}
+              </p>
+              {admissionStatusNotice.kind === "error" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void reloadJoinWindow();
+                  }}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    border: "1px solid rgba(148, 163, 184, 0.45)",
+                    background: "#fff",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: "#475569",
+                    cursor: "pointer",
+                  }}
+                >
+                  更新
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <div
             style={{
