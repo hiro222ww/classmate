@@ -14,6 +14,11 @@ import {
 import { DevPanel } from "@/components/DevPanel";
 import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import { buildThemeSelectPath } from "@/lib/joinMode";
+import {
+  canStartMatchJoin,
+  formatAdmissionClosedNotice,
+  guardMatchJoinAdmission,
+} from "@/lib/admissionJoinGate";
 import { trackFunnelEvent } from "@/lib/funnelEvents";
 import { useCurrentClass } from "@/components/dashboard/useCurrentClass";
 import {
@@ -445,7 +450,8 @@ export default function HomeClient() {
     useState(false);
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
-  const [joinWindowOpen, setJoinWindowOpen] = useState(true);
+  const [joinWindowOpen, setJoinWindowOpen] = useState(false);
+  const [joinWindowResolved, setJoinWindowResolved] = useState(false);
   const [joinWindowText, setJoinWindowText] = useState("");
 
   function formatAdmissionRange(startRaw?: string, endRaw?: string) {
@@ -468,6 +474,17 @@ export default function HomeClient() {
   }
   const adminCanBypassAdmission =
     adminAuthenticated && opsTestFlags.ignoreAdmission && !joinWindowOpen;
+  const matchJoinAdmissionGate = {
+    admissionResolved: joinWindowResolved,
+    joinWindowOpen,
+    ignoreAdmission: opsTestFlags.ignoreAdmission,
+  };
+  const matchJoinBlocked =
+    !canStartMatchJoin(matchJoinAdmissionGate) || authStatus === "loading";
+  const admissionClosedNotice = formatAdmissionClosedNotice(
+    joinWindowOpen,
+    joinWindowText
+  );
   const opsTestActive =
     adminAuthenticated &&
     (opsTestFlags.ignoreAdmission ||
@@ -869,24 +886,20 @@ export default function HomeClient() {
         if (!res.ok || !json?.ok) {
           setJoinWindowOpen(true);
           setJoinWindowText("");
+          setJoinWindowResolved(true);
           return;
         }
 
         const isOpen = Boolean(json.open);
-        const rangeText = formatAdmissionRange(
-          json?.window?.start,
-          json?.window?.end
-        );
-        const statusText = isOpen ? "入学受付中" : "入学受付時間外";
         setJoinWindowOpen(isOpen);
-        setJoinWindowText(
-          rangeText ? `${statusText} ｜ 受付 ${rangeText}` : statusText
-        );
+        setJoinWindowText(String(json.text ?? "").trim());
+        setJoinWindowResolved(true);
       } catch (e) {
         console.warn("[home] admission status load failed", e);
         if (!cancelled) {
           setJoinWindowOpen(true);
           setJoinWindowText("");
+          setJoinWindowResolved(true);
         }
       }
     }
@@ -2244,6 +2257,16 @@ console.log("[home] resolved ids", { classId, sessionId, json });
 
   async function quickJoinFreeMatch(entryMode: "voice" | "chat") {
     try {
+      if (
+        !guardMatchJoinAdmission({
+          admissionResolved: joinWindowResolved,
+          joinWindowOpen,
+          ignoreAdmission: opsTestFlags.ignoreAdmission,
+        })
+      ) {
+        return;
+      }
+
       setQuickBusy(true);
 
       const currentDeviceId = String(getDeviceId() ?? "").trim();
@@ -2731,9 +2754,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           className="home-dash-join"
           voiceBusy={quickBusy}
           chatBusy={quickBusy}
-          joinDisabled={
-            (!joinWindowOpen && !opsTestFlags.ignoreAdmission) || authLoading
-          }
+          matchJoinDisabled={matchJoinBlocked}
+          admissionClosedNotice={admissionClosedNotice}
           voiceLabel={
             adminCanBypassAdmission
               ? "管理者としてテスト入室（通話）"
@@ -2751,6 +2773,15 @@ console.log("[home] resolved ids", { classId, sessionId, json });
               router.push("/onboarding");
               return;
             }
+            if (
+              !guardMatchJoinAdmission({
+                admissionResolved: joinWindowResolved,
+                joinWindowOpen,
+                ignoreAdmission: opsTestFlags.ignoreAdmission,
+              })
+            ) {
+              return;
+            }
             void trackFunnelEvent({
               eventName: "talk_cta_clicked",
               deviceId: getDeviceId(),
@@ -2761,6 +2792,15 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           onChatJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
+              return;
+            }
+            if (
+              !guardMatchJoinAdmission({
+                admissionResolved: joinWindowResolved,
+                joinWindowOpen,
+                ignoreAdmission: opsTestFlags.ignoreAdmission,
+              })
+            ) {
               return;
             }
             void trackFunnelEvent({

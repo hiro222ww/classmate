@@ -64,6 +64,11 @@ import {
   buildShellAwareLoginUrl,
   buildShellAwareSettingsUrl,
 } from "@/lib/appShellNavigation";
+import {
+  canStartMatchJoin,
+  formatAdmissionClosedNotice,
+  guardMatchJoinAdmission,
+} from "@/lib/admissionJoinGate";
 
 type World = {
   world_key: string;
@@ -350,7 +355,8 @@ export default function SelectClient() {
 
   const [joinLimitMessage, setJoinLimitMessage] = useState("");
 
-  const [joinWindowOpen, setJoinWindowOpen] = useState(true);
+  const [joinWindowOpen, setJoinWindowOpen] = useState(false);
+  const [joinWindowResolved, setJoinWindowResolved] = useState(false);
   const [joinWindowText, setJoinWindowText] = useState("");
 
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
@@ -396,15 +402,18 @@ export default function SelectClient() {
     if (!r.ok || !j?.ok) {
       setJoinWindowOpen(true);
       setJoinWindowText("");
+      setJoinWindowResolved(true);
       return;
     }
 
     setJoinWindowOpen(Boolean(j.open));
     setJoinWindowText(String(j.text ?? ""));
+    setJoinWindowResolved(true);
   } catch (e) {
     console.error("[class/select] admission status load failed", e);
     setJoinWindowOpen(true);
     setJoinWindowText("");
+    setJoinWindowResolved(true);
   }
 }
 
@@ -814,6 +823,11 @@ export default function SelectClient() {
     [boards]
   );
 
+  const admissionClosedNotice = formatAdmissionClosedNotice(
+    joinWindowOpen,
+    joinWindowText
+  );
+
   const themeGroups = useMemo(() => {
     const paid = boards.filter((b) => b.monthly_price > 0);
     return THEME_CATEGORIES.map((cat) => ({
@@ -863,6 +877,16 @@ export default function SelectClient() {
 
     // Paid themes stay visible but never enter match-join or billing.
     if (b.monthly_price > 0) {
+      return;
+    }
+
+    if (
+      !guardMatchJoinAdmission({
+        admissionResolved: joinWindowResolved,
+        joinWindowOpen,
+        ignoreAdmission: opsTestFlags.ignoreAdmission,
+      })
+    ) {
       return;
     }
 
@@ -1149,19 +1173,24 @@ export default function SelectClient() {
     const adminTestJoin =
       admissionClosed && adminAuthenticated && opsTestFlags.ignoreAdmission;
     const prefsNotReady = !prefsLoaded;
+    const matchJoinAdmissionGate = {
+      admissionResolved: joinWindowResolved,
+      joinWindowOpen,
+      ignoreAdmission: opsTestFlags.ignoreAdmission,
+    };
     const joinDisabled =
       comingSoon ||
       busy ||
       !deviceId ||
       profileMissing ||
-      (admissionClosed && !opsTestFlags.ignoreAdmission) ||
+      !canStartMatchJoin(matchJoinAdmissionGate) ||
       prefsNotReady;
 
     const enterReady =
       !comingSoon &&
       !locked &&
       !profileMissing &&
-      (!admissionClosed || opsTestFlags.ignoreAdmission);
+      canStartMatchJoin(matchJoinAdmissionGate);
 
     const tint = comingSoon
       ? "rgba(241, 245, 249, 0.92)"
@@ -1723,6 +1752,21 @@ export default function SelectClient() {
           >
             テーマを決めずに、気軽に入れるクラス
           </p>
+          {admissionClosedNotice ? (
+            <p
+              role="status"
+              className="cm-select-admission-closed"
+              style={{
+                margin: 0,
+                fontSize: 13,
+                fontWeight: 700,
+                color: "#78716c",
+                lineHeight: 1.45,
+              }}
+            >
+              {admissionClosedNotice}
+            </p>
+          ) : null}
           <div
             style={{
               display: "grid",

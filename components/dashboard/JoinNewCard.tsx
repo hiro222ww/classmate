@@ -18,11 +18,15 @@ const EQUAL_CTA_STYLE: React.CSSProperties = {
 
 type JoinNewCardProps = {
   className?: string;
+  /** Disables voice/chat match-join CTAs (not theme browse). */
+  matchJoinDisabled?: boolean;
+  /** @deprecated Use matchJoinDisabled */
   joinDisabled?: boolean;
   voiceBusy?: boolean;
   chatBusy?: boolean;
   voiceLabel?: string;
   chatLabel?: string;
+  admissionClosedNotice?: string | null;
   themeSelectHref?: string;
   themeSelectLabel?: string;
   /** When set (without navigating), renders a button instead of a Link. */
@@ -52,11 +56,13 @@ const THEME_SELECT_STYLE: React.CSSProperties = {
 /** Home hero: voice + chat at equal priority, theme select as sub-link below. */
 export function JoinNewCard({
   className,
+  matchJoinDisabled,
   joinDisabled = false,
   voiceBusy = false,
   chatBusy = false,
   voiceLabel = "🎙️ 通話から始める！",
   chatLabel = "💬 チャットから始める！",
+  admissionClosedNotice = null,
   themeSelectHref,
   themeSelectLabel = "テーマを選んで始める",
   onThemeSelect,
@@ -67,8 +73,9 @@ export function JoinNewCard({
     .filter(Boolean)
     .join(" ");
 
-  const voiceDisabled = joinDisabled || voiceBusy || chatBusy;
-  const chatDisabled = joinDisabled || chatBusy || voiceBusy;
+  const blockMatchJoin = matchJoinDisabled ?? joinDisabled;
+  const voiceDisabled = blockMatchJoin || voiceBusy || chatBusy;
+  const chatDisabled = blockMatchJoin || chatBusy || voiceBusy;
 
   return (
     <section
@@ -80,6 +87,22 @@ export function JoinNewCard({
         gap: 12,
       }}
     >
+      {admissionClosedNotice ? (
+        <p
+          className="cm-home-admission-closed"
+          role="status"
+          style={{
+            margin: 0,
+            fontSize: 13,
+            fontWeight: 700,
+            color: "#78716c",
+            textAlign: "center",
+            lineHeight: 1.45,
+          }}
+        >
+          {admissionClosedNotice}
+        </p>
+      ) : null}
       <div
         className="cm-home-dual-cta-grid"
         style={{
@@ -120,11 +143,9 @@ export function JoinNewCard({
           type="button"
           className="cm-cta-secondary cm-home-theme-select"
           onClick={onThemeSelect}
-          disabled={joinDisabled}
           style={{
             ...THEME_SELECT_STYLE,
-            opacity: joinDisabled ? 0.55 : 1,
-            cursor: joinDisabled ? "not-allowed" : "pointer",
+            cursor: "pointer",
           }}
         >
           {themeSelectLabel}
