@@ -1,4 +1,5 @@
 import { normalizeMatchEntryMode, type MatchEntryMode } from "@/lib/matchJoinEntryMode";
+import type { JoinMode } from "@/lib/joinMode";
 
 export type MatchJoinRequestBody = {
   deviceId: string;
@@ -12,6 +13,8 @@ export type MatchJoinRequestBody = {
   openJoinedClass?: boolean;
   classId?: string;
   sessionId?: string;
+  /** Legacy client hint from ?mode= URLs; server uses entryMode for match pools. */
+  intentMode?: JoinMode;
 };
 
 /**
@@ -28,6 +31,7 @@ export function buildMatchJoinRequestBody(params: {
   openJoinedClassId?: string | null;
   sessionId?: string | null;
   entryMode?: MatchEntryMode | string | null;
+  intentMode?: JoinMode;
 }): MatchJoinRequestBody {
   const openJoinedClassId = String(params.openJoinedClassId ?? "").trim();
   const body: MatchJoinRequestBody = {
@@ -55,6 +59,10 @@ export function buildMatchJoinRequestBody(params: {
     if (sessionId) {
       body.sessionId = sessionId;
     }
+  }
+
+  if (params.intentMode) {
+    body.intentMode = params.intentMode;
   }
 
   return body;

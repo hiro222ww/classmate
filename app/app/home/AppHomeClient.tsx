@@ -13,6 +13,7 @@ import {
 import { buildShellAwareLoginUrl } from "@/lib/appShellNavigation";
 import { fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
+import { buildThemeSelectPath } from "@/lib/joinMode";
 import { withDev } from "@/lib/withDev";
 import AppShellPage from "@/components/app-shell/AppShellPage";
 import AppShellSection from "@/components/app-shell/AppShellSection";
@@ -95,22 +96,34 @@ export default function AppHomeClient() {
             <AuthCardSkeleton />
           ) : (
             <div style={{ display: "grid", gap: 12 }}>
-              <button
-                type="button"
-                className="app-shell-btn app-shell-btn--primary"
-                disabled={actionsLocked}
-                onClick={() => router.push(withDev("/"))}
-              >
-                最大5人で話す
-              </button>
-              <button
-                type="button"
-                className="app-shell-btn"
-                disabled={actionsLocked}
-                onClick={() => router.push(withDev("/class/select"))}
-              >
-                テーマを選んで話す
-              </button>
+              <div style={{ display: "grid", gap: 4 }}>
+                <button
+                  type="button"
+                  className="app-shell-btn app-shell-btn--primary"
+                  disabled={actionsLocked}
+                  onClick={() => router.push(withDev("/"))}
+                >
+                  🎙️ 通話から始める！
+                </button>
+                <p className="app-shell-muted" style={{ margin: 0, textAlign: "center" }}>
+                  今すぐ誰かと話す
+                </p>
+              </div>
+              <div style={{ display: "grid", gap: 4 }}>
+                <button
+                  type="button"
+                  className="app-shell-btn"
+                  disabled={actionsLocked}
+                  onClick={() =>
+                    router.push(withDev(buildThemeSelectPath("chat")))
+                  }
+                >
+                  💬 チャットから始める！
+                </button>
+                <p className="app-shell-muted" style={{ margin: 0, textAlign: "center", fontSize: 12 }}>
+                  メッセージから気軽に
+                </p>
+              </div>
               <button
                 type="button"
                 className="app-shell-btn"

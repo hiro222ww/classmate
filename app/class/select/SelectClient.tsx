@@ -14,6 +14,12 @@ import { pushRecentClass } from "@/lib/recentClasses";
 import { DevModeSwitcher } from "@/components/DevModeSwitcher";
 import { isDevFeatureEnabled } from "@/lib/devMode";
 import { buildMatchJoinRequestBody } from "@/lib/matchJoinRequest";
+import {
+  buildThemeSelectPath,
+  JOIN_MODE_QUERY_KEY,
+  parseJoinMode,
+  type JoinMode,
+} from "@/lib/joinMode";
 import { isSessionEligibleForNormalJoin } from "@/lib/recruitment";
 import { GENDER_RESTRICTED_TOPIC_MESSAGE } from "@/lib/genderRestriction";
 import { hasMinimumProfile } from "@/lib/profileClient";
@@ -296,6 +302,8 @@ export default function SelectClient() {
   const searchParams = useSearchParams();
   const dev = (searchParams.get("dev") ?? "").trim();
   const devQuery = dev ? `dev=${encodeURIComponent(dev)}` : "";
+  const joinMode: JoinMode = parseJoinMode(searchParams.get(JOIN_MODE_QUERY_KEY));
+  const selectSelfPath = buildThemeSelectPath(joinMode, { dev: dev || null });
 
   const withDev = (path: string) => {
     if (!devQuery) return path;
@@ -837,7 +845,7 @@ export default function SelectClient() {
     );
 
     if (ok) {
-      window.location.href = withDev(buildProfileEditPath("/class/select"));
+      window.location.href = withDev(buildProfileEditPath(selectSelfPath));
     }
 
     return true;
@@ -925,6 +933,7 @@ export default function SelectClient() {
         maxAge: finalMaxAge,
         openJoinedClassId: forcedClassId ?? null,
         entryMode,
+        intentMode: joinMode,
       });
 
       const clientRequestId =
@@ -1059,10 +1068,9 @@ export default function SelectClient() {
 
       // Open joined class → room. Fresh chat match → /room. Fresh voice → /call.
       if (matchBody.openJoinedClass) {
-        const roomWithDev = withDev(
-          `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
-            `&sessionId=${encodeURIComponent(sessionId)}&openJoinedClass=1`
-        );
+        const roomWithDev = buildMatchedRoomPath(classId, sessionId, {
+          openJoinedClass: true,
+        });
         pushRecentClass(
           {
             id: classId,
@@ -1387,14 +1395,14 @@ export default function SelectClient() {
         notificationsBusy={notificationsBusy}
         onToggleNotifications={toggleNotifications}
         hideWebPush={isApp}
-        profileHref={withDev(buildProfileEditPath("/class/select"))}
+        profileHref={withDev(buildProfileEditPath(selectSelfPath))}
         myClassesHref={withDev("/class/mine")}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={
           loggedIn
             ? withDev(buildShellAwareSettingsUrl())
-            : withDev(buildShellAwareLoginUrl("/class/select"))
+            : withDev(buildShellAwareLoginUrl(selectSelfPath))
         }
         accountLabel={accountLabel}
         loggedIn={loggedIn}
@@ -1450,7 +1458,7 @@ export default function SelectClient() {
             プロフィール登録が必要です
           </div>
           <Link
-            href={withDev(buildProfileEditPath("/class/select"))}
+            href={withDev(buildProfileEditPath(selectSelfPath))}
             className="cm-cta-primary"
             style={{
               ...PRIMARY_BTN,

@@ -2,6 +2,7 @@
 export const FUNNEL_EVENT_NAMES = [
   "min_profile_saved",
   "talk_cta_clicked",
+  "chat_cta_clicked",
   "lobby_joined",
   "call_started",
   "class_vote_yes",
