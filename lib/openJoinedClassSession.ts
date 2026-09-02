@@ -39,6 +39,7 @@ type ResolveParams = {
   requestedCapacity: number;
   recruitmentSessionTtlMinutes: number | null;
   hintSessionId?: string | null;
+  entryMode?: "voice" | "chat";
 };
 
 type ResolveOk = {
@@ -70,6 +71,7 @@ export async function createFormingSession(params: {
   classId: string;
   className: string;
   requestedCapacity: number;
+  entryMode?: "voice" | "chat";
   reason: OpenJoinedSessionInvalidReason | "no_valid_active_session" | "no_joinable_session";
 }) {
   const logReason =
@@ -87,6 +89,7 @@ export async function createFormingSession(params: {
       topic: params.className,
       status: "forming",
       capacity: params.requestedCapacity,
+      entry_mode: params.entryMode ?? "chat",
     })
     .select("id,status,created_at")
     .single();
@@ -179,7 +182,7 @@ async function loadHintSessionRow(
 
   const { data: sessionRow, error } = await supabase
     .from("sessions")
-    .select("id,status,created_at,capacity,class_id")
+    .select("id,status,created_at,capacity,class_id,entry_mode")
     .eq("id", hintSessionId)
     .maybeSingle();
 
@@ -208,6 +211,10 @@ async function loadHintSessionRow(
       deviceIsMember: memberIds.includes(deviceId),
       membersLockedAt: null,
       joinOpenUntil: null,
+      entryMode:
+        String(sessionRow.entry_mode ?? "voice").trim().toLowerCase() === "chat"
+          ? "chat"
+          : "voice",
     },
     sameClass,
     sessionClassId,
@@ -465,6 +472,7 @@ async function ensureJoinableSessionOrCreate(params: {
   recruitmentSessionTtlMinutes: number | null;
   selectionReason: string;
   allowHintReuse?: boolean;
+  entryMode?: "voice" | "chat";
 }): Promise<ResolveOk | ResolveErr> {
   const sessionId = params.sessionId;
   let sessionStatus = await reactivateExpiredHintSessionIfNeeded({
@@ -673,6 +681,7 @@ async function ensureJoinableSessionOrCreate(params: {
     classId: params.classId,
     className: params.className,
     requestedCapacity: params.requestedCapacity,
+    entryMode: params.entryMode ?? "chat",
     reason: createReason ?? "no_joinable_session",
   });
 
@@ -704,11 +713,16 @@ export async function resolveOpenJoinedClassSession(
     excludeSessionIds: hintSessionId ? [hintSessionId] : [],
   });
 
-  const classSessions = await listClassSessionsWithMembers(
+  const classSessionsAll = await listClassSessionsWithMembers(
     supabase,
     params.classId,
     deviceId
   );
+  const entryMode = params.entryMode ?? "chat";
+  const classSessions = classSessionsAll.filter(
+    (s) => (s.entryMode ?? "voice") === entryMode
+  );
+  const sessionEntryMode = entryMode;
 
   if (hintSessionId) {
     const hintPick = await resolveHintSessionPick({
@@ -752,6 +766,7 @@ export async function resolveOpenJoinedClassSession(
         recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
         selectionReason: hintSelectionReason,
         allowHintReuse: true,
+        entryMode: sessionEntryMode,
       });
     }
   }
@@ -794,6 +809,7 @@ export async function resolveOpenJoinedClassSession(
         canonical.memberCount
       ),
       allowHintReuse: canonical.sessionId === hintSessionId,
+      entryMode: sessionEntryMode,
     });
   }
 
@@ -828,6 +844,7 @@ export async function resolveOpenJoinedClassSession(
         requestedCapacity: params.requestedCapacity,
         recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
         selectionReason: "reuse_rpc_session",
+        entryMode: sessionEntryMode,
       });
     }
 
@@ -890,6 +907,7 @@ export async function resolveOpenJoinedClassSession(
         recruitmentSessionTtlMinutes: params.recruitmentSessionTtlMinutes,
         selectionReason: "reuse_hint_with_members",
         allowHintReuse: true,
+        entryMode: sessionEntryMode,
       });
     }
 
@@ -910,6 +928,7 @@ export async function resolveOpenJoinedClassSession(
     classId: params.classId,
     className: params.className,
     requestedCapacity: params.requestedCapacity,
+    entryMode: sessionEntryMode,
     reason: "no_joinable_session",
   });
 

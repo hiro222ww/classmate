@@ -22,6 +22,7 @@ export type ClassSessionRow = {
   deviceIsMember: boolean;
   membersLockedAt: string | null;
   joinOpenUntil: string | null;
+  entryMode: "voice" | "chat";
 };
 
 export type CanonicalSessionPick = {
@@ -55,7 +56,7 @@ export async function listClassSessionsWithMembers(
 ): Promise<ClassSessionRow[]> {
   const { data: sessions, error } = await client
     .from("sessions")
-    .select("id,status,created_at,capacity,members_locked_at,join_open_until")
+    .select("id,status,created_at,capacity,members_locked_at,join_open_until,entry_mode")
     .eq("class_id", classId)
     .order("created_at", { ascending: false });
 
@@ -95,6 +96,10 @@ export async function listClassSessionsWithMembers(
         ? String(row.members_locked_at)
         : null,
       joinOpenUntil: row.join_open_until ? String(row.join_open_until) : null,
+      entryMode:
+        String(row.entry_mode ?? "voice").trim().toLowerCase() === "chat"
+          ? "chat"
+          : "voice",
     };
   });
 }

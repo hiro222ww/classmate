@@ -13,7 +13,13 @@ type Props = {
   children: React.ReactNode;
 
   onBack?: () => void;
+  /** Toolbar back label (default: 戻る) */
+  backLabel?: string;
   onHome?: () => void;
+  /** Toolbar primary exit label (default: ホーム) */
+  homeLabel?: string;
+  /** Fallback Link target when onHome is omitted */
+  homeHref?: string;
   onStartCall?: () => void;
   startDisabled?: boolean;
   startLabel?: string;
@@ -41,7 +47,10 @@ export function ChalkboardRoomShell({
   right,
   children,
   onBack,
+  backLabel = "戻る",
   onHome,
+  homeLabel = "ホーム",
+  homeHref: homeHrefProp,
   onStartCall,
   startDisabled = false,
   startLabel = "通話を開始",
@@ -52,7 +61,7 @@ export function ChalkboardRoomShell({
 
   const moveHref = withDev("/class/select");
   const homeHref = withDev(
-    isApp ? resolveShellDashboardPath() : "/"
+    homeHrefProp ?? (isApp ? resolveShellDashboardPath() : "/")
   );
   const ghostBtnClass = [
     "cm-room-ghost-btn",
@@ -107,7 +116,7 @@ export function ChalkboardRoomShell({
             className={ghostBtnClass}
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
-            戻る
+            {backLabel}
           </button>
         ) : null}
 
@@ -148,7 +157,7 @@ export function ChalkboardRoomShell({
             className={ghostBtnClass}
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
-            ホーム
+            {homeLabel}
           </button>
         ) : (
           <Link
@@ -156,7 +165,7 @@ export function ChalkboardRoomShell({
             className={ghostBtnClass}
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
-            ホーム
+            {homeLabel}
           </Link>
         )}
 

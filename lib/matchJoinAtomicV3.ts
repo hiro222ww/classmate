@@ -18,6 +18,7 @@ export type MatchJoinAtomicV3Params = {
   blockedDeviceIds: string[];
   requestedMinAge: number;
   requestedMaxAge: number;
+  entryMode?: "voice" | "chat";
   requestId?: string;
 };
 
@@ -188,6 +189,7 @@ export async function callMatchJoinAtomicV3(params: MatchJoinAtomicV3Params) {
     p_blocked_device_ids: params.blockedDeviceIds,
     p_requested_min_age: params.requestedMinAge,
     p_requested_max_age: params.requestedMaxAge,
+    p_entry_mode: params.entryMode ?? "voice",
   });
 
   if (error) {

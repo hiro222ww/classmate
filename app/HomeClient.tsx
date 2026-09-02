@@ -2241,7 +2241,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
   }
   openClassRef.current = openClass;
 
-  async function quickJoinFreeAndOpen() {
+  async function quickJoinFreeMatch(entryMode: "voice" | "chat") {
     try {
       setQuickBusy(true);
 
@@ -2261,6 +2261,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         topicKey: null,
         worldKey: "default",
         capacity: 5,
+        entryMode,
       });
 
       console.log(
@@ -2330,6 +2331,20 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       }
 
       clearClassLeftLocally(classId);
+
+      if (entryMode === "chat") {
+        const roomPath = buildMatchedRoomPath(classId, sessionId);
+        void trackFunnelEvent({
+          eventName: "talk_cta_clicked",
+          deviceId: currentDeviceId,
+          sessionId,
+          classId,
+          meta: { source: "home_free_chat", entryMode: "chat" },
+        });
+        router.push(roomPath);
+        return;
+      }
+
       const entry = prepareMatchedCallEntry({
         classId,
         sessionId,
@@ -2713,19 +2728,24 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         ) : null}
         <JoinNewCard
           className="home-dash-join"
-          quickJoinBusy={quickBusy}
-          quickJoinDisabled={
+          voiceBusy={quickBusy}
+          chatBusy={quickBusy}
+          joinDisabled={
             (!joinWindowOpen && !opsTestFlags.ignoreAdmission) || authLoading
           }
-          quickJoinLabel={
+          voiceLabel={
             adminCanBypassAdmission
-              ? "管理者としてテスト入室"
-              : "最大5人で話す"
+              ? "管理者としてテスト入室（通話）"
+              : "🎙️ 通話から始める！"
           }
-          quickJoinHint=""
+          chatLabel={
+            adminCanBypassAdmission
+              ? "管理者としてテスト入室（チャット）"
+              : "💬 チャットから始める！"
+          }
           themeSelectHref={withDev("/class/select")}
-          themeSelectLabel="テーマを選んで話す"
-          onQuickJoin={() => {
+          themeSelectLabel="テーマを選んで始める"
+          onVoiceJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
               return;
@@ -2733,8 +2753,21 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             void trackFunnelEvent({
               eventName: "talk_cta_clicked",
               deviceId: getDeviceId(),
+              meta: { entryMode: "voice" },
             });
-            void quickJoinFreeAndOpen();
+            void quickJoinFreeMatch("voice");
+          }}
+          onChatJoin={() => {
+            if (!hasMinimumProfile(profile)) {
+              router.push("/onboarding");
+              return;
+            }
+            void trackFunnelEvent({
+              eventName: "talk_cta_clicked",
+              deviceId: getDeviceId(),
+              meta: { entryMode: "chat" },
+            });
+            void quickJoinFreeMatch("chat");
           }}
         />
       </div>

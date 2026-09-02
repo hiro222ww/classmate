@@ -19,6 +19,7 @@ describe("invite join session fallback", () => {
     deviceIsMember: false,
     membersLockedAt: null,
     joinOpenUntil: null,
+    entryMode: "chat",
   };
 
   it("allows invite join to stale forming session while host is waiting alone", () => {

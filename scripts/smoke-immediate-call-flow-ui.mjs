@@ -695,6 +695,25 @@ async function main() {
         } else {
           pass("mine_room_no_random_lobby");
         }
+        if (body.includes("マイクラスへ戻る")) {
+          pass("mine_room_back_to_mine_label");
+          const backBtn = page.getByRole("button", { name: "マイクラスへ戻る" });
+          if (await backBtn.count()) {
+            await backBtn.click();
+            try {
+              await page.waitForURL(/\/class\/mine/, { timeout: 15000 });
+              pass("mine_room_back_to_mine_nav", page.url());
+            } catch {
+              fail("mine_room_back_to_mine_nav", page.url());
+            }
+          } else {
+            fail("mine_room_back_to_mine_nav", "button missing");
+          }
+        } else if (body.includes("ホーム")) {
+          fail("mine_room_back_to_mine_label", "still shows ホーム");
+        } else {
+          fail("mine_room_back_to_mine_label", "label not found");
+        }
         await shot(page, "08-mine-room-pc");
       } else {
         skip("mine_open_goes_room", "no .cm-mine-class-row for device");

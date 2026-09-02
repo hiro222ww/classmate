@@ -31,7 +31,10 @@ import {
 import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
-import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import {
+  resolveShellDashboardPath,
+  resolveShellMinePath,
+} from "@/lib/appShellContext";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import {
   buildCurrentPathReturnTo,
@@ -805,6 +808,8 @@ export default function RoomClient() {
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceRow>>({});
   const [topicTitle, setTopicTitle] = useState("ルーム");
   const [classLabel, setClassLabel] = useState("");
+  /** True when this class appears in /class/mine (official / joined). */
+  const [classVisibleInMine, setClassVisibleInMine] = useState(false);
   const [err, setErr] = useState("");
   const [memberCount, setMemberCount] = useState(0);
   const [status, setStatus] = useState("forming");
@@ -1375,7 +1380,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     };
   }, [bumpRoomAsync, cancelJoinRecoveryTimers]);
 
-  /** Return to Home — keeps session_members and class_memberships; presence only. */
+  /**
+   * Official joined class (mine / openJoinedClass) → マイクラス.
+   * Provisional / random room → dashboard (ホーム). Never used by /call.
+   */
+  const returnToMine = openJoinedClass || classVisibleInMine;
+  const roomExitHref = returnToMine
+    ? resolveShellMinePath()
+    : resolveShellDashboardPath();
+  const roomExitLabel = returnToMine ? "マイクラスへ戻る" : "ホーム";
+
+  /** Return to Home or Mine — keeps session_members and class_memberships; presence only. */
   const goHome = useCallback(() => {
     joinRetryCountByKeyRef.current.clear();
     cancelJoinRecoveryTimers("home_navigation");
@@ -1383,9 +1398,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
     const did = String(deviceId ?? "").trim();
     const cid = String(classId ?? "").trim();
+    const exitHref = withDev(roomExitHref);
 
-    logNavigationIntent("return_home", "RoomClient.goHome");
-    logRouteChange(getCurrentPath(), withDev(resolveShellDashboardPath()), "return_home");
+    logNavigationIntent(
+      returnToMine ? "return_mine" : "return_home",
+      "RoomClient.goHome"
+    );
+    logRouteChange(
+      getCurrentPath(),
+      exitHref,
+      returnToMine ? "return_mine" : "return_home"
+    );
 
     if (cid) {
       clearLocallyHiddenClass(cid);
@@ -1405,8 +1428,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         .then((res) => {
           if (res.ok) {
             roomLog(
-              `[room] return-home presence=screen=home class=${cid.slice(-6)} ` +
-                `session=${sessionId.slice(-6)} device=${did.slice(-4)}`
+              `[room] return-${returnToMine ? "mine" : "home"} presence=screen=home ` +
+                `class=${cid.slice(-6)} session=${sessionId.slice(-6)} ` +
+                `device=${did.slice(-4)}`
             );
           }
         })
@@ -1418,8 +1442,17 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         });
     }
 
-    router.push(withDev(resolveShellDashboardPath()));
-  }, [bumpRoomAsync, cancelJoinRecoveryTimers, classId, deviceId, router, sessionId]);
+    router.push(exitHref);
+  }, [
+    bumpRoomAsync,
+    cancelJoinRecoveryTimers,
+    classId,
+    deviceId,
+    returnToMine,
+    roomExitHref,
+    router,
+    sessionId,
+  ]);
 
   const quitLobbyAndGoHome = useCallback(async () => {
     if (lobbyQuitBusy) return;
@@ -1774,6 +1807,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     async function loadClassMeta() {
       if (!deviceId || !classId) return;
 
+      setClassVisibleInMine(false);
+
       try {
         const res = await fetch(
           `/api/class/mine?deviceId=${encodeURIComponent(deviceId)}`,
@@ -1791,7 +1826,12 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
             String(c?.class_id ?? "").trim() === classId
         ) as MineClassRow | undefined;
 
-        if (!matched) return;
+        if (!matched) {
+          setClassVisibleInMine(false);
+          return;
+        }
+
+        setClassVisibleInMine(true);
 
         const nextTopicTitle = formatTopicTitleFromClassRow(matched);
         const nextClassLabel = formatClassLabelFromClassRow(matched);
@@ -4424,10 +4464,11 @@ const name = rawName === "You" ? "参加者" : rawName;
                       ? ["通話を開始できます。"]
                       : []
           }
-          onBack={() => {
-            router.push(withDev(resolveShellDashboardPath()));
-          }}
+          onBack={goHome}
+          backLabel={roomExitLabel}
           onHome={goHome}
+          homeLabel={roomExitLabel}
+          homeHref={roomExitHref}
           onStartCall={() => {
             const blockReason = isCallStartBlocked();
             if (blockReason) {

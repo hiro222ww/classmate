@@ -44,6 +44,11 @@ export function resolveShellDashboardPath(): string {
   return isAppShellContext() ? APP_HOME : "/";
 }
 
+/** Official class room → マイクラス（Web / Capacitor 共通） */
+export function resolveShellMinePath(): string {
+  return "/class/mine";
+}
+
 function remapWebHomePath(path: string): string {
   const base = path.split("?")[0] ?? path;
   if (base === "/" || base === "/home") return APP_HOME;

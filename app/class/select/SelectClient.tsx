@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  buildMatchedRoomPath,
   prepareMatchedCallEntry,
   resolveMatchJoinSessionIds,
 } from "@/lib/enterMatchedCallClient";
+import type { MatchEntryMode } from "@/lib/matchJoinEntryMode";
 import { getDeviceId } from "@/lib/device";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { DevModeSwitcher } from "@/components/DevModeSwitcher";
@@ -74,6 +76,7 @@ type Topic = {
   min_age: number;
   monthly_price?: number;
   is_premium?: boolean;
+  badge_label?: string | null;
 };
 
 type ClassRow = {
@@ -120,6 +123,8 @@ type EntryBoard = {
   topic_key: string | null;
   is_sensitive: boolean;
   monthly_price: number;
+  /** Admin/custom badge when present; paid teasers fall back to 準備中. */
+  badge_label?: string | null;
 };
 
 /** Display-only grouping for existing topics (no dummy themes). */
@@ -133,10 +138,11 @@ type ThemeCategoryId =
   | "other";
 
 /**
- * Paid / locked themes stay in data + entitlements; hide from select UI for now.
- * Flip to true to re-show 「テーマから探す」 groups without schema changes.
+ * Paid / unreleased themes are shown as non-interactive teasers.
+ * Join / purchase / billing stay disabled — data is display-only.
  */
-const SHOW_PAID_THEMES_IN_SELECT = false;
+const SHOW_PAID_THEMES_AS_TEASER = true;
+const PAID_THEME_TEASER_LABEL = "準備中";
 
 const THEME_CATEGORIES: {
   id: ThemeCategoryId;
@@ -783,6 +789,7 @@ export default function SelectClient() {
             : t.is_premium
               ? 1200
               : 0,
+        badge_label: t.badge_label ?? null,
       });
     }
 
@@ -836,10 +843,20 @@ export default function SelectClient() {
     return true;
   }
 
-  async function joinMatchedBoard(b: EntryBoard, forcedClassId?: string) {
-    console.log("[select] clicked board =", b, "forcedClassId =", forcedClassId);
+  async function joinMatchedBoard(
+    b: EntryBoard,
+    opts?: { entryMode?: MatchEntryMode; forcedClassId?: string }
+  ) {
+    const entryMode = opts?.entryMode ?? "voice";
+    const forcedClassId = opts?.forcedClassId;
+    console.log("[select] clicked board =", b, "entryMode =", entryMode, "forcedClassId =", forcedClassId);
     lastJoinBoardRef.current = b;
     setEntryFailure(null);
+
+    // Paid themes stay visible but never enter match-join or billing.
+    if (b.monthly_price > 0) {
+      return;
+    }
 
     if (!deviceId) {
       alert("deviceId の取得中です。数秒後にもう一度押してください。");
@@ -907,6 +924,7 @@ export default function SelectClient() {
         minAge: finalMinAge,
         maxAge: finalMaxAge,
         openJoinedClassId: forcedClassId ?? null,
+        entryMode,
       });
 
       const clientRequestId =
@@ -1039,7 +1057,7 @@ export default function SelectClient() {
 
       const autoCallDeviceId = String(deviceId || getDeviceId() || "").trim();
 
-      // Open joined class → room. Fresh theme match → /call immediately (solo OK).
+      // Open joined class → room. Fresh chat match → /room. Fresh voice → /call.
       if (matchBody.openJoinedClass) {
         const roomWithDev = withDev(
           `/room?autojoin=1&classId=${encodeURIComponent(classId)}` +
@@ -1054,6 +1072,20 @@ export default function SelectClient() {
           20
         );
         window.location.href = roomWithDev;
+        return;
+      }
+
+      if (entryMode === "chat") {
+        const roomPath = buildMatchedRoomPath(classId, sessionId);
+        pushRecentClass(
+          {
+            id: classId,
+            title: b.title,
+            url: roomPath,
+          },
+          20
+        );
+        window.location.href = roomPath;
         return;
       }
 
@@ -1098,6 +1130,11 @@ export default function SelectClient() {
     accent?: { tint: string; border: string };
     emphasizeFree?: boolean;
   }) {
+    const isFree = b.monthly_price <= 0;
+    const comingSoon = !isFree;
+    const teaserLabel =
+      String(b.badge_label ?? "").trim() || PAID_THEME_TEASER_LABEL;
+
     const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
     const admissionClosed = !joinWindowOpen;
@@ -1105,6 +1142,7 @@ export default function SelectClient() {
       admissionClosed && adminAuthenticated && opsTestFlags.ignoreAdmission;
     const prefsNotReady = !prefsLoaded;
     const joinDisabled =
+      comingSoon ||
       busy ||
       !deviceId ||
       profileMissing ||
@@ -1112,23 +1150,75 @@ export default function SelectClient() {
       prefsNotReady;
 
     const enterReady =
+      !comingSoon &&
       !locked &&
       !profileMissing &&
       (!admissionClosed || opsTestFlags.ignoreAdmission);
 
-    const isFree = b.monthly_price <= 0;
-    const tint = accent?.tint ?? (isFree ? FREE_TINT : undefined);
-    const border = accent?.border ?? (isFree ? "rgba(16, 185, 129, 0.28)" : undefined);
+    const tint = comingSoon
+      ? "rgba(241, 245, 249, 0.92)"
+      : accent?.tint ?? (isFree ? FREE_TINT : undefined);
+    const border = comingSoon
+      ? "rgba(148, 163, 184, 0.35)"
+      : accent?.border ?? (isFree ? "rgba(16, 185, 129, 0.28)" : undefined);
+
+    const actionLabel = comingSoon
+      ? teaserLabel
+      : profileMissing
+        ? "プロフィール登録が必要"
+        : adminTestJoin
+          ? "テスト入室"
+          : admissionClosed
+            ? "入学受付時間外"
+            : null;
+
+    const renderJoinButton = (mode: MatchEntryMode, label: string) => (
+      <button
+        type="button"
+        className={[
+          "cm-board-enter",
+          !comingSoon && enterReady ? "cm-cta-primary" : "cm-cta-secondary",
+        ].join(" ")}
+        onClick={() => {
+          if (comingSoon) return;
+          void joinMatchedBoard(b, { entryMode: mode });
+        }}
+        disabled={joinDisabled}
+        aria-disabled={joinDisabled}
+        style={{
+          width: "100%",
+          padding: "10px 8px",
+          color: comingSoon ? "#94a3b8" : "var(--cm-text, #0f172a)",
+          fontWeight: 900,
+          fontSize: 13,
+          cursor: joinDisabled ? "not-allowed" : "pointer",
+          opacity: joinDisabled ? 0.62 : 1,
+          background: comingSoon ? "rgba(226, 232, 240, 0.9)" : undefined,
+        }}
+      >
+        {actionLabel ?? label}
+      </button>
+    );
 
     return (
       <div
-        className="cm-board-card cm-select-theme-card"
+        className={[
+          "cm-board-card",
+          "cm-select-theme-card",
+          comingSoon ? "cm-select-theme-card--teaser" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        aria-disabled={comingSoon || undefined}
         style={{
           padding: emphasizeFree ? 16 : 12,
           background: tint,
           border: border ? `1px solid ${border}` : undefined,
           borderRadius: 16,
-          boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
+          boxShadow: comingSoon
+            ? "none"
+            : "0 4px 14px rgba(15, 23, 42, 0.04)",
+          opacity: comingSoon ? 0.78 : 1,
         }}
       >
         <div
@@ -1145,11 +1235,25 @@ export default function SelectClient() {
               style={{
                 fontSize: emphasizeFree ? 17 : 15,
                 display: "block",
-                color: "#0f172a",
+                color: comingSoon ? "#64748b" : "#0f172a",
               }}
             >
               {isFree ? "テーマフリー" : b.title}
             </strong>
+            {comingSoon && b.monthly_price > 0 ? (
+              <span
+                style={{
+                  display: "block",
+                  marginTop: 4,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#94a3b8",
+                }}
+              >
+                {tierName(b.monthly_price)} · ¥
+                {b.monthly_price.toLocaleString("ja-JP")}/月
+              </span>
+            ) : null}
           </div>
           <div
             style={{
@@ -1160,19 +1264,19 @@ export default function SelectClient() {
               flexShrink: 0,
             }}
           >
-            {!isFree && themeBillingEnabled ? (
+            {comingSoon ? (
               <span
                 style={{
                   fontSize: 11,
                   fontWeight: 800,
-                  color: "#64748b",
-                  background: "rgba(248, 250, 252, 0.95)",
-                  border: "1px solid rgba(148, 163, 184, 0.35)",
+                  color: "#92400e",
+                  background: "rgba(254, 243, 199, 0.95)",
+                  border: "1px solid rgba(245, 158, 11, 0.35)",
                   borderRadius: 999,
                   padding: "3px 8px",
                 }}
               >
-                🔒 テーマプラン対象
+                {teaserLabel === PAID_THEME_TEASER_LABEL ? "🔒 準備中" : teaserLabel}
               </span>
             ) : null}
             {b.is_sensitive ? (
@@ -1180,7 +1284,7 @@ export default function SelectClient() {
                 🔞
               </span>
             ) : null}
-            {profileMissing ? (
+            {!comingSoon && profileMissing ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e" }}>
                 プロフィール未登録
               </span>
@@ -1195,7 +1299,7 @@ export default function SelectClient() {
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
               wordBreak: "break-word",
-              color: "#475569",
+              color: comingSoon ? "#94a3b8" : "#475569",
               lineHeight: 1.5,
               fontSize: 13,
             }}
@@ -1204,32 +1308,17 @@ export default function SelectClient() {
           </p>
         ) : null}
 
-        <button
-          type="button"
-          className={[
-            "cm-board-enter",
-            enterReady ? "cm-cta-primary" : "cm-cta-secondary",
-          ].join(" ")}
-          onClick={() => void joinMatchedBoard(b)}
-          disabled={joinDisabled}
+        <div
           style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+            gap: 8,
             marginTop: 12,
-            width: "100%",
-            padding: "10px 12px",
-            color: "var(--cm-text, #0f172a)",
-            fontWeight: 900,
-            cursor: joinDisabled ? "not-allowed" : "pointer",
-            opacity: joinDisabled ? 0.62 : 1,
           }}
         >
-          {profileMissing
-            ? "プロフィール登録が必要"
-            : adminTestJoin
-              ? "管理者としてテスト入室"
-              : admissionClosed
-                ? "入学受付時間外"
-                : "入る"}
-        </button>
+          {renderJoinButton("voice", "通話で始める")}
+          {renderJoinButton("chat", "チャットで始める")}
+        </div>
       </div>
     );
   }
@@ -1463,7 +1552,7 @@ export default function SelectClient() {
               lineHeight: 1.25,
             }}
           >
-            テーマを選んで話す
+            テーマを選ぶ
           </h2>
           <p
             style={{
@@ -1473,7 +1562,7 @@ export default function SelectClient() {
               color: "#64748b",
             }}
           >
-            フリーテーマから、気軽に話せるクラスへ入れます
+            各テーマから通話またはチャットで始められます（最大5人）
           </p>
         </div>
 
@@ -1511,24 +1600,7 @@ export default function SelectClient() {
             />
             {joinWindowText || (joinWindowOpen ? "入学受付中" : "入学受付時間外")}
           </span>
-          {SHOW_PAID_THEMES_IN_SELECT &&
-          (themeBillingEnabled || slotBillingEnabled) ? (
-            <span
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid rgba(148, 163, 184, 0.28)",
-                fontSize: 12,
-                fontWeight: 700,
-                color: "#64748b",
-              }}
-            >
-              {themeBillingEnabled
-                ? `プラン: ${tierName(topicPlan)}`
-                : `${slots}クラス枠`}
-            </span>
-          ) : slotBillingEnabled ? (
+          {slotBillingEnabled ? (
             <span
               style={{
                 padding: "6px 10px",
@@ -1656,7 +1728,7 @@ export default function SelectClient() {
           </div>
         </section>
 
-        {SHOW_PAID_THEMES_IN_SELECT && themeGroups.length > 0 ? (
+        {SHOW_PAID_THEMES_AS_TEASER && themeGroups.length > 0 ? (
           <section style={{ display: "grid", gap: 16 }}>
             <div>
               <h3
@@ -1677,7 +1749,7 @@ export default function SelectClient() {
                   color: "#64748b",
                 }}
               >
-                気になるテーマのクラスをのぞいてみよう
+                準備中のテーマです。通話・チャットともに参加・購入できません
               </p>
             </div>
 

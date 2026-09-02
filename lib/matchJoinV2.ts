@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { formatPostgresError } from "@/lib/postgresError";
 import { callMatchJoinAtomicV3 } from "@/lib/matchJoinAtomicV3";
+import { normalizeMatchEntryMode } from "@/lib/matchJoinEntryMode";
 import {
   blocksNewJoinSessionStatus,
   isDeadlinePassed,
@@ -702,6 +703,9 @@ export async function matchJoinV2Post(req: Request) {
     const topicKey = normalizeTopicKey(body.topicKey);
     const requestedCapacity = normalizeCapacity(body.capacity);
     const openJoinedClass = body.openJoinedClass === true;
+    const entryMode = openJoinedClass
+      ? "chat"
+      : normalizeMatchEntryMode(body.entryMode ?? body.entry_mode);
     const rawClassId = String(
       body.classId ?? body.forcedClassId ?? ""
     ).trim();
@@ -1032,6 +1036,7 @@ export async function matchJoinV2Post(req: Request) {
       blockedDeviceIds,
       requestedMinAge,
       requestedMaxAge,
+      entryMode,
       requestId,
     });
 
@@ -1064,6 +1069,7 @@ export async function matchJoinV2Post(req: Request) {
         requestedCapacity,
         recruitmentSessionTtlMinutes,
         hintSessionId: forcedSessionId || resolvedSessionId,
+        entryMode,
       });
 
       if (!resolved.ok) return resolved.response;

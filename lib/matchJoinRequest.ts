@@ -1,3 +1,5 @@
+import { normalizeMatchEntryMode, type MatchEntryMode } from "@/lib/matchJoinEntryMode";
+
 export type MatchJoinRequestBody = {
   deviceId: string;
   worldKey: string;
@@ -5,6 +7,8 @@ export type MatchJoinRequestBody = {
   capacity: number;
   minAge?: number;
   maxAge?: number;
+  /** voice → /call pool; chat → /room pool (separate sessions, same theme). */
+  entryMode?: MatchEntryMode;
   openJoinedClass?: boolean;
   classId?: string;
   sessionId?: string;
@@ -23,12 +27,17 @@ export function buildMatchJoinRequestBody(params: {
   maxAge?: number;
   openJoinedClassId?: string | null;
   sessionId?: string | null;
+  entryMode?: MatchEntryMode | string | null;
 }): MatchJoinRequestBody {
+  const openJoinedClassId = String(params.openJoinedClassId ?? "").trim();
   const body: MatchJoinRequestBody = {
     deviceId: params.deviceId,
     worldKey: params.worldKey ?? "default",
     topicKey: params.topicKey ?? null,
     capacity: params.capacity ?? 5,
+    entryMode: openJoinedClassId
+      ? "chat"
+      : normalizeMatchEntryMode(params.entryMode),
   };
 
   if (params.minAge !== undefined) {
@@ -38,8 +47,6 @@ export function buildMatchJoinRequestBody(params: {
   if (params.maxAge !== undefined) {
     body.maxAge = params.maxAge;
   }
-
-  const openJoinedClassId = String(params.openJoinedClassId ?? "").trim();
 
   if (openJoinedClassId) {
     body.openJoinedClass = true;

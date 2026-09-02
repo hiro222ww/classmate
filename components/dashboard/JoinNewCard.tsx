@@ -3,31 +3,51 @@
 import Link from "next/link";
 import { DASH_CARD, PRIMARY_BTN, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
 
-type JoinNewCardProps = {
-  className?: string;
-  quickJoinDisabled?: boolean;
-  quickJoinBusy?: boolean;
-  quickJoinLabel?: string;
-  quickJoinHint?: string;
-  themeSelectHref?: string;
-  themeSelectLabel?: string;
-  onQuickJoin: () => void;
+const EQUAL_CTA_STYLE: React.CSSProperties = {
+  ...PRIMARY_BTN,
+  padding: "16px 14px",
+  fontSize: 16,
+  borderRadius: 16,
+  minHeight: 56,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  lineHeight: 1.35,
 };
 
-/** One-decision home CTA: primary random talk + weaker theme-select link. */
+type JoinNewCardProps = {
+  className?: string;
+  joinDisabled?: boolean;
+  voiceBusy?: boolean;
+  chatBusy?: boolean;
+  voiceLabel?: string;
+  chatLabel?: string;
+  themeSelectHref?: string;
+  themeSelectLabel?: string;
+  onVoiceJoin: () => void;
+  onChatJoin: () => void;
+};
+
+/** Home hero: voice + chat at equal priority, theme select as sub-link below. */
 export function JoinNewCard({
   className,
-  quickJoinDisabled = false,
-  quickJoinBusy = false,
-  quickJoinLabel = "最大5人で話す",
-  quickJoinHint = "",
+  joinDisabled = false,
+  voiceBusy = false,
+  chatBusy = false,
+  voiceLabel = "🎙️ 通話から始める！",
+  chatLabel = "💬 チャットから始める！",
   themeSelectHref,
-  themeSelectLabel = "テーマを選んで話す",
-  onQuickJoin,
+  themeSelectLabel = "テーマを選んで始める",
+  onVoiceJoin,
+  onChatJoin,
 }: JoinNewCardProps) {
   const sectionClass = ["cm-paper-card", "cm-home-talk-cta", className]
     .filter(Boolean)
     .join(" ");
+
+  const voiceDisabled = joinDisabled || voiceBusy || chatBusy;
+  const chatDisabled = joinDisabled || chatBusy || voiceBusy;
 
   return (
     <section
@@ -39,38 +59,41 @@ export function JoinNewCard({
         gap: 12,
       }}
     >
-      <button
-        type="button"
-        className="cm-cta-primary"
-        onClick={onQuickJoin}
-        disabled={quickJoinDisabled || quickJoinBusy}
+      <div
+        className="cm-home-dual-cta-grid"
         style={{
-          ...PRIMARY_BTN,
-          padding: "18px 20px",
-          fontSize: 18,
-          borderRadius: 16,
-          minHeight: 56,
-          opacity: quickJoinDisabled || quickJoinBusy ? 0.55 : 1,
-          cursor:
-            quickJoinDisabled || quickJoinBusy ? "not-allowed" : "pointer",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          gap: 10,
         }}
       >
-        {quickJoinBusy ? "参加中…" : quickJoinLabel}
-      </button>
-      {quickJoinHint ? (
-        <p
+        <button
+          type="button"
+          className="cm-cta-primary cm-home-voice-cta"
+          onClick={onVoiceJoin}
+          disabled={voiceDisabled}
           style={{
-            margin: 0,
-            fontSize: 13,
-            fontWeight: 700,
-            color: "#6b7280",
-            textAlign: "center",
-            lineHeight: 1.45,
+            ...EQUAL_CTA_STYLE,
+            opacity: voiceDisabled ? 0.55 : 1,
+            cursor: voiceDisabled ? "not-allowed" : "pointer",
           }}
         >
-          {quickJoinHint}
-        </p>
-      ) : null}
+          {voiceBusy ? "参加中…" : voiceLabel}
+        </button>
+        <button
+          type="button"
+          className="cm-cta-primary cm-home-chat-cta"
+          onClick={onChatJoin}
+          disabled={chatDisabled}
+          style={{
+            ...EQUAL_CTA_STYLE,
+            opacity: chatDisabled ? 0.55 : 1,
+            cursor: chatDisabled ? "not-allowed" : "pointer",
+          }}
+        >
+          {chatBusy ? "参加中…" : chatLabel}
+        </button>
+      </div>
       {themeSelectHref ? (
         <Link
           href={themeSelectHref}
