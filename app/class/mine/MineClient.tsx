@@ -212,7 +212,6 @@ export default function MineClient() {
         }
         accountLabel={accountLabel}
         loggedIn={loggedIn}
-        topHref={withDev("/")}
         aboutHref={withDev("/about")}
         termsHref={withDev("/terms")}
         privacyHref={withDev("/privacy")}

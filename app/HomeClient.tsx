@@ -2645,7 +2645,6 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         accountHref={loggedIn ? withDev(buildShellAwareSettingsUrl()) : withDev(buildShellAwareLoginUrl("/"))}
         accountLabel={accountLabel}
         loggedIn={loggedIn}
-        topHref={withDev("/")}
         aboutHref={withDev("/about")}
         termsHref={withDev("/terms")}
         privacyHref={withDev("/privacy")}

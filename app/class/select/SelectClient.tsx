@@ -1450,7 +1450,6 @@ export default function SelectClient() {
         }
         accountLabel={accountLabel}
         loggedIn={loggedIn}
-        topHref={withDev("/")}
         aboutHref={withDev("/about")}
         termsHref={withDev("/terms")}
         privacyHref={withDev("/privacy")}

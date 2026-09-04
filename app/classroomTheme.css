@@ -1997,15 +1997,16 @@
   left: 0;
   right: 0;
   z-index: 910;
-  max-height: 85vh;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  /* Prefer dynamic viewport so mobile browser chrome doesn't clip the sheet. */
+  max-height: min(92dvh, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #fff;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.12);
   transform: translateY(100%);
   transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
   pointer-events: none;
 }
 .cm-bottom-sheet--open {
@@ -2018,6 +2019,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px 8px;
+  flex-shrink: 0;
 }
 .cm-bottom-sheet-title {
   font-size: 17px;
@@ -2043,7 +2045,12 @@
 }
 
 .cm-bottom-sheet-body {
-  padding: 4px 20px 16px;
+  padding: 4px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* ========== Hamburger button ========== */

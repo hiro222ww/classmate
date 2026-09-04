@@ -18,7 +18,6 @@ type HomeMenuSheetProps = {
   accountHref: string;
   accountLabel: string;
   loggedIn: boolean;
-  topHref: string;
   aboutHref: string;
   termsHref: string;
   privacyHref: string;
@@ -182,7 +181,6 @@ export default function HomeMenuSheet({
   accountHref,
   accountLabel,
   loggedIn,
-  topHref,
   aboutHref,
   termsHref,
   privacyHref,
@@ -295,10 +293,6 @@ export default function HomeMenuSheet({
           Classmate
         </div>
 
-        <Link href={topHref} onClick={onClose} style={rowStyle}>
-          <span>Classmateトップ</span>
-          <span style={chevron}>›</span>
-        </Link>
         <Link href={aboutHref} onClick={onClose} style={rowStyle}>
           <span>Classmateについて</span>
           <span style={chevron}>›</span>

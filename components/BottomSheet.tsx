@@ -86,6 +86,7 @@ export default function BottomSheet({
               display: "flex",
               justifyContent: "flex-end",
               padding: "8px 16px 0",
+              flexShrink: 0,
             }}
           >
             <button
