@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import BottomSheet from "@/components/BottomSheet";
-import { HOME_INTRO } from "@/lib/seo";
 
 type HomeMenuSheetProps = {
   open: boolean;
@@ -147,7 +146,7 @@ const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 14,
-  padding: "14px 8px",
+  padding: "12px 8px",
   borderBottom: "1px solid #f3f4f6",
   textDecoration: "none",
   color: "#111827",
@@ -165,6 +164,12 @@ const chevron: React.CSSProperties = {
   color: "#9ca3af",
   fontSize: 16,
   flexShrink: 0,
+};
+
+const legalLinkStyle: React.CSSProperties = {
+  color: "#6b7280",
+  textDecoration: "none",
+  fontWeight: 700,
 };
 
 export default function HomeMenuSheet({
@@ -195,7 +200,7 @@ export default function HomeMenuSheet({
             fontSize: 12,
             fontWeight: 800,
             color: "#6b7280",
-            padding: "4px 8px 6px",
+            padding: "2px 8px 4px",
             letterSpacing: "0.04em",
           }}
         >
@@ -271,11 +276,7 @@ export default function HomeMenuSheet({
           <span style={chevron}>›</span>
         </Link>
 
-        <Link
-          href={accountHref}
-          onClick={onClose}
-          style={{ ...rowStyle }}
-        >
+        <Link href={accountHref} onClick={onClose} style={rowStyle}>
           <GlyphGoogle />
           <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
           <span style={chevron}>›</span>
@@ -286,74 +287,52 @@ export default function HomeMenuSheet({
             fontSize: 12,
             fontWeight: 800,
             color: "#6b7280",
-            padding: "14px 8px 6px",
+            padding: "12px 8px 4px",
             letterSpacing: "0.04em",
           }}
         >
           Classmate
         </div>
 
-        <Link href={aboutHref} onClick={onClose} style={rowStyle}>
-          <span>Classmateについて</span>
-          <span style={chevron}>›</span>
-        </Link>
-        <Link href={termsHref} onClick={onClose} style={rowStyle}>
-          <span>利用規約</span>
-          <span style={chevron}>›</span>
-        </Link>
-        <Link href={privacyHref} onClick={onClose} style={rowStyle}>
-          <span>プライバシーポリシー</span>
-          <span style={chevron}>›</span>
-        </Link>
-        <Link href={guidelinesHref} onClick={onClose} style={rowStyle}>
-          <span>ガイドライン</span>
-          <span style={chevron}>›</span>
-        </Link>
         <Link
-          href={commercialHref}
+          href={aboutHref}
           onClick={onClose}
           style={{ ...rowStyle, borderBottom: "none" }}
         >
-          <span>特定商取引法に基づく表記</span>
+          <span>Classmateについて</span>
           <span style={chevron}>›</span>
         </Link>
-      </nav>
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "16px 8px 8px",
-          marginTop: 8,
-          borderTop: "1px solid #f3f4f6",
-        }}
-      >
-        <img
-          src="/apple-touch-icon.png"
-          alt=""
-          width={40}
-          height={40}
-          aria-hidden
+        <div
+          aria-label="規約・ポリシー"
           style={{
-            borderRadius: "50%",
-            border: "2px solid rgba(255,255,255,0.85)",
-            boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
-            flexShrink: 0,
-          }}
-        />
-        <p
-          style={{
-            margin: 0,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px 10px",
+            alignItems: "center",
+            padding: "4px 8px 2px",
             fontSize: 12,
-            lineHeight: 1.5,
-            color: "#6b7280",
-            fontWeight: 600,
+            lineHeight: 1.45,
+            color: "#9ca3af",
           }}
         >
-          {HOME_INTRO}
-        </p>
-      </div>
+          <Link href={termsHref} onClick={onClose} style={legalLinkStyle}>
+            利用規約
+          </Link>
+          <span aria-hidden>·</span>
+          <Link href={privacyHref} onClick={onClose} style={legalLinkStyle}>
+            プライバシー
+          </Link>
+          <span aria-hidden>·</span>
+          <Link href={guidelinesHref} onClick={onClose} style={legalLinkStyle}>
+            ガイドライン
+          </Link>
+          <span aria-hidden>·</span>
+          <Link href={commercialHref} onClick={onClose} style={legalLinkStyle}>
+            特商法表記
+          </Link>
+        </div>
+      </nav>
     </BottomSheet>
   );
 }
