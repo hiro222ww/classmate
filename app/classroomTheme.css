@@ -1997,12 +1997,16 @@
   left: 0;
   right: 0;
   z-index: 910;
-  /* Content-sized sheet; paint into the iOS safe area so no empty gap appears. */
-  height: fit-content;
+  /*
+   * Hug content height. Avoid display:flex + max-height on iOS Safari —
+   * that combo often expands the sheet to max-height and leaves a blank gap.
+   */
+  height: auto;
   max-height: min(80dvh, 80vh);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   background: #fff;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.12);
@@ -2021,7 +2025,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px 2px;
-  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
 }
 .cm-bottom-sheet-title {
   font-size: 17px;
@@ -2047,12 +2054,7 @@
 }
 
 .cm-bottom-sheet-body {
-  padding: 0 16px 8px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  flex: 0 1 auto;
-  min-height: 0;
+  padding: 0 16px 10px;
 }
 
 /* ========== Hamburger button ========== */
