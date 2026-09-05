@@ -111,6 +111,8 @@ export default function TermsPage() {
         <Link href="/privacy">プライバシーポリシー</Link>
         {" · "}
         <Link href="/guidelines">コミュニティガイドライン</Link>
+        {" · "}
+        <Link href="/legal/commercial-disclosure">特商法表記</Link>
       </p>
     </LegalPageShell>
   );

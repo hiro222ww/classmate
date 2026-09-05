@@ -116,6 +116,10 @@ export default function AboutPage() {
         <Link href="/terms">利用規約</Link>
         {" · "}
         <Link href="/privacy">プライバシーポリシー</Link>
+        {" · "}
+        <Link href="/guidelines">ガイドライン</Link>
+        {" · "}
+        <Link href="/legal/commercial-disclosure">特商法表記</Link>
       </p>
     </LegalPageShell>
   );

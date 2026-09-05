@@ -18,10 +18,8 @@ type HomeMenuSheetProps = {
   accountLabel: string;
   loggedIn: boolean;
   aboutHref: string;
-  termsHref: string;
-  privacyHref: string;
-  guidelinesHref: string;
-  commercialHref: string;
+  /** Single entry for terms / privacy / guidelines / commercial disclosure. */
+  legalHref: string;
 };
 
 function GlyphBell({ enabled }: { enabled: boolean }) {
@@ -146,7 +144,7 @@ const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 14,
-  padding: "12px 8px",
+  padding: "11px 8px",
   borderBottom: "1px solid #f3f4f6",
   textDecoration: "none",
   color: "#111827",
@@ -166,12 +164,6 @@ const chevron: React.CSSProperties = {
   flexShrink: 0,
 };
 
-const legalLinkStyle: React.CSSProperties = {
-  color: "#6b7280",
-  textDecoration: "none",
-  fontWeight: 700,
-};
-
 export default function HomeMenuSheet({
   open,
   onClose,
@@ -187,10 +179,7 @@ export default function HomeMenuSheet({
   accountLabel,
   loggedIn,
   aboutHref,
-  termsHref,
-  privacyHref,
-  guidelinesHref,
-  commercialHref,
+  legalHref,
 }: HomeMenuSheetProps) {
   return (
     <BottomSheet open={open} onClose={onClose} title="メニュー">
@@ -200,7 +189,7 @@ export default function HomeMenuSheet({
             fontSize: 12,
             fontWeight: 800,
             color: "#6b7280",
-            padding: "2px 8px 4px",
+            padding: "0 8px 2px",
             letterSpacing: "0.04em",
           }}
         >
@@ -287,51 +276,26 @@ export default function HomeMenuSheet({
             fontSize: 12,
             fontWeight: 800,
             color: "#6b7280",
-            padding: "12px 8px 4px",
+            padding: "10px 8px 2px",
             letterSpacing: "0.04em",
           }}
         >
           Classmate
         </div>
 
-        <Link
-          href={aboutHref}
-          onClick={onClose}
-          style={{ ...rowStyle, borderBottom: "none" }}
-        >
+        <Link href={aboutHref} onClick={onClose} style={rowStyle}>
           <span>Classmateについて</span>
           <span style={chevron}>›</span>
         </Link>
 
-        <div
-          aria-label="規約・ポリシー"
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "6px 10px",
-            alignItems: "center",
-            padding: "4px 8px 2px",
-            fontSize: 12,
-            lineHeight: 1.45,
-            color: "#9ca3af",
-          }}
+        <Link
+          href={legalHref}
+          onClick={onClose}
+          style={{ ...rowStyle, borderBottom: "none" }}
         >
-          <Link href={termsHref} onClick={onClose} style={legalLinkStyle}>
-            利用規約
-          </Link>
-          <span aria-hidden>·</span>
-          <Link href={privacyHref} onClick={onClose} style={legalLinkStyle}>
-            プライバシー
-          </Link>
-          <span aria-hidden>·</span>
-          <Link href={guidelinesHref} onClick={onClose} style={legalLinkStyle}>
-            ガイドライン
-          </Link>
-          <span aria-hidden>·</span>
-          <Link href={commercialHref} onClick={onClose} style={legalLinkStyle}>
-            特商法表記
-          </Link>
-        </div>
+          <span>規約・ポリシー</span>
+          <span style={chevron}>›</span>
+        </Link>
       </nav>
     </BottomSheet>
   );

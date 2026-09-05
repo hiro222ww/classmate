@@ -1451,10 +1451,7 @@ export default function SelectClient() {
         accountLabel={accountLabel}
         loggedIn={loggedIn}
         aboutHref={withDev("/about")}
-        termsHref={withDev("/terms")}
-        privacyHref={withDev("/privacy")}
-        guidelinesHref={withDev("/guidelines")}
-        commercialHref={withDev("/legal/commercial-disclosure")}
+        legalHref={withDev("/terms")}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
