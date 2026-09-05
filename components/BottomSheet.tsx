@@ -9,6 +9,14 @@ type BottomSheetProps = {
   children: React.ReactNode;
 };
 
+/**
+ * iOS Safari-safe bottom sheet.
+ *
+ * Do NOT size a `position:fixed; bottom:0` panel with `max-height` alone —
+ * WebKit often stretches it to max-height and leaves a blank gap under short
+ * content. Instead, dock a full-screen flex column (`justify-content:flex-end`)
+ * and let the sheet be a normal flex child that hugs its content up to max-height.
+ */
 export default function BottomSheet({
   open,
   onClose,
@@ -53,20 +61,17 @@ export default function BottomSheet({
   }, [open]);
 
   return (
-    <>
-      {/* backdrop */}
-      <div
-        className={`cm-bottom-sheet-backdrop ${open ? "cm-bottom-sheet-backdrop--open" : ""}`}
-        aria-hidden
-        onClick={close}
-      />
-      {/* sheet */}
+    <div
+      className={`cm-bottom-sheet-root ${open ? "cm-bottom-sheet-root--open" : ""}`}
+      onClick={close}
+    >
       <div
         ref={sheetRef}
         role="dialog"
         aria-modal={open}
         aria-label={title ?? "メニュー"}
-        className={`cm-bottom-sheet ${open ? "cm-bottom-sheet--open" : ""}`}
+        className="cm-bottom-sheet"
+        onClick={(e) => e.stopPropagation()}
       >
         {title ? (
           <div className="cm-bottom-sheet-header">
@@ -101,6 +106,6 @@ export default function BottomSheet({
         )}
         <div className="cm-bottom-sheet-body">{children}</div>
       </div>
-    </>
+    </div>
   );
 }
