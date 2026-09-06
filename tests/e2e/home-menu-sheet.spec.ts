@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * The home hamburger menu must hug its content on mobile viewports.
- * A tall empty white gap under the last row is the recurring production bug.
+ * Home hamburger menu must hug content.
+ * Root cause of the blank gap: max-height + overflow-y on `.cm-bottom-sheet`
+ * (flex item) made iOS Safari use max-height as the used height.
  */
 test.use({
   viewport: { width: 390, height: 844 },
@@ -32,31 +33,40 @@ test.describe("home menu bottom sheet", () => {
       await expect(sheet.getByText(label, { exact: true })).toBeVisible();
     }
 
-    // Allow JS height lock (rAF / timeouts) to settle.
-    await page.waitForTimeout(250);
-
     const metrics = await sheet.evaluate((el) => {
+      const scroll = el.querySelector(".cm-bottom-sheet-scroll");
       const body = el.querySelector(".cm-bottom-sheet-body");
       const nav = body?.querySelector("nav");
-      const sheetHeight = el.getBoundingClientRect().height;
-      const contentBottom =
-        nav?.getBoundingClientRect().bottom ?? el.getBoundingClientRect().bottom;
+      const last = nav?.lastElementChild;
+      const cs = getComputedStyle(el);
+      const scrollCs = scroll ? getComputedStyle(scroll) : null;
       const sheetBottom = el.getBoundingClientRect().bottom;
+      const lastBottom = last?.getBoundingClientRect().bottom ?? sheetBottom;
       return {
-        sheetHeight,
+        sheetHeight: el.getBoundingClientRect().height,
+        scrollHeight: scroll?.getBoundingClientRect().height ?? 0,
         contentHeight: nav?.getBoundingClientRect().height ?? 0,
         viewportHeight: window.innerHeight,
-        gapBelowContent: sheetBottom - contentBottom,
+        gapBelowLastItem: sheetBottom - lastBottom,
+        sheetMaxHeight: cs.maxHeight,
+        sheetOverflowY: cs.overflowY,
+        scrollMaxHeight: scrollCs?.maxHeight ?? null,
+        scrollOverflowY: scrollCs?.overflowY ?? null,
         inlineHeight: el.style.height,
       };
     });
 
-    // Explicit pixel lock should be applied.
-    expect(metrics.inlineHeight).toMatch(/^\d+px$/);
-    // Sheet must not inflate toward ~80vh when content is shorter.
+    // Outer sheet must NOT carry max-height/overflow (iOS gap root cause).
+    expect(metrics.sheetMaxHeight).toBe("none");
+    expect(metrics.sheetOverflowY).toBe("visible");
+    // Inner scroll owns the cap.
+    expect(metrics.scrollMaxHeight).not.toBe("none");
+    expect(metrics.scrollOverflowY).toBe("auto");
+    // No JS height lock.
+    expect(metrics.inlineHeight).toBe("");
+    // Sheet hugs content — must not inflate toward ~80vh.
     expect(metrics.sheetHeight).toBeLessThan(metrics.viewportHeight * 0.7);
-    // Empty gap under the last row must stay tiny (safe-area / padding only).
-    expect(metrics.gapBelowContent).toBeLessThan(48);
-    expect(metrics.sheetHeight - metrics.contentHeight).toBeLessThan(100);
+    // Gap under last row = body padding (+ optional safe-area on outer sheet).
+    expect(metrics.gapBelowLastItem).toBeLessThan(48);
   });
 });

@@ -1979,9 +1979,18 @@
 
 /* ========== Bottom Sheet ========== */
 /*
- * Full-viewport dock + content-sized sheet.
- * iOS Safari stretches `position:fixed; bottom:0; max-height:…` panels to
- * max-height (blank gap under short menus). Flex-end docking avoids that.
+ * Dock: full-viewport flex column, sheet pinned to bottom.
+ *
+ * iOS Safari blank-gap root cause:
+ * `.cm-bottom-sheet` previously had BOTH `max-height: min(80dvh,80vh)` AND
+ * `overflow-y: auto` while being a flex item. WebKit then uses max-height as
+ * the used height → large empty white box under the last menu row.
+ *
+ * Split responsibilities:
+ * - `.cm-bottom-sheet`: content-sized chrome only (no max-height / overflow)
+ * - `.cm-bottom-sheet-scroll`: owns max-height + overflow scrolling
+ * - `padding-bottom: env(safe-area-inset-bottom)` stays on the outer sheet
+ *   (home-indicator inset only; not a large spacer)
  */
 .cm-bottom-sheet-root {
   position: fixed;
@@ -2001,28 +2010,29 @@
 }
 
 .cm-bottom-sheet {
-  /*
-   * flex:none so the dock cannot stretch us. Height is locked in JS from
-   * measured content (see BottomSheet) because iOS still expands max-height
-   * + overflow sheets and can clip later menu rows into a blank gap.
-   */
-  flex: none;
+  flex: 0 0 auto;
   width: 100%;
-  height: fit-content;
-  max-height: min(80dvh, 80vh);
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  /* Content-sized. Do NOT set max-height or overflow here (iOS gap bug). */
+  height: auto;
+  overflow: visible;
   background: #fff;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.12);
+  /* iPhone home indicator only — typically ~34px, not the large menu gap. */
   padding-bottom: env(safe-area-inset-bottom, 0px);
   transform: translateY(100%);
   transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 .cm-bottom-sheet-root--open .cm-bottom-sheet {
   transform: translateY(0);
+}
+
+.cm-bottom-sheet-scroll {
+  max-height: min(80dvh, 80vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .cm-bottom-sheet-header {
