@@ -1979,29 +1979,29 @@
 
 /* ========== Bottom Sheet ========== */
 /*
- * White background painter: `.cm-bottom-sheet` (background:#fff).
+ * Content-sized by default. ~80% viewport is NOT a default height.
  *
- * Why a huge white gap still appeared after the prior "content-sized" change:
- * `.cm-bottom-sheet-scroll` kept BOTH `max-height: min(80dvh,80vh)` AND
- * `overflow-y: auto` on the SAME element. iOS Safari resolves that combo's
- * used height to max-height. Parent `.cm-bottom-sheet` is height:auto, so it
- * grows with the child and paints white down to ~80vh under the last row.
+ * White painter: `.cm-bottom-sheet` (background:#fff).
  *
- * Correct split (must not reunite max-height + overflow:auto on one node):
- * - `.cm-bottom-sheet`: white bg, max-height cap, overflow:hidden (clip only),
- *   position:absolute; bottom:0; height:auto (content-sized from the bottom).
- * - `.cm-bottom-sheet-scroll`: overflow-y:auto ONLY — no max-height.
+ * iOS rule: never leave `max-height` + `overflow:auto` on the same node
+ * (used height becomes max-height → huge white gap under the last row).
  *
- * Use svh (not dvh) for the cap so Safari chrome show/hide on long-press does
- * not recompute the sheet height as aggressively.
+ * Default CSS: no max-height anywhere; scroll overflow is visible.
+ * `BottomSheet.tsx` measures natural height on open and ONLY THEN:
+ *   - sets sheet.style.maxHeight to a px cap frozen at open time
+ *   - sets scroll.style.overflowY = 'auto'
+ * when content exceeds ~80% of the viewport. Short menus never get a cap,
+ * so they cannot expand to fill the screen.
  *
- * Debug outlines: add ?bsdebug=1 → `.cm-bottom-sheet-root--debug`
+ * Cap uses frozen px (not live dvh) so Safari chrome / long-press does not
+ * change sheet height.
+ *
+ * Debug: ?bsdebug=1 → `.cm-bottom-sheet-root--debug` outlines.
  */
 .cm-bottom-sheet-root {
   position: fixed;
   inset: 0;
   z-index: 900;
-  /* Overlay only — do not flex-size the sheet (avoids flex min/max height quirks). */
   background: rgba(15, 23, 42, 0);
   pointer-events: none;
   transition: background 280ms ease;
@@ -2017,16 +2017,17 @@
   right: 0;
   bottom: 0;
   width: 100%;
-  /* Content height from bottom; capped — does NOT use overflow:auto here. */
+  /* Pure content size. max-height is applied inline by JS only when needed. */
   height: auto;
-  max-height: min(80svh, 80vh);
+  max-height: none;
+  /* Clip only — never overflow:auto on this node (iOS max-height expand bug). */
   overflow: hidden;
   display: flex;
   flex-direction: column;
   background: #fff;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.12);
-  /* Home indicator only (~34px). Not a flex:1 filler. */
+  /* Home indicator only. Not a flex:1 filler. */
   padding-bottom: env(safe-area-inset-bottom, 0px);
   transform: translateY(100%);
   transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
@@ -2036,13 +2037,20 @@
 }
 
 .cm-bottom-sheet-scroll {
-  /* Scrollport only. No max-height — parent caps height. */
+  /* Default: not a scrollport. No max-height — ever in CSS. */
   flex: 0 1 auto;
   min-height: 0;
   overflow-x: hidden;
+  overflow-y: visible;
+  overscroll-behavior: contain;
+}
+
+/* Overflow path only: JS also sets inline overflowY:auto when capped. */
+.cm-bottom-sheet-root--capped .cm-bottom-sheet-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
 }
 
 /* Temporary visual ownership map (?bsdebug=1) */
@@ -2101,7 +2109,8 @@
 }
 
 .cm-bottom-sheet-body {
-  padding: 0 16px 10px;
+  /* 16–24px under the last row (e.g. Googleでログイン), plus sheet safe-area. */
+  padding: 0 16px 20px;
 }
 
 /* ========== Hamburger button ========== */

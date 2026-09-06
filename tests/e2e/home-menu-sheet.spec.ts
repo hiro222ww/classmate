@@ -1,12 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Home menu must hug content down to the last row.
- *
- * Blank-gap ownership:
- * - White fill: `.cm-bottom-sheet` (background:#fff)
- * - Height inflation: was `.cm-bottom-sheet-scroll` with max-height+overflow:auto
- *   (iOS used max-height as used height; parent grew and painted white)
+ * Content-sized bottom sheet:
+ * - Short menus: no max-height, hug last row (+ body pad + safe-area)
+ * - Tall menus only: JS applies frozen px max-height + scroll overflow
+ * - Never max-height + overflow:auto on the same node in default CSS
  */
 test.use({
   viewport: { width: 390, height: 844 },
@@ -17,7 +15,7 @@ test.use({
 });
 
 test.describe("home menu bottom sheet", () => {
-  test("hugs content; scroll has no max-height; sheet paints white", async ({
+  test("short menu hugs content without a permanent max-height", async ({
     page,
   }) => {
     await page.goto("/dev/home-menu");
@@ -37,6 +35,9 @@ test.describe("home menu bottom sheet", () => {
       await expect(sheet.getByText(label, { exact: true })).toBeVisible();
     }
 
+    // Allow syncSize timeouts
+    await page.waitForTimeout(250);
+
     const metrics = await sheet.evaluate((el) => {
       const scroll = el.querySelector(".cm-bottom-sheet-scroll");
       const body = el.querySelector(".cm-bottom-sheet-body");
@@ -48,33 +49,30 @@ test.describe("home menu bottom sheet", () => {
       const lastBottom = last?.getBoundingClientRect().bottom ?? sheetBottom;
       return {
         sheetHeight: el.getBoundingClientRect().height,
-        scrollHeight: scroll?.getBoundingClientRect().height ?? 0,
         viewportHeight: window.innerHeight,
         gapBelowLastItem: sheetBottom - lastBottom,
-        sheetBg: cs.backgroundColor,
-        sheetMaxHeight: cs.maxHeight,
+        sheetMaxHeightCss: cs.maxHeight,
+        sheetInlineMaxHeight: el.style.maxHeight,
         sheetOverflowY: cs.overflowY,
-        sheetPosition: cs.position,
-        sheetBottomCss: cs.bottom,
         scrollMaxHeight: scrollCs?.maxHeight ?? null,
         scrollOverflowY: scrollCs?.overflowY ?? null,
-        inlineHeight: el.style.height,
+        cappedAttr: el.getAttribute("data-bs-capped"),
+        sheetBg: cs.backgroundColor,
       };
     });
 
-    // White painter is the sheet itself.
+    // White painter
     expect(metrics.sheetBg).toMatch(/rgb\(\s*255,\s*255,\s*255\s*\)/);
-    // Cap on sheet (clip), not on scrollport.
-    expect(metrics.sheetMaxHeight).not.toBe("none");
-    expect(metrics.sheetOverflowY).toBe("hidden");
-    expect(metrics.sheetPosition).toBe("absolute");
-    expect(metrics.sheetBottomCss).toBe("0px");
-    // Scrollport must NOT carry max-height (reuniting with overflow:auto = iOS gap).
+    // Short fixture must NOT be capped to ~80vh
+    expect(metrics.cappedAttr).toBe("0");
+    expect(metrics.sheetInlineMaxHeight).toBe("");
+    expect(metrics.sheetMaxHeightCss).toBe("none");
+    // Scroll has no max-height; overflow stays visible when not capped
     expect(metrics.scrollMaxHeight).toBe("none");
-    expect(metrics.scrollOverflowY).toBe("auto");
-    expect(metrics.inlineHeight).toBe("");
+    expect(metrics.scrollOverflowY).toBe("visible");
     expect(metrics.sheetHeight).toBeLessThan(metrics.viewportHeight * 0.7);
-    // body padding (+ optional safe-area on sheet)
-    expect(metrics.gapBelowLastItem).toBeLessThan(48);
+    // body pad (~20px) + optional safe-area on sheet
+    expect(metrics.gapBelowLastItem).toBeGreaterThanOrEqual(16);
+    expect(metrics.gapBelowLastItem).toBeLessThan(56);
   });
 });
