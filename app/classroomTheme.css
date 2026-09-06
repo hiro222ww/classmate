@@ -1978,30 +1978,32 @@
 }
 
 /* ========== Bottom Sheet ========== */
-.cm-bottom-sheet-backdrop {
+/*
+ * Full-viewport dock + content-sized sheet.
+ * iOS Safari stretches `position:fixed; bottom:0; max-height:…` panels to
+ * max-height (blank gap under short menus). Flex-end docking avoids that.
+ */
+.cm-bottom-sheet-root {
   position: fixed;
   inset: 0;
   z-index: 900;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
   background: rgba(15, 23, 42, 0);
   pointer-events: none;
   transition: background 280ms ease;
 }
-.cm-bottom-sheet-backdrop--open {
+.cm-bottom-sheet-root--open {
   background: rgba(15, 23, 42, 0.35);
   pointer-events: auto;
 }
 
 .cm-bottom-sheet {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 910;
-  /*
-   * Hug content height. Avoid display:flex + max-height on iOS Safari —
-   * that combo often expands the sheet to max-height and leaves a blank gap.
-   */
-  height: auto;
+  /* Flex child of the dock — hugs content; shrinks only when over max-height. */
+  flex: 0 1 auto;
+  width: 100%;
   max-height: min(80dvh, 80vh);
   overflow-x: hidden;
   overflow-y: auto;
@@ -2013,11 +2015,9 @@
   padding-bottom: env(safe-area-inset-bottom, 0px);
   transform: translateY(100%);
   transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
-  pointer-events: none;
 }
-.cm-bottom-sheet--open {
+.cm-bottom-sheet-root--open .cm-bottom-sheet {
   transform: translateY(0);
-  pointer-events: auto;
 }
 
 .cm-bottom-sheet-header {
@@ -2124,7 +2124,7 @@
   .cm-stagger-5 {
     animation: none !important;
   }
-  .cm-bottom-sheet-backdrop,
+  .cm-bottom-sheet-root,
   .cm-bottom-sheet {
     transition: none !important;
   }
