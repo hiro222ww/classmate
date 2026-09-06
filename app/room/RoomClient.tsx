@@ -4464,8 +4464,6 @@ const name = rawName === "You" ? "参加者" : rawName;
                       ? ["通話を開始できます。"]
                       : []
           }
-          onBack={goHome}
-          backLabel={roomExitLabel}
           onHome={goHome}
           homeLabel={roomExitLabel}
           homeHref={roomExitHref}

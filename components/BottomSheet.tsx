@@ -33,23 +33,29 @@ export default function BottomSheet({
     const sheet = sheetRef.current;
     if (!sheet || !open) return;
 
-    // Measure natural content size without max-height/overflow constraints.
-    sheet.style.height = "auto";
-    sheet.style.maxHeight = "none";
-    sheet.style.overflow = "visible";
-
-    const natural = Math.ceil(sheet.getBoundingClientRect().height);
-    const maxPx = Math.round(window.innerHeight * 0.8);
-
-    if (natural > maxPx) {
-      sheet.style.height = `${maxPx}px`;
-      sheet.style.overflowX = "hidden";
-      sheet.style.overflowY = "auto";
-    } else {
-      sheet.style.height = `${Math.max(natural, 1)}px`;
-      sheet.style.overflow = "hidden";
+    // Sum direct children heights (header + body). Do NOT measure the sheet box:
+    // on iOS it may already be flex-stretched to max-height, which would
+    // permanently re-lock the blank gap.
+    let contentH = 0;
+    for (const child of Array.from(sheet.children)) {
+      if (child instanceof HTMLElement) contentH += child.offsetHeight;
     }
+    const padBottom =
+      Number.parseFloat(getComputedStyle(sheet).paddingBottom) || 0;
+    // body.scrollHeight catches content taller than the current body box
+    const body = sheet.querySelector<HTMLElement>(".cm-bottom-sheet-body");
+    if (body && body.scrollHeight > body.offsetHeight) {
+      contentH += body.scrollHeight - body.offsetHeight;
+    }
+
+    const natural = Math.ceil(contentH + padBottom);
+    const maxPx = Math.round(window.innerHeight * 0.8);
+    const next = Math.max(Math.min(natural, maxPx), 1);
+
+    sheet.style.height = `${next}px`;
     sheet.style.maxHeight = `${maxPx}px`;
+    sheet.style.overflowX = "hidden";
+    sheet.style.overflowY = natural > maxPx ? "auto" : "hidden";
   }, [open]);
 
   useEffect(() => {
