@@ -2037,11 +2037,13 @@
 }
 
 .cm-bottom-sheet-scroll {
-  /* Default: not a scrollport. No max-height — ever in CSS. */
+  /* Default: not a scrollport. No max-height — ever in CSS.
+   * Do NOT set overflow-x:hidden here: with overflow-y:visible that forces
+   * computed overflow-y to auto (CSS overflow pairing), which reintroduces
+   * a scrollport on short sheets. */
   flex: 0 1 auto;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: visible;
+  overflow: visible;
   overscroll-behavior: contain;
 }
 
@@ -2049,6 +2051,7 @@
 .cm-bottom-sheet-root--capped .cm-bottom-sheet-scroll {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
