@@ -2047,7 +2047,7 @@
 
 /* Temporary visual ownership map (?bsdebug=1) */
 .cm-bottom-sheet-root--debug {
-  outline: 3px solid magenta;
+  outline: 3px solid #22d3ee;
   outline-offset: -3px;
 }
 .cm-bottom-sheet-root--debug .cm-bottom-sheet {
@@ -2065,6 +2065,28 @@
 .cm-bottom-sheet-root--debug .cm-bottom-sheet-body {
   outline: 3px solid orange;
   outline-offset: -3px;
+}
+
+/*
+ * PAINT DIAGNOSIS ONLY (?bsdebug=1) — not a layout fix.
+ * Extreme colors to see where backgrounds actually paint on iOS Safari.
+ * A) Magenta stops mid-sheet → compositing/paint hole (geometry OK, paint fails)
+ * B) Magenta reaches viewport bottom → sheet bg paints; gray is another layer
+ */
+.cm-bottom-sheet-root--debug.cm-bottom-sheet-root--open {
+  background: #00ffff !important; /* cyan: backdrop / root paint extent */
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet {
+  background: #ff00ff !important; /* magenta: sheet paint extent */
+  background-image: none !important;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-scroll {
+  /* Keep scroll transparent so sheet magenta shows through empty regions */
+  background: transparent !important;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-header,
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-body {
+  background: transparent !important;
 }
 
 /* Live geometry HUD (?bsdebug=1) — measurement only */

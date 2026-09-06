@@ -42,6 +42,27 @@ type NamedTarget = {
   exists: boolean;
 };
 
+type PaintSnap = {
+  backgroundColor: string;
+  backgroundImage: string;
+  borderRadius: string;
+  overflow: string;
+  clipPath: string;
+  maskImage: string;
+  transform: string;
+  translate: string;
+  willChange: string;
+  filter: string;
+  backdropFilter: string;
+  opacity: string;
+  contain: string;
+  contentVisibility: string;
+  isolation: string;
+  mixBlendMode: string;
+  beforeContent: string;
+  afterContent: string;
+};
+
 type GeometryProbe = {
   sheet: Box;
   scroll: Box;
@@ -60,6 +81,9 @@ type GeometryProbe = {
   sheetStyle: StyleSnap;
   scrollStyle: StyleSnap;
   rootStyle: StyleSnap | null;
+  sheetPaint: PaintSnap;
+  scrollPaint: PaintSnap;
+  rootPaint: PaintSnap | null;
   named: NamedTarget[];
   points: ProbePoint[];
   verdict: string;
@@ -93,9 +117,46 @@ function styleOf(el: Element): StyleSnap {
     inset: `${cs.top}/${cs.right}/${cs.bottom}/${cs.left}`,
     overflowY: cs.overflowY,
     display: cs.display,
-    background: cs.backgroundImage !== "none" ? cs.backgroundImage.slice(0, 80) : cs.backgroundColor,
+    background:
+      cs.backgroundImage !== "none"
+        ? cs.backgroundImage.slice(0, 80)
+        : cs.backgroundColor,
     backgroundColor: cs.backgroundColor,
     zIndex: cs.zIndex,
+  };
+}
+
+/** Compositing / clip related styles for paint diagnosis. */
+function paintOf(el: Element): PaintSnap {
+  const cs = getComputedStyle(el);
+  const pe = getComputedStyle(el, "::before");
+  const ae = getComputedStyle(el, "::after");
+  const css = cs as CSSStyleDeclaration & {
+    webkitMaskImage?: string;
+    webkitBackdropFilter?: string;
+    translate?: string;
+    contentVisibility?: string;
+  };
+  return {
+    backgroundColor: cs.backgroundColor,
+    backgroundImage:
+      cs.backgroundImage === "none" ? "none" : cs.backgroundImage.slice(0, 48),
+    borderRadius: cs.borderRadius,
+    overflow: `${cs.overflowX}/${cs.overflowY}`,
+    clipPath: cs.clipPath,
+    maskImage: css.webkitMaskImage || cs.maskImage || "none",
+    transform: cs.transform,
+    translate: css.translate || "",
+    willChange: cs.willChange,
+    filter: cs.filter,
+    backdropFilter: css.webkitBackdropFilter || cs.backdropFilter || "none",
+    opacity: cs.opacity,
+    contain: cs.contain,
+    contentVisibility: css.contentVisibility || "",
+    isolation: cs.isolation,
+    mixBlendMode: cs.mixBlendMode,
+    beforeContent: pe.content,
+    afterContent: ae.content,
   };
 }
 
@@ -245,6 +306,9 @@ function probe(root: HTMLElement, hudEl: Element | null): GeometryProbe | null {
     sheetStyle: styleOf(sheet),
     scrollStyle: styleOf(scroll),
     rootStyle: styleOf(root),
+    sheetPaint: paintOf(sheet),
+    scrollPaint: paintOf(scroll),
+    rootPaint: paintOf(root),
     named,
     points,
     verdict,
@@ -412,6 +476,29 @@ export default function BottomSheetGeometryDebug({
                 ))}
               </div>
             ))}
+
+            <div className="cm-bs-geom-debug__title">
+              paint/compositing (sheet/scroll/root)
+            </div>
+            <div className="cm-bs-geom-debug__anc">
+              PAINT DIAG: sheet should be #ff00ff, root open should be #00ffff.
+              If magenta stops mid-sheet → paint hole. If full height → bg paints
+              OK.
+            </div>
+            {line(
+              "sheet paint",
+              `bg=${data.sheetPaint.backgroundColor} radius=${data.sheetPaint.borderRadius} overflow=${data.sheetPaint.overflow} clip=${data.sheetPaint.clipPath} mask=${data.sheetPaint.maskImage} transform=${data.sheetPaint.transform} translate=${data.sheetPaint.translate || "n/a"} willChange=${data.sheetPaint.willChange} filter=${data.sheetPaint.filter} backdrop=${data.sheetPaint.backdropFilter} opacity=${data.sheetPaint.opacity} contain=${data.sheetPaint.contain} isolation=${data.sheetPaint.isolation} ::before=${data.sheetPaint.beforeContent} ::after=${data.sheetPaint.afterContent}`
+            )}
+            {line(
+              "scroll paint",
+              `bg=${data.scrollPaint.backgroundColor} overflow=${data.scrollPaint.overflow} transform=${data.scrollPaint.transform} opacity=${data.scrollPaint.opacity} contain=${data.scrollPaint.contain}`
+            )}
+            {line(
+              "root paint",
+              data.rootPaint
+                ? `bg=${data.rootPaint.backgroundColor} overflow=${data.rootPaint.overflow} transform=${data.rootPaint.transform} opacity=${data.rootPaint.opacity} isolation=${data.rootPaint.isolation}`
+                : "n/a"
+            )}
 
             <div className="cm-bs-geom-debug__verdict">{data.verdict}</div>
           </>
