@@ -102,6 +102,25 @@ export default function BottomSheet({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="cm-bottom-sheet-scroll">
+          {/* Deploy visibility marker: real DOM text (not CSS). Temporary. */}
+          {debug ? (
+            <div
+              data-deploy-debug="0906"
+              style={{
+                margin: 0,
+                padding: "10px 16px",
+                background: "#fef08a",
+                color: "#111827",
+                fontSize: 16,
+                fontWeight: 900,
+                letterSpacing: "0.04em",
+                textAlign: "center",
+                borderBottom: "2px solid #ca8a04",
+              }}
+            >
+              BUILD DEBUG 0906
+            </div>
+          ) : null}
           {title ? (
             <div className="cm-bottom-sheet-header">
               <span className="cm-bottom-sheet-title">{title}</span>
