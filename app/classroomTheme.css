@@ -2045,7 +2045,7 @@
   overscroll-behavior: contain;
 }
 
-/* Temporary visual ownership map (?bsdebug=1) */
+/* Temporary visual ownership map (?bsdebug=1) — investigation, not a fix */
 .cm-bottom-sheet-root--debug {
   outline: 3px solid magenta;
   outline-offset: -3px;
@@ -2058,13 +2058,62 @@
   outline: 3px solid lime;
   outline-offset: -3px;
 }
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-header {
-  outline: 3px solid blue;
+/* HomeClient → HomeMenuSheet children root */
+.cm-bottom-sheet-root--debug .cm-home-menu-root {
+  outline: 3px solid #3b82f6;
   outline-offset: -3px;
 }
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-body {
-  outline: 3px solid orange;
+/* Account menu block */
+.cm-bottom-sheet-root--debug .cm-home-menu-account {
+  outline: 3px solid #a855f7;
   outline-offset: -3px;
+}
+/* Google login wrapper */
+.cm-bottom-sheet-root--debug .cm-home-menu-google {
+  outline: 3px solid #f97316;
+  outline-offset: -3px;
+}
+
+.cm-bs-debug-metric {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  max-width: min(92vw, 420px);
+  padding: 2px 5px;
+  border: 1px solid;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  font: 600 9px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+.cm-bs-debug-panel {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 10001;
+  max-height: 34vh;
+  overflow: auto;
+  pointer-events: none;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  font: 600 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cm-bs-debug-panel__title {
+  margin-top: 6px;
+  margin-bottom: 2px;
+  color: #fbbf24;
+  font-weight: 800;
+}
+.cm-bs-debug-panel__title:first-child {
+  margin-top: 0;
+}
+.cm-bs-debug-panel__anc {
+  opacity: 0.95;
+  word-break: break-word;
 }
 
 .cm-bottom-sheet-header {
