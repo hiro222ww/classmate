@@ -183,93 +183,109 @@ export default function HomeMenuSheet({
 }: HomeMenuSheetProps) {
   return (
     <BottomSheet open={open} onClose={onClose} title="メニュー">
-      <nav aria-label="ホームメニュー" style={{ display: "grid" }}>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: "#6b7280",
-            padding: "0 8px 2px",
-            letterSpacing: "0.04em",
-          }}
-        >
-          アカウント
-        </div>
-        {onToggleNotifications && !hideWebPush ? (
-          <button
-            type="button"
-            onClick={() => {
-              void onToggleNotifications();
-            }}
-            disabled={notificationsBusy}
+      {/*
+        children root for BottomSheet (HomeClient → HomeMenuSheet).
+        Debug (?bsdebug=1): .cm-home-menu-root = blue outline.
+      */}
+      <nav
+        className="cm-home-menu-root"
+        aria-label="ホームメニュー"
+        style={{ display: "grid" }}
+      >
+        {/* Account block — purple outline in bsdebug */}
+        <div className="cm-home-menu-account">
+          <div
             style={{
-              ...rowStyle,
-              cursor: notificationsBusy ? "not-allowed" : "pointer",
+              fontSize: 12,
+              fontWeight: 800,
+              color: "#6b7280",
+              padding: "0 8px 2px",
+              letterSpacing: "0.04em",
             }}
           >
-            <GlyphBell enabled={notificationsEnabled} />
-            <span>通知</span>
-            <span style={chevron}>
-              {notificationsEnabled ? (
-                <span style={{ color: "#10b981", fontWeight: 900, fontSize: 13 }}>
-                  ON
-                </span>
-              ) : (
-                <span
-                  style={{
-                    color: "#ef4444",
-                    fontWeight: 900,
-                    fontSize: 13,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  OFF
+            アカウント
+          </div>
+          {onToggleNotifications && !hideWebPush ? (
+            <button
+              type="button"
+              onClick={() => {
+                void onToggleNotifications();
+              }}
+              disabled={notificationsBusy}
+              style={{
+                ...rowStyle,
+                cursor: notificationsBusy ? "not-allowed" : "pointer",
+              }}
+            >
+              <GlyphBell enabled={notificationsEnabled} />
+              <span>通知</span>
+              <span style={chevron}>
+                {notificationsEnabled ? (
+                  <span
+                    style={{ color: "#10b981", fontWeight: 900, fontSize: 13 }}
+                  >
+                    ON
+                  </span>
+                ) : (
                   <span
                     style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: "#ef4444",
-                      display: "inline-block",
+                      color: "#ef4444",
+                      fontWeight: 900,
+                      fontSize: 13,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
                     }}
-                  />
-                </span>
-              )}
-            </span>
-          </button>
-        ) : null}
+                  >
+                    OFF
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: "50%",
+                        background: "#ef4444",
+                        display: "inline-block",
+                      }}
+                    />
+                  </span>
+                )}
+              </span>
+            </button>
+          ) : null}
 
-        <Link href={profileHref} onClick={onClose} style={rowStyle}>
-          <GlyphUser />
-          <span>プロフィール編集</span>
-          <span style={chevron}>›</span>
-        </Link>
+          <Link href={profileHref} onClick={onClose} style={rowStyle}>
+            <GlyphUser />
+            <span>プロフィール編集</span>
+            <span style={chevron}>›</span>
+          </Link>
 
-        <Link href={myClassesHref} onClick={onClose} style={rowStyle}>
-          <GlyphClasses />
-          <span>マイクラス</span>
-          <span style={chevron}>›</span>
-        </Link>
+          <Link href={myClassesHref} onClick={onClose} style={rowStyle}>
+            <GlyphClasses />
+            <span>マイクラス</span>
+            <span style={chevron}>›</span>
+          </Link>
 
-        <Link href={planHref} onClick={onClose} style={rowStyle}>
-          <GlyphCrown />
-          <span>プランを見る</span>
-          <span style={chevron}>›</span>
-        </Link>
+          <Link href={planHref} onClick={onClose} style={rowStyle}>
+            <GlyphCrown />
+            <span>プランを見る</span>
+            <span style={chevron}>›</span>
+          </Link>
 
-        <Link href={billingHref} onClick={onClose} style={rowStyle}>
-          <GlyphCard />
-          <span>お支払い・解約</span>
-          <span style={chevron}>›</span>
-        </Link>
+          <Link href={billingHref} onClick={onClose} style={rowStyle}>
+            <GlyphCard />
+            <span>お支払い・解約</span>
+            <span style={chevron}>›</span>
+          </Link>
 
-        <Link href={accountHref} onClick={onClose} style={rowStyle}>
-          <GlyphGoogle />
-          <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
-          <span style={chevron}>›</span>
-        </Link>
+          {/* Google login wrapper — orange outline in bsdebug */}
+          <div className="cm-home-menu-google">
+            <Link href={accountHref} onClick={onClose} style={rowStyle}>
+              <GlyphGoogle />
+              <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
+              <span style={chevron}>›</span>
+            </Link>
+          </div>
+        </div>
 
         <div
           style={{

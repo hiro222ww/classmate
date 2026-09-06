@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import BottomSheetLayoutDebug from "@/components/BottomSheetLayoutDebug";
 
 type BottomSheetProps = {
   open: boolean;
@@ -14,21 +15,8 @@ type BottomSheetProps = {
  *
  * White fill is painted by `.cm-bottom-sheet` (`background:#fff`).
  *
- * Remaining blank-gap cause after the prior split:
- * `.cm-bottom-sheet-scroll` still had BOTH `max-height` and `overflow-y:auto`.
- * On iOS that makes the scroll box's used height = max-height (~80vh). The
- * parent sheet is `height:auto`, so it grows with the child and the white
- * background extends far below the last row ("Googleでログイン").
- *
- * Long-press / reflow: max-height used `80dvh`, which changes when Safari
- * chrome shows/hides, so the wrongly-expanded height visibly jumped.
- *
- * Correct split:
- * - `.cm-bottom-sheet`: white bg + `max-height` + `overflow:hidden` (not auto),
- *   absolutely docked with `bottom:0` (not flex-end sizing).
- * - `.cm-bottom-sheet-scroll`: `overflow-y:auto` only — no max-height.
- *
- * Debug: append `?bsdebug=1` to outline each wrapper in a different color.
+ * Debug: append `?bsdebug=1` to outline wrappers and show computed metrics.
+ * (No height/max-height/dvh/svh changes in this investigation pass.)
  */
 export default function BottomSheet({
   open,
@@ -36,13 +24,15 @@ export default function BottomSheet({
   title,
   children,
 }: BottomSheetProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const prevOverflow = useRef("");
   const [debug, setDebug] = useState(false);
 
   useEffect(() => {
     try {
-      setDebug(new URLSearchParams(window.location.search).get("bsdebug") === "1");
+      const q = new URLSearchParams(window.location.search);
+      setDebug(q.get("bsdebug") === "1");
     } catch {
       setDebug(false);
     }
@@ -84,6 +74,7 @@ export default function BottomSheet({
 
   return (
     <div
+      ref={rootRef}
       className={[
         "cm-bottom-sheet-root",
         open ? "cm-bottom-sheet-root--open" : "",
@@ -136,6 +127,7 @@ export default function BottomSheet({
           <div className="cm-bottom-sheet-body">{children}</div>
         </div>
       </div>
+      {debug ? <BottomSheetLayoutDebug open={open} rootRef={rootRef} /> : null}
     </div>
   );
 }
