@@ -2001,9 +2001,14 @@
 }
 
 .cm-bottom-sheet {
-  /* Flex child of the dock — hugs content; shrinks only when over max-height. */
-  flex: 0 1 auto;
+  /*
+   * flex:none so the dock cannot stretch us. Height is locked in JS from
+   * measured content (see BottomSheet) because iOS still expands max-height
+   * + overflow sheets and can clip later menu rows into a blank gap.
+   */
+  flex: none;
   width: 100%;
+  height: fit-content;
   max-height: min(80dvh, 80vh);
   overflow-x: hidden;
   overflow-y: auto;
