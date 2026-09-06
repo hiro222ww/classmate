@@ -2103,6 +2103,27 @@
   color: #86efac;
   font-weight: 800;
 }
+.cm-bs-geom-debug__point {
+  margin-top: 6px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(248, 250, 252, 0.18);
+}
+.cm-bs-geom-debug__point-title {
+  color: #93c5fd;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+.cm-bs-hit-marker {
+  position: fixed;
+  z-index: 10060;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #f43f5e;
+  background: rgba(250, 204, 21, 0.85);
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.5);
+}
 
 .cm-bottom-sheet-header {
   display: flex;
