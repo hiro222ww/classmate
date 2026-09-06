@@ -1979,27 +1979,29 @@
 
 /* ========== Bottom Sheet ========== */
 /*
- * Dock: full-viewport flex column, sheet pinned to bottom.
+ * White background painter: `.cm-bottom-sheet` (background:#fff).
  *
- * iOS Safari blank-gap root cause:
- * `.cm-bottom-sheet` previously had BOTH `max-height: min(80dvh,80vh)` AND
- * `overflow-y: auto` while being a flex item. WebKit then uses max-height as
- * the used height → large empty white box under the last menu row.
+ * Why a huge white gap still appeared after the prior "content-sized" change:
+ * `.cm-bottom-sheet-scroll` kept BOTH `max-height: min(80dvh,80vh)` AND
+ * `overflow-y: auto` on the SAME element. iOS Safari resolves that combo's
+ * used height to max-height. Parent `.cm-bottom-sheet` is height:auto, so it
+ * grows with the child and paints white down to ~80vh under the last row.
  *
- * Split responsibilities:
- * - `.cm-bottom-sheet`: content-sized chrome only (no max-height / overflow)
- * - `.cm-bottom-sheet-scroll`: owns max-height + overflow scrolling
- * - `padding-bottom: env(safe-area-inset-bottom)` stays on the outer sheet
- *   (home-indicator inset only; not a large spacer)
+ * Correct split (must not reunite max-height + overflow:auto on one node):
+ * - `.cm-bottom-sheet`: white bg, max-height cap, overflow:hidden (clip only),
+ *   position:absolute; bottom:0; height:auto (content-sized from the bottom).
+ * - `.cm-bottom-sheet-scroll`: overflow-y:auto ONLY — no max-height.
+ *
+ * Use svh (not dvh) for the cap so Safari chrome show/hide on long-press does
+ * not recompute the sheet height as aggressively.
+ *
+ * Debug outlines: add ?bsdebug=1 → `.cm-bottom-sheet-root--debug`
  */
 .cm-bottom-sheet-root {
   position: fixed;
   inset: 0;
   z-index: 900;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: stretch;
+  /* Overlay only — do not flex-size the sheet (avoids flex min/max height quirks). */
   background: rgba(15, 23, 42, 0);
   pointer-events: none;
   transition: background 280ms ease;
@@ -2010,15 +2012,21 @@
 }
 
 .cm-bottom-sheet {
-  flex: 0 0 auto;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   width: 100%;
-  /* Content-sized. Do NOT set max-height or overflow here (iOS gap bug). */
+  /* Content height from bottom; capped — does NOT use overflow:auto here. */
   height: auto;
-  overflow: visible;
+  max-height: min(80svh, 80vh);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border-radius: 20px 20px 0 0;
   box-shadow: 0 -10px 40px rgba(15, 23, 42, 0.12);
-  /* iPhone home indicator only — typically ~34px, not the large menu gap. */
+  /* Home indicator only (~34px). Not a flex:1 filler. */
   padding-bottom: env(safe-area-inset-bottom, 0px);
   transform: translateY(100%);
   transition: transform 340ms cubic-bezier(0.32, 0.72, 0, 1);
@@ -2028,11 +2036,35 @@
 }
 
 .cm-bottom-sheet-scroll {
-  max-height: min(80dvh, 80vh);
+  /* Scrollport only. No max-height — parent caps height. */
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+}
+
+/* Temporary visual ownership map (?bsdebug=1) */
+.cm-bottom-sheet-root--debug {
+  outline: 3px solid magenta;
+  outline-offset: -3px;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet {
+  outline: 3px solid red;
+  outline-offset: -3px;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-scroll {
+  outline: 3px solid lime;
+  outline-offset: -3px;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-header {
+  outline: 3px solid blue;
+  outline-offset: -3px;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-body {
+  outline: 3px solid orange;
+  outline-offset: -3px;
 }
 
 .cm-bottom-sheet-header {

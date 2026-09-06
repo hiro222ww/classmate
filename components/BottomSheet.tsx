@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type BottomSheetProps = {
   open: boolean;
@@ -10,17 +10,25 @@ type BottomSheetProps = {
 };
 
 /**
- * Bottom sheet with iOS-safe sizing.
+ * Bottom sheet layout (iOS Safari).
  *
- * Root cause of the home-menu blank gap on iOS Safari:
- * putting BOTH `max-height` and `overflow-y: auto` on `.cm-bottom-sheet`
- * (a flex child of the full-viewport dock) makes WebKit resolve the used
- * height to max-height (~80vh), leaving empty white space under the rows.
+ * White fill is painted by `.cm-bottom-sheet` (`background:#fff`).
  *
- * Fix: outer `.cm-bottom-sheet` is content-sized only (no max-height /
- * overflow). Inner `.cm-bottom-sheet-scroll` owns max-height + scrolling.
- * `padding-bottom: env(safe-area-inset-bottom)` stays on the outer sheet
- * so the home indicator gap is preserved without creating a large spacer.
+ * Remaining blank-gap cause after the prior split:
+ * `.cm-bottom-sheet-scroll` still had BOTH `max-height` and `overflow-y:auto`.
+ * On iOS that makes the scroll box's used height = max-height (~80vh). The
+ * parent sheet is `height:auto`, so it grows with the child and the white
+ * background extends far below the last row ("Googleでログイン").
+ *
+ * Long-press / reflow: max-height used `80dvh`, which changes when Safari
+ * chrome shows/hides, so the wrongly-expanded height visibly jumped.
+ *
+ * Correct split:
+ * - `.cm-bottom-sheet`: white bg + `max-height` + `overflow:hidden` (not auto),
+ *   absolutely docked with `bottom:0` (not flex-end sizing).
+ * - `.cm-bottom-sheet-scroll`: `overflow-y:auto` only — no max-height.
+ *
+ * Debug: append `?bsdebug=1` to outline each wrapper in a different color.
  */
 export default function BottomSheet({
   open,
@@ -30,6 +38,15 @@ export default function BottomSheet({
 }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const prevOverflow = useRef("");
+  const [debug, setDebug] = useState(false);
+
+  useEffect(() => {
+    try {
+      setDebug(new URLSearchParams(window.location.search).get("bsdebug") === "1");
+    } catch {
+      setDebug(false);
+    }
+  }, []);
 
   const close = useCallback(() => {
     onClose();
@@ -67,7 +84,13 @@ export default function BottomSheet({
 
   return (
     <div
-      className={`cm-bottom-sheet-root ${open ? "cm-bottom-sheet-root--open" : ""}`}
+      className={[
+        "cm-bottom-sheet-root",
+        open ? "cm-bottom-sheet-root--open" : "",
+        debug ? "cm-bottom-sheet-root--debug" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onClick={close}
     >
       <div
