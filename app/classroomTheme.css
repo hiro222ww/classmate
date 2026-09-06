@@ -2067,6 +2067,43 @@
   outline-offset: -3px;
 }
 
+/* Live geometry HUD (?bsdebug=1) — measurement only */
+.cm-bs-geom-debug {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 10050;
+  max-height: 42vh;
+  overflow: auto;
+  pointer-events: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font: 600 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.cm-bs-geom-debug__title {
+  margin: 6px 0 2px;
+  color: #fbbf24;
+  font-weight: 800;
+}
+.cm-bs-geom-debug__title:first-child {
+  margin-top: 0;
+}
+.cm-bs-geom-debug__anc {
+  opacity: 0.95;
+  word-break: break-word;
+}
+.cm-bs-geom-debug__verdict {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(248, 250, 252, 0.25);
+  color: #86efac;
+  font-weight: 800;
+}
+
 .cm-bottom-sheet-header {
   display: flex;
   align-items: center;
