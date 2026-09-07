@@ -2,66 +2,44 @@
 
 import { useEffect, useState } from "react";
 
-type Box = { top: number; bottom: number; height: number; width?: number };
-type StyleSnap = {
-  height: string;
-  minHeight: string;
-  maxHeight: string;
-  flexGrow: string;
-  flex: string;
-  position: string;
-  top: string;
-  bottom: string;
-  inset: string;
-  overflowY: string;
-  display: string;
-  background: string;
+type Box = { top: number; bottom: number; height: number; width: number; left: number };
+type HitStyle = {
   backgroundColor: string;
+  backgroundImage: string;
+  position: string;
   zIndex: string;
+  opacity: string;
+  visibility: string;
+  display: string;
+  overflow: string;
+  clipPath: string;
+  mask: string;
+  transform: string;
 };
 
 type HitNode = {
-  tag: string;
+  tagName: string;
   className: string;
   id: string;
   box: Box;
-  style: StyleSnap;
+  style: HitStyle;
 };
 
 type ProbePoint = {
   name: string;
   x: number;
   y: number;
+  topHit: string;
   hits: HitNode[];
 };
 
-type NamedTarget = {
-  label: string;
-  box: Box | null;
-  style: StyleSnap | null;
-  exists: boolean;
-};
-
-type GeometryProbe = {
-  sheet: Box;
-  scroll: Box;
-  body: Box;
-  content: Box | null;
-  lastItem: Box | null;
-  viewport: {
-    innerHeight: number;
-    visualHeight: number;
-    visualOffsetTop: number;
-    visualOffsetLeft: number;
-  };
-  gapSheetMinusLast: number | null;
-  gapBelowSheetToInner: number | null;
-  gapBelowSheetToVisual: number | null;
-  sheetStyle: StyleSnap;
-  scrollStyle: StyleSnap;
-  rootStyle: StyleSnap | null;
-  named: NamedTarget[];
+type Probe = {
+  myClassFound: boolean;
+  myClassBox: Box | null;
+  sheetBox: Box | null;
+  viewport: { innerHeight: number; visualHeight: number };
   points: ProbePoint[];
+  switchSummary: string;
   verdict: string;
 };
 
@@ -76,54 +54,55 @@ function boxOf(el: Element): Box {
     bottom: round(r.bottom),
     height: round(r.height),
     width: round(r.width),
+    left: round(r.left),
   };
 }
 
-function styleOf(el: Element): StyleSnap {
+function hitStyleOf(el: Element): HitStyle {
   const cs = getComputedStyle(el);
+  const css = cs as CSSStyleDeclaration & {
+    webkitMaskImage?: string;
+  };
   return {
-    height: cs.height,
-    minHeight: cs.minHeight,
-    maxHeight: cs.maxHeight,
-    flexGrow: cs.flexGrow,
-    flex: cs.flex,
-    position: cs.position,
-    top: cs.top,
-    bottom: cs.bottom,
-    inset: `${cs.top}/${cs.right}/${cs.bottom}/${cs.left}`,
-    overflowY: cs.overflowY,
-    display: cs.display,
-    background: cs.backgroundImage !== "none" ? cs.backgroundImage.slice(0, 80) : cs.backgroundColor,
     backgroundColor: cs.backgroundColor,
+    backgroundImage:
+      cs.backgroundImage === "none" ? "none" : cs.backgroundImage.slice(0, 60),
+    position: cs.position,
     zIndex: cs.zIndex,
+    opacity: cs.opacity,
+    visibility: cs.visibility,
+    display: cs.display,
+    overflow: `${cs.overflowX}/${cs.overflowY}`,
+    clipPath: cs.clipPath,
+    mask: css.webkitMaskImage || cs.maskImage || "none",
+    transform: cs.transform,
   };
 }
 
 function hitOf(el: Element): HitNode {
   return {
-    tag: el.tagName.toLowerCase(),
+    tagName: el.tagName.toLowerCase(),
     className:
       typeof (el as HTMLElement).className === "string"
-        ? (el as HTMLElement).className.trim().slice(0, 80)
+        ? (el as HTMLElement).className.trim().slice(0, 100)
         : "",
     id: (el as HTMLElement).id || "",
     box: boxOf(el),
-    style: styleOf(el),
+    style: hitStyleOf(el),
   };
 }
 
-function findLastMenuItem(root: Element): Element | null {
-  const nav = root.querySelector(
-    ".cm-bottom-sheet-body nav, .cm-home-menu-root, nav"
-  );
-  if (!nav) return null;
-  const rows = nav.querySelectorAll("a, button");
-  return rows.length ? rows[rows.length - 1] : nav.lastElementChild;
-}
-
-function namedTarget(label: string, el: Element | null): NamedTarget {
-  if (!el) return { label, box: null, style: null, exists: false };
-  return { label, box: boxOf(el), style: styleOf(el), exists: true };
+function findMyClassRow(root: Element): HTMLElement | null {
+  const nodes = root.querySelectorAll("a, button, span, div");
+  for (const node of Array.from(nodes)) {
+    const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+    if (text === "マイクラス" || text.startsWith("マイクラス")) {
+      // Prefer the row link/button ancestor when the match is an inner span.
+      const row = node.closest("a, button") as HTMLElement | null;
+      return row || (node as HTMLElement);
+    }
+  }
+  return null;
 }
 
 function samplePoint(
@@ -138,122 +117,108 @@ function samplePoint(
   const hits: HitNode[] = [];
   for (const el of list) {
     if (excludeHud && (el === excludeHud || excludeHud.contains(el))) continue;
-    // Skip crosshair markers
     if (
       el instanceof HTMLElement &&
-      el.dataset &&
       (el.dataset.bsHitMarker != null || el.dataset.bsGeomDebug != null)
     ) {
       continue;
     }
     hits.push(hitOf(el));
-    if (hits.length >= 5) break;
+    if (hits.length >= 10) break;
   }
-  return { name, x: round(cx), y: round(cy), hits };
+  const top = hits[0];
+  const topHit = top
+    ? `<${top.tagName}${top.id ? `#${top.id}` : ""}${
+        top.className ? `.${top.className.split(/\s+/)[0]}` : ""
+      }> bg=${top.style.backgroundColor}`
+    : "none";
+  return { name, x: round(cx), y: round(cy), topHit, hits };
 }
 
-function probe(root: HTMLElement, hudEl: Element | null): GeometryProbe | null {
+function summarizeSwitch(points: ProbePoint[]): string {
+  if (points.length < 2) return "n/a";
+  const lines: string[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1].topHit;
+    const cur = points[i].topHit;
+    if (prev !== cur) {
+      lines.push(
+        `SWITCH ${points[i - 1].name} → ${points[i].name}: ${prev}  ==>  ${cur}`
+      );
+    } else {
+      lines.push(`same ${points[i - 1].name} → ${points[i].name}: ${cur}`);
+    }
+  }
+  return lines.join(" | ");
+}
+
+function probe(root: HTMLElement, hudEl: Element | null): Probe {
   const sheet = root.querySelector(".cm-bottom-sheet");
-  const scroll = root.querySelector(".cm-bottom-sheet-scroll");
-  const body = root.querySelector(".cm-bottom-sheet-body");
-  if (!sheet || !scroll || !body) return null;
-
-  const content =
-    body.firstElementChild instanceof HTMLElement
-      ? body.firstElementChild
-      : null;
-  const lastItem = findLastMenuItem(root);
-
-  const sheetBox = boxOf(sheet);
-  const scrollBox = boxOf(scroll);
-  const bodyBox = boxOf(body);
-  const contentBox = content ? boxOf(content) : null;
-  const lastBox = lastItem ? boxOf(lastItem) : null;
-
-  const vv = window.visualViewport;
-  const visualHeight = vv?.height ?? window.innerHeight;
-  const visualOffsetTop = vv?.offsetTop ?? 0;
-  const visualOffsetLeft = vv?.offsetLeft ?? 0;
-  const visualBottom = visualOffsetTop + visualHeight;
-
-  const gapSheetMinusLast = lastBox
-    ? round(sheetBox.bottom - lastBox.bottom)
-    : null;
-  const gapBelowSheetToInner = round(window.innerHeight - sheetBox.bottom);
-  const gapBelowSheetToVisual = round(visualBottom - sheetBox.bottom);
+  const myClass = findMyClassRow(root);
+  const sheetBox = sheet ? boxOf(sheet) : null;
+  const myClassBox = myClass ? boxOf(myClass) : null;
 
   const cx = Math.round(window.innerWidth / 2);
+  const points: ProbePoint[] = [];
 
-  // 1) Just under Google / last row (usually still near sheet padding)
-  const yUnderGoogle = lastBox
-    ? lastBox.bottom + 8
-    : sheetBox.bottom - 4;
-  // 2) Mid of the region BELOW the sheet (the contested white/gray band)
-  const yBelowSheetBand =
-    gapBelowSheetToVisual > 8
-      ? sheetBox.bottom + gapBelowSheetToVisual / 2
-      : sheetBox.bottom + 40;
-  // 3) Just above Safari chrome / visual bottom
-  const yAboveSafari = visualBottom - 12;
+  if (myClassBox) {
+    const midY = myClassBox.top + myClassBox.height / 2;
+    points.push(samplePoint("0.myclass-center", cx, midY, hudEl));
+    points.push(samplePoint("1.myclass+10px", cx, myClassBox.bottom + 10, hudEl));
+    points.push(
+      samplePoint("2.myclass+100px", cx, myClassBox.bottom + 100, hudEl)
+    );
+    points.push(
+      samplePoint("3.myclass+300px", cx, myClassBox.bottom + 300, hudEl)
+    );
+  } else {
+    // Fallback: sheet mid / lower band
+    const y0 = sheetBox ? sheetBox.top + sheetBox.height * 0.25 : 200;
+    points.push(samplePoint("0.fallback-upper", cx, y0, hudEl));
+    points.push(samplePoint("1.fallback+10", cx, y0 + 10, hudEl));
+    points.push(samplePoint("2.fallback+100", cx, y0 + 100, hudEl));
+    points.push(samplePoint("3.fallback+300", cx, y0 + 300, hudEl));
+  }
 
-  const points = [
-    samplePoint("1.under-google", cx, yUnderGoogle, hudEl),
-    samplePoint("2.below-sheet-band", cx, yBelowSheetBand, hudEl),
-    samplePoint("3.above-safari", cx, yAboveSafari, hudEl),
-  ];
+  // Geometric center of the thin-gray band under マイクラス
+  // (myclass.bottom → viewport bottom — the contested paint region).
+  if (myClassBox) {
+    const bandBottom = window.innerHeight;
+    const grayMidY =
+      myClassBox.bottom + Math.max(40, (bandBottom - myClassBox.bottom) / 2);
+    points.unshift(samplePoint("G.gray-band-center", cx, grayMidY, hudEl));
+  }
 
-  const named = [
-    namedTarget("html", document.documentElement),
-    namedTarget("body", document.body),
-    namedTarget(
-      "main.cm-classroom-scope",
-      document.querySelector("main.cm-classroom-scope")
-    ),
-    namedTarget(".cm-home-body", document.querySelector(".cm-home-body")),
-    namedTarget(".cm-bottom-sheet-root", root),
-    namedTarget(".cm-bottom-sheet", sheet),
-  ];
+  const switchSummary = summarizeSwitch(
+    points.filter((p) => p.name.startsWith("0") || p.name.startsWith("1") || p.name.startsWith("2") || p.name.startsWith("3"))
+  );
 
+  const grayHits = points.find((p) => p.name.startsWith("G."))?.hits ?? [];
+  const topGray = grayHits[0];
   let verdict = "inconclusive";
-  if (gapBelowSheetToVisual > 40) {
-    const topHit = points[1]?.hits[0];
-    if (topHit) {
-      verdict = `BELOW-SHEET band ~${gapBelowSheetToVisual}px. Top hit at mid-band: <${topHit.tag}.${topHit.className}> bg=${topHit.style.backgroundColor} pos=${topHit.style.position}`;
-    } else {
-      verdict = `BELOW-SHEET band ~${gapBelowSheetToVisual}px (sheet ends above visual bottom)`;
-    }
-  } else if (gapSheetMinusLast != null && gapSheetMinusLast <= 80) {
-    verdict =
-      "Sheet hugs content; inspect below-sheet band / Safari chrome gap if any";
+  if (topGray) {
+    verdict = `GRAY-BAND top element: <${topGray.tagName}${
+      topGray.className ? `.${topGray.className.split(/\s+/).slice(0, 2).join(".")}` : ""
+    }> bg=${topGray.style.backgroundColor} bgImg=${topGray.style.backgroundImage} pos=${topGray.style.position} z=${topGray.style.zIndex} opacity=${topGray.style.opacity}`;
   }
 
   return {
-    sheet: sheetBox,
-    scroll: scrollBox,
-    body: bodyBox,
-    content: contentBox,
-    lastItem: lastBox,
+    myClassFound: Boolean(myClass),
+    myClassBox,
+    sheetBox,
     viewport: {
       innerHeight: round(window.innerHeight),
-      visualHeight: round(visualHeight),
-      visualOffsetTop: round(visualOffsetTop),
-      visualOffsetLeft: round(visualOffsetLeft),
+      visualHeight: round(window.visualViewport?.height ?? window.innerHeight),
     },
-    gapSheetMinusLast,
-    gapBelowSheetToInner,
-    gapBelowSheetToVisual,
-    sheetStyle: styleOf(sheet),
-    scrollStyle: styleOf(scroll),
-    rootStyle: styleOf(root),
-    named,
     points,
+    switchSummary,
     verdict,
   };
 }
 
 /**
- * On-device geometry + paint hit-test HUD for ?bsdebug=1.
- * Measurement only — does not change BottomSheet layout CSS.
+ * ?bsdebug=1 paint/hit diagnosis focused on the マイクラス boundary.
+ * No BottomSheet height/max-height changes.
  */
 export default function BottomSheetGeometryDebug({
   open,
@@ -262,7 +227,7 @@ export default function BottomSheetGeometryDebug({
   open: boolean;
   rootRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const [data, setData] = useState<GeometryProbe | null>(null);
+  const [data, setData] = useState<Probe | null>(null);
   const [hudEl, setHudEl] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -270,26 +235,29 @@ export default function BottomSheetGeometryDebug({
       setData(null);
       return;
     }
-
     let raf = 0;
     const run = () => {
       const root = rootRef.current;
       if (!root) return;
-      setData(probe(root, hudEl));
+      const next = probe(root, hudEl);
+      setData(next);
+      // Full dump for Safari Web Inspector when HUD truncates.
+      try {
+        console.info("[bsdebug-paint]", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
     };
     const schedule = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(run);
     };
-
     schedule();
-    const t1 = window.setTimeout(schedule, 50);
-    const t2 = window.setTimeout(schedule, 250);
-    const t3 = window.setTimeout(schedule, 600);
+    const t1 = window.setTimeout(schedule, 80);
+    const t2 = window.setTimeout(schedule, 300);
+    const t3 = window.setTimeout(schedule, 700);
     window.addEventListener("resize", schedule);
     window.visualViewport?.addEventListener("resize", schedule);
-    window.visualViewport?.addEventListener("scroll", schedule);
-
     return () => {
       cancelAnimationFrame(raf);
       window.clearTimeout(t1);
@@ -297,17 +265,10 @@ export default function BottomSheetGeometryDebug({
       window.clearTimeout(t3);
       window.removeEventListener("resize", schedule);
       window.visualViewport?.removeEventListener("resize", schedule);
-      window.visualViewport?.removeEventListener("scroll", schedule);
     };
   }, [open, rootRef, hudEl]);
 
   if (!open) return null;
-
-  const line = (label: string, value: string) => (
-    <div key={label}>
-      <strong>{label}</strong> {value}
-    </div>
-  );
 
   return (
     <>
@@ -317,7 +278,7 @@ export default function BottomSheetGeometryDebug({
           data-bs-hit-marker={p.name}
           className="cm-bs-hit-marker"
           style={{ left: p.x - 6, top: p.y - 6 }}
-          title={p.name}
+          title={`${p.name} ${p.topHit}`}
         />
       ))}
       <div
@@ -326,97 +287,61 @@ export default function BottomSheetGeometryDebug({
         data-bs-geom-debug="1"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="cm-bs-geom-debug__title">bsdebug geometry</div>
-        {data ? (
+        <div className="cm-bs-geom-debug__title">
+          paint hit-test @ マイクラス boundary
+        </div>
+        <div>
+          colors: sheet=magenta rgb(255,0,255) / scroll=green 0.5 /
+          root=blue 0.35
+        </div>
+        {!data ? (
+          <div>measuring…</div>
+        ) : (
           <>
-            {line(
-              "sheet",
-              `t=${data.sheet.top} b=${data.sheet.bottom} h=${data.sheet.height}`
-            )}
-            {line(
-              "scroll",
-              `t=${data.scroll.top} b=${data.scroll.bottom} h=${data.scroll.height}`
-            )}
-            {line(
-              "lastItem",
-              data.lastItem
-                ? `t=${data.lastItem.top} b=${data.lastItem.bottom} h=${data.lastItem.height}`
-                : "n/a"
-            )}
-            {line(
-              "viewport",
-              `inner=${data.viewport.innerHeight} vv=${data.viewport.visualHeight} vv.offsetTop=${data.viewport.visualOffsetTop}`
-            )}
-            {line(
-              "sheet.bottom - last.bottom",
-              data.gapSheetMinusLast == null
-                ? "n/a"
-                : `${data.gapSheetMinusLast}px`
-            )}
-            {line(
-              "innerH - sheet.bottom",
-              data.gapBelowSheetToInner == null
-                ? "n/a"
-                : `${data.gapBelowSheetToInner}px`
-            )}
-            {line(
-              "visualBottom - sheet.bottom",
-              data.gapBelowSheetToVisual == null
-                ? "n/a"
-                : `${data.gapBelowSheetToVisual}px`
-            )}
-            {line(
-              "root computed",
-              data.rootStyle
-                ? `bg=${data.rootStyle.backgroundColor} pos=${data.rootStyle.position} inset=${data.rootStyle.inset} h=${data.rootStyle.height} z=${data.rootStyle.zIndex}`
-                : "n/a"
-            )}
-
-            <div className="cm-bs-geom-debug__title">named surfaces</div>
-            {data.named.map((n) =>
-              n.exists && n.box && n.style ? (
-                <div key={n.label} className="cm-bs-geom-debug__anc">
-                  {n.label} box.h={n.box.height} t={n.box.top} b={n.box.bottom}{" "}
-                  bg={n.style.backgroundColor} bgImg=
-                  {n.style.background.slice(0, 40)} pos={n.style.position} h=
-                  {n.style.height} min={n.style.minHeight} max=
-                  {n.style.maxHeight} top={n.style.top} bottom={n.style.bottom}{" "}
-                  inset={n.style.inset} z={n.style.zIndex}
-                </div>
-              ) : (
-                <div key={n.label} className="cm-bs-geom-debug__anc">
-                  {n.label} MISSING
-                </div>
-              )
-            )}
-
+            <div>
+              myClassFound={String(data.myClassFound)}{" "}
+              {data.myClassBox
+                ? `box t=${data.myClassBox.top} b=${data.myClassBox.bottom} h=${data.myClassBox.height}`
+                : ""}
+            </div>
+            <div>
+              sheet{" "}
+              {data.sheetBox
+                ? `t=${data.sheetBox.top} b=${data.sheetBox.bottom} h=${data.sheetBox.height}`
+                : "n/a"}{" "}
+              viewport inner={data.viewport.innerHeight} vv=
+              {data.viewport.visualHeight}
+            </div>
+            <div className="cm-bs-geom-debug__title">topHit switch</div>
+            <div className="cm-bs-geom-debug__anc">{data.switchSummary}</div>
             <div className="cm-bs-geom-debug__title">
-              elementsFromPoint (top 5)
+              elementsFromPoint (top 10)
             </div>
             {data.points.map((p) => (
               <div key={p.name} className="cm-bs-geom-debug__point">
                 <div className="cm-bs-geom-debug__point-title">
-                  {p.name} @ ({p.x},{p.y})
+                  {p.name} @ ({p.x},{p.y}) top={p.topHit}
                 </div>
                 {p.hits.map((h, i) => (
                   <div key={`${p.name}-${i}`} className="cm-bs-geom-debug__anc">
-                    {i}. &lt;{h.tag}
+                    {i}. &lt;{h.tagName}
                     {h.id ? `#${h.id}` : ""}
-                    {h.className ? `.${h.className.split(" ")[0]}` : ""}&gt; box=
-                    {h.box.height}px [{h.box.top}-{h.box.bottom}] bg=
-                    {h.style.backgroundColor} pos={h.style.position} h=
-                    {h.style.height} min={h.style.minHeight} max=
-                    {h.style.maxHeight} top={h.style.top} bottom=
-                    {h.style.bottom} inset={h.style.inset} z={h.style.zIndex}
+                    {h.className
+                      ? `.${h.className.split(/\s+/).slice(0, 2).join(".")}`
+                      : ""}
+                    &gt; bg={h.style.backgroundColor} bgImg=
+                    {h.style.backgroundImage} pos={h.style.position} z=
+                    {h.style.zIndex} opacity={h.style.opacity} vis=
+                    {h.style.visibility} display={h.style.display} overflow=
+                    {h.style.overflow} clip={h.style.clipPath} mask=
+                    {h.style.mask} transform={h.style.transform} box=
+                    {h.box.height}px [{h.box.top}-{h.box.bottom}]
                   </div>
                 ))}
               </div>
             ))}
-
             <div className="cm-bs-geom-debug__verdict">{data.verdict}</div>
           </>
-        ) : (
-          <div>measuring…</div>
         )}
       </div>
     </>

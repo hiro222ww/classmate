@@ -2067,14 +2067,34 @@
   outline-offset: -3px;
 }
 
-/* Live geometry HUD (?bsdebug=1) — measurement only */
+/*
+ * PAINT DIAGNOSIS ONLY (?bsdebug=1) — not a layout fix.
+ * Extreme colors to see which layer paints the gray band under マイクラス.
+ * sheet magenta / scroll translucent green / root translucent blue
+ */
+.cm-bottom-sheet-root--debug.cm-bottom-sheet-root--open {
+  background: rgba(0, 0, 255, 0.35) !important;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet {
+  background: rgb(255, 0, 255) !important;
+  background-image: none !important;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-scroll {
+  background: rgba(0, 255, 0, 0.5) !important;
+}
+.cm-bottom-sheet-root--debug .cm-bottom-sheet-header {
+  /* Keep header readable; still translucent so magenta can show at edges */
+  background: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* Live geometry / paint HUD (?bsdebug=1) — measurement only */
 .cm-bs-geom-debug {
   position: fixed;
   top: 8px;
   left: 8px;
   right: 8px;
   z-index: 10050;
-  max-height: 42vh;
+  max-height: 70vh;
   overflow: auto;
   pointer-events: auto;
   padding: 8px 10px;

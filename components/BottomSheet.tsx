@@ -15,9 +15,10 @@ type BottomSheetProps = {
  *
  * White fill is painted by `.cm-bottom-sheet` (`background:#fff`).
  *
- * Debug: `?bsdebug=1` outlines wrappers and shows live geometry metrics
- * (rects / computed height styles / sheet.bottom - lastItem.bottom).
- * Measurement-only — no speculative layout changes in this pass.
+ * Debug (`?bsdebug=1`):
+ * - paint hit-test around マイクラス boundary (elementsFromPoint)
+ * - extreme layer colors (sheet magenta / scroll green / root blue)
+ * Diagnosis only — does NOT change height / max-height / dvh / svh.
  */
 export default function BottomSheet({
   open,
