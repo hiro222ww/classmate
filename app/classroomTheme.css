@@ -1981,13 +1981,11 @@
 /*
  * White background painter: `.cm-bottom-sheet` (background:#fff).
  *
- * Why a huge white gap still appeared after the prior "content-sized" change:
- * `.cm-bottom-sheet-scroll` kept BOTH `max-height: min(80dvh,80vh)` AND
- * `overflow-y: auto` on the SAME element. iOS Safari resolves that combo's
- * used height to max-height. Parent `.cm-bottom-sheet` is height:auto, so it
- * grows with the child and paints white down to ~80vh under the last row.
+ * Mounting: `.cm-bottom-sheet-root` is portaled to `document.body` so it is
+ * not clipped by page ancestors (`main.cm-classroom-scope` uses
+ * overflow:hidden + isolation:isolate for atmosphere decorations).
  *
- * Correct split (must not reunite max-height + overflow:auto on one node):
+ * Height split (must not reunite max-height + overflow:auto on one node):
  * - `.cm-bottom-sheet`: white bg, max-height cap, overflow:hidden (clip only),
  *   position:absolute; bottom:0; height:auto (content-sized from the bottom).
  * - `.cm-bottom-sheet-scroll`: overflow-y:auto ONLY — no max-height.

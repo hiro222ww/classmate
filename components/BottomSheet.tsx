@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import BottomSheetGeometryDebug from "@/components/BottomSheetGeometryDebug";
 
 type BottomSheetProps = {
@@ -11,15 +12,15 @@ type BottomSheetProps = {
 };
 
 /**
- * Bottom sheet layout (iOS Safari).
+ * Bottom sheet overlay — page-layout independent.
+ *
+ * Always portaled to `document.body` so it is not clipped by page ancestors
+ * such as `main.cm-classroom-scope` (`overflow: hidden` + `isolation: isolate`).
  *
  * White fill is painted by `.cm-bottom-sheet` (`background:#fff`).
  *
- * Debug (`?bsdebug=1`):
- * - paint hit-test around マイクラス boundary (elementsFromPoint)
- * - extreme layer colors (sheet magenta / scroll green / root blue)
- * Diagnosis only — does NOT change height / max-height / dvh / svh.
- * `?bsdebug=raw` logs the same measurements without colors, HUD, or banner.
+ * Debug (`?bsdebug=1`): paint hit-test HUD + layer colors.
+ * `?bsdebug=raw`: same measurements without visual overlays.
  */
 export default function BottomSheet({
   open,
@@ -30,8 +31,13 @@ export default function BottomSheet({
   const rootRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const prevOverflow = useRef("");
+  const [mounted, setMounted] = useState(false);
   const [debugMode, setDebugMode] = useState<string | null>(null);
   const debug = debugMode === "1";
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     try {
@@ -75,7 +81,9 @@ export default function BottomSheet({
     }
   }, [open]);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       ref={rootRef}
       className={[
@@ -96,25 +104,6 @@ export default function BottomSheet({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="cm-bottom-sheet-scroll">
-          {/* Deploy visibility marker: real DOM text (not CSS). Temporary. */}
-          {debug ? (
-            <div
-              data-deploy-debug="0906"
-              style={{
-                margin: 0,
-                padding: "10px 16px",
-                background: "#fef08a",
-                color: "#111827",
-                fontSize: 16,
-                fontWeight: 900,
-                letterSpacing: "0.04em",
-                textAlign: "center",
-                borderBottom: "2px solid #ca8a04",
-              }}
-            >
-              BUILD DEBUG 0906
-            </div>
-          ) : null}
           {title ? (
             <div className="cm-bottom-sheet-header">
               <span className="cm-bottom-sheet-title">{title}</span>
@@ -150,8 +139,13 @@ export default function BottomSheet({
         </div>
       </div>
       {debug || debugMode === "raw" ? (
-        <BottomSheetGeometryDebug open={open} rootRef={rootRef} showHud={debug} />
+        <BottomSheetGeometryDebug
+          open={open}
+          rootRef={rootRef}
+          showHud={debug}
+        />
       ) : null}
-    </div>
+    </div>,
+    document.body
   );
 }

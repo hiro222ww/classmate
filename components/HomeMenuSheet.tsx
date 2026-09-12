@@ -182,7 +182,7 @@ export default function HomeMenuSheet({
   legalHref,
 }: HomeMenuSheetProps) {
   return (
-    <BottomSheet open={open} onClose={onClose} title="メニュー TEST-0906">
+    <BottomSheet open={open} onClose={onClose} title="メニュー">
       <nav aria-label="ホームメニュー" style={{ display: "grid" }}>
         <div
           style={{

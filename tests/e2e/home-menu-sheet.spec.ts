@@ -41,9 +41,67 @@ test.describe("home menu bottom sheet", () => {
     await expect.poll(() => page.locator(".cm-bottom-sheet").evaluate((el) => getComputedStyle(el).transform)).toBe("matrix(1, 0, 0, 1, 0, 0)");
     expect(await measure()).toEqual(normal);
     await expect(page.locator(".cm-bs-geom-debug, .cm-bs-hit-marker, [data-deploy-debug], .cm-bottom-sheet-root--debug")).toHaveCount(0);
-    expect(probes.at(-1)?.ancestors.length).toBeGreaterThan(3);
+    // Portaled to body: root → body → html (and possibly others).
+    expect(probes.at(-1)?.ancestors.length).toBeGreaterThanOrEqual(3);
     expect(probes.at(-1)?.rows).toHaveLength(8);
     expect(probes.at(-1)?.containers).toHaveLength(5);
+    const parentIsBody = await page
+      .locator(".cm-bottom-sheet-root")
+      .evaluate((el) => el.parentElement === document.body);
+    expect(parentIsBody).toBe(true);
+  });
+
+  test("stays visible when page main is short and overflow-hidden", async ({
+    page,
+  }) => {
+    await page.goto("/dev/home-menu");
+    await expect(page.locator(".cm-bottom-sheet")).toBeVisible();
+
+    await page.evaluate(() => {
+      const main = document.querySelector("main.cm-classroom-scope");
+      if (!(main instanceof HTMLElement)) return;
+      main.style.minHeight = "0";
+      main.style.height = "240px";
+      main.style.overflow = "hidden";
+    });
+
+    const sheet = page.locator(".cm-bottom-sheet");
+    for (const label of [
+      "マイクラス",
+      "プランを見る",
+      "お支払い・解約",
+      "Classmateについて",
+      "規約・ポリシー",
+    ]) {
+      const row = sheet.getByText(label, { exact: true });
+      await expect(row).toBeVisible();
+      await expect(row).toBeInViewport();
+    }
+
+    const paint = await page.evaluate(() => {
+      const last = Array.from(
+        document.querySelectorAll(".cm-bottom-sheet-body nav a, .cm-bottom-sheet-body nav button")
+      ).at(-1) as HTMLElement | undefined;
+      if (!last) return null;
+      const r = last.getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2);
+      const y = Math.round(r.top + r.height / 2);
+      const el = document.elementFromPoint(x, y);
+      return {
+        x,
+        y,
+        hit: el
+          ? `${el.tagName.toLowerCase()}.${String(el.className || "")
+              .split(/\s+/)
+              .slice(0, 2)
+              .join(".")}`
+          : null,
+        insideSheet: Boolean(el?.closest(".cm-bottom-sheet")),
+        parentIsBody: document.querySelector(".cm-bottom-sheet-root")?.parentElement === document.body,
+      };
+    });
+    expect(paint?.parentIsBody).toBe(true);
+    expect(paint?.insideSheet).toBe(true);
   });
 
   test("hugs content; scroll has no max-height; sheet paints white", async ({
