@@ -17,6 +17,35 @@ test.use({
 });
 
 test.describe("home menu bottom sheet", () => {
+  test("raw diagnostics preserve normal menu geometry and paint styles", async ({ page }) => {
+    const measure = () => page.locator(".cm-bottom-sheet").evaluate((sheet) => {
+      const scroll = sheet.querySelector(".cm-bottom-sheet-scroll")!;
+      return {
+        rect: sheet.getBoundingClientRect().toJSON(),
+        background: getComputedStyle(sheet).backgroundColor,
+        scrollBackground: getComputedStyle(scroll).backgroundColor,
+        text: sheet.textContent,
+      };
+    });
+    await page.goto("/dev/home-menu");
+    await expect(page.locator(".cm-bottom-sheet-scroll")).toBeVisible();
+    await expect.poll(() => page.locator(".cm-bottom-sheet").evaluate((el) => getComputedStyle(el).transform)).toBe("matrix(1, 0, 0, 1, 0, 0)");
+    const normal = await measure();
+    const probes: Array<{ ancestors: unknown[]; rows: unknown[]; containers: unknown[] }> = [];
+    page.on("console", (message) => {
+      const prefix = "[bsdebug-paint] ";
+      if (message.text().startsWith(prefix)) probes.push(JSON.parse(message.text().slice(prefix.length)));
+    });
+    await page.goto("/dev/home-menu?bsdebug=raw");
+    await expect.poll(() => probes.length).toBeGreaterThan(0);
+    await expect.poll(() => page.locator(".cm-bottom-sheet").evaluate((el) => getComputedStyle(el).transform)).toBe("matrix(1, 0, 0, 1, 0, 0)");
+    expect(await measure()).toEqual(normal);
+    await expect(page.locator(".cm-bs-geom-debug, .cm-bs-hit-marker, [data-deploy-debug], .cm-bottom-sheet-root--debug")).toHaveCount(0);
+    expect(probes.at(-1)?.ancestors.length).toBeGreaterThan(3);
+    expect(probes.at(-1)?.rows).toHaveLength(8);
+    expect(probes.at(-1)?.containers).toHaveLength(5);
+  });
+
   test("hugs content; scroll has no max-height; sheet paints white", async ({
     page,
   }) => {

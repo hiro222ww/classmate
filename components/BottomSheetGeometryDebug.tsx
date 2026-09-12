@@ -4,6 +4,12 @@ import { useEffect, useState } from "react";
 
 type Box = { top: number; bottom: number; height: number; width: number; left: number };
 type HitStyle = {
+  isolation: string;
+  contain: string;
+  filter: string;
+  backdropFilter: string;
+  perspective: string;
+  willChange: string;
   backgroundColor: string;
   backgroundImage: string;
   position: string;
@@ -23,6 +29,9 @@ type HitNode = {
   id: string;
   box: Box;
   style: HitStyle;
+  clientHeight: number;
+  scrollHeight: number;
+  scrollTop: number;
 };
 
 type ProbePoint = {
@@ -31,13 +40,18 @@ type ProbePoint = {
   y: number;
   topHit: string;
   hits: HitNode[];
+  inViewport: boolean;
 };
 
 type Probe = {
   myClassFound: boolean;
   myClassBox: Box | null;
   sheetBox: Box | null;
-  viewport: { innerHeight: number; visualHeight: number };
+  viewport: { innerHeight: number; visualHeight: number; offsetTop: number; scale: number; scrollY: number };
+  ancestors: HitNode[];
+  containers: HitNode[];
+  rows: (HitNode & { label: string })[];
+  mainPseudo: { before: HitStyle; after: HitStyle } | null;
   points: ProbePoint[];
   switchSummary: string;
   verdict: string;
@@ -58,15 +72,21 @@ function boxOf(el: Element): Box {
   };
 }
 
-function hitStyleOf(el: Element): HitStyle {
-  const cs = getComputedStyle(el);
+function hitStyleOf(el: Element, pseudo?: string): HitStyle {
+  const cs = getComputedStyle(el, pseudo);
   const css = cs as CSSStyleDeclaration & {
     webkitMaskImage?: string;
   };
   return {
+    isolation: cs.isolation,
+    contain: cs.contain,
+    filter: cs.filter,
+    backdropFilter: cs.getPropertyValue("backdrop-filter") || cs.getPropertyValue("-webkit-backdrop-filter"),
+    perspective: cs.perspective,
+    willChange: cs.willChange,
     backgroundColor: cs.backgroundColor,
     backgroundImage:
-      cs.backgroundImage === "none" ? "none" : cs.backgroundImage.slice(0, 60),
+      cs.backgroundImage,
     position: cs.position,
     zIndex: cs.zIndex,
     opacity: cs.opacity,
@@ -89,17 +109,18 @@ function hitOf(el: Element): HitNode {
     id: (el as HTMLElement).id || "",
     box: boxOf(el),
     style: hitStyleOf(el),
+    clientHeight: el.clientHeight,
+    scrollHeight: el.scrollHeight,
+    scrollTop: el.scrollTop,
   };
 }
 
 function findMyClassRow(root: Element): HTMLElement | null {
-  const nodes = root.querySelectorAll("a, button, span, div");
+  const nodes = root.querySelectorAll<HTMLElement>("nav a, nav button");
   for (const node of Array.from(nodes)) {
     const text = (node.textContent || "").replace(/\s+/g, " ").trim();
     if (text === "マイクラス" || text.startsWith("マイクラス")) {
-      // Prefer the row link/button ancestor when the match is an inner span.
-      const row = node.closest("a, button") as HTMLElement | null;
-      return row || (node as HTMLElement);
+      return node;
     }
   }
   return null;
@@ -111,8 +132,11 @@ function samplePoint(
   y: number,
   excludeHud: Element | null
 ): ProbePoint {
-  const cx = Math.max(0, Math.min(window.innerWidth - 1, x));
-  const cy = Math.max(0, Math.min(window.innerHeight - 1, y));
+  // Do not silently move offscreen samples onto the last viewport pixel.
+  const cx = x;
+  const cy = y;
+  const inViewport = x >= 0 && x < window.innerWidth && y >= 0 && y < window.innerHeight;
+  if (!inViewport) return { name, x: round(x), y: round(y), inViewport, topHit: "outside layout viewport", hits: [] };
   const list = document.elementsFromPoint(cx, cy);
   const hits: HitNode[] = [];
   for (const el of list) {
@@ -132,7 +156,7 @@ function samplePoint(
         top.className ? `.${top.className.split(/\s+/)[0]}` : ""
       }> bg=${top.style.backgroundColor}`
     : "none";
-  return { name, x: round(cx), y: round(cy), topHit, hits };
+  return { name, x: round(cx), y: round(cy), inViewport, topHit, hits };
 }
 
 function summarizeSwitch(points: ProbePoint[]): string {
@@ -197,18 +221,28 @@ function probe(root: HTMLElement, hudEl: Element | null): Probe {
   const topGray = grayHits[0];
   let verdict = "inconclusive";
   if (topGray) {
-    verdict = `GRAY-BAND top element: <${topGray.tagName}${
+    verdict = `HIT TEST ONLY (not pixel ownership): <${topGray.tagName}${
       topGray.className ? `.${topGray.className.split(/\s+/).slice(0, 2).join(".")}` : ""
     }> bg=${topGray.style.backgroundColor} bgImg=${topGray.style.backgroundImage} pos=${topGray.style.position} z=${topGray.style.zIndex} opacity=${topGray.style.opacity}`;
   }
 
+  const ancestors: HitNode[] = [];
+  for (let el: Element | null = root; el; el = el.parentElement) ancestors.push(hitOf(el));
+  const main = root.closest("main");
   return {
+    ancestors,
+    containers: Array.from(root.querySelectorAll(".cm-bottom-sheet, .cm-bottom-sheet-scroll, .cm-bottom-sheet-header, .cm-bottom-sheet-body, nav")).map(hitOf),
+    rows: Array.from(root.querySelectorAll("nav a, nav button")).map((el) => ({ ...hitOf(el), label: el.textContent?.trim() ?? "" })),
+    mainPseudo: main ? { before: hitStyleOf(main, "::before"), after: hitStyleOf(main, "::after") } : null,
     myClassFound: Boolean(myClass),
     myClassBox,
     sheetBox,
     viewport: {
       innerHeight: round(window.innerHeight),
       visualHeight: round(window.visualViewport?.height ?? window.innerHeight),
+      offsetTop: window.visualViewport?.offsetTop ?? 0,
+      scale: window.visualViewport?.scale ?? 1,
+      scrollY: window.scrollY,
     },
     points,
     switchSummary,
@@ -223,9 +257,11 @@ function probe(root: HTMLElement, hudEl: Element | null): Probe {
 export default function BottomSheetGeometryDebug({
   open,
   rootRef,
+  showHud = true,
 }: {
   open: boolean;
   rootRef: React.RefObject<HTMLDivElement | null>;
+  showHud?: boolean;
 }) {
   const [data, setData] = useState<Probe | null>(null);
   const [hudEl, setHudEl] = useState<HTMLDivElement | null>(null);
@@ -257,18 +293,23 @@ export default function BottomSheetGeometryDebug({
     const t2 = window.setTimeout(schedule, 300);
     const t3 = window.setTimeout(schedule, 700);
     window.addEventListener("resize", schedule);
+    document.addEventListener("scroll", schedule, true);
     window.visualViewport?.addEventListener("resize", schedule);
+    window.visualViewport?.addEventListener("scroll", schedule);
     return () => {
       cancelAnimationFrame(raf);
       window.clearTimeout(t1);
       window.clearTimeout(t2);
       window.clearTimeout(t3);
       window.removeEventListener("resize", schedule);
+      document.removeEventListener("scroll", schedule, true);
       window.visualViewport?.removeEventListener("resize", schedule);
+      window.visualViewport?.removeEventListener("scroll", schedule);
     };
   }, [open, rootRef, hudEl]);
 
-  if (!open) return null;
+  // raw mode emits console measurements without altering paint or menu content.
+  if (!open || !showHud) return null;
 
   return (
     <>
@@ -292,7 +333,7 @@ export default function BottomSheetGeometryDebug({
         </div>
         <div>
           colors: sheet=magenta rgb(255,0,255) / scroll=green 0.5 /
-          root=blue 0.35
+          root=blue 0.35 (green over magenta produces gray)
         </div>
         {!data ? (
           <div>measuring…</div>

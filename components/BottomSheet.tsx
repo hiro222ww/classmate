@@ -19,6 +19,7 @@ type BottomSheetProps = {
  * - paint hit-test around マイクラス boundary (elementsFromPoint)
  * - extreme layer colors (sheet magenta / scroll green / root blue)
  * Diagnosis only — does NOT change height / max-height / dvh / svh.
+ * `?bsdebug=raw` logs the same measurements without colors, HUD, or banner.
  */
 export default function BottomSheet({
   open,
@@ -29,15 +30,14 @@ export default function BottomSheet({
   const rootRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const prevOverflow = useRef("");
-  const [debug, setDebug] = useState(false);
+  const [debugMode, setDebugMode] = useState<string | null>(null);
+  const debug = debugMode === "1";
 
   useEffect(() => {
     try {
-      setDebug(
-        new URLSearchParams(window.location.search).get("bsdebug") === "1"
-      );
+      setDebugMode(new URLSearchParams(window.location.search).get("bsdebug"));
     } catch {
-      setDebug(false);
+      setDebugMode(null);
     }
   }, []);
 
@@ -149,8 +149,8 @@ export default function BottomSheet({
           <div className="cm-bottom-sheet-body">{children}</div>
         </div>
       </div>
-      {debug ? (
-        <BottomSheetGeometryDebug open={open} rootRef={rootRef} />
+      {debug || debugMode === "raw" ? (
+        <BottomSheetGeometryDebug open={open} rootRef={rootRef} showHud={debug} />
       ) : null}
     </div>
   );
