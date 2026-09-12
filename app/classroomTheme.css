@@ -1992,8 +1992,6 @@
  *
  * Use svh (not dvh) for the cap so Safari chrome show/hide on long-press does
  * not recompute the sheet height as aggressively.
- *
- * Debug outlines: add ?bsdebug=1 → `.cm-bottom-sheet-root--debug`
  */
 .cm-bottom-sheet-root {
   position: fixed;
@@ -2041,106 +2039,6 @@
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-}
-
-/* Temporary visual ownership map (?bsdebug=1) */
-.cm-bottom-sheet-root--debug {
-  outline: 3px solid magenta;
-  outline-offset: -3px;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet {
-  outline: 3px solid red;
-  outline-offset: -3px;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-scroll {
-  outline: 3px solid lime;
-  outline-offset: -3px;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-header {
-  outline: 3px solid blue;
-  outline-offset: -3px;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-body {
-  outline: 3px solid orange;
-  outline-offset: -3px;
-}
-
-/*
- * PAINT DIAGNOSIS ONLY (?bsdebug=1) — not a layout fix.
- * Extreme colors to see which layer paints the gray band under マイクラス.
- * sheet magenta / scroll translucent green / root translucent blue
- */
-.cm-bottom-sheet-root--debug.cm-bottom-sheet-root--open {
-  background: rgba(0, 0, 255, 0.35) !important;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet {
-  background: rgb(255, 0, 255) !important;
-  background-image: none !important;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-scroll {
-  background: rgba(0, 255, 0, 0.5) !important;
-}
-.cm-bottom-sheet-root--debug .cm-bottom-sheet-header {
-  /* Keep header readable; still translucent so magenta can show at edges */
-  background: rgba(255, 255, 255, 0.92) !important;
-}
-
-/* Live geometry / paint HUD (?bsdebug=1) — measurement only */
-.cm-bs-geom-debug {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  right: 8px;
-  z-index: 10050;
-  max-height: 70vh;
-  overflow: auto;
-  pointer-events: auto;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.92);
-  color: #f8fafc;
-  font: 600 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-.cm-bs-geom-debug__title {
-  margin: 6px 0 2px;
-  color: #fbbf24;
-  font-weight: 800;
-}
-.cm-bs-geom-debug__title:first-child {
-  margin-top: 0;
-}
-.cm-bs-geom-debug__anc {
-  opacity: 0.95;
-  word-break: break-word;
-}
-.cm-bs-geom-debug__verdict {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(248, 250, 252, 0.25);
-  color: #86efac;
-  font-weight: 800;
-}
-.cm-bs-geom-debug__point {
-  margin-top: 6px;
-  padding-top: 4px;
-  border-top: 1px dashed rgba(248, 250, 252, 0.18);
-}
-.cm-bs-geom-debug__point-title {
-  color: #93c5fd;
-  font-weight: 800;
-  margin-bottom: 2px;
-}
-.cm-bs-hit-marker {
-  position: fixed;
-  z-index: 10060;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 2px solid #f43f5e;
-  background: rgba(250, 204, 21, 0.85);
-  pointer-events: none;
-  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.5);
 }
 
 .cm-bottom-sheet-header {
