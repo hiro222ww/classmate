@@ -2612,6 +2612,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_GREEN_OVERRIDES_CSS}</style>
 
       <HomeBrandVisual
+        showIntro={false}
         menuButton={
           <button
             type="button"
@@ -2800,15 +2801,15 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           voiceLabel={
             adminCanBypassAdmission
               ? "管理者としてテスト入室（通話）"
-              : "🎙️ 通話から始める！"
+              : "通話で始める"
           }
           chatLabel={
             adminCanBypassAdmission
               ? "管理者としてテスト入室（チャット）"
-              : "💬 チャットから始める！"
+              : "チャットで始める"
           }
           themeSelectHref={withDev("/class/select")}
-          themeSelectLabel="テーマを選んで始める"
+          themeSelectLabel="テーマを選ぶ"
           onVoiceJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");

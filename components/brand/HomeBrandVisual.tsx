@@ -1,17 +1,33 @@
 "use client";
 
 import { HOME_INTRO } from "@/lib/seo";
+import Link from "next/link";
+import { useSyncExternalStore, type MouseEvent } from "react";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import { withDev } from "@/lib/withDev";
+
+const subscribe = () => () => {};
+const homeHref = () => withDev(resolveShellDashboardPath());
+const serverHomeHref = () => "/";
+
+function keepCurrentHome(event: MouseEvent<HTMLAnchorElement>) {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  // Avoid refreshing the current home and reinitializing its profile state.
+  if (event.currentTarget.href === window.location.href) event.preventDefault();
+}
 
 type Props = {
   menuButton?: React.ReactNode;
+  showIntro?: boolean;
 };
 
 /**
  * First-view brand header for the home page.
  * Character icon (apple-touch-icon) + "Classmate" wordmark + optional ☰.
  */
-export function HomeBrandVisual({ menuButton }: Props) {
+export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
   const hasMenu = Boolean(menuButton);
+  const href = useSyncExternalStore(subscribe, homeHref, serverHomeHref);
 
   return (
     <div
@@ -80,10 +96,15 @@ export function HomeBrandVisual({ menuButton }: Props) {
                 justify-self: center;
               }
             }
+
+            .cm-home-brand-visual-grid--compact {
+              grid-template-columns: 1fr auto;
+              grid-template-areas: "brand menu";
+            }
           `}</style>
 
-          <div className="cm-home-brand-visual-grid">
-            <div className="cm-home-brand-visual-grid-brand">
+          <div className={`cm-home-brand-visual-grid ${showIntro ? "" : "cm-home-brand-visual-grid--compact"}`}>
+            <Link href={href} onClick={keepCurrentHome} aria-label="Classmate — ホームへ戻る" className="cm-brand-home-link cm-home-brand-visual-grid-brand">
               <img
                 src="/apple-touch-icon.png"
                 alt=""
@@ -125,23 +146,27 @@ export function HomeBrandVisual({ menuButton }: Props) {
                   クラスメイト
                 </span>
               </div>
-            </div>
+            </Link>
 
-            <div className="cm-home-brand-visual-grid-divider" aria-hidden />
+            {showIntro ? (
+              <>
+                <div className="cm-home-brand-visual-grid-divider" aria-hidden />
 
-            <p
-              className="cm-home-brand-visual-intro cm-stagger-2 cm-home-brand-visual-grid-intro"
-              style={{
-                margin: 0,
-                fontSize: 13,
-                lineHeight: 1.6,
-                fontWeight: 600,
-                color: "var(--cm-text, #374151)",
-                textAlign: "left",
-              }}
-            >
-              {HOME_INTRO}
-            </p>
+                <p
+                  className="cm-home-brand-visual-intro cm-stagger-2 cm-home-brand-visual-grid-intro"
+                  style={{
+                    margin: 0,
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    fontWeight: 600,
+                    color: "var(--cm-text, #374151)",
+                    textAlign: "left",
+                  }}
+                >
+                  {HOME_INTRO}
+                </p>
+              </>
+            ) : null}
 
             <div className="cm-home-brand-visual-grid-menu">{menuButton}</div>
           </div>
@@ -149,7 +174,11 @@ export function HomeBrandVisual({ menuButton }: Props) {
       ) : (
         <>
           {/* Auth pages / callbacks: keep old compact layout (no hamburger) */}
-          <div
+          <Link
+            href={href}
+            onClick={keepCurrentHome}
+            aria-label="Classmate — ホームへ戻る"
+            className="cm-brand-home-link"
             style={{
               display: "flex",
               alignItems: "center",
@@ -196,21 +225,23 @@ export function HomeBrandVisual({ menuButton }: Props) {
                 クラスメイト
               </span>
             </div>
-          </div>
+          </Link>
 
-          <p
-            className="cm-home-brand-visual-intro cm-stagger-2"
-            style={{
-              margin: 0,
-              fontSize: 13,
-              lineHeight: 1.6,
-              fontWeight: 600,
-              color: "var(--cm-text, #374151)",
-              textAlign: "left",
-            }}
-          >
-            {HOME_INTRO}
-          </p>
+          {showIntro ? (
+            <p
+              className="cm-home-brand-visual-intro cm-stagger-2"
+              style={{
+                margin: 0,
+                fontSize: 13,
+                lineHeight: 1.6,
+                fontWeight: 600,
+                color: "var(--cm-text, #374151)",
+                textAlign: "left",
+              }}
+            >
+              {HOME_INTRO}
+            </p>
+          ) : null}
         </>
       )}
     </div>

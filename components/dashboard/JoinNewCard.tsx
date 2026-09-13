@@ -1,21 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { DASH_CARD, PRIMARY_BTN, SECONDARY_BTN } from "@/components/dashboard/dashboardStyles";
+import { DASH_CARD } from "@/components/dashboard/dashboardStyles";
+import { MatchEntryButton } from "@/components/MatchEntryButton";
 import type { AdmissionStatusNotice } from "@/lib/admissionJoinGate";
-
-const EQUAL_CTA_STYLE: React.CSSProperties = {
-  ...PRIMARY_BTN,
-  padding: "16px 14px",
-  fontSize: 16,
-  borderRadius: 16,
-  minHeight: 56,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 6,
-  lineHeight: 1.35,
-};
 
 type JoinNewCardProps = {
   className?: string;
@@ -37,37 +25,19 @@ type JoinNewCardProps = {
   onChatJoin: () => void;
 };
 
-const THEME_SELECT_STYLE: React.CSSProperties = {
-  ...SECONDARY_BTN,
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  textDecoration: "none",
-  padding: "12px 16px",
-  fontSize: 14,
-  fontWeight: 800,
-  borderRadius: 14,
-  border: "1px solid rgba(148, 163, 184, 0.45)",
-  background: "#fff",
-  color: "#475569",
-  boxShadow: "none",
-  width: "100%",
-  cursor: "pointer",
-};
-
-/** Home hero: voice + chat at equal priority, theme select as sub-link below. */
+/** Home hero: voice is primary, chat secondary, with theme browsing below. */
 export function JoinNewCard({
   className,
   matchJoinDisabled,
   joinDisabled = false,
   voiceBusy = false,
   chatBusy = false,
-  voiceLabel = "🎙️ 通話から始める！",
-  chatLabel = "💬 チャットから始める！",
+  voiceLabel = "通話で始める",
+  chatLabel = "チャットで始める",
   admissionStatusNotice = null,
   onAdmissionRefresh,
   themeSelectHref,
-  themeSelectLabel = "テーマを選んで始める",
+  themeSelectLabel = "テーマを選ぶ",
   onThemeSelect,
   onVoiceJoin,
   onChatJoin,
@@ -142,50 +112,35 @@ export function JoinNewCard({
           gap: 10,
         }}
       >
-        <button
-          type="button"
-          className="cm-cta-primary cm-home-voice-cta"
+        <MatchEntryButton
+          mode="voice"
+          className="cm-home-voice-cta"
           onClick={onVoiceJoin}
           disabled={voiceDisabled}
-          style={{
-            ...EQUAL_CTA_STYLE,
-            opacity: voiceDisabled ? 0.55 : 1,
-            cursor: voiceDisabled ? "not-allowed" : "pointer",
-          }}
         >
           {voiceBusy ? "参加中…" : voiceLabel}
-        </button>
-        <button
-          type="button"
-          className="cm-cta-primary cm-home-chat-cta"
+        </MatchEntryButton>
+        <MatchEntryButton
+          mode="chat"
+          className="cm-home-chat-cta"
           onClick={onChatJoin}
           disabled={chatDisabled}
-          style={{
-            ...EQUAL_CTA_STYLE,
-            opacity: chatDisabled ? 0.55 : 1,
-            cursor: chatDisabled ? "not-allowed" : "pointer",
-          }}
         >
           {chatBusy ? "参加中…" : chatLabel}
-        </button>
+        </MatchEntryButton>
       </div>
       {onThemeSelect ? (
         <button
           type="button"
-          className="cm-cta-secondary cm-home-theme-select"
+          className="cm-home-theme-select"
           onClick={onThemeSelect}
-          style={{
-            ...THEME_SELECT_STYLE,
-            cursor: "pointer",
-          }}
         >
           {themeSelectLabel}
         </button>
       ) : themeSelectHref ? (
         <Link
           href={themeSelectHref}
-          className="cm-cta-secondary cm-home-theme-select"
-          style={THEME_SELECT_STYLE}
+          className="cm-home-theme-select"
         >
           {themeSelectLabel}
         </Link>

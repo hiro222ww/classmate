@@ -55,6 +55,7 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
+import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
@@ -787,7 +788,7 @@ export default function SelectClient() {
     result.push({
       key: "free",
       title: "フリー",
-      description: "テーマを決めずに、気軽に同年代と話せるクラスです。",
+      description: "同年代と気軽に話そう",
       world_key: "default",
       topic_key: null,
       is_sensitive: false,
@@ -1225,12 +1226,10 @@ export default function SelectClient() {
                 : null;
 
     const renderJoinButton = (mode: MatchEntryMode, label: string) => (
-      <button
-        type="button"
-        className={[
-          "cm-board-enter",
-          !comingSoon && enterReady ? "cm-cta-primary" : "cm-cta-secondary",
-        ].join(" ")}
+      <MatchEntryButton
+        mode={mode}
+        muted={comingSoon || !enterReady}
+        className="cm-board-enter"
         onClick={() => {
           if (comingSoon) return;
           void joinMatchedBoard(b, { entryMode: mode });
@@ -1240,16 +1239,14 @@ export default function SelectClient() {
         style={{
           width: "100%",
           padding: "10px 8px",
-          color: comingSoon ? "#94a3b8" : "var(--cm-text, #0f172a)",
           fontWeight: 900,
           fontSize: 13,
           cursor: joinDisabled ? "not-allowed" : "pointer",
           opacity: joinDisabled ? 0.62 : 1,
-          background: comingSoon ? "rgba(226, 232, 240, 0.9)" : undefined,
         }}
       >
         {actionLabel ?? label}
-      </button>
+      </MatchEntryButton>
     );
 
     return (
@@ -1430,7 +1427,7 @@ export default function SelectClient() {
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
-      <HomeBrandVisual menuButton={menuButton} />
+      <HomeBrandVisual menuButton={menuButton} showIntro={false} />
 
       <HomeMenuSheet
         open={menuOpen}
@@ -1602,16 +1599,6 @@ export default function SelectClient() {
           >
             テーマを選ぶ
           </h2>
-          <p
-            style={{
-              margin: "6px 0 0",
-              fontSize: 13,
-              fontWeight: 600,
-              color: "#64748b",
-            }}
-          >
-            各テーマから通話またはチャットで始められます（最大5人）
-          </p>
         </div>
 
         <div
@@ -1762,16 +1749,6 @@ export default function SelectClient() {
           >
             テーマフリー
           </h3>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#64748b",
-            }}
-          >
-            テーマを決めずに、気軽に入れるクラス
-          </p>
           {admissionStatusNotice ? (
             <div
               role="status"
@@ -1844,16 +1821,6 @@ export default function SelectClient() {
               >
                 テーマから探す
               </h3>
-              <p
-                style={{
-                  margin: "4px 0 0",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "#64748b",
-                }}
-              >
-                準備中のテーマです。通話・チャットともに参加・購入できません
-              </p>
             </div>
 
             {themeGroups.map((group) => (
