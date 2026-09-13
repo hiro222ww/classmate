@@ -1,33 +1,60 @@
 "use client";
 
-import { HOME_INTRO } from "@/lib/seo";
 import Link from "next/link";
-import { useSyncExternalStore, type MouseEvent } from "react";
-import { resolveShellDashboardPath } from "@/lib/appShellContext";
-import { withDev } from "@/lib/withDev";
-
-const subscribe = () => () => {};
-const homeHref = () => withDev(resolveShellDashboardPath());
-const serverHomeHref = () => "/";
-
-function keepCurrentHome(event: MouseEvent<HTMLAnchorElement>) {
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  // Avoid refreshing the current home and reinitializing its profile state.
-  if (event.currentTarget.href === window.location.href) event.preventDefault();
-}
+import { HOME_INTRO } from "@/lib/seo";
 
 type Props = {
   menuButton?: React.ReactNode;
-  showIntro?: boolean;
 };
+
+/** Header mark without the black rim baked into apple-touch-icon. */
+const BRAND_MARK_SRC = "/brand/classmate-mark.png";
+
+const brandMarkStyle = (size: number): React.CSSProperties => ({
+  width: size,
+  height: size,
+  borderRadius: "50%",
+  border: "1px solid rgba(255,255,255,0.85)",
+  boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
+  flexShrink: 0,
+  display: "block",
+  background: "transparent",
+  objectFit: "cover",
+});
+
+const wordmarkStyle: React.CSSProperties = {
+  fontSize: 22,
+  fontWeight: 900,
+  color: "#1e3a5f",
+  letterSpacing: 0.3,
+  lineHeight: 1.1,
+};
+
+const subtitleStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 11,
+  fontWeight: 700,
+  color: "#64748b",
+  letterSpacing: "0.04em",
+  marginTop: 1,
+};
+
+function BrandWordmark() {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <span style={wordmarkStyle}>Classmate</span>
+      <span style={subtitleStyle}>クラスメイト</span>
+    </div>
+  );
+}
 
 /**
  * First-view brand header for the home page.
- * Character icon (apple-touch-icon) + "Classmate" wordmark + optional ☰.
+ * Character mark + "Classmate" wordmark (home link) + optional ☰.
  */
-export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
+export function HomeBrandVisual({ menuButton }: Props) {
   const hasMenu = Boolean(menuButton);
-  const href = useSyncExternalStore(subscribe, homeHref, serverHomeHref);
+  const markSize = hasMenu ? 56 : 52;
 
   return (
     <div
@@ -37,7 +64,7 @@ export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
         gap: 8,
         minWidth: 0,
         maxWidth: "100%",
-        padding: "16px 16px 14px",
+        padding: "14px 16px 12px",
         borderRadius: 22,
         background:
           "linear-gradient(180deg, rgba(238,246,255,0.92) 0%, rgba(204,251,241,0.55) 100%)",
@@ -63,6 +90,14 @@ export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
               align-items: center;
               gap: 10px;
               min-width: 0;
+              text-decoration: none;
+              color: inherit;
+            }
+
+            .cm-home-brand-visual-grid-brand:focus-visible {
+              outline: 2px solid #0ea5e9;
+              outline-offset: 3px;
+              border-radius: 12px;
             }
 
             .cm-home-brand-visual-grid-menu {
@@ -91,145 +126,36 @@ export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
                 grid-area: divider;
                 display: block;
                 width: 1px;
-                height: 38px;
+                height: 42px;
                 background: rgba(15, 23, 42, 0.15);
                 justify-self: center;
               }
             }
-
-            .cm-home-brand-visual-grid--compact {
-              grid-template-columns: 1fr auto;
-              grid-template-areas: "brand menu";
-            }
           `}</style>
 
-          <div className={`cm-home-brand-visual-grid ${showIntro ? "" : "cm-home-brand-visual-grid--compact"}`}>
-            <Link href={href} onClick={keepCurrentHome} aria-label="Classmate — ホームへ戻る" className="cm-brand-home-link cm-home-brand-visual-grid-brand">
+          <div className="cm-home-brand-visual-grid">
+            <Link
+              href="/"
+              className="cm-home-brand-visual-grid-brand"
+              aria-label="Classmateホーム"
+            >
               <img
-                src="/apple-touch-icon.png"
+                src={BRAND_MARK_SRC}
                 alt=""
-                width={48}
-                height={48}
+                width={markSize}
+                height={markSize}
                 decoding="async"
                 fetchPriority="high"
                 aria-hidden
-                style={{
-                  borderRadius: "50%",
-                  border: "2px solid rgba(255,255,255,0.8)",
-                  boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
-                  flexShrink: 0,
-                }}
+                style={brandMarkStyle(markSize)}
               />
-
-              <div style={{ minWidth: 0 }}>
-                <span
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 900,
-                    color: "#1e3a5f",
-                    letterSpacing: 0.3,
-                    lineHeight: 1.1,
-                  }}
-                >
-                  Classmate
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "#64748b",
-                    letterSpacing: "0.04em",
-                    marginTop: 1,
-                  }}
-                >
-                  クラスメイト
-                </span>
-              </div>
+              <BrandWordmark />
             </Link>
 
-            {showIntro ? (
-              <>
-                <div className="cm-home-brand-visual-grid-divider" aria-hidden />
+            <div className="cm-home-brand-visual-grid-divider" aria-hidden />
 
-                <p
-                  className="cm-home-brand-visual-intro cm-stagger-2 cm-home-brand-visual-grid-intro"
-                  style={{
-                    margin: 0,
-                    fontSize: 13,
-                    lineHeight: 1.6,
-                    fontWeight: 600,
-                    color: "var(--cm-text, #374151)",
-                    textAlign: "left",
-                  }}
-                >
-                  {HOME_INTRO}
-                </p>
-              </>
-            ) : null}
-
-            <div className="cm-home-brand-visual-grid-menu">{menuButton}</div>
-          </div>
-        </>
-      ) : (
-        <>
-          {/* Auth pages / callbacks: keep old compact layout (no hamburger) */}
-          <Link
-            href={href}
-            onClick={keepCurrentHome}
-            aria-label="Classmate — ホームへ戻る"
-            className="cm-brand-home-link"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <img
-              src="/apple-touch-icon.png"
-              alt=""
-              width={44}
-              height={44}
-              decoding="async"
-              fetchPriority="high"
-              aria-hidden
-              style={{
-                borderRadius: "50%",
-                border: "2px solid rgba(255,255,255,0.8)",
-                boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
-                flexShrink: 0,
-              }}
-            />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <span
-                style={{
-                  fontSize: 22,
-                  fontWeight: 900,
-                  color: "#1e3a5f",
-                  letterSpacing: 0.3,
-                  lineHeight: 1.1,
-                }}
-              >
-                Classmate
-              </span>
-              <span
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#64748b",
-                  letterSpacing: "0.04em",
-                  marginTop: 1,
-                }}
-              >
-                クラスメイト
-              </span>
-            </div>
-          </Link>
-
-          {showIntro ? (
             <p
-              className="cm-home-brand-visual-intro cm-stagger-2"
+              className="cm-home-brand-visual-intro cm-stagger-2 cm-home-brand-visual-grid-intro"
               style={{
                 margin: 0,
                 fontSize: 13,
@@ -241,7 +167,53 @@ export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
             >
               {HOME_INTRO}
             </p>
-          ) : null}
+
+            <div className="cm-home-brand-visual-grid-menu">{menuButton}</div>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Auth pages / callbacks: compact layout (no hamburger) */}
+          <Link
+            href="/"
+            aria-label="Classmateホーム"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 10,
+              minWidth: 0,
+              textDecoration: "none",
+              color: "inherit",
+              width: "fit-content",
+              maxWidth: "100%",
+            }}
+          >
+            <img
+              src={BRAND_MARK_SRC}
+              alt=""
+              width={markSize}
+              height={markSize}
+              decoding="async"
+              fetchPriority="high"
+              aria-hidden
+              style={brandMarkStyle(markSize)}
+            />
+            <BrandWordmark />
+          </Link>
+
+          <p
+            className="cm-home-brand-visual-intro cm-stagger-2"
+            style={{
+              margin: 0,
+              fontSize: 13,
+              lineHeight: 1.6,
+              fontWeight: 600,
+              color: "var(--cm-text, #374151)",
+              textAlign: "left",
+            }}
+          >
+            {HOME_INTRO}
+          </p>
         </>
       )}
     </div>
