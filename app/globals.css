@@ -199,15 +199,49 @@ html.classmate-board-drawing,
 html.classmate-board-drawing body {
   user-select: none !important;
   -webkit-user-select: none !important;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: none;
 }
 
-html.classmate-board-drawing .classmate-session-messages-list {
+html.classmate-board-drawing .classmate-session-messages-list,
+html.classmate-board-drawing .cm-room-messages {
   user-select: none !important;
   -webkit-user-select: none !important;
+  pointer-events: none !important;
 }
 
 body.classmate-board-fullscreen {
   overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.classmate-board-fs-shell {
+  box-sizing: border-box;
+}
+
+/* Keep SessionMessages in the same React tree; dock visually over the board portal. */
+body.classmate-board-fullscreen .classmate-call-messages-dock {
+  position: fixed;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  z-index: 9100;
+  margin: 0 !important;
+  max-height: min(200px, 36vh);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.28);
+}
+
+body.classmate-board-fullscreen .classmate-call-messages-dock .cm-room-messages {
+  margin: 0;
+  max-height: inherit;
+}
+
+body.classmate-board-fullscreen .classmate-call-messages-dock .classmate-session-messages-list {
+  max-height: 96px !important;
 }
 
 .classmate-push-bell-wrap {
