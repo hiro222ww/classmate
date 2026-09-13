@@ -1,14 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import { HOME_INTRO } from "@/lib/seo";
+import Link from "next/link";
+import { useSyncExternalStore, type MouseEvent } from "react";
+import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import { withDev } from "@/lib/withDev";
 
-type Props = {
-  menuButton?: React.ReactNode;
-};
+const subscribe = () => () => {};
+const homeHref = () => withDev(resolveShellDashboardPath());
+const serverHomeHref = () => "/";
 
 /** Header mark without the black rim baked into apple-touch-icon. */
 const BRAND_MARK_SRC = "/brand/classmate-mark.png";
+
+function keepCurrentHome(event: MouseEvent<HTMLAnchorElement>) {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  // Avoid refreshing the current home and reinitializing its profile state.
+  if (event.currentTarget.href === window.location.href) event.preventDefault();
+}
+
+type Props = {
+  menuButton?: React.ReactNode;
+  showIntro?: boolean;
+};
 
 const brandMarkStyle = (size: number): React.CSSProperties => ({
   width: size,
@@ -22,38 +36,13 @@ const brandMarkStyle = (size: number): React.CSSProperties => ({
   objectFit: "cover",
 });
 
-const wordmarkStyle: React.CSSProperties = {
-  fontSize: 22,
-  fontWeight: 900,
-  color: "#1e3a5f",
-  letterSpacing: 0.3,
-  lineHeight: 1.1,
-};
-
-const subtitleStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 11,
-  fontWeight: 700,
-  color: "#64748b",
-  letterSpacing: "0.04em",
-  marginTop: 1,
-};
-
-function BrandWordmark() {
-  return (
-    <div style={{ minWidth: 0 }}>
-      <span style={wordmarkStyle}>Classmate</span>
-      <span style={subtitleStyle}>クラスメイト</span>
-    </div>
-  );
-}
-
 /**
  * First-view brand header for the home page.
  * Character mark + "Classmate" wordmark (home link) + optional ☰.
  */
-export function HomeBrandVisual({ menuButton }: Props) {
+export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
   const hasMenu = Boolean(menuButton);
+  const href = useSyncExternalStore(subscribe, homeHref, serverHomeHref);
   const markSize = hasMenu ? 56 : 52;
 
   return (
@@ -131,13 +120,21 @@ export function HomeBrandVisual({ menuButton }: Props) {
                 justify-self: center;
               }
             }
+
+            .cm-home-brand-visual-grid--compact {
+              grid-template-columns: 1fr auto;
+              grid-template-areas: "brand menu";
+            }
           `}</style>
 
-          <div className="cm-home-brand-visual-grid">
+          <div
+            className={`cm-home-brand-visual-grid ${showIntro ? "" : "cm-home-brand-visual-grid--compact"}`}
+          >
             <Link
-              href="/"
-              className="cm-home-brand-visual-grid-brand"
-              aria-label="Classmateホーム"
+              href={href}
+              onClick={keepCurrentHome}
+              aria-label="Classmate — ホームへ戻る"
+              className="cm-brand-home-link cm-home-brand-visual-grid-brand"
             >
               <img
                 src={BRAND_MARK_SRC}
@@ -149,43 +146,71 @@ export function HomeBrandVisual({ menuButton }: Props) {
                 aria-hidden
                 style={brandMarkStyle(markSize)}
               />
-              <BrandWordmark />
+
+              <div style={{ minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 900,
+                    color: "#1e3a5f",
+                    letterSpacing: 0.3,
+                    lineHeight: 1.1,
+                  }}
+                >
+                  Classmate
+                </span>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#64748b",
+                    letterSpacing: "0.04em",
+                    marginTop: 1,
+                  }}
+                >
+                  クラスメイト
+                </span>
+              </div>
             </Link>
 
-            <div className="cm-home-brand-visual-grid-divider" aria-hidden />
+            {showIntro ? (
+              <>
+                <div className="cm-home-brand-visual-grid-divider" aria-hidden />
 
-            <p
-              className="cm-home-brand-visual-intro cm-stagger-2 cm-home-brand-visual-grid-intro"
-              style={{
-                margin: 0,
-                fontSize: 13,
-                lineHeight: 1.6,
-                fontWeight: 600,
-                color: "var(--cm-text, #374151)",
-                textAlign: "left",
-              }}
-            >
-              {HOME_INTRO}
-            </p>
+                <p
+                  className="cm-home-brand-visual-intro cm-stagger-2 cm-home-brand-visual-grid-intro"
+                  style={{
+                    margin: 0,
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    fontWeight: 600,
+                    color: "var(--cm-text, #374151)",
+                    textAlign: "left",
+                  }}
+                >
+                  {HOME_INTRO}
+                </p>
+              </>
+            ) : null}
 
             <div className="cm-home-brand-visual-grid-menu">{menuButton}</div>
           </div>
         </>
       ) : (
         <>
-          {/* Auth pages / callbacks: compact layout (no hamburger) */}
+          {/* Auth pages / callbacks: keep old compact layout (no hamburger) */}
           <Link
-            href="/"
-            aria-label="Classmateホーム"
+            href={href}
+            onClick={keepCurrentHome}
+            aria-label="Classmate — ホームへ戻る"
+            className="cm-brand-home-link"
             style={{
-              display: "inline-flex",
+              display: "flex",
               alignItems: "center",
               gap: 10,
-              minWidth: 0,
               textDecoration: "none",
               color: "inherit",
-              width: "fit-content",
-              maxWidth: "100%",
             }}
           >
             <img
@@ -198,22 +223,48 @@ export function HomeBrandVisual({ menuButton }: Props) {
               aria-hidden
               style={brandMarkStyle(markSize)}
             />
-            <BrandWordmark />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span
+                style={{
+                  fontSize: 22,
+                  fontWeight: 900,
+                  color: "#1e3a5f",
+                  letterSpacing: 0.3,
+                  lineHeight: 1.1,
+                }}
+              >
+                Classmate
+              </span>
+              <span
+                style={{
+                  display: "block",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#64748b",
+                  letterSpacing: "0.04em",
+                  marginTop: 1,
+                }}
+              >
+                クラスメイト
+              </span>
+            </div>
           </Link>
 
-          <p
-            className="cm-home-brand-visual-intro cm-stagger-2"
-            style={{
-              margin: 0,
-              fontSize: 13,
-              lineHeight: 1.6,
-              fontWeight: 600,
-              color: "var(--cm-text, #374151)",
-              textAlign: "left",
-            }}
-          >
-            {HOME_INTRO}
-          </p>
+          {showIntro ? (
+            <p
+              className="cm-home-brand-visual-intro cm-stagger-2"
+              style={{
+                margin: 0,
+                fontSize: 13,
+                lineHeight: 1.6,
+                fontWeight: 600,
+                color: "var(--cm-text, #374151)",
+                textAlign: "left",
+              }}
+            >
+              {HOME_INTRO}
+            </p>
+          ) : null}
         </>
       )}
     </div>
