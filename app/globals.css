@@ -201,13 +201,82 @@ html.classmate-board-drawing body {
   -webkit-user-select: none !important;
 }
 
-html.classmate-board-drawing .classmate-session-messages-list {
+html.classmate-board-drawing .classmate-session-messages-list,
+html.classmate-board-drawing .cm-room-messages {
   user-select: none !important;
   -webkit-user-select: none !important;
+  pointer-events: none !important;
+}
+
+html.classmate-board-draw-armed,
+html.classmate-board-draw-armed body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.classmate-board-draw-armed .classmate-session-messages-list,
+html.classmate-board-draw-armed .cm-room-messages {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+html.classmate-board-fullscreen,
+html.classmate-board-fullscreen body {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  height: 100%;
+  height: 100dvh;
 }
 
 body.classmate-board-fullscreen {
   overflow: hidden;
+}
+
+/* Keep messages / call chrome from stealing Apple Pencil hits under the board. */
+body.classmate-board-fullscreen .cm-room-messages,
+body.classmate-board-fullscreen .cm-call-root {
+  pointer-events: none !important;
+}
+
+.classmate-board-fullscreen-layer {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 20000 !important;
+  box-sizing: border-box;
+  width: 100% !important;
+  height: 100% !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px;
+  padding:
+    max(8px, env(safe-area-inset-top, 0px))
+    max(10px, env(safe-area-inset-right, 0px))
+    max(8px, env(safe-area-inset-bottom, 0px))
+    max(10px, env(safe-area-inset-left, 0px)) !important;
+  background: #0f172a !important;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+.classmate-board-fullscreen-layer .classmate-board-scroll {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+
+.classmate-board-fullscreen-layer .classmate-board-surface {
+  min-width: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+}
+
+.classmate-board-fullscreen-layer label,
+.classmate-board-fullscreen-layer span {
+  color: #e2e8f0;
 }
 
 .classmate-push-bell-wrap {

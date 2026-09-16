@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { getDeviceId } from "@/lib/device";
 import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
@@ -42,6 +43,7 @@ const BOARD_REALTIME_RESUBSCRIBE_MS = 4000;
 const BOARD_STATUS_RECONNECTING = "再接続中…";
 
 const BOARD_DRAWING_LOCK_CLASS = "classmate-board-drawing";
+const BOARD_DRAW_ARMED_CLASS = "classmate-board-draw-armed";
 const BOARD_FULLSCREEN_CLASS = "classmate-board-fullscreen";
 
 function setBoardDrawingLock(active: boolean) {
@@ -52,8 +54,14 @@ function setBoardDrawingLock(active: boolean) {
   }
 }
 
+function setBoardDrawArmed(active: boolean) {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle(BOARD_DRAW_ARMED_CLASS, active);
+}
+
 function setBoardFullscreenLock(active: boolean) {
   if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle(BOARD_FULLSCREEN_CLASS, active);
   document.body.classList.toggle(BOARD_FULLSCREEN_CLASS, active);
 }
 
@@ -314,9 +322,15 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     return () => {
       setBoardDrawingLock(false);
+      setBoardDrawArmed(false);
       setBoardFullscreenLock(false);
     };
   }, []);
+
+  useEffect(() => {
+    setBoardDrawArmed(touchMode === "draw");
+    return () => setBoardDrawArmed(false);
+  }, [touchMode]);
 
   const getCanvasSize = () => {
     const canvas = canvasRef.current;
@@ -1054,7 +1068,13 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
 
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener("scroll", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("scroll", onResize);
+    };
   }, [sessionId, isFullscreen]);
 
   useEffect(() => {
@@ -1205,10 +1225,17 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         if (sel && sel.removeAllRanges) sel.removeAllRanges();
       }
 
-      if (touchMode === "pan") return;
+      // Apple Pencil / stylus should always draw, even if pan mode was left on.
+      const isPen = ev.pointerType === "pen";
+      if (touchMode === "pan" && !isPen) return;
 
       ev.preventDefault();
-      (ev.target as any)?.setPointerCapture?.(ev.pointerId);
+      ev.stopPropagation();
+      try {
+        canvas.setPointerCapture(ev.pointerId);
+      } catch {
+        // Older WebKit may reject capture; continue without it.
+      }
 
       const p = getBoardPoint(ev);
       if (!p) return;
@@ -1314,7 +1341,8 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
 
     const onUp = (ev: PointerEvent) => {
-      if (touchMode === "pan") return;
+      const isPen = ev.pointerType === "pen";
+      if (touchMode === "pan" && !isPen) return;
 
       ev.preventDefault();
 
@@ -1358,10 +1386,8 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       void finalizeAndSend();
     };
 
-    const onPointerLeave = () => {
-      if (!drawingRef.current) return;
-      void finalizeAndSend();
-    };
+    // Do NOT end the stroke on pointerleave — Apple Pencil often leaves the
+    // canvas bounds briefly; setPointerCapture keeps delivering moves.
 
     const onVis = () => {
       if (!document.hidden) return;
@@ -1386,7 +1412,6 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     canvas.addEventListener("lostpointercapture", onCancel as EventListener, {
       passive: false,
     });
-    canvas.addEventListener("pointerleave", onPointerLeave, { passive: false });
     canvas.addEventListener("contextmenu", onCtx as EventListener, {
       passive: false,
     });
@@ -1397,7 +1422,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
 
     const blockSelectWhileDrawing = (ev: Event) => {
-      if (!drawingRef.current) return;
+      if (!drawingRef.current && touchMode !== "draw") return;
       ev.preventDefault();
     };
 
@@ -1434,7 +1459,6 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         "lostpointercapture",
         onCancel as EventListener
       );
-      canvas.removeEventListener("pointerleave", onPointerLeave);
       canvas.removeEventListener("contextmenu", onCtx as EventListener);
       canvas.removeEventListener("selectstart", blockBoardDefault);
       canvas.removeEventListener("dragstart", blockBoardDefault);
@@ -1464,23 +1488,15 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, penColor, penWidth, tool, sounds, isTouchLike, touchMode]);
 
-  return (
+  const board = (
     <div
-      className="classmate-board-root"
+      className={
+        isFullscreen
+          ? "classmate-board-root classmate-board-fullscreen-layer"
+          : "classmate-board-root"
+      }
       style={{
-        ...(isFullscreen
-          ? {
-              position: "fixed",
-              inset: 0,
-              zIndex: 9000,
-              marginTop: 0,
-              background: "#f8fafc",
-              display: "flex",
-              flexDirection: "column",
-              padding: 12,
-              overflow: "hidden",
-            }
-          : { marginTop: 10 }),
+        ...(isFullscreen ? undefined : { marginTop: 10 }),
         ...BOARD_TOUCH_GUARD,
       }}
     >
@@ -1679,14 +1695,14 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         ref={boardScrollRef}
         className="classmate-board-scroll"
         style={{
-          marginTop: 10,
+          marginTop: isFullscreen ? 0 : 10,
           flex: isFullscreen ? 1 : undefined,
           minHeight: isFullscreen ? 0 : undefined,
-          borderRadius: 16,
+          borderRadius: isFullscreen ? 12 : 16,
           border: "1px solid rgba(0,0,0,0.08)",
           background: BOARD_OUTER_BG,
-          padding: 10,
-          overflowX: "auto",
+          padding: isFullscreen ? 8 : 10,
+          overflowX: isFullscreen ? "hidden" : "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
           ...BOARD_TOUCH_GUARD,
@@ -1702,13 +1718,13 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             width: "100%",
             maxWidth: "none",
             margin: "0 auto",
-            minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
+            minWidth: isFullscreen ? 0 : MOBILE_MIN_BOARD_WIDTH_PX,
             minHeight: isFullscreen ? "100%" : isTouchLike ? 420 : 620,
             height: isFullscreen ? "100%" : undefined,
             aspectRatio: isFullscreen
               ? undefined
               : `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
-            borderRadius: 16,
+            borderRadius: isFullscreen ? 10 : 16,
             border: "2px solid #073126",
             background: BOARD_BG,
             boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
@@ -1834,6 +1850,21 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       ) : null}
     </div>
   );
+
+  if (isFullscreen && typeof document !== "undefined") {
+    return (
+      <>
+        <div
+          className="classmate-board-fullscreen-placeholder"
+          aria-hidden
+          style={{ minHeight: 280, marginTop: 10 }}
+        />
+        {createPortal(board, document.body)}
+      </>
+    );
+  }
+
+  return board;
 }
 
 export default function SharedCanvasBoard({
