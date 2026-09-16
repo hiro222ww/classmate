@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { renderMessageTextWithLinks } from "@/lib/messageLinkify";
 import {
@@ -28,6 +28,65 @@ type Props = {
   title?: string;
   maxHeight?: number;
   collapsible?: boolean;
+};
+
+/** Flat stroke icons — avoid colorful system emoji glyphs in the composer chrome. */
+function GlyphSmile({ active = false }: { active?: boolean }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.85"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 10h.01" />
+      <path d="M15 10h.01" />
+      <path
+        d={active ? "M8.5 14.5c1.2 1.4 2.7 2 3.5 2s2.3-.6 3.5-2" : "M8.5 15c1.2 1.2 2.7 1.8 3.5 1.8s2.3-.6 3.5-1.8"}
+      />
+    </svg>
+  );
+}
+
+function GlyphCamera() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.85"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h2l1.2-1.6A1.5 1.5 0 0 1 10.9 4h2.2a1.5 1.5 0 0 1 1.2.4L15.5 6H17.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-8Z" />
+      <circle cx="12" cy="12.5" r="3.25" />
+    </svg>
+  );
+}
+
+const composerIconBtnStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 40,
+  height: 40,
+  padding: 0,
+  border: "1px solid #d1d5db",
+  borderRadius: 999,
+  background: "#fff",
+  color: "#475569",
+  cursor: "pointer",
+  flexShrink: 0,
+  lineHeight: 0,
 };
 
 const EMOJIS = [
@@ -804,37 +863,31 @@ export default function SessionMessages({
         >
           <button
             type="button"
+            aria-label="絵文字を選ぶ"
+            aria-pressed={showEmojiPicker}
             onClick={() => {
               setShowEmojiPicker((prev) => !prev);
               inputRef.current?.focus();
             }}
             style={{
-              border: "1px solid #d1d5db",
-              borderRadius: 999,
-              padding: "10px 12px",
-              background: "#fff",
-              cursor: "pointer",
-              fontSize: 18,
-              lineHeight: 1,
-              whiteSpace: "nowrap",
+              ...composerIconBtnStyle,
+              color: showEmojiPicker ? "#0f766e" : "#475569",
+              borderColor: showEmojiPicker ? "#99f6e4" : "#d1d5db",
+              background: showEmojiPicker ? "#f0fdfa" : "#fff",
             }}
           >
-            😊
+            <GlyphSmile active={showEmojiPicker} />
           </button>
 
           <label
+            aria-label="画像を添付"
             style={{
-              border: "1px solid #d1d5db",
-              borderRadius: 999,
-              padding: "10px 12px",
+              ...composerIconBtnStyle,
               cursor: sending ? "not-allowed" : "pointer",
-              background: "#fff",
               opacity: sending ? 0.6 : 1,
-              whiteSpace: "nowrap",
-              lineHeight: 1,
             }}
           >
-            📷
+            <GlyphCamera />
             <input
               type="file"
               accept="image/jpeg,image/png,image/webp"
