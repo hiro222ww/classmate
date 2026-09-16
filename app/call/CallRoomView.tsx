@@ -943,7 +943,11 @@ export default function CallRoomView({
 
       <section style={{ marginTop: 16 }}>{boardSlot}</section>
 
-      {messagesSlot ? <div style={{ marginTop: 16 }}>{messagesSlot}</div> : null}
+      {messagesSlot ? (
+        <div className="classmate-call-messages-dock" style={{ marginTop: 16 }}>
+          {messagesSlot}
+        </div>
+      ) : null}
 
       {profileModalSlot}
     </main>

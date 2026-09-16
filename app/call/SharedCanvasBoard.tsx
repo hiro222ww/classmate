@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { getDeviceId } from "@/lib/device";
 import { isDebugLogEnabled, logDebug } from "@/lib/debugLog";
@@ -70,6 +76,33 @@ function boardTouchAction(
 ): CSSProperties["touchAction"] {
   return touchMode === "pan" ? "pan-x pan-y" : "none";
 }
+
+/** Apple Pencil always draws; finger/mouse respect draw/pan mode. */
+function pointerShouldDraw(
+  pointerType: string,
+  touchMode: "draw" | "pan"
+): boolean {
+  if (pointerType === "pen") return true;
+  return touchMode === "draw";
+}
+
+const FS_SHELL_STYLE: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 9000,
+  margin: 0,
+  background: "#0f172a",
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  overflow: "hidden",
+  paddingTop: "max(8px, env(safe-area-inset-top, 0px))",
+  paddingRight: "max(8px, env(safe-area-inset-right, 0px))",
+  /* Leave room for the CallRoomView messages dock (same React tree, CSS-fixed). */
+  paddingBottom:
+    "max(168px, calc(152px + env(safe-area-inset-bottom, 0px)))",
+  paddingLeft: "max(8px, env(safe-area-inset-left, 0px))",
+};
 
 function SharedCanvasBoardPreview({
   overlayText,
@@ -273,6 +306,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
 
   const drawingRef = useRef(false);
+  const activePointerIdRef = useRef<number | null>(null);
   const pointsRef = useRef<StrokePoint[]>([]);
   const lastPtRef = useRef<StrokePoint | null>(null);
   const strokeIdRef = useRef("");
@@ -587,17 +621,25 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     });
   };
 
-  const getBoardPoint = (e: PointerEvent): StrokePoint | null => {
+  const getBoardPoint = (
+    e: PointerEvent,
+    opts?: { clamp?: boolean }
+  ): StrokePoint | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
 
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
 
-    if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+    if (opts?.clamp) {
+      x = Math.max(0, Math.min(rect.width, x));
+      y = Math.max(0, Math.min(rect.height, y));
+    } else if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      return null;
+    }
 
     return {
       x: (x / rect.width) * BOARD_LOGICAL_WIDTH,
@@ -1161,6 +1203,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
 
     const resetDrawingState = () => {
       drawingRef.current = false;
+      activePointerIdRef.current = null;
       lastMoveRef.current = null;
       lastPtRef.current = null;
       pointsRef.current = [];
@@ -1175,10 +1218,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
 
     const finalizeAndSend = async () => {
-      if (!drawingRef.current) {
-        forceAbort();
-        return;
-      }
+      if (!drawingRef.current) return;
 
       const finalPoints = [...pointsRef.current];
       const strokeColor = strokeColorRef.current;
@@ -1199,20 +1239,30 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       }, 120);
     };
 
+    const isActivePointer = (ev: PointerEvent) =>
+      activePointerIdRef.current !== null &&
+      ev.pointerId === activePointerIdRef.current;
+
     const onDown = (ev: PointerEvent) => {
       if (window.getSelection) {
         const sel = window.getSelection();
         if (sel && sel.removeAllRanges) sel.removeAllRanges();
       }
 
-      if (touchMode === "pan") return;
-
-      ev.preventDefault();
-      (ev.target as any)?.setPointerCapture?.(ev.pointerId);
+      if (!pointerShouldDraw(ev.pointerType, touchMode)) return;
+      if (drawingRef.current) return;
 
       const p = getBoardPoint(ev);
       if (!p) return;
 
+      ev.preventDefault();
+      try {
+        canvas.setPointerCapture(ev.pointerId);
+      } catch {
+        // Older WebKit may reject capture; window pointerup still finalizes.
+      }
+
+      activePointerIdRef.current = ev.pointerId;
       setBoardDrawingLock(true);
 
       if (tool === "eraser") {
@@ -1255,11 +1305,11 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
 
     const onMove = (ev: PointerEvent) => {
-      if (!drawingRef.current) return;
+      if (!drawingRef.current || !isActivePointer(ev)) return;
 
       ev.preventDefault();
 
-      const p = getBoardPoint(ev);
+      const p = getBoardPoint(ev, { clamp: true });
       const last = lastPtRef.current;
       if (!p || !last) return;
 
@@ -1314,13 +1364,12 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
 
     const onUp = (ev: PointerEvent) => {
-      if (touchMode === "pan") return;
+      if (!drawingRef.current) return;
+      if (!isActivePointer(ev)) return;
 
       ev.preventDefault();
 
-      if (!drawingRef.current) return;
-
-      const p = getBoardPoint(ev);
+      const p = getBoardPoint(ev, { clamp: true });
       const last = lastPtRef.current;
 
       if (p && last) {
@@ -1341,6 +1390,14 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     const onCancel = (ev: Event) => {
       ev.preventDefault?.();
       if (!drawingRef.current) return;
+      const pev = ev as PointerEvent;
+      if (
+        typeof pev.pointerId === "number" &&
+        activePointerIdRef.current !== null &&
+        pev.pointerId !== activePointerIdRef.current
+      ) {
+        return;
+      }
       void finalizeAndSend();
     };
 
@@ -1358,9 +1415,11 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       void finalizeAndSend();
     };
 
-    const onPointerLeave = () => {
-      if (!drawingRef.current) return;
-      void finalizeAndSend();
+    // Do not finalize on pointerleave — Pencil strokes must stay owned until
+    // up / cancel / lostpointercapture so edge strokes don't leak into messages.
+    const onPointerLeave = (ev: PointerEvent) => {
+      if (!drawingRef.current || !isActivePointer(ev)) return;
+      ev.preventDefault();
     };
 
     const onVis = () => {
@@ -1464,33 +1523,33 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId, penColor, penWidth, tool, sounds, isTouchLike, touchMode]);
 
-  return (
+  const toolBtnPad = isFullscreen
+    ? "8px 10px"
+    : isTouchLike
+      ? "10px 14px"
+      : "8px 12px";
+  const toolBtnMinH = isFullscreen ? 40 : isTouchLike ? 44 : undefined;
+
+  const boardUi = (
     <div
-      className="classmate-board-root"
+      className={
+        isFullscreen
+          ? "classmate-board-root classmate-board-fs-shell"
+          : "classmate-board-root"
+      }
       style={{
-        ...(isFullscreen
-          ? {
-              position: "fixed",
-              inset: 0,
-              zIndex: 9000,
-              marginTop: 0,
-              background: "#f8fafc",
-              display: "flex",
-              flexDirection: "column",
-              padding: 12,
-              overflow: "hidden",
-            }
-          : { marginTop: 10 }),
+        ...(isFullscreen ? FS_SHELL_STYLE : { marginTop: 10 }),
         ...BOARD_TOUCH_GUARD,
       }}
     >
       <div
         style={{
           display: "flex",
-          gap: 10,
+          gap: isFullscreen ? 8 : 10,
           flexWrap: "wrap",
           alignItems: "center",
           justifyContent: "space-between",
+          flexShrink: 0,
           ...BOARD_TOUCH_GUARD,
         }}
       >
@@ -1505,7 +1564,13 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             ...BOARD_TOUCH_GUARD,
           }}
         >
-          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
+          <label
+            style={{
+              fontSize: 12,
+              fontWeight: 900,
+              color: isFullscreen ? "#e5e7eb" : "#374151",
+            }}
+          >
             太さ
             <input
               type="range"
@@ -1517,7 +1582,14 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             />
           </label>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
             {CHALK_COLORS.map((c) => (
               <button
                 key={c.value}
@@ -1528,12 +1600,12 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
                   setPenColor(c.value);
                 }}
                 style={{
-                  width: 28,
-                  height: 28,
+                  width: isFullscreen ? 26 : 28,
+                  height: isFullscreen ? 26 : 28,
                   borderRadius: 999,
                   border:
                     tool === "chalk" && penColor === c.value
-                      ? "2px solid #111"
+                      ? "2px solid #fff"
                       : "1px solid #bbb",
                   background: c.value,
                   cursor: "pointer",
@@ -1545,11 +1617,12 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
               type="button"
               onClick={() => setTool("eraser")}
               style={{
-                padding: "8px 10px",
+                padding: toolBtnPad,
+                minHeight: toolBtnMinH,
                 borderRadius: 12,
                 border:
                   tool === "eraser" ? "2px solid #111" : "1px solid #ddd",
-                background: "#fff",
+                background: tool === "eraser" ? "#e5e7eb" : "#fff",
                 color: "#111",
                 fontWeight: 900,
                 cursor: "pointer",
@@ -1573,17 +1646,17 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             type="button"
             onClick={() => setIsFullscreen((prev) => !prev)}
             style={{
-              padding: isTouchLike ? "10px 14px" : "8px 12px",
-              minHeight: isTouchLike ? 44 : undefined,
+              padding: toolBtnPad,
+              minHeight: toolBtnMinH,
               borderRadius: 12,
               border: "1px solid #d1d5db",
-              background: isFullscreen ? "#111827" : "#fff",
-              color: isFullscreen ? "#fff" : "#111827",
+              background: isFullscreen ? "#fff" : "#fff",
+              color: "#111827",
               fontWeight: 900,
               cursor: "pointer",
             }}
           >
-            {isFullscreen ? "全画面を閉じる" : "全画面"}
+            {isFullscreen ? "閉じる" : "全画面"}
           </button>
 
           <button
@@ -1591,8 +1664,8 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             onClick={requestClear}
             aria-label="黒板をすべて消す"
             style={{
-              padding: isTouchLike ? "10px 14px" : "8px 12px",
-              minHeight: isTouchLike ? 44 : undefined,
+              padding: toolBtnPad,
+              minHeight: toolBtnMinH,
               borderRadius: 12,
               border: "1px solid #fca5a5",
               background: "#fff5f5",
@@ -1609,7 +1682,6 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
 
       <div
         style={{
-          marginTop: 8,
           display: "flex",
           gap: 8,
           flexWrap: "wrap",
@@ -1622,7 +1694,8 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           type="button"
           onClick={() => setTouchMode("draw")}
           style={{
-            padding: "8px 12px",
+            padding: toolBtnPad,
+            minHeight: toolBtnMinH,
             borderRadius: 999,
             border:
               touchMode === "draw" ? "2px solid #111" : "1px solid #d1d5db",
@@ -1632,14 +1705,15 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             cursor: "pointer",
           }}
         >
-          描画モード
+          描画
         </button>
 
         <button
           type="button"
           onClick={() => setTouchMode("pan")}
           style={{
-            padding: "8px 12px",
+            padding: toolBtnPad,
+            minHeight: toolBtnMinH,
             borderRadius: 999,
             border: touchMode === "pan" ? "2px solid #111" : "1px solid #d1d5db",
             background: touchMode === "pan" ? "#111827" : "#fff",
@@ -1648,27 +1722,38 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             cursor: "pointer",
           }}
         >
-          移動モード
+          移動
         </button>
 
-        <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-          {touchMode === "draw"
-            ? isTouchLike
-              ? "1本指で描画"
-              : "ドラッグで描画"
-            : isTouchLike
-              ? "スワイプで黒板を移動"
-              : "ドラッグで黒板を移動"}
-        </span>
+        {!isFullscreen ? (
+          <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
+            {touchMode === "draw"
+              ? isTouchLike
+                ? "1本指で描画（Pencilは常に描画）"
+                : "ドラッグで描画"
+              : isTouchLike
+                ? "スワイプで黒板を移動（Pencilは描画）"
+                : "ドラッグで黒板を移動"}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>
+            Pencilは常に描画
+          </span>
+        )}
       </div>
 
       {info ? (
         <div
           style={{
-            marginTop: 8,
             fontSize: 12,
-            color: info === BOARD_STATUS_RECONNECTING ? "#6b7280" : "#92400e",
+            color:
+              info === BOARD_STATUS_RECONNECTING
+                ? isFullscreen
+                  ? "#94a3b8"
+                  : "#6b7280"
+                : "#92400e",
             fontWeight: info === BOARD_STATUS_RECONNECTING ? 700 : 800,
+            flexShrink: 0,
           }}
         >
           {info}
@@ -1679,16 +1764,19 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         ref={boardScrollRef}
         className="classmate-board-scroll"
         style={{
-          marginTop: 10,
           flex: isFullscreen ? 1 : undefined,
           minHeight: isFullscreen ? 0 : undefined,
-          borderRadius: 16,
+          marginTop: isFullscreen ? 0 : 10,
+          borderRadius: isFullscreen ? 12 : 16,
           border: "1px solid rgba(0,0,0,0.08)",
           background: BOARD_OUTER_BG,
-          padding: 10,
-          overflowX: "auto",
+          padding: isFullscreen ? 6 : 10,
+          overflowX: isFullscreen ? "hidden" : "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
+          display: isFullscreen ? "flex" : undefined,
+          alignItems: isFullscreen ? "center" : undefined,
+          justifyContent: isFullscreen ? "center" : undefined,
           ...BOARD_TOUCH_GUARD,
           touchAction: boardTouchAction(touchMode),
           cursor: touchMode === "pan" && !isTouchLike ? "grab" : undefined,
@@ -1699,20 +1787,20 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           className="classmate-board-surface"
           style={{
             position: "relative",
-            width: "100%",
-            maxWidth: "none",
-            margin: "0 auto",
-            minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
-            minHeight: isFullscreen ? "100%" : isTouchLike ? 420 : 620,
+            width: isFullscreen ? "auto" : "100%",
             height: isFullscreen ? "100%" : undefined,
-            aspectRatio: isFullscreen
-              ? undefined
-              : `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
-            borderRadius: 16,
+            maxWidth: "100%",
+            maxHeight: isFullscreen ? "100%" : undefined,
+            margin: isFullscreen ? "0 auto" : "0 auto",
+            minWidth: isFullscreen ? 0 : MOBILE_MIN_BOARD_WIDTH_PX,
+            minHeight: isFullscreen ? 0 : isTouchLike ? 420 : 620,
+            aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
+            borderRadius: isFullscreen ? 12 : 16,
             border: "2px solid #073126",
             background: BOARD_BG,
             boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
             overflow: "hidden",
+            flexShrink: 1,
             ...BOARD_TOUCH_GUARD,
             touchAction: boardTouchAction(touchMode),
           }}
@@ -1730,9 +1818,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
                 tool === "eraser"
                   ? "cell"
                   : touchMode === "pan"
-                    ? isTouchLike
-                      ? "grab"
-                      : "grab"
+                    ? "grab"
                     : "crosshair",
             }}
           />
@@ -1768,7 +1854,12 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           >
             <h2
               id="board-clear-title"
-              style={{ margin: 0, fontSize: 18, fontWeight: 900, color: "#111827" }}
+              style={{
+                margin: 0,
+                fontSize: 18,
+                fontWeight: 900,
+                color: "#111827",
+              }}
             >
               黒板をすべて消しますか？
             </h2>
@@ -1834,6 +1925,21 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       ) : null}
     </div>
   );
+
+  if (isFullscreen && typeof document !== "undefined") {
+    return (
+      <>
+        <div
+          className="classmate-board-root classmate-board-fs-placeholder"
+          aria-hidden
+          style={{ marginTop: 10, minHeight: 48 }}
+        />
+        {createPortal(boardUi, document.body)}
+      </>
+    );
+  }
+
+  return boardUi;
 }
 
 export default function SharedCanvasBoard({
