@@ -911,59 +911,196 @@
   position: relative;
 }
 
-/* Wood-frame look via outer shadows only (layout size unchanged) */
+.cm-classroom-scope .cm-room-board-wrap.has-characters {
+  padding-bottom: 18px;
+}
+
+/* School blackboard: wood frame + matte slate + chalk tray */
 .cm-classroom-scope .cm-room-chalkboard {
+  --cm-chalk-wood-light: #c4a06a;
+  --cm-chalk-wood: #8b6240;
+  --cm-chalk-wood-dark: #5c3d24;
+  --cm-chalk-slate: #1f3d30;
+  --cm-chalk-slate-deep: #163028;
+  --cm-chalk-dust: #dcefdc;
+
   position: relative;
   isolation: isolate;
-  background:
-    radial-gradient(120% 80% at 20% 0%, rgba(255, 255, 255, 0.1), transparent 55%),
-    linear-gradient(165deg, #3f5f4c 0%, var(--cm-board) 42%, #2f4638 100%) !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  overflow: visible;
+  border-radius: 6px !important;
+  padding: 18px 18px 28px !important;
+  color: var(--cm-chalk-dust) !important;
+  background: var(--cm-chalk-slate) !important;
+  border: none !important;
   box-shadow:
-    0 0 0 3px #c9a46a,
-    0 0 0 8px #8a6a3c,
-    0 1px 0 rgba(255, 255, 255, 0.2) inset,
-    0 14px 30px rgba(44, 42, 40, 0.22) !important;
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 0 0 5px var(--cm-chalk-wood),
+    0 0 0 7px var(--cm-chalk-wood-dark),
+    0 1px 0 rgba(255, 240, 210, 0.35) inset,
+    0 16px 28px rgba(40, 28, 16, 0.28) !important;
 }
 
 .cm-classroom-scope .cm-room-chalkboard::before {
-  content: "";
-  pointer-events: none;
-  position: absolute;
-  inset: 8px;
-  border-radius: 12px;
-  border: 1px dashed rgba(233, 255, 242, 0.18);
-  z-index: 0;
+  content: none;
 }
 
-.cm-classroom-scope .cm-room-chalkboard > * {
+.cm-classroom-scope .cm-room-chalkboard-surface {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  z-index: 0;
+  background:
+    radial-gradient(120% 90% at 12% 8%, rgba(255, 255, 255, 0.07), transparent 42%),
+    radial-gradient(90% 70% at 88% 18%, rgba(255, 255, 255, 0.04), transparent 46%),
+    linear-gradient(
+      165deg,
+      #274a3a 0%,
+      var(--cm-chalk-slate) 48%,
+      var(--cm-chalk-slate-deep) 100%
+    );
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.28);
+}
+
+.cm-classroom-scope .cm-room-chalkboard-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.35) 0.55px, transparent 0.7px),
+    radial-gradient(rgba(0, 0, 0, 0.2) 0.45px, transparent 0.65px);
+  background-size: 7px 7px, 5px 5px;
+  background-position: 0 0, 2px 3px;
+  mix-blend-mode: soft-light;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-writing {
   position: relative;
   z-index: 1;
+  display: grid;
+  gap: 10px;
+  min-height: 64px;
 }
 
 .cm-classroom-scope .cm-room-board-title {
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
-  letter-spacing: 0.03em !important;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em !important;
+  line-height: 1.35;
+  color: #eef8ee;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.35),
+    0 0 10px rgba(220, 239, 220, 0.12);
 }
 
-.cm-classroom-scope .cm-room-board-label {
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  opacity: 0.95 !important;
+.cm-classroom-scope .cm-room-board-lines {
+  display: grid;
+  gap: 6px;
 }
 
 .cm-classroom-scope .cm-room-board-line {
-  padding-left: 2px;
+  padding-left: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 700;
+  color: rgba(232, 246, 232, 0.92);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+}
+
+.cm-classroom-scope .cm-room-board-label {
+  display: none;
+}
+
+/* Bottom chalk tray / ledge */
+.cm-classroom-scope .cm-room-chalkboard-tray {
+  position: absolute;
+  left: -7px;
+  right: -7px;
+  bottom: -11px;
+  height: 14px;
+  z-index: 2;
+  border-radius: 0 0 4px 4px;
+  background:
+    linear-gradient(180deg, #d2b07a 0%, var(--cm-chalk-wood-light) 35%, var(--cm-chalk-wood) 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 240, 210, 0.35) inset,
+    0 4px 8px rgba(40, 28, 16, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 14px;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-chalk {
+  width: 28px;
+  height: 5px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #f7f4ea, #e4dfd0);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+}
+
+.cm-classroom-scope .cm-room-chalkboard-eraser {
+  width: 22px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #6b7280, #4b5563);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
+/* Character stage for future anime collab overlays */
+.cm-classroom-scope .cm-room-chalkboard-stage {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: end;
+  padding: 0 6px 10px;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-stage-side {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-stage-side.is-left {
+  justify-content: flex-start;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-stage-side.is-center {
+  justify-content: center;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-stage-side.is-right {
+  justify-content: flex-end;
+}
+
+.cm-classroom-scope .cm-room-chalkboard-character {
+  display: block;
+  width: auto;
+  height: clamp(72px, 22vw, 120px);
+  max-width: 42%;
+  object-fit: contain;
+  object-position: bottom center;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.28));
+  user-select: none;
 }
 
 .cm-room-root.cm-room-state-error .cm-room-chalkboard {
   box-shadow:
-    0 0 0 3px #d4a574,
-    0 0 0 8px #8a6a3c,
-    0 0 0 2px rgba(196, 92, 92, 0.35),
-    0 14px 30px rgba(44, 42, 40, 0.22) !important;
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 0 0 5px var(--cm-chalk-wood, #8b6240),
+    0 0 0 7px var(--cm-chalk-wood-dark, #5c3d24),
+    0 0 0 2px rgba(196, 92, 92, 0.4),
+    0 16px 28px rgba(40, 28, 16, 0.28) !important;
 }
 
 .cm-room-root.cm-room-state-refreshing .cm-room-members {
@@ -1096,11 +1233,28 @@
     padding: 8px 10px;
   }
   .cm-classroom-scope .cm-room-chalkboard {
+    padding: 16px 14px 26px !important;
     box-shadow:
-      0 0 0 2px #c9a46a,
-      0 0 0 6px #8a6a3c,
-      0 1px 0 rgba(255, 255, 255, 0.18) inset,
-      0 10px 22px rgba(44, 42, 40, 0.2) !important;
+      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 0 0 4px var(--cm-chalk-wood, #8b6240),
+      0 0 0 6px var(--cm-chalk-wood-dark, #5c3d24),
+      0 1px 0 rgba(255, 240, 210, 0.3) inset,
+      0 12px 22px rgba(40, 28, 16, 0.26) !important;
+  }
+
+  .cm-classroom-scope .cm-room-chalkboard-tray {
+    left: -6px;
+    right: -6px;
+    bottom: -10px;
+    height: 12px;
+  }
+
+  .cm-classroom-scope .cm-room-board-title {
+    font-size: 16px;
+  }
+
+  .cm-classroom-scope .cm-room-board-line {
+    font-size: 13px;
   }
 }
 

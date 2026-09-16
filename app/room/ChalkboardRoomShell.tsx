@@ -5,6 +5,15 @@ import React from "react";
 import { isAppShellContext, resolveShellDashboardPath } from "@/lib/appShellContext";
 import { withDev } from "@/lib/withDev";
 
+/** Future anime-collab / mascot overlays on the classroom blackboard. */
+export type ChalkboardCharacter = {
+  id: string;
+  src: string;
+  alt: string;
+  /** Where the character stands relative to the chalk writing. */
+  side?: "left" | "right" | "center";
+};
+
 type Props = {
   title: string;
   subtitle?: string;
@@ -25,6 +34,8 @@ type Props = {
   startLabel?: string;
 
   returnTo?: string;
+  /** Optional collab characters standing in front of the board. */
+  characters?: ChalkboardCharacter[];
 };
 
 const WEB_GHOST_BTN: React.CSSProperties = {
@@ -54,6 +65,7 @@ export function ChalkboardRoomShell({
   onStartCall,
   startDisabled = false,
   startLabel = "通話を開始",
+  characters = [],
 }: Props) {
   const isApp = isAppShellContext();
   const subtitleText = String(subtitle ?? "").trim();
@@ -83,6 +95,11 @@ export function ChalkboardRoomShell({
   ]
     .filter(Boolean)
     .join(" ");
+
+  const leftChars = characters.filter((c) => (c.side ?? "left") === "left");
+  const centerChars = characters.filter((c) => c.side === "center");
+  const rightChars = characters.filter((c) => c.side === "right");
+  const hasCharacters = characters.length > 0;
 
   return (
     <main
@@ -172,78 +189,85 @@ export function ChalkboardRoomShell({
         {right}
       </div>
 
-      <div className="cm-room-board-wrap" style={{ marginTop: 8 }}>
+      <div
+        className={`cm-room-board-wrap${hasCharacters ? " has-characters" : ""}`}
+        style={{ marginTop: 8 }}
+      >
         <div
           className={
             isApp
               ? "app-immersive-board cm-room-chalkboard"
               : "cm-room-chalkboard"
           }
-          style={
-            isApp
-              ? undefined
-              : {
-                  borderRadius: 18,
-                  padding: "14px 18px",
-                  background: "#0f2b1d",
-                  color: "#e9fff2",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
-                  width: "100%",
-                }
-          }
         >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
+          <div className="cm-room-chalkboard-surface" aria-hidden />
+          <div className="cm-room-chalkboard-writing">
             <div
               className={
                 isApp
                   ? "app-immersive-board-title cm-room-board-title"
                   : "cm-room-board-title"
               }
-              style={
-                isApp
-                  ? undefined
-                  : {
-                      fontSize: 18,
-                      fontWeight: 900,
-                      letterSpacing: 0.2,
-                      lineHeight: 1.3,
-                    }
-              }
             >
               {boardTitle}
             </div>
 
-            {!isApp ? (
-              <div className="cm-room-board-label" style={{ fontSize: 11, opacity: 0.8 }}>
-                board
+            {lines.length > 0 ? (
+              <div className="cm-room-board-lines">
+                {lines.map((t, i) => (
+                  <div key={i} className="cm-room-board-line">
+                    {t}
+                  </div>
+                ))}
               </div>
             ) : null}
           </div>
 
-          <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
-            {lines.map((t, i) => (
-              <div
-                key={i}
-                className="cm-room-board-line"
-                style={{
-                  fontSize: 15,
-                  lineHeight: 1.45,
-                  fontWeight: 800,
-                  opacity: 0.96,
-                }}
-              >
-                {t}
-              </div>
-            ))}
+          <div className="cm-room-chalkboard-tray" aria-hidden>
+            <span className="cm-room-chalkboard-chalk" />
+            <span className="cm-room-chalkboard-eraser" />
           </div>
+
+          {hasCharacters ? (
+            <div className="cm-room-chalkboard-stage" aria-hidden={false}>
+              <div className="cm-room-chalkboard-stage-side is-left">
+                {leftChars.map((c) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={c.id}
+                    className="cm-room-chalkboard-character"
+                    src={c.src}
+                    alt={c.alt}
+                    decoding="async"
+                  />
+                ))}
+              </div>
+              <div className="cm-room-chalkboard-stage-side is-center">
+                {centerChars.map((c) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={c.id}
+                    className="cm-room-chalkboard-character"
+                    src={c.src}
+                    alt={c.alt}
+                    decoding="async"
+                  />
+                ))}
+              </div>
+              <div className="cm-room-chalkboard-stage-side is-right">
+                {rightChars.map((c) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={c.id}
+                    className="cm-room-chalkboard-character"
+                    src={c.src}
+                    alt={c.alt}
+                    decoding="async"
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 
