@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { renderMessageTextWithLinks } from "@/lib/messageLinkify";
+import { isJumboEmojiMessage, countEmojiTokens } from "@/lib/messageEmoji";
 import {
   MESSAGE_HISTORY_LIMIT,
   MESSAGE_MAX_LENGTH,
@@ -88,6 +89,42 @@ const composerIconBtnStyle: CSSProperties = {
   flexShrink: 0,
   lineHeight: 0,
 };
+
+function GlyphChevronUp() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 15l6-6 6 6" />
+    </svg>
+  );
+}
+
+function GlyphChevronDown() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
 
 const EMOJIS = [
   "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚",
@@ -617,6 +654,13 @@ export default function SessionMessages({
             messages.map((m) => {
               const isMe =
                 String(m.device_id ?? "").trim() === String(deviceId ?? "").trim();
+              const jumboEmoji =
+                !m.deleted_at &&
+                m.message_type !== "image" &&
+                isJumboEmojiMessage(m.message);
+              const jumboCount = jumboEmoji
+                ? countEmojiTokens(m.message.trim())
+                : 0;
 
               return (
                 <div
@@ -641,47 +685,61 @@ export default function SessionMessages({
                     {formatTime(m.created_at)}
                   </div>
 
-                  <div
-                    className={
-                      isMe ? "cm-room-msg-bubble is-me" : "cm-room-msg-bubble"
-                    }
-                    style={{
-                      maxWidth: "78%",
-                      padding: "9px 11px",
-                      borderRadius: 14,
-                      background: isMe ? "#dcfce7" : "#f9fafb",
-                      border: "1px solid #e5e7eb",
-                      whiteSpace: "pre-wrap",
-                      overflowWrap: "anywhere",
-                      fontSize: 13,
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {m.deleted_at ? (
-                      <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
-                        メッセージを取り消しました
-                      </span>
-                    ) : m.message_type === "image" && m.image_path ? (
-                      <img
-                        src={
-                          supabase.storage
-                            .from("room-message-images")
-                            .getPublicUrl(m.image_path).data.publicUrl
-                        }
-                        alt="送信画像"
-                        loading="lazy"
-                        style={{
-                          maxWidth: "100%",
-                          maxHeight: 240,
-                          borderRadius: 10,
-                          display: "block",
-                          objectFit: "contain",
-                        }}
-                      />
-                    ) : (
-                      renderMessageTextWithLinks(m.message)
-                    )}
-                  </div>
+                  {jumboEmoji ? (
+                    <div
+                      className={
+                        isMe
+                          ? "cm-room-msg-emoji is-me"
+                          : "cm-room-msg-emoji"
+                      }
+                      data-count={jumboCount}
+                      aria-label={m.message.trim()}
+                    >
+                      {m.message.trim()}
+                    </div>
+                  ) : (
+                    <div
+                      className={
+                        isMe ? "cm-room-msg-bubble is-me" : "cm-room-msg-bubble"
+                      }
+                      style={{
+                        maxWidth: "78%",
+                        padding: "9px 11px",
+                        borderRadius: 14,
+                        background: isMe ? "#dcfce7" : "#f9fafb",
+                        border: "1px solid #e5e7eb",
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {m.deleted_at ? (
+                        <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
+                          メッセージを取り消しました
+                        </span>
+                      ) : m.message_type === "image" && m.image_path ? (
+                        <img
+                          src={
+                            supabase.storage
+                              .from("room-message-images")
+                              .getPublicUrl(m.image_path).data.publicUrl
+                          }
+                          alt="送信画像"
+                          loading="lazy"
+                          style={{
+                            maxWidth: "100%",
+                            maxHeight: 240,
+                            borderRadius: 10,
+                            display: "block",
+                            objectFit: "contain",
+                          }}
+                        />
+                      ) : (
+                        renderMessageTextWithLinks(m.message)
+                      )}
+                    </div>
+                  )}
 
                   {isMe && !m.deleted_at ? (
                     <button
@@ -707,57 +765,26 @@ export default function SessionMessages({
         </div>
 
         {messages.length > 0 ? (
-          <>
+          <div className="cm-room-msg-scroll-controls">
             <button
               type="button"
+              className="cm-room-msg-scroll-btn"
               title="先頭へ"
+              aria-label="先頭へ"
               onClick={() => scrollToTopNextFrame("smooth")}
-              style={{
-                position: "absolute",
-                left: "50%",
-                bottom: 80,
-                transform: "translateX(-50%)",
-                borderRadius: 999,
-                width: 40,
-                height: 40,
-                background: "#6b7280",
-                color: "#fff",
-                border: "none",
-                fontSize: 18,
-                fontWeight: 900,
-                cursor: "pointer",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                zIndex: 2,
-              }}
             >
-              ↑
+              <GlyphChevronUp />
             </button>
-
             <button
               type="button"
+              className="cm-room-msg-scroll-btn"
               title="最新へ"
+              aria-label="最新へ"
               onClick={() => scrollToBottomNextFrame("smooth")}
-              style={{
-                position: "absolute",
-                left: "50%",
-                bottom: 20,
-                transform: "translateX(-50%)",
-                borderRadius: 999,
-                width: 40,
-                height: 40,
-                background: "#22c55e",
-                color: "#fff",
-                border: "none",
-                fontSize: 18,
-                fontWeight: 900,
-                cursor: "pointer",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-                zIndex: 2,
-              }}
             >
-              ↓
+              <GlyphChevronDown />
             </button>
-          </>
+          </div>
         ) : null}
       </div>
 

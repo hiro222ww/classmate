@@ -1199,6 +1199,62 @@
   border-color: rgba(76, 107, 87, 0.28) !important;
 }
 
+/* Emoji-only messages: standalone jumbo, no bubble chrome */
+.cm-classroom-scope .cm-room-msg-emoji {
+  max-width: 78%;
+  padding: 2px 4px;
+  font-size: 42px;
+  line-height: 1.15;
+  letter-spacing: 0.04em;
+  user-select: text;
+}
+
+.cm-classroom-scope .cm-room-msg-emoji[data-count="1"] {
+  font-size: 52px;
+}
+
+.cm-classroom-scope .cm-room-msg-emoji[data-count="2"],
+.cm-classroom-scope .cm-room-msg-emoji[data-count="3"] {
+  font-size: 36px;
+}
+
+.cm-classroom-scope .cm-room-msg-scroll-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 14px;
+  z-index: 2;
+  display: grid;
+  gap: 6px;
+}
+
+.cm-classroom-scope .cm-room-msg-scroll-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(255, 255, 255, 0.88);
+  color: #64748b;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  line-height: 0;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.cm-classroom-scope .cm-room-msg-scroll-btn:hover {
+  background: #fff;
+  color: #334155;
+  border-color: rgba(100, 116, 139, 0.55);
+}
+
+.cm-classroom-scope .cm-room-msg-scroll-btn:active {
+  transform: translateY(0.5px);
+}
+
 .cm-classroom-scope .cm-room-msg-empty {
   margin: 4px 0 8px;
   padding: 22px 8px 18px;
