@@ -287,6 +287,14 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
 
   const lastMoveRef = useRef<{ t: number; x: number; y: number } | null>(null);
   const lastTapRef = useRef(0);
+  const activePointerIdRef = useRef<number | null>(null);
+  const penDoubleTapRef = useRef<{ t: number; x: number; y: number } | null>(
+    null
+  );
+  const strokeStartedAtRef = useRef(0);
+  const toolRef = useRef<"chalk" | "eraser">("chalk");
+  const penColorLiveRef = useRef<string>(CHALK_COLORS[0].value);
+  const penWidthLiveRef = useRef(3);
 
   const watchdogRef = useRef<number | null>(null);
   const fallbackPollRef = useRef<number | null>(null);
@@ -316,6 +324,10 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+
+  toolRef.current = tool;
+  penColorLiveRef.current = penColor;
+  penWidthLiveRef.current = penWidth;
 
   const sounds = useBoardSounds();
 
@@ -601,17 +613,26 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     });
   };
 
-  const getBoardPoint = (e: PointerEvent): StrokePoint | null => {
+  const getBoardPoint = (
+    e: PointerEvent,
+    opts?: { clamp?: boolean }
+  ): StrokePoint | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
 
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
 
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    let x = e.clientX - rect.left;
+    let y = e.clientY - rect.top;
 
-    if (x < 0 || y < 0 || x > rect.width || y > rect.height) return null;
+    if (opts?.clamp !== false) {
+      // Keep Pencil strokes alive near edges instead of dropping the point.
+      x = Math.min(rect.width, Math.max(0, x));
+      y = Math.min(rect.height, Math.max(0, y));
+    } else if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+      return null;
+    }
 
     return {
       x: (x / rect.width) * BOARD_LOGICAL_WIDTH,
@@ -1185,6 +1206,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       lastPtRef.current = null;
       pointsRef.current = [];
       strokeIdRef.current = "";
+      activePointerIdRef.current = null;
       setBoardDrawingLock(false);
     };
 
@@ -1219,40 +1241,95 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       }, 120);
     };
 
+    const isPrimaryDrawPointer = (ev: PointerEvent) => {
+      if (activePointerIdRef.current == null) return true;
+      return ev.pointerId === activePointerIdRef.current;
+    };
+
     const onDown = (ev: PointerEvent) => {
       if (window.getSelection) {
         const sel = window.getSelection();
         if (sel && sel.removeAllRanges) sel.removeAllRanges();
       }
 
-      // Apple Pencil / stylus should always draw, even if pan mode was left on.
       const isPen = ev.pointerType === "pen";
+      // Ignore palm / finger while a Pencil stroke is active.
+      if (
+        !isPen &&
+        activePointerIdRef.current != null &&
+        drawingRef.current
+      ) {
+        return;
+      }
+
+      // Apple Pencil / stylus should always draw, even if pan mode was left on.
       if (touchMode === "pan" && !isPen) return;
+
+      // Eraser tip / barrel button when the browser exposes it.
+      if (isPen && (ev.button === 5 || (ev.buttons & 32) === 32)) {
+        setTool("eraser");
+        toolRef.current = "eraser";
+      }
 
       ev.preventDefault();
       ev.stopPropagation();
+
+      const p = getBoardPoint(ev);
+      if (!p) return;
+
+      if (isPen) {
+        const prev = penDoubleTapRef.current;
+        const now = performance.now();
+        const dx = prev ? p.x - prev.x : 0;
+        const dy = prev ? p.y - prev.y : 0;
+        const dist2 = dx * dx + dy * dy;
+        // Logical board coords: ~28 units ≈ small tip double-tap.
+        if (prev && now - prev.t <= 340 && dist2 <= 28 * 28) {
+          penDoubleTapRef.current = null;
+          const next = toolRef.current === "eraser" ? "chalk" : "eraser";
+          toolRef.current = next;
+          setTool(next);
+          setInfo(
+            next === "eraser" ? "黒板消し（ペンダブルタップ）" : "チョーク"
+          );
+          window.setTimeout(() => {
+            setInfo((cur) =>
+              cur === "黒板消し（ペンダブルタップ）" || cur === "チョーク"
+                ? ""
+                : cur
+            );
+          }, 1200);
+          return;
+        }
+        penDoubleTapRef.current = { t: now, x: p.x, y: p.y };
+      } else {
+        penDoubleTapRef.current = null;
+      }
+
       try {
         canvas.setPointerCapture(ev.pointerId);
       } catch {
         // Older WebKit may reject capture; continue without it.
       }
 
-      const p = getBoardPoint(ev);
-      if (!p) return;
-
+      activePointerIdRef.current = ev.pointerId;
       setBoardDrawingLock(true);
 
-      if (tool === "eraser") {
+      const activeTool = toolRef.current;
+      if (activeTool === "eraser") {
         materializeRemoteProgressAsPendingRows();
       }
 
-      strokeColorRef.current = tool === "eraser" ? BOARD_BG : penColor;
-      strokeWidthRef.current = tool === "eraser" ? ERASER_WIDTH : penWidth;
+      strokeColorRef.current =
+        activeTool === "eraser" ? BOARD_BG : penColorLiveRef.current;
+      strokeWidthRef.current =
+        activeTool === "eraser" ? ERASER_WIDTH : penWidthLiveRef.current;
 
       drawingRef.current = true;
       pointsRef.current = [p];
       lastPtRef.current = p;
       lastMoveRef.current = { t: performance.now(), x: p.x, y: p.y };
+      strokeStartedAtRef.current = performance.now();
       strokeIdRef.current = makeStrokeId();
 
       redrawScene();
@@ -1271,18 +1348,19 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
 
       const now = performance.now();
 
-      if (tool === "chalk" && now - lastTapRef.current > 260) {
+      if (activeTool === "chalk" && now - lastTapRef.current > 260) {
         lastTapRef.current = now;
         sounds.chalkTap(0.35);
       }
 
-      if (tool === "chalk") {
+      if (activeTool === "chalk") {
         sounds.chalkStart();
       }
     };
 
     const onMove = (ev: PointerEvent) => {
       if (!drawingRef.current) return;
+      if (!isPrimaryDrawPointer(ev)) return;
 
       ev.preventDefault();
 
@@ -1295,6 +1373,11 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       const dist2 = dx * dx + dy * dy;
 
       if (dist2 < 0.8) return;
+
+      // Moving meaningfully cancels pending double-tap candidate.
+      if (ev.pointerType === "pen") {
+        penDoubleTapRef.current = null;
+      }
 
       pointsRef.current.push(p);
       drawLocalSegment(last, p);
@@ -1329,10 +1412,13 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         const speed01 = Math.max(0, Math.min(1, distPx / dt / 1.8));
         const pressure01 = Math.max(
           0,
-          Math.min(1, 0.75 * (1 - speed01) + 0.02 * (penWidth - 2))
+          Math.min(
+            1,
+            0.75 * (1 - speed01) + 0.02 * (penWidthLiveRef.current - 2)
+          )
         );
 
-        if (tool === "chalk") {
+        if (toolRef.current === "chalk") {
           sounds.chalkMove(speed01, pressure01);
         }
       }
@@ -1343,6 +1429,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     const onUp = (ev: PointerEvent) => {
       const isPen = ev.pointerType === "pen";
       if (touchMode === "pan" && !isPen) return;
+      if (!isPrimaryDrawPointer(ev)) return;
 
       ev.preventDefault();
 
@@ -1361,6 +1448,24 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           drawLocalSegment(last, p);
           lastPtRef.current = p;
         }
+      }
+
+      // Short Pencil tip-tap: keep for double-tap detection, don't save a speck.
+      if (isPen) {
+        const pts = pointsRef.current;
+        const first = pts[0];
+        const end = pts[pts.length - 1] ?? first;
+        const travel2 = first
+          ? (end.x - first.x) ** 2 + (end.y - first.y) ** 2
+          : 0;
+        const held = performance.now() - strokeStartedAtRef.current;
+        if (pts.length <= 3 && travel2 <= 10 * 10 && held <= 280) {
+          forceAbort();
+          redrawScene();
+          return;
+        }
+        // Real stroke — cancel pending double-tap.
+        penDoubleTapRef.current = null;
       }
 
       void finalizeAndSend();
@@ -1409,9 +1514,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     canvas.addEventListener("pointercancel", onCancel as EventListener, {
       passive: false,
     });
-    canvas.addEventListener("lostpointercapture", onCancel as EventListener, {
-      passive: false,
-    });
+    // No lostpointercapture handler — iPad/Pencil can fire it mid-stroke.
     canvas.addEventListener("contextmenu", onCtx as EventListener, {
       passive: false,
     });
@@ -1455,10 +1558,6 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onCancel as EventListener);
-      canvas.removeEventListener(
-        "lostpointercapture",
-        onCancel as EventListener
-      );
       canvas.removeEventListener("contextmenu", onCtx as EventListener);
       canvas.removeEventListener("selectstart", blockBoardDefault);
       canvas.removeEventListener("dragstart", blockBoardDefault);
@@ -1486,7 +1585,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       watchdogRef.current = null;
       forceAbort();
     };
-  }, [sessionId, penColor, penWidth, tool, sounds, isTouchLike, touchMode]);
+  }, [sessionId, sounds, isTouchLike, touchMode]);
 
   const board = (
     <div
@@ -1670,8 +1769,8 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
           {touchMode === "draw"
             ? isTouchLike
-              ? "1本指で描画"
-              : "ドラッグで描画"
+              ? "1本指で描画 / ペンダブルタップで黒板消し"
+              : "ドラッグで描画 / ペンダブルタップで黒板消し"
             : isTouchLike
               ? "スワイプで黒板を移動"
               : "ドラッグで黒板を移動"}
