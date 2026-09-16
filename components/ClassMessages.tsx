@@ -227,8 +227,16 @@ export default function ClassMessages({
             ) : err && messages.length === 0 ? (
               <div style={{ color: "#b91c1c", fontSize: 12 }}>{err}</div>
             ) : messages.length === 0 ? (
-              <div style={{ color: "#6b7280", fontSize: 12 }}>
-                まだメッセージはありません
+              <div
+                style={{
+                  color: "#94a3b8",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textAlign: "center",
+                  padding: "18px 8px",
+                }}
+              >
+                ここにメッセージが表示されます
               </div>
             ) : (
               messages.map((m) => {

@@ -612,9 +612,7 @@ export default function SessionMessages({
           ) : err && messages.length === 0 ? (
             <div style={{ color: "#b91c1c", fontSize: 13 }}>{err}</div>
           ) : messages.length === 0 ? (
-            <div className="cm-room-msg-empty" style={{ color: "#666", fontSize: 13 }}>
-              まだメッセージはありません
-            </div>
+            <div className="cm-room-msg-empty">ここにメッセージが表示されます</div>
           ) : (
             messages.map((m) => {
               const isMe =
