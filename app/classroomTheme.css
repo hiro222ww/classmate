@@ -1218,6 +1218,21 @@
   font-size: 36px;
 }
 
+.cm-classroom-scope .cm-room-msg-menu {
+  animation: cm-room-msg-menu-in 140ms ease-out;
+}
+
+@keyframes cm-room-msg-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .cm-classroom-scope .cm-room-msg-scroll-controls {
   position: absolute;
   right: 10px;

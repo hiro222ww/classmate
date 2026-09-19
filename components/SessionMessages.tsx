@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { renderMessageTextWithLinks } from "@/lib/messageLinkify";
 import { isJumboEmojiMessage, countEmojiTokens } from "@/lib/messageEmoji";
@@ -247,10 +247,17 @@ export default function SessionMessages({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [menuMessageId, setMenuMessageId] = useState<string | null>(null);
 
   const boxRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const deletedMessageIdsRef = useRef<Set<string>>(new Set());
+  const longPressRef = useRef<{
+    id: string;
+    timer: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const pendingImageUrl = useMemo(() => {
     if (!pendingImage) return "";
@@ -607,6 +614,86 @@ export default function SessionMessages({
     await sendText();
   }
 
+  function clearLongPressTimer() {
+    const lp = longPressRef.current;
+    if (lp?.timer) window.clearTimeout(lp.timer);
+    longPressRef.current = null;
+  }
+
+  function openMessageMenu(id: string) {
+    clearLongPressTimer();
+    setMenuMessageId(id);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function closeMessageMenu() {
+    setMenuMessageId(null);
+  }
+
+  useEffect(() => {
+    if (!menuMessageId) return;
+
+    const onPointerDown = (ev: PointerEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (target?.closest?.("[data-cm-msg-menu]")) return;
+      if (target?.closest?.(`[data-cm-msg-id="${menuMessageId}"]`)) return;
+      closeMessageMenu();
+    };
+
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") closeMessageMenu();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuMessageId]);
+
+  function bindOwnMessagePress(m: RoomMessage) {
+    const isMe =
+      String(m.device_id ?? "").trim() === String(deviceId ?? "").trim();
+    if (!isMe || m.deleted_at) return {};
+
+    return {
+      "data-cm-msg-id": m.id,
+      onPointerDown: (ev: ReactPointerEvent) => {
+        if (ev.pointerType === "mouse" && ev.button !== 0) return;
+        clearLongPressTimer();
+        const timer = window.setTimeout(() => {
+          openMessageMenu(m.id);
+          try {
+            navigator.vibrate?.(12);
+          } catch {
+            // ignore
+          }
+        }, 450);
+        longPressRef.current = {
+          id: m.id,
+          timer,
+          x: ev.clientX,
+          y: ev.clientY,
+        };
+      },
+      onPointerMove: (ev: ReactPointerEvent) => {
+        const lp = longPressRef.current;
+        if (!lp || lp.id !== m.id) return;
+        const dx = ev.clientX - lp.x;
+        const dy = ev.clientY - lp.y;
+        if (dx * dx + dy * dy > 100) clearLongPressTimer();
+      },
+      onPointerUp: () => clearLongPressTimer(),
+      onPointerCancel: () => clearLongPressTimer(),
+      onPointerLeave: () => clearLongPressTimer(),
+      onContextMenu: (ev: ReactMouseEvent) => {
+        ev.preventDefault();
+        openMessageMenu(m.id);
+      },
+    } as const;
+  }
+
   const body = (
     <>
       {err ? (
@@ -661,6 +748,8 @@ export default function SessionMessages({
               const jumboCount = jumboEmoji
                 ? countEmojiTokens(m.message.trim())
                 : 0;
+              const pressBind = bindOwnMessagePress(m);
+              const menuOpen = menuMessageId === m.id;
 
               return (
                 <div
@@ -670,6 +759,7 @@ export default function SessionMessages({
                     display: "grid",
                     gap: 4,
                     justifyItems: isMe ? "end" : "start",
+                    position: "relative",
                   }}
                 >
                   <div
@@ -694,6 +784,8 @@ export default function SessionMessages({
                       }
                       data-count={jumboCount}
                       aria-label={m.message.trim()}
+                      style={{ touchAction: "manipulation", cursor: isMe ? "pointer" : undefined }}
+                      {...pressBind}
                     >
                       {m.message.trim()}
                     </div>
@@ -712,7 +804,10 @@ export default function SessionMessages({
                         overflowWrap: "anywhere",
                         fontSize: 13,
                         lineHeight: 1.5,
+                        touchAction: "manipulation",
+                        cursor: isMe && !m.deleted_at ? "pointer" : undefined,
                       }}
+                      {...pressBind}
                     >
                       {m.deleted_at ? (
                         <span style={{ color: "#9ca3af", fontStyle: "italic" }}>
@@ -727,12 +822,14 @@ export default function SessionMessages({
                           }
                           alt="送信画像"
                           loading="lazy"
+                          draggable={false}
                           style={{
                             maxWidth: "100%",
                             maxHeight: 240,
                             borderRadius: 10,
                             display: "block",
                             objectFit: "contain",
+                            pointerEvents: "none",
                           }}
                         />
                       ) : (
@@ -741,22 +838,70 @@ export default function SessionMessages({
                     </div>
                   )}
 
-                  {isMe && !m.deleted_at ? (
-                    <button
-                      type="button"
-                      disabled={deletingId === m.id}
-                      onClick={() => void deleteMessage(m)}
+                  {menuOpen && isMe && !m.deleted_at ? (
+                    <div
+                      data-cm-msg-menu
+                      className="cm-room-msg-menu"
+                      role="menu"
                       style={{
-                        border: "none",
-                        background: "transparent",
-                        color: deletingId === m.id ? "#d1d5db" : "#9ca3af",
-                        fontSize: 11,
-                        cursor: deletingId === m.id ? "not-allowed" : "pointer",
-                        padding: "0 4px",
+                        position: "absolute",
+                        top: "100%",
+                        right: isMe ? 0 : "auto",
+                        left: isMe ? "auto" : 0,
+                        zIndex: 5,
+                        marginTop: 4,
+                        minWidth: 132,
+                        padding: 6,
+                        borderRadius: 12,
+                        border: "1px solid #e5e7eb",
+                        background: "#fff",
+                        boxShadow: "0 10px 28px rgba(15, 23, 42, 0.14)",
+                        display: "grid",
+                        gap: 4,
                       }}
                     >
-                      {deletingId === m.id ? "取り消し中" : "取り消し"}
-                    </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={deletingId === m.id}
+                        onClick={() => {
+                          closeMessageMenu();
+                          void deleteMessage(m);
+                        }}
+                        style={{
+                          border: "none",
+                          borderRadius: 8,
+                          padding: "10px 12px",
+                          background: "#fff1f2",
+                          color: "#be123c",
+                          fontWeight: 800,
+                          fontSize: 13,
+                          textAlign: "left",
+                          cursor:
+                            deletingId === m.id ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        {deletingId === m.id ? "取り消し中…" : "取り消し"}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={closeMessageMenu}
+                        style={{
+                          border: "none",
+                          borderRadius: 8,
+                          padding: "8px 12px",
+                          background: "transparent",
+                          color: "#64748b",
+                          fontWeight: 700,
+                          fontSize: 12,
+                          textAlign: "left",
+                          cursor: "pointer",
+                        }}
+                      >
+                        閉じる
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               );
