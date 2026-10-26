@@ -40,118 +40,178 @@ import {
   isMissingProfileColumnError,
   type UserProfileRow,
 } from "@/lib/userProfileRow";
+import {
+  toUserFacingProfileSaveError,
+  withSupabaseRetry,
+} from "@/lib/supabaseRetry";
 
 type ProfileRow = UserProfileRow;
+
+function profileSaveFailureResponse(errorCode: string, error: unknown) {
+  console.error(`[profile] ${errorCode}`, {
+    message: error instanceof Error ? error.message : String(error ?? ""),
+  });
+  return NextResponse.json(
+    {
+      ok: false,
+      error: errorCode,
+      message: toUserFacingProfileSaveError(error),
+    },
+    {
+      status: 503,
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      },
+    }
+  );
+}
 
 async function fetchProfileRowByFilter(filter: {
   column: "device_id" | "user_id";
   value: string;
 }): Promise<{ data: Partial<ProfileRow> | null; error: string | null }> {
-  const query = supabaseAdmin
-    .from("user_profiles")
-    .select(USER_PROFILE_LEGAL_SELECT)
-    .eq(filter.column, filter.value);
+  try {
+    const { data, error } = await withSupabaseRetry(
+      () =>
+        supabaseAdmin
+          .from("user_profiles")
+          .select(USER_PROFILE_LEGAL_SELECT)
+          .eq(filter.column, filter.value)
+          .maybeSingle(),
+      { label: "user_profiles.read_legal" }
+    );
 
-  const { data, error } = await query.maybeSingle();
+    if (!error) {
+      return { data: (data as Partial<ProfileRow> | null) ?? null, error: null };
+    }
 
-  if (!error) {
-    return { data: (data as Partial<ProfileRow> | null) ?? null, error: null };
-  }
+    if (!isMissingProfileColumnError(error.message)) {
+      return { data: null, error: error.message };
+    }
 
-  if (!isMissingProfileColumnError(error.message)) {
-    return { data: null, error: error.message };
-  }
+    console.warn("[profile] legal columns missing; falling back to base select", {
+      column: filter.column,
+      message: error.message,
+    });
 
-  console.warn("[profile] legal columns missing; falling back to base select", {
-    column: filter.column,
-    message: error.message,
-  });
+    const fallback = await withSupabaseRetry(
+      () =>
+        supabaseAdmin
+          .from("user_profiles")
+          .select(USER_PROFILE_BASE_SELECT)
+          .eq(filter.column, filter.value)
+          .maybeSingle(),
+      { label: "user_profiles.read_base" }
+    );
 
-  const fallback = await supabaseAdmin
-    .from("user_profiles")
-    .select(USER_PROFILE_BASE_SELECT)
-    .eq(filter.column, filter.value)
-    .maybeSingle();
+    if (!fallback.error) {
+      return {
+        data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+        error: null,
+      };
+    }
 
-  if (!fallback.error) {
+    if (!isMissingProfileColumnError(fallback.error.message)) {
+      return { data: null, error: fallback.error.message };
+    }
+
+    const legacy = await withSupabaseRetry(
+      () =>
+        supabaseAdmin
+          .from("user_profiles")
+          .select(USER_PROFILE_BASE_SELECT_LEGACY)
+          .eq(filter.column, filter.value)
+          .maybeSingle(),
+      { label: "user_profiles.read_legacy" }
+    );
+
+    if (legacy.error) {
+      return { data: null, error: legacy.error.message };
+    }
+
     return {
-      data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+      data: (legacy.data as Partial<ProfileRow> | null) ?? null,
       error: null,
     };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : String(error ?? "read_failed"),
+    };
   }
-
-  if (!isMissingProfileColumnError(fallback.error.message)) {
-    return { data: null, error: fallback.error.message };
-  }
-
-  const legacy = await supabaseAdmin
-    .from("user_profiles")
-    .select(USER_PROFILE_BASE_SELECT_LEGACY)
-    .eq(filter.column, filter.value)
-    .maybeSingle();
-
-  if (legacy.error) {
-    return { data: null, error: legacy.error.message };
-  }
-
-  return {
-    data: (legacy.data as Partial<ProfileRow> | null) ?? null,
-    error: null,
-  };
 }
 
 async function fetchExistingProfileConsent(
   deviceId: string,
   userId?: string | null
 ) {
-  const normalizedUserId = String(userId ?? "").trim();
+  try {
+    const normalizedUserId = String(userId ?? "").trim();
 
-  if (normalizedUserId) {
-    const { data, error } = await supabaseAdmin
-      .from("user_profiles")
-      .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
-      .eq("user_id", normalizedUserId)
-      .maybeSingle();
+    if (normalizedUserId) {
+      const { data, error } = await withSupabaseRetry(
+        () =>
+          supabaseAdmin
+            .from("user_profiles")
+            .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
+            .eq("user_id", normalizedUserId)
+            .maybeSingle(),
+        { label: "user_profiles.consent_by_user" }
+      );
 
-    if (!error && data) {
+      if (!error && data) {
+        return {
+          data: (data as Partial<ProfileRow> | null) ?? null,
+          error: null as string | null,
+        };
+      }
+
+      if (error && !isMissingProfileColumnError(error.message)) {
+        return { data: null, error: error.message };
+      }
+    }
+
+    const { data, error } = await withSupabaseRetry(
+      () =>
+        supabaseAdmin
+          .from("user_profiles")
+          .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
+          .eq("device_id", deviceId)
+          .maybeSingle(),
+      { label: "user_profiles.consent_by_device" }
+    );
+
+    if (!error) {
       return {
         data: (data as Partial<ProfileRow> | null) ?? null,
         error: null as string | null,
       };
     }
 
-    if (error && !isMissingProfileColumnError(error.message)) {
+    if (!isMissingProfileColumnError(error.message)) {
       return { data: null, error: error.message };
     }
-  }
 
-  const { data, error } = await supabaseAdmin
-    .from("user_profiles")
-    .select(USER_PROFILE_LEGAL_CONSENT_SELECT)
-    .eq("device_id", deviceId)
-    .maybeSingle();
+    const fallback = await withSupabaseRetry(
+      () =>
+        supabaseAdmin
+          .from("user_profiles")
+          .select("photo_path, show_age, user_id")
+          .eq("device_id", deviceId)
+          .maybeSingle(),
+      { label: "user_profiles.consent_fallback" }
+    );
 
-  if (!error) {
     return {
-      data: (data as Partial<ProfileRow> | null) ?? null,
-      error: null as string | null,
+      data: (fallback.data as Partial<ProfileRow> | null) ?? null,
+      error: fallback.error?.message ?? null,
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : String(error ?? "read_failed"),
     };
   }
-
-  if (!isMissingProfileColumnError(error.message)) {
-    return { data: null, error: error.message };
-  }
-
-  const fallback = await supabaseAdmin
-    .from("user_profiles")
-    .select("photo_path, show_age, user_id")
-    .eq("device_id", deviceId)
-    .maybeSingle();
-
-  return {
-    data: (fallback.data as Partial<ProfileRow> | null) ?? null,
-    error: fallback.error?.message ?? null,
-  };
 }
 
 const MAX_OPTIONAL_TEXT_LENGTH = 500;
@@ -444,114 +504,35 @@ export async function GET(req: Request) {
  * mode=minimum: display_name + declared_age only (no birth_date invent)
  */
 async function postMinimumProfile(req: Request, form: FormData) {
-  const device_id = normalizeString(form.get("device_id"));
-  const display_name = normalizeString(form.get("display_name"));
-  const declaredAge = normalizeDeclaredAge(form.get("declared_age"));
+  try {
+    const device_id = normalizeString(form.get("device_id"));
+    const display_name = normalizeString(form.get("display_name"));
+    const declaredAge = normalizeDeclaredAge(form.get("declared_age"));
 
-  const termsAgreed = parseLegalAgreementFlag(form.get("terms_agreed"));
-  const privacyAgreed = parseLegalAgreementFlag(form.get("privacy_agreed"));
-  const guidelinesAgreed = parseLegalAgreementFlag(form.get("guidelines_agreed"));
-
-  if (!device_id || !display_name || declaredAge == null) {
-    return NextResponse.json(
-      { ok: false, error: "missing_fields" },
-      {
-        status: 400,
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        },
-      }
+    const termsAgreed = parseLegalAgreementFlag(form.get("terms_agreed"));
+    const privacyAgreed = parseLegalAgreementFlag(form.get("privacy_agreed"));
+    const guidelinesAgreed = parseLegalAgreementFlag(
+      form.get("guidelines_agreed")
     );
-  }
 
-  if (declaredAge < DECLARED_AGE_MIN || declaredAge > DECLARED_AGE_MAX) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "invalid_declared_age",
-        message: `${DECLARED_AGE_MIN}歳以上で入力してください。`,
-      },
-      {
-        status: 400,
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        },
-      }
-    );
-  }
-
-  let linkedUserId: string | null = null;
-  const identity = await resolveRequestIdentity({ req, deviceId: device_id });
-  if (identity.ok && identity.identity.userId) {
-    linkedUserId = identity.identity.userId;
-    try {
-      await bootstrapUserIdentity({
-        userId: linkedUserId,
-        deviceId: device_id,
-      });
-    } catch (bootstrapError) {
-      console.warn("[profile][POST minimum] identity bootstrap failed", bootstrapError);
+    if (!device_id || !display_name || declaredAge == null) {
+      return NextResponse.json(
+        { ok: false, error: "missing_fields" },
+        {
+          status: 400,
+          headers: {
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          },
+        }
+      );
     }
-  }
 
-  const opsTest = resolveOpsTestFlags(req);
-  if (!shouldBypassProfileAgeGates(opsTest)) {
-    const ageGuard = await enforceProfileSaveAge({
-      age: declaredAge,
-      guardianConsent: false,
-    });
-    if (!ageGuard.ok) {
-      return joinAgeGuardResponse(ageGuard);
-    }
-  }
-
-  const moderation = await moderateUserText(display_name);
-  if (!moderation.ok && moderation.block) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "contact_exchange_blocked",
-        message: moderation.message,
-        field: "display_name",
-      },
-      { status: 400 }
-    );
-  }
-
-  const existingProfileRes = await fetchExistingProfileConsent(
-    device_id,
-    linkedUserId
-  );
-  const existingProfile = existingProfileRes.data;
-  const existingError = existingProfileRes.error;
-
-  if (existingError) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "profile_existing_read_failed",
-        message: existingError,
-      },
-      {
-        status: 500,
-        headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        },
-      }
-    );
-  }
-
-  const existingConsent = existingProfile as LegalConsentFields | null;
-  const alreadyValid = hasValidLegalConsent(existingConsent);
-
-  if (!alreadyValid) {
-    if (!termsAgreed || !privacyAgreed || !guidelinesAgreed) {
+    if (declaredAge < DECLARED_AGE_MIN || declaredAge > DECLARED_AGE_MAX) {
       return NextResponse.json(
         {
           ok: false,
-          error: "legal_consent_required",
-          message:
-            "利用規約、プライバシーポリシー、コミュニティガイドラインへの同意が必要です。",
+          error: "invalid_declared_age",
+          message: `${DECLARED_AGE_MIN}歳以上で入力してください。`,
         },
         {
           status: 400,
@@ -561,92 +542,173 @@ async function postMinimumProfile(req: Request, form: FormData) {
         }
       );
     }
-  }
 
-  const consentFields: LegalConsentFields = alreadyValid
-    ? {
-        terms_agreed_at: existingConsent?.terms_agreed_at ?? null,
-        privacy_agreed_at: existingConsent?.privacy_agreed_at ?? null,
-        guidelines_agreed_at: existingConsent?.guidelines_agreed_at ?? null,
-        legal_consent_version: existingConsent?.legal_consent_version ?? null,
-        terms_version:
-          existingConsent?.terms_version ??
-          existingConsent?.legal_consent_version ??
-          null,
+    let linkedUserId: string | null = null;
+    try {
+      const identity = await resolveRequestIdentity({ req, deviceId: device_id });
+      if (identity.ok && identity.identity.userId) {
+        linkedUserId = identity.identity.userId;
+        try {
+          await bootstrapUserIdentity({
+            userId: linkedUserId,
+            deviceId: device_id,
+          });
+        } catch (bootstrapError) {
+          console.warn(
+            "[profile][POST minimum] identity bootstrap failed",
+            bootstrapError
+          );
+        }
       }
-    : buildLegalConsentPayload();
+    } catch (identityError) {
+      // Auth/link lookup is optional for minimum profile; continue as anonymous.
+      console.warn(
+        "[profile][POST minimum] identity resolve failed; continuing anonymous",
+        identityError
+      );
+    }
 
-  const today = new Date();
-  const asOf = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const opsTest = resolveOpsTestFlags(req);
+    if (!shouldBypassProfileAgeGates(opsTest)) {
+      const ageGuard = await enforceProfileSaveAge({
+        age: declaredAge,
+        guardianConsent: false,
+      });
+      if (!ageGuard.ok) {
+        return joinAgeGuardResponse(ageGuard);
+      }
+    }
 
-  const payload: ProfileRow = {
-    device_id,
-    user_id: linkedUserId ?? existingProfile?.user_id ?? null,
-    display_name,
-    birth_date: normalizeString(existingProfile?.birth_date) || null,
-    gender: normalizeString(existingProfile?.gender) || null,
-    declared_age: declaredAge,
-    declared_age_as_of: asOf,
-    photo_path: normalizePhotoPath(existingProfile?.photo_path),
-    hobbies: normalizeOptionalText(existingProfile?.hobbies),
-    bio: normalizeOptionalText(existingProfile?.bio),
-    show_age: normalizeShowAge(existingProfile?.show_age),
-    ...consentFields,
-  };
+    const moderation = await moderateUserText(display_name);
+    if (!moderation.ok && moderation.block) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "contact_exchange_blocked",
+          message: moderation.message,
+          field: "display_name",
+        },
+        { status: 400 }
+      );
+    }
 
-  const { error: upsertError, writeMode } = await persistUserProfileRow({
-    deviceId: device_id,
-    linkedUserId,
-    existingProfile,
-    payload,
-  });
+    const existingProfileRes = await fetchExistingProfileConsent(
+      device_id,
+      linkedUserId
+    );
+    const existingProfile = existingProfileRes.data;
+    const existingError = existingProfileRes.error;
 
-  if (upsertError) {
+    if (existingError) {
+      return profileSaveFailureResponse(
+        "profile_existing_read_failed",
+        existingError
+      );
+    }
+
+    const existingConsent = existingProfile as LegalConsentFields | null;
+    const alreadyValid = hasValidLegalConsent(existingConsent);
+
+    if (!alreadyValid) {
+      if (!termsAgreed || !privacyAgreed || !guidelinesAgreed) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "legal_consent_required",
+            message:
+              "利用規約、プライバシーポリシー、コミュニティガイドラインへの同意が必要です。",
+          },
+          {
+            status: 400,
+            headers: {
+              "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            },
+          }
+        );
+      }
+    }
+
+    const consentFields: LegalConsentFields = alreadyValid
+      ? {
+          terms_agreed_at: existingConsent?.terms_agreed_at ?? null,
+          privacy_agreed_at: existingConsent?.privacy_agreed_at ?? null,
+          guidelines_agreed_at: existingConsent?.guidelines_agreed_at ?? null,
+          legal_consent_version: existingConsent?.legal_consent_version ?? null,
+          terms_version:
+            existingConsent?.terms_version ??
+            existingConsent?.legal_consent_version ??
+            null,
+        }
+      : buildLegalConsentPayload();
+
+    const today = new Date();
+    const asOf = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+    const payload: ProfileRow = {
+      device_id,
+      user_id: linkedUserId ?? existingProfile?.user_id ?? null,
+      display_name,
+      birth_date: normalizeString(existingProfile?.birth_date) || null,
+      gender: normalizeString(existingProfile?.gender) || null,
+      declared_age: declaredAge,
+      declared_age_as_of: asOf,
+      photo_path: normalizePhotoPath(existingProfile?.photo_path),
+      hobbies: normalizeOptionalText(existingProfile?.hobbies),
+      bio: normalizeOptionalText(existingProfile?.bio),
+      show_age: normalizeShowAge(existingProfile?.show_age),
+      ...consentFields,
+    };
+
+    const { error: upsertError, writeMode } = await persistUserProfileRow({
+      deviceId: device_id,
+      linkedUserId,
+      existingProfile,
+      payload,
+    });
+
+    if (upsertError) {
+      return profileSaveFailureResponse("profile_upsert_failed", upsertError);
+    }
+
+    const confirmFilter = resolveProfileConfirmFilter({
+      deviceId: device_id,
+      linkedUserId,
+      writeMode,
+    });
+    const confirmResult = await fetchProfileRowByFilter(confirmFilter);
+    if (confirmResult.error) {
+      // Upsert already succeeded; treat confirm miss as soft success with payload.
+      console.warn("[profile][POST minimum] confirm read failed after upsert", {
+        message: confirmResult.error,
+      });
+    }
+    const profile = toProfileResponse(confirmResult.data ?? payload);
+    const legalConsent = buildLegalConsentStatus(
+      (confirmResult.data ?? payload) as LegalConsentFields
+    );
+
     return NextResponse.json(
       {
-        ok: false,
-        error: "profile_upsert_failed",
-        message: upsertError,
+        ok: true,
+        profile: profile
+          ? {
+              ...profile,
+              age: calcAgeFromProfile(profile),
+              profile_complete: isUserProfileComplete(profile),
+              minimum_profile: hasMinimumProfile(profile),
+              legal_consent: legalConsent,
+            }
+          : null,
       },
       {
-        status: 500,
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
         },
       }
     );
+  } catch (error) {
+    return profileSaveFailureResponse("profile_minimum_save_failed", error);
   }
-
-  const confirmFilter = resolveProfileConfirmFilter({
-    deviceId: device_id,
-    linkedUserId,
-    writeMode,
-  });
-  const confirmResult = await fetchProfileRowByFilter(confirmFilter);
-  const profile = toProfileResponse(confirmResult.data);
-  const legalConsent = buildLegalConsentStatus(
-    confirmResult.data as LegalConsentFields
-  );
-
-  return NextResponse.json(
-    {
-      ok: true,
-      profile: profile
-        ? {
-            ...profile,
-            age: calcAgeFromProfile(profile),
-            profile_complete: isUserProfileComplete(profile),
-            minimum_profile: hasMinimumProfile(profile),
-            legal_consent: legalConsent,
-          }
-        : null,
-    },
-    {
-      headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      },
-    }
-  );
 }
 
 /**

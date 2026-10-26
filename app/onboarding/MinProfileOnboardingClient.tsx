@@ -11,6 +11,88 @@ import {
 import { trackFunnelEvent } from "@/lib/funnelEvents";
 import { sanitizeReturnTo } from "@/lib/profileNavigation";
 import { withDev } from "@/lib/withDev";
+import { isRetryableNetworkError } from "@/lib/retryableFetch";
+import {
+  PROFILE_SAVE_NETWORK_USER_MESSAGE,
+  toUserFacingProfileSaveError,
+} from "@/lib/supabaseRetry";
+
+async function sleep(ms: number) {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function buildMinimumProfileForm(
+  deviceId: string,
+  values: MinProfileFormValues
+) {
+  const form = new FormData();
+  form.append("mode", "minimum");
+  form.append("device_id", deviceId);
+  form.append("display_name", values.displayName);
+  form.append("declared_age", String(values.declaredAge));
+  form.append("terms_agreed", "true");
+  form.append("privacy_agreed", "true");
+  form.append("guidelines_agreed", "true");
+  return form;
+}
+
+async function postMinimumProfileWithRetry(
+  deviceId: string,
+  values: MinProfileFormValues
+) {
+  const maxAttempts = 3;
+  const backoffMs = [300, 800];
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      // Rebuild FormData each attempt — request bodies are not reliably reusable.
+      const res = await authenticatedFetch("/api/profile", {
+        method: "POST",
+        body: buildMinimumProfileForm(deviceId, values),
+      });
+      const json = await res.json().catch(() => null);
+
+      if (res.ok && json?.ok) {
+        return json;
+      }
+
+      const message = String(
+        json?.message ?? json?.error ?? "保存に失敗しました。"
+      );
+      const retryable =
+        res.status >= 500 ||
+        res.status === 503 ||
+        isRetryableNetworkError(message);
+
+      if (retryable && attempt < maxAttempts - 1) {
+        lastError = new Error(message);
+        await sleep(backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 800);
+        continue;
+      }
+
+      throw new Error(toUserFacingProfileSaveError(message));
+    } catch (error) {
+      lastError = error;
+      const alreadyUserFacing =
+        error instanceof Error &&
+        error.message === PROFILE_SAVE_NETWORK_USER_MESSAGE;
+      const retryable = isRetryableNetworkError(error);
+      if (retryable && attempt < maxAttempts - 1) {
+        await sleep(backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 800);
+        continue;
+      }
+      if (alreadyUserFacing) throw error;
+      throw new Error(toUserFacingProfileSaveError(error));
+    }
+  }
+
+  throw new Error(
+    toUserFacingProfileSaveError(lastError) || PROFILE_SAVE_NETWORK_USER_MESSAGE
+  );
+}
 
 export function MinProfileOnboardingClient() {
   const router = useRouter();
@@ -33,25 +115,7 @@ export function MinProfileOnboardingClient() {
       throw new Error("端末情報の取得に失敗しました。再読み込みしてください。");
     }
 
-    const form = new FormData();
-    form.append("mode", "minimum");
-    form.append("device_id", deviceId);
-    form.append("display_name", values.displayName);
-    form.append("declared_age", String(values.declaredAge));
-    form.append("terms_agreed", "true");
-    form.append("privacy_agreed", "true");
-    form.append("guidelines_agreed", "true");
-
-    const res = await authenticatedFetch("/api/profile", {
-      method: "POST",
-      body: form,
-    });
-    const json = await res.json().catch(() => null);
-    if (!res.ok || !json?.ok) {
-      throw new Error(
-        String(json?.message ?? json?.error ?? "保存に失敗しました。")
-      );
-    }
+    await postMinimumProfileWithRetry(deviceId, values);
 
     void trackFunnelEvent({
       eventName: "min_profile_saved",

@@ -3,6 +3,7 @@ import {
   isMissingProfileColumnError,
   type UserProfileRow,
 } from "@/lib/userProfileRow";
+import { withSupabaseRetry } from "@/lib/supabaseRetry";
 
 type ProfileWriteMode =
   | { type: "device_upsert"; deviceId: string }
@@ -46,21 +47,36 @@ async function writeProfileRow(
       .upsert(row, { onConflict: "device_id" });
   };
 
-  let { error } = await run(payload);
+  try {
+    let { error } = await withSupabaseRetry(() => run(payload), {
+      label: "user_profiles.write",
+    });
 
-  if (error && isMissingProfileColumnError(error.message)) {
-    ({ error } = await run(stripLegalProfileFields(payload) as UserProfileRow));
+    if (error && isMissingProfileColumnError(error.message)) {
+      ({ error } = await withSupabaseRetry(
+        () => run(stripLegalProfileFields(payload) as UserProfileRow),
+        { label: "user_profiles.write_no_legal" }
+      ));
+    }
+
+    if (error && isMissingProfileColumnError(error.message)) {
+      ({ error } = await withSupabaseRetry(
+        () =>
+          run(
+            stripDeclaredAgeFields(
+              stripLegalProfileFields(payload) as UserProfileRow
+            ) as UserProfileRow
+          ),
+        { label: "user_profiles.write_legacy" }
+      ));
+    }
+
+    return { error: error?.message ?? null };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error ?? "write_failed"),
+    };
   }
-
-  if (error && isMissingProfileColumnError(error.message)) {
-    ({ error } = await run(
-      stripDeclaredAgeFields(
-        stripLegalProfileFields(payload) as UserProfileRow
-      ) as UserProfileRow
-    ));
-  }
-
-  return { error: error?.message ?? null };
 }
 
 export function resolveProfileWriteMode(params: {
