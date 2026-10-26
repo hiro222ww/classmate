@@ -54,7 +54,7 @@ export type WithSupabaseRetryOptions = {
  * Retry transient Supabase/network failures (thrown or `{ error }` results).
  */
 export async function withSupabaseRetry<T>(
-  operation: () => Promise<T>,
+  operation: () => PromiseLike<T> | T,
   opts?: WithSupabaseRetryOptions
 ): Promise<T> {
   const maxAttempts = opts?.maxAttempts ?? 3;
@@ -64,7 +64,7 @@ export async function withSupabaseRetry<T>(
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
-      const result = await operation();
+      const result = await Promise.resolve(operation());
 
       if (
         result &&
