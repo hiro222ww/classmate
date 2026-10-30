@@ -10,6 +10,7 @@ import AppAccountNav from "@/components/AppAccountNav";
 import SiteFooter from "@/components/SiteFooter";
 import LineInAppBrowserGate from "@/components/LineInAppBrowserGate";
 import PageVisitTracker from "@/components/PageVisitTracker";
+import WebMobileNavHost from "@/components/nav/WebMobileNavHost";
 import { buildHomeMetadata } from "@/lib/seo";
 import "./globals.css";
 
@@ -54,9 +55,12 @@ export default function RootLayout({
               <AppAccountNav />
             </Suspense>
             {/* ▼ メインコンテンツ */}
-            <div style={{ minHeight: "100vh" }}>{children}</div>
+            <div style={{ minHeight: "100dvh" }}>{children}</div>
 
             <SiteFooter />
+            <Suspense fallback={null}>
+              <WebMobileNavHost />
+            </Suspense>
           </AuthProvider>
         </LineInAppBrowserGate>
       </body>

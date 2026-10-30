@@ -110,6 +110,42 @@ export function ChalkboardRoomShell({
           : { padding: 16, maxWidth: 980, margin: "0 auto" }
       }
     >
+      <div className="cm-room-hero-bg cm-stagger-1">
+        <p className="cm-room-hero-title">{title}</p>
+        {subtitleText ? (
+          <p className="cm-room-hero-sub">{subtitleText}</p>
+        ) : (
+          <p className="cm-room-hero-sub">通話前ロビー · メンバーと準備できます</p>
+        )}
+        {onStartCall ? (
+          <button
+            type="button"
+            onClick={onStartCall}
+            disabled={startDisabled}
+            className={primaryBtnClass}
+            style={{
+              marginTop: 14,
+              minHeight: 48,
+              padding: "12px 20px",
+              borderRadius: 16,
+              border: "none",
+              background: startDisabled
+                ? "rgba(255,255,255,0.35)"
+                : "linear-gradient(180deg, #ffffff 0%, #e7f2ff 100%)",
+              color: startDisabled ? "rgba(255,255,255,0.8)" : "#1e3a5f",
+              fontWeight: 900,
+              fontSize: 15,
+              cursor: startDisabled ? "not-allowed" : "pointer",
+              boxShadow: startDisabled
+                ? "none"
+                : "0 8px 20px rgba(15, 23, 42, 0.18)",
+            }}
+          >
+            {startLabel}
+          </button>
+        ) : null}
+      </div>
+
       <div
         className={
           isApp ? "app-immersive-toolbar cm-room-toolbar" : "cm-room-toolbar"
@@ -134,28 +170,6 @@ export function ChalkboardRoomShell({
             style={isApp ? undefined : WEB_GHOST_BTN}
           >
             {backLabel}
-          </button>
-        ) : null}
-
-        {onStartCall ? (
-          <button
-            type="button"
-            onClick={onStartCall}
-            disabled={startDisabled}
-            className={primaryBtnClass}
-            style={
-              isApp
-                ? undefined
-                : {
-                    ...WEB_GHOST_BTN,
-                    background: startDisabled ? "#d1d5db" : "#2563eb",
-                    color: "#fff",
-                    cursor: startDisabled ? "not-allowed" : "pointer",
-                    opacity: startDisabled ? 0.7 : 1,
-                  }
-            }
-          >
-            {startLabel}
           </button>
         ) : null}
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import BottomSheet from "@/components/BottomSheet";
+import { CmAvatar } from "@/components/ui/CmAvatar";
 
 type HomeMenuSheetProps = {
   open: boolean;
@@ -20,6 +21,12 @@ type HomeMenuSheetProps = {
   aboutHref: string;
   /** Single entry for terms / privacy / guidelines / commercial disclosure. */
   legalHref: string;
+  /** Optional display name / photo for the profile header block. */
+  displayName?: string;
+  photoPath?: string | null;
+  avatarUrl?: string | null;
+  /** Extra primary link: theme discover */
+  discoverHref?: string;
 };
 
 function GlyphBell({ enabled }: { enabled: boolean }) {
@@ -119,6 +126,25 @@ function GlyphClasses() {
   );
 }
 
+function GlyphSearch() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
+
 function GlyphGoogle() {
   return (
     <span
@@ -144,10 +170,10 @@ const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 14,
-  padding: "11px 8px",
-  borderBottom: "1px solid #f3f4f6",
+  padding: "12px 8px",
+  borderBottom: "1px solid var(--cm-border, #e5eaf2)",
   textDecoration: "none",
-  color: "#111827",
+  color: "var(--cm-text, #17233d)",
   fontSize: 15,
   fontWeight: 700,
   cursor: "pointer",
@@ -155,11 +181,13 @@ const rowStyle: React.CSSProperties = {
   border: "none",
   width: "100%",
   textAlign: "left",
+  minHeight: 44,
+  fontFamily: "inherit",
 };
 
 const chevron: React.CSSProperties = {
   marginLeft: "auto",
-  color: "#9ca3af",
+  color: "var(--cm-muted, #64748b)",
   fontSize: 16,
   flexShrink: 0,
 };
@@ -180,21 +208,58 @@ export default function HomeMenuSheet({
   loggedIn,
   aboutHref,
   legalHref,
+  displayName,
+  photoPath = null,
+  avatarUrl = null,
+  discoverHref = "/class/select",
 }: HomeMenuSheetProps) {
+  const name = String(displayName || accountLabel || "ゲスト").trim() || "ゲスト";
+
   return (
     <BottomSheet open={open} onClose={onClose} title="メニュー">
       <nav aria-label="ホームメニュー" style={{ display: "grid" }}>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: "#6b7280",
-            padding: "0 8px 2px",
-            letterSpacing: "0.04em",
-          }}
-        >
-          アカウント
+        <div className="cm-menu-profile-block">
+          <CmAvatar
+            label={name}
+            sizePx={48}
+            photoPath={photoPath}
+            avatarUrl={avatarUrl}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div className="cm-menu-profile-name">{name}</div>
+            <Link
+              href={profileHref}
+              onClick={onClose}
+              className="cm-menu-profile-edit"
+            >
+              プロフィールを編集
+            </Link>
+          </div>
         </div>
+
+        <div className="cm-menu-group-label">主要</div>
+        <Link href={myClassesHref} onClick={onClose} style={rowStyle}>
+          <GlyphClasses />
+          <span>マイクラス</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={discoverHref} onClick={onClose} style={rowStyle}>
+          <GlyphSearch />
+          <span>探す</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={planHref} onClick={onClose} style={rowStyle}>
+          <GlyphCrown />
+          <span>プランを見る</span>
+          <span style={chevron}>›</span>
+        </Link>
+        <Link href={billingHref} onClick={onClose} style={rowStyle}>
+          <GlyphCard />
+          <span>お支払い・解約</span>
+          <span style={chevron}>›</span>
+        </Link>
+
+        <div className="cm-menu-group-label">アカウント</div>
         {onToggleNotifications && !hideWebPush ? (
           <button
             type="button"
@@ -211,7 +276,13 @@ export default function HomeMenuSheet({
             <span>通知</span>
             <span style={chevron}>
               {notificationsEnabled ? (
-                <span style={{ color: "#10b981", fontWeight: 900, fontSize: 13 }}>
+                <span
+                  style={{
+                    color: "var(--cm-online, #12a879)",
+                    fontWeight: 900,
+                    fontSize: 13,
+                  }}
+                >
                   ON
                 </span>
               ) : (
@@ -247,42 +318,13 @@ export default function HomeMenuSheet({
           <span style={chevron}>›</span>
         </Link>
 
-        <Link href={myClassesHref} onClick={onClose} style={rowStyle}>
-          <GlyphClasses />
-          <span>マイクラス</span>
-          <span style={chevron}>›</span>
-        </Link>
-
-        <Link href={planHref} onClick={onClose} style={rowStyle}>
-          <GlyphCrown />
-          <span>プランを見る</span>
-          <span style={chevron}>›</span>
-        </Link>
-
-        <Link href={billingHref} onClick={onClose} style={rowStyle}>
-          <GlyphCard />
-          <span>お支払い・解約</span>
-          <span style={chevron}>›</span>
-        </Link>
-
         <Link href={accountHref} onClick={onClose} style={rowStyle}>
           <GlyphGoogle />
           <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
           <span style={chevron}>›</span>
         </Link>
 
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: "#6b7280",
-            padding: "10px 8px 2px",
-            letterSpacing: "0.04em",
-          }}
-        >
-          Classmate
-        </div>
-
+        <div className="cm-menu-group-label">サービス</div>
         <Link href={aboutHref} onClick={onClose} style={rowStyle}>
           <span>Classmateについて</span>
           <span style={chevron}>›</span>

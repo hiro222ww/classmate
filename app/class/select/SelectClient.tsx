@@ -1416,12 +1416,13 @@ export default function SelectClient() {
       style={
         {
           ...(isApp
-            ? { color: "#111" }
-            : { padding: "16px 16px 28px", maxWidth: 960, margin: "0 auto", color: "#111" }),
-          ["--dash-primary-bg-full" as any]:
-            "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
-          ["--dash-primary-shadow" as any]:
-            "0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3)",
+            ? { color: "var(--cm-text)" }
+            : {
+                padding: "16px 16px 28px",
+                maxWidth: 960,
+                margin: "0 auto",
+                color: "var(--cm-text)",
+              }),
         } as any
       }
     >
