@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { DEFAULT_AVATAR_SRC } from "@/lib/defaultAvatar";
 import { DISPLAY_NAME_FALLBACK } from "@/lib/resolveDisplayName";
 import {
   formatGenderLabel,
@@ -51,7 +52,7 @@ export function isValidMemberProfileTarget(
 export function getMemberAvatarUrl(photoPath?: string | null) {
   let normalized = String(photoPath ?? "").trim();
 
-  if (!normalized) return "/default-avatar.jpg";
+  if (!normalized) return DEFAULT_AVATAR_SRC;
 
   if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
     return normalized;
@@ -70,7 +71,7 @@ export function getMemberAvatarUrl(photoPath?: string | null) {
     .getPublicUrl(normalized);
 
   const publicUrl = data?.publicUrl?.trim();
-  if (!publicUrl) return "/default-avatar.jpg";
+  if (!publicUrl) return DEFAULT_AVATAR_SRC;
 
   return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
 }

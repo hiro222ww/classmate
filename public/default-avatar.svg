@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-hidden="true">
+  <defs>
+    <radialGradient id="cmDefaultAvatarBg" cx="50%" cy="38%" r="68%">
+      <stop offset="0%" stop-color="#f4f9ff"/>
+      <stop offset="55%" stop-color="#d7e8ff"/>
+      <stop offset="100%" stop-color="#b9d4f8"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="64" fill="url(#cmDefaultAvatarBg)"/>
+  <circle cx="64" cy="46" r="22" fill="#ffffff"/>
+  <path fill="#ffffff" d="M22 118c6.5-30 26.5-44 42-44s35.5 14 42 44c-12 6-26.5 10-42 10s-30-4-42-10z"/>
+</svg>

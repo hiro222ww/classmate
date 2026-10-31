@@ -2,6 +2,8 @@
 "use client";
 
 import React from "react";
+import { CmAvatar } from "@/components/ui/CmAvatar";
+import { isDefaultAvatarSrc } from "@/lib/defaultAvatar";
 
 export type Member = {
   id?: string;
@@ -19,31 +21,12 @@ function Avatar({
   avatarUrl?: string | null;
   dim?: boolean;
 }) {
-  const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
+  const photoUrl =
+    avatarUrl && !isDefaultAvatarSrc(avatarUrl) ? avatarUrl : null;
 
   return (
-    <div
-      title={name}
-      style={{
-        width: 48,
-        height: 48,
-        borderRadius: 999,
-        border: "2px solid #1f2937",
-        background: avatarUrl ? "transparent" : "#f3f4f6",
-        overflow: "hidden",
-        display: "grid",
-        placeItems: "center",
-        fontWeight: 900,
-        color: "#111",
-        opacity: dim ? 0.45 : 1,
-      }}
-    >
-      {avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={avatarUrl} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-      ) : (
-        <span style={{ fontSize: 18 }}>{initial}</span>
-      )}
+    <div title={name} style={{ opacity: dim ? 0.45 : 1, flexShrink: 0 }}>
+      <CmAvatar label={name} sizePx={48} avatarUrl={photoUrl} />
     </div>
   );
 }
