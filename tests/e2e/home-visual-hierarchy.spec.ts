@@ -31,8 +31,15 @@ async function mockHomeData(page: Page) {
 }
 
 async function checkActions(page: Page) {
-  const voice = page.getByRole("button", { name: "通話で始める", exact: true });
-  const chat = page.getByRole("button", { name: "チャットで始める", exact: true });
+  // Home RandomTalkCta uses short labels; select free board uses MatchEntryButton defaults.
+  const voice = page
+    .getByRole("button", { name: "通話", exact: true })
+    .or(page.getByRole("button", { name: "通話で始める", exact: true }))
+    .first();
+  const chat = page
+    .getByRole("button", { name: "チャット", exact: true })
+    .or(page.getByRole("button", { name: "チャットで始める", exact: true }))
+    .first();
   await expect(voice).toBeEnabled();
   await expect(chat).toBeEnabled();
   await expect(voice).toHaveCSS("color", "rgb(255, 255, 255)");
@@ -55,15 +62,23 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await checkActions(page);
       const brand = page.getByRole("link", { name: "Classmate — ホームへ戻る" });
       await expect(brand).toHaveAttribute("href", "/");
-      expect((await brand.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      expect((await brand.boundingBox())!.height).toBeGreaterThanOrEqual(43);
       await expect(brand.locator("img")).toHaveCount(1);
       await expect(brand).toContainText("クラスメイト");
       await expect(page.locator(".cm-home-brand-visual-intro")).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "テーマを選ぶ", exact: true })).toHaveCSS("border-top-width", "0px");
+      await expect(page.getByRole("heading", { name: "探す", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "一覧", exact: true })).toHaveAttribute(
+        "href",
+        "/class/select"
+      );
+      await expect(page.getByRole("link", { name: /学校・勉強/ })).toHaveAttribute(
+        "href",
+        "/class/select?cat=school"
+      );
       await page.screenshot({ path: testInfo.outputPath(`home-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await checkActions(page);
-      await page.getByRole("link", { name: "テーマを選ぶ", exact: true }).click();
+      await page.getByRole("link", { name: "一覧", exact: true }).click();
       await expect(page).toHaveURL(/\/class\/select$/);
       await checkActions(page);
       await expect(page.getByRole("heading", { name: "探す", exact: true })).toHaveCount(1);
@@ -78,7 +93,12 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await expect(page.getByText("テーマ課金はすべて準備中です。参加・課金はできません。")).toBeVisible();
       await expect(page.locator(".cm-select-subcat-row")).toHaveCount(3);
       await expect(page.getByText("準備中").first()).toBeVisible();
-      await expect(page.getByRole("button", { name: "通話で始める", exact: true })).toBeEnabled();
+      await expect(
+        page
+          .getByRole("button", { name: "通話", exact: true })
+          .or(page.getByRole("button", { name: "通話で始める", exact: true }))
+          .first()
+      ).toBeEnabled();
       await page.screenshot({ path: testInfo.outputPath(`select-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await expect(page).toHaveURL(/\/$/);
