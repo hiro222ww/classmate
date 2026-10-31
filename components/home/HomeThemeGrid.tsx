@@ -7,7 +7,7 @@ type HomeThemeGridProps = {
   title?: string;
 };
 
-/** Home discover section — links into /class/select. */
+/** Home discover section — representative majors only; 一覧 opens full catalog. */
 export function HomeThemeGrid({
   className,
   title = "探す",
@@ -16,7 +16,7 @@ export function HomeThemeGrid({
     <ThemeCardGrid
       className={className}
       title={title}
-      href="/class/select"
+      variant="featured"
       listHref="/class/select"
     />
   );

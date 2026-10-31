@@ -3133,6 +3133,42 @@ a.cm-my-class-empty-primary {
   color: #1d4ed8;
 }
 
+.cm-home-theme-card--relationship {
+  background: linear-gradient(180deg, #fff1f2 0%, #ffffff 100%);
+  border-color: rgba(244, 63, 94, 0.18);
+  color: #be123c;
+}
+
+.cm-home-theme-card--identity {
+  background: linear-gradient(180deg, #f5f3ff 0%, #ffffff 100%);
+  border-color: rgba(124, 58, 237, 0.18);
+  color: #6d28d9;
+}
+
+.cm-home-theme-card--beauty {
+  background: linear-gradient(180deg, #fdf2f8 0%, #ffffff 100%);
+  border-color: rgba(236, 72, 153, 0.18);
+  color: #be185d;
+}
+
+.cm-home-theme-card--sports {
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  border-color: rgba(34, 197, 94, 0.2);
+  color: #15803d;
+}
+
+.cm-home-theme-card--career {
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: #1d4ed8;
+}
+
+.cm-home-theme-card--creative {
+  background: linear-gradient(180deg, #fefce8 0%, #ffffff 100%);
+  border-color: rgba(234, 179, 8, 0.28);
+  color: #a16207;
+}
+
 .cm-home-theme-card-icon {
   display: inline-flex;
   align-items: center;

@@ -1668,7 +1668,9 @@ export default function SelectClient() {
           {!activeMajor ? (
             <ThemeCardGrid
               title="カテゴリー"
+              variant="all"
               listHref={null}
+              showComingSoonHint
               onPick={(id) => {
                 openMajorCategory(id);
               }}
@@ -1692,7 +1694,9 @@ export default function SelectClient() {
                 </button>
               </div>
               <p className="cm-select-teaser-note">
-                テーマ課金はすべて準備中です。参加・課金はできません。
+                {activeMajor.status === "coming_soon"
+                  ? "このカテゴリーのテーマ課金は準備中です。参加・課金はできません。"
+                  : "テーマを選んで参加できます。"}
               </p>
               <ul className="cm-select-subcat-list">
                 {subCategoryRows.map((row) => (
@@ -1705,9 +1709,13 @@ export default function SelectClient() {
                         <span className="cm-select-subcat-desc">
                           {row.topic.description}
                         </span>
+                      ) : row.hint && row.hint !== "準備中" ? (
+                        <span className="cm-select-subcat-desc">{row.hint}</span>
                       ) : null}
                     </div>
-                    <span className="cm-select-subcat-badge">準備中</span>
+                    {row.comingSoon ? (
+                      <span className="cm-select-subcat-badge">準備中</span>
+                    ) : null}
                   </li>
                 ))}
               </ul>

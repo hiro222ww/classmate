@@ -71,10 +71,13 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
         "href",
         "/class/select"
       );
+      // Home keeps only the four representative majors.
+      await expect(page.locator(".cm-home-theme-grid-list .cm-home-theme-card")).toHaveCount(4);
       await expect(page.getByRole("link", { name: /学校・勉強/ })).toHaveAttribute(
         "href",
         "/class/select?cat=school"
       );
+      await expect(page.getByRole("link", { name: /アイデンティティ/ })).toHaveCount(0);
       await page.screenshot({ path: testInfo.outputPath(`home-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await checkActions(page);
@@ -83,15 +86,20 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await checkActions(page);
       await expect(page.getByRole("heading", { name: "探す", exact: true })).toHaveCount(1);
       await expect(page.getByRole("heading", { name: "カテゴリー", exact: true })).toHaveCount(1);
+      // 探す shows the full major catalog in a 2-column grid.
+      await expect(page.locator(".cm-home-theme-grid-list .cm-home-theme-card")).toHaveCount(10);
       await expect(page.getByRole("button", { name: /学校・勉強/ })).toBeVisible();
+      await expect(page.getByRole("button", { name: /アイデンティティ・多様性/ })).toBeVisible();
       await expect(page.getByText("各テーマから通話またはチャットで始められます（最大5人）")).toHaveCount(0);
       await expect(page.getByText("テーマを決めずに、気軽に入れるクラス")).toHaveCount(0);
       await expect(page.locator(".cm-home-brand-visual-intro")).toHaveCount(0);
       await expect(page.getByText("¥480/月", { exact: false })).toHaveCount(0);
       await page.getByRole("button", { name: /趣味・エンタメ/ }).click();
       await expect(page.getByRole("heading", { name: "趣味・エンタメ", exact: true })).toBeVisible();
-      await expect(page.getByText("テーマ課金はすべて準備中です。参加・課金はできません。")).toBeVisible();
-      await expect(page.locator(".cm-select-subcat-row")).toHaveCount(3);
+      await expect(
+        page.getByText("このカテゴリーのテーマ課金は準備中です。参加・課金はできません。")
+      ).toBeVisible();
+      await expect(page.locator(".cm-select-subcat-row")).toHaveCount(4);
       await expect(page.getByText("準備中").first()).toBeVisible();
       await expect(
         page
