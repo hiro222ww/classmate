@@ -7,6 +7,8 @@ type Props = {
   busy?: boolean;
   feedback?: string | null;
   onToggle: () => void | Promise<void>;
+  /** Icon-only control for compact app headers (keeps 44px tap target). */
+  compact?: boolean;
 };
 
 export function PushNotificationBell({
@@ -14,6 +16,7 @@ export function PushNotificationBell({
   busy = false,
   feedback = null,
   onToggle,
+  compact = false,
 }: Props) {
   const [wiggle, setWiggle] = useState(false);
 
@@ -50,6 +53,7 @@ export function PushNotificationBell({
         aria-busy={busy}
         className={[
           "classmate-push-bell",
+          compact ? "classmate-push-bell--compact" : "",
           enabled ? "classmate-push-bell--on" : "classmate-push-bell--off",
           wiggle ? "classmate-push-bell--wiggle" : "",
           busy ? "classmate-push-bell--busy" : "",
@@ -58,11 +62,29 @@ export function PushNotificationBell({
           .join(" ")}
       >
         <span className="classmate-push-bell-icon" aria-hidden>
-          {enabled ? "🔔" : "🔕"}
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            {!enabled ? <path d="M2 2l20 20" strokeOpacity="0.45" /> : null}
+          </svg>
         </span>
-        <span className="classmate-push-bell-label">
-          {busy ? (settingUp ? "設定中" : "…") : enabled ? "ON" : "OFF"}
-        </span>
+        {!compact ? (
+          <span className="classmate-push-bell-label">
+            {busy ? (settingUp ? "設定中" : "…") : enabled ? "ON" : "OFF"}
+          </span>
+        ) : null}
+        {compact && !enabled ? (
+          <span className="classmate-push-bell-dot" aria-hidden />
+        ) : null}
       </button>
 
       {showFeedback ? (

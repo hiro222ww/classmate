@@ -1588,18 +1588,10 @@ export default function SelectClient() {
 
       <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
         <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 900,
-              color: "#0f172a",
-              letterSpacing: 0.01,
-              lineHeight: 1.25,
-            }}
-          >
-            テーマを選ぶ
-          </h2>
+          <header className="cm-page-heading">
+            <h1>テーマを選ぶ</h1>
+            <p>気になるテーマからクラスに入れます</p>
+          </header>
         </div>
 
         <div
@@ -1611,34 +1603,27 @@ export default function SelectClient() {
           }}
         >
           <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 10px",
-              borderRadius: 999,
-              background: joinWindowOpen
-                ? "rgba(236, 253, 245, 0.95)"
-                : "rgba(241, 245, 249, 0.95)",
-              border: "1px solid rgba(148, 163, 184, 0.28)",
-              fontSize: 12,
-              fontWeight: 800,
-              color: "#334155",
-            }}
+            className={[
+              "cm-admission-pill",
+              joinWindowLoadState === "error"
+                ? "cm-admission-pill--error"
+                : joinWindowLoadState === "loading"
+                  ? "cm-admission-pill--loading"
+                  : joinWindowOpen
+                    ? "cm-admission-pill--open"
+                    : "cm-admission-pill--closed",
+            ].join(" ")}
+            role="status"
           >
             <span
+              aria-hidden
               style={{
                 width: 7,
                 height: 7,
-                borderRadius: "50%",
-                background:
-                  joinWindowLoadState === "error"
-                    ? "#f59e0b"
-                    : joinWindowLoadState === "loading"
-                      ? "#94a3b8"
-                      : joinWindowOpen
-                        ? "#16a34a"
-                        : "#94a3b8",
+                borderRadius: 999,
+                background: "currentColor",
+                opacity: 0.85,
+                display: "inline-block",
               }}
             />
             {admissionPillText}

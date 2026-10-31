@@ -238,51 +238,34 @@ export default function UserLoginClient() {
       className="cm-classroom-scope cm-auth-root"
       data-cm-auth={busy ? "busy" : error ? "error" : "idle"}
       style={{
-        maxWidth: 520,
+        maxWidth: 440,
         margin: "0 auto",
-        padding: 24,
+        padding: "20px 16px 28px",
         display: "grid",
-        gap: 16,
+        gap: 14,
       }}
     >
-      <div style={{ marginBottom: 6 }}>
-        <HomeBrandVisual />
-      </div>
+      <HomeBrandVisual showIntro={false} />
 
-      <header
-        className="cm-auth-header"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
-        <h1
-          className="cm-section-title"
-          style={{ margin: 0, fontSize: 28, fontWeight: 900 }}
-        >
-          ログイン / 新規登録
-        </h1>
-        <HelpTip
-          label="ログインについて"
-          content="Google アカウントでログインします。初めての方も同じボタンから登録できます。ログイン後、元の画面に戻ります。メール送信は使わないため、送信上限の影響を受けません。"
-        />
+      <header className="cm-auth-header cm-page-heading">
+        <h1>ようこそ</h1>
+        <p className="cm-auth-lead">
+          同年代と気軽に通話できる音声コミュニティです。Google
+          アカウントですぐ始められます。
+          <HelpTip
+            label="ログインについて"
+            content="Google アカウントでログインします。初めての方も同じボタンから登録できます。ログイン後、元の画面に戻ります。メール送信は使わないため、送信上限の影響を受けません。"
+          />
+        </p>
       </header>
 
       <section
         className="cm-paper-card cm-auth-card"
         style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 18,
-          padding: 16,
           display: "grid",
           gap: 12,
         }}
       >
-        <div className="cm-auth-card-emblem">
-          <ClassmateEmblem size="lg" decorative />
-        </div>
         <GoogleLoginButton
           busy={busy}
           onClick={() => void onGoogleLogin()}
@@ -293,16 +276,29 @@ export default function UserLoginClient() {
             justifyContent: "center",
             gap: 10,
             padding: "14px 16px",
-            borderRadius: 12,
-            border: "1px solid #d1d5db",
+            borderRadius: 14,
+            border: "1px solid var(--cm-border)",
             background: "#fff",
-            color: "#111827",
+            color: "var(--cm-text)",
             fontWeight: 900,
             fontSize: 15,
             cursor: busy ? "default" : "pointer",
             opacity: busy ? 0.7 : 1,
+            minHeight: 48,
           }}
         />
+        <p
+          style={{
+            margin: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            color: "var(--cm-muted)",
+            textAlign: "center",
+            lineHeight: 1.45,
+          }}
+        >
+          新規登録も同じボタンから。通話は少人数の安心なクラスで楽しめます。
+        </p>
       </section>
 
       {error ? (

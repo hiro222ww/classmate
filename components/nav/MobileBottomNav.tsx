@@ -174,6 +174,7 @@ export function shouldHideMobileBottomNav(pathname: string): boolean {
   if (p.startsWith("/room")) return true;
   if (p.startsWith("/app")) return true;
   if (p.startsWith("/auth")) return true;
+  if (p.startsWith("/login")) return true;
   if (p.startsWith("/onboarding")) return true;
   if (p.startsWith("/admin")) return true;
   return false;

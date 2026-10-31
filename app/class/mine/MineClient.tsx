@@ -2,6 +2,7 @@
 
 import { useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { MyClassCard } from "@/components/home/MyClassCard";
@@ -159,79 +160,61 @@ export default function MineClient() {
         />
       ) : null}
 
-      <div style={{ marginTop: 18, display: "grid", gap: 16 }}>
-        <div>
-          <h1
+      <div style={{ marginTop: 14, display: "grid", gap: 14 }}>
+        <header className="cm-page-heading">
+          <div
             style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 900,
-              color: "var(--cm-text)",
-              letterSpacing: 0.01,
-              lineHeight: 1.25,
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 10,
             }}
           >
-            マイクラス
-          </h1>
-          <p
-            style={{
-              margin: "6px 0 0",
-              fontSize: 13,
-              fontWeight: 600,
-              color: "var(--cm-muted)",
-            }}
-          >
-            所属しているクラスを選べます
-          </p>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const id = String(deviceId || getDeviceId()).trim();
-              if (id) void reload(id);
-            }}
-            disabled={loading}
-            style={{
-              marginLeft: "auto",
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid var(--cm-border)",
-              background: "#fff",
-              fontSize: 12,
-              fontWeight: 800,
-              color: "var(--cm-muted)",
-              cursor: loading ? "default" : "pointer",
-              minHeight: 44,
-            }}
-          >
-            更新
-          </button>
-        </div>
+            <div>
+              <h1>マイクラス</h1>
+              <p>所属しているクラスを選べます</p>
+            </div>
+            <button
+              type="button"
+              className="cm-text-btn"
+              onClick={() => {
+                const id = String(deviceId || getDeviceId()).trim();
+                if (id) void reload(id);
+              }}
+              disabled={loading}
+            >
+              更新
+            </button>
+          </div>
+        </header>
 
         {error ? (
-          <p
-            style={{
-              margin: 0,
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid #fecaca",
-              background: "#fef2f2",
-              color: "#991b1b",
-              fontWeight: 700,
-              fontSize: 13,
-            }}
-          >
-            {error}
-          </p>
+          <div className="cm-empty-state" role="alert">
+            <div className="cm-empty-state-icon" aria-hidden>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v5" />
+                <path d="M12 16h.01" />
+              </svg>
+            </div>
+            <p className="cm-empty-state-title">読み込めませんでした</p>
+            <p className="cm-empty-state-body">{error}</p>
+            <div className="cm-empty-state-actions">
+              <button
+                type="button"
+                className="cm-text-btn"
+                onClick={() => {
+                  const id = String(deviceId || getDeviceId()).trim();
+                  if (id) void reload(id);
+                }}
+              >
+                もう一度試す
+              </button>
+              <Link href={withDev("/class/select")} className="cm-home-discover-link">
+                テーマを探す
+              </Link>
+            </div>
+          </div>
         ) : null}
 
         {loading ? (
@@ -240,15 +223,15 @@ export default function MineClient() {
             aria-busy="true"
             style={{
               padding: 16,
-              borderRadius: "var(--cm-radius)",
+              borderRadius: 18,
               border: "1px solid var(--cm-border)",
               background: "var(--cm-card-bg)",
             }}
           >
             <div
               style={{
-                height: 18,
-                width: "42%",
+                height: 16,
+                width: "40%",
                 borderRadius: 8,
                 background: "var(--cm-card-bg-soft)",
               }}
@@ -256,35 +239,37 @@ export default function MineClient() {
             <div
               style={{
                 marginTop: 12,
-                height: 72,
+                height: 64,
                 borderRadius: 12,
                 background: "var(--cm-card-bg-soft)",
               }}
             />
           </section>
         ) : error ? null : classes.length === 0 ? (
-          <section
-            className="cm-paper-card"
-            style={{
-              padding: 20,
-              borderRadius: "var(--cm-radius)",
-              border: "1px solid var(--cm-border)",
-              background: "var(--cm-card-bg)",
-            }}
-          >
-            <p
-              style={{
-                margin: 0,
-                fontSize: 15,
-                fontWeight: 800,
-                color: "var(--cm-muted)",
-                textAlign: "center",
-                lineHeight: 1.55,
-              }}
-            >
-              所属しているクラスはありません
+          <div className="cm-empty-state">
+            <div className="cm-empty-state-icon" aria-hidden>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              </svg>
+            </div>
+            <p className="cm-empty-state-title">まだ所属クラスがありません</p>
+            <p className="cm-empty-state-body">
+              テーマを選んでクラスに入るか、ランダム通話で同年代と話してみましょう。
             </p>
-          </section>
+            <div className="cm-empty-state-actions">
+              <Link href={withDev("/class/select")} className="cm-home-discover-link">
+                テーマを探す
+              </Link>
+              <Link
+                href={withDev("/")}
+                className="cm-text-btn"
+                style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+              >
+                ホームで通話する
+              </Link>
+            </div>
+          </div>
         ) : (
           <div className="cm-my-class-list">
             {classes.map((row) => (

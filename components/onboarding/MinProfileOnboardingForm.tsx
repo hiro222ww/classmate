@@ -103,28 +103,30 @@ export function MinProfileOnboardingForm({
 
   return (
     <main
+      className="cm-classroom-scope cm-auth-root"
       style={{
         minHeight: "100dvh",
         display: "grid",
         placeItems: "center",
-        padding: 20,
-        background: "linear-gradient(180deg, #f7fafc 0%, #eef4f8 100%)",
+        padding: "20px 16px",
+        background:
+          "radial-gradient(700px 280px at 12% 0%, rgba(231,242,255,0.9), transparent 58%), linear-gradient(180deg, #f8faff 0%, #fff7f2 100%)",
       }}
     >
       <form
         onSubmit={(e) => void onSubmit(e)}
         style={{
-          width: "min(420px, 100%)",
+          width: "min(400px, 100%)",
           display: "grid",
-          gap: 16,
+          gap: 14,
         }}
       >
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900 }}>はじめる</h1>
-          <p style={{ margin: "8px 0 0", fontSize: 14, color: "#6b7280" }}>
+        <header className="cm-auth-header cm-page-heading">
+          <h1>はじめる</h1>
+          <p className="cm-auth-lead">
             表示名と年齢だけで、最大5人の通話に参加できます。
           </p>
-        </div>
+        </header>
 
         <FormSection
           title="基本情報"
@@ -173,15 +175,18 @@ export function MinProfileOnboardingForm({
         <button
           type="submit"
           disabled={busy || submitDisabled}
+          className="cm-cta-primary"
           style={{
             padding: "12px 16px",
-            borderRadius: 12,
+            borderRadius: 14,
             border: "none",
-            background: "#2f9e6b",
+            background: "var(--cm-primary-bg)",
             color: "#fff",
             fontWeight: 800,
             cursor: busy ? "wait" : "pointer",
             opacity: busy || submitDisabled ? 0.7 : 1,
+            minHeight: 48,
+            boxShadow: "var(--cm-primary-shadow)",
           }}
         >
           {busy ? busyLabel : submitLabel}

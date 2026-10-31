@@ -53,7 +53,6 @@ import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
 import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
-import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useAuth } from "@/components/AuthProvider";
 import { isAppShellContext } from "@/lib/appShellContext";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
@@ -2610,7 +2609,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       className={homeStateClass}
       style={{
         display: "grid",
-        gap: 16,
+        gap: 14,
       }}
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_OVERRIDES_CSS}</style>
@@ -2678,26 +2677,31 @@ console.log("[home] resolved ids", { classId, sessionId, json });
               alignItems: "center",
             }}
           >
-            <StatusPill>
+            <span
+              className={[
+                "cm-admission-pill",
+                joinWindowLoadState === "error"
+                  ? "cm-admission-pill--error"
+                  : joinWindowLoadState === "loading"
+                    ? "cm-admission-pill--loading"
+                    : joinWindowOpen
+                      ? "cm-admission-pill--open"
+                      : "cm-admission-pill--closed",
+              ].join(" ")}
+            >
               <span
                 aria-hidden
                 style={{
                   width: 7,
                   height: 7,
                   borderRadius: 999,
-                  background:
-                    joinWindowLoadState === "error"
-                      ? "#f59e0b"
-                      : joinWindowLoadState === "loading"
-                        ? "#94a3b8"
-                        : joinWindowOpen
-                          ? "var(--cm-online, #12a879)"
-                          : "#94a3b8",
+                  background: "currentColor",
+                  opacity: 0.85,
                   display: "inline-block",
                 }}
               />
               {admissionPillText}
-            </StatusPill>
+            </span>
             {joinWindowLoadState === "error" ? (
               <button
                 type="button"
@@ -2770,22 +2774,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       ) : null}
 
       {/* Random talk CTA */}
-      <div
-        className={["cm-stagger-4", "cm-home-empty-emblem-wrap", "cm-home-talk-hero"].join(" ")}
-        style={{
-          display: "grid",
-          gap: 16,
-          gridTemplateColumns: "1fr",
-        }}
-      >
-        {!loading ? (
-          <ClassmateEmblem
-            size="lg"
-            variant="watermark"
-            decorative
-            className="cm-home-empty-emblem"
-          />
-        ) : null}
+      <div className="cm-stagger-4 cm-home-talk-hero">
         <RandomTalkCta
           voiceBusy={quickBusy}
           chatBusy={quickBusy}
@@ -2795,16 +2784,11 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             void reloadJoinWindow();
           }}
           voiceLabel={
-            adminCanBypassAdmission
-              ? "管理者としてテスト入室（通話）"
-              : "通話で始める"
+            adminCanBypassAdmission ? "テスト入室（通話）" : "通話で始める"
           }
           chatLabel={
-            adminCanBypassAdmission
-              ? "管理者としてテスト入室（チャット）"
-              : "チャットで始める"
+            adminCanBypassAdmission ? "テスト入室（チャット）" : "チャット"
           }
-          themeSelectHref={undefined}
           onVoiceJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
@@ -2851,10 +2835,10 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       </div>
 
       <section className="cm-home-discover cm-stagger-5">
-        <h2 className="cm-home-section-title">発見</h2>
-        <p className="cm-home-section-sub">
-          テーマからクラスを探せます
-        </p>
+        <div className="cm-home-discover-copy">
+          <h2 className="cm-home-section-title">発見</h2>
+          <p className="cm-home-section-sub">テーマからクラスを探せます</p>
+        </div>
         <Link href={withDev("/class/select")} className="cm-home-discover-link">
           テーマを選ぶ
         </Link>
