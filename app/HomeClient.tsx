@@ -72,6 +72,7 @@ import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
+import { hasCreateClassEntitlement } from "@/lib/classCreateGuards";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { supabase } from "@/lib/supabaseClient";
 import {
@@ -471,6 +472,10 @@ export default function HomeClient() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileChecked, setProfileChecked] = useState(false);
+  /** null = still loading; avoid flashing ＋作成 before entitlements resolve */
+  const [canCreateClasses, setCanCreateClasses] = useState<boolean | null>(
+    null
+  );
   const [classes, setClasses] = useState<MineClass[]>([]);
   const [recruitmentSessionTtlMinutes, setRecruitmentSessionTtlMinutes] =
     useState<number | null>(5);
@@ -901,6 +906,37 @@ export default function HomeClient() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    const id = String(deviceId ?? "").trim();
+    if (!id) {
+      setCanCreateClasses(null);
+      return;
+    }
+
+    let alive = true;
+    setCanCreateClasses(null);
+
+    void (async () => {
+      try {
+        const er = await fetch("/api/user/entitlements", {
+          method: "GET",
+          headers: await buildDeviceAuthHeaders(id),
+          cache: "no-store",
+        });
+        const ej = await er.json().catch(() => null);
+        if (!alive) return;
+        setCanCreateClasses(hasCreateClassEntitlement(ej));
+      } catch {
+        if (!alive) return;
+        setCanCreateClasses(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [deviceId]);
 
   useEffect(() => {
     if (!mounted || authStatus === "loading" || !profileChecked) return;
@@ -2890,12 +2926,14 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       >
         <div className="cm-home-section-head">
           <h2 className="cm-home-section-title">マイクラス</h2>
-          <Link
-            href={withDev("/class/create")}
-            className="cm-home-section-link"
-          >
-            ＋ 作成
-          </Link>
+          {canCreateClasses === true ? (
+            <Link
+              href={withDev("/class/create")}
+              className="cm-home-section-link"
+            >
+              ＋ 作成
+            </Link>
+          ) : null}
         </div>
         {myClassRows.length > 0 ? (
           <div className="cm-my-class-list">
@@ -2924,7 +2962,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             })}
           </div>
         ) : (
-          <MyClassEmpty />
+          <MyClassEmpty canCreateClasses={canCreateClasses === true} />
         )}
       </section>
       {/* Lets the section scroll fully under the top inset on short pages. */}
