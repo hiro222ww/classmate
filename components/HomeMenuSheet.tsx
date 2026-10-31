@@ -136,7 +136,7 @@ export default function HomeMenuSheet({
         >
           <CmAvatar
             label={name}
-            sizePx={56}
+            sizePx={48}
             photoPath={photoPath}
             avatarUrl={avatarUrl}
           />
