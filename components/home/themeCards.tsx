@@ -3,49 +3,30 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { withDev } from "@/lib/withDev";
+import {
+  THEME_MAJOR_CATEGORIES,
+  buildThemeSelectCategoryPath,
+  type ThemeMajorCategoryId,
+} from "@/lib/themeCatalog";
 
-export type ThemeCardId = "game" | "music" | "study" | "chat";
+export type ThemeCardId = ThemeMajorCategoryId;
 
 export type ThemeCardDef = {
   id: ThemeCardId;
   title: string;
   hint: string;
   tone: ThemeCardId;
-  /** Optional category match keys for select filtering. */
-  match: RegExp;
 };
 
-/** Visual theme affordances — not invented live rooms. */
-export const THEME_CARDS: ThemeCardDef[] = [
-  {
-    id: "game",
-    title: "ゲーム",
-    hint: "一緒に遊ぶ",
-    tone: "game",
-    match: /ゲーム|game|esports|eスポーツ/,
-  },
-  {
-    id: "music",
-    title: "音楽",
-    hint: "聴いて話す",
-    tone: "music",
-    match: /音楽|music|歌|メロディ/,
-  },
-  {
-    id: "study",
-    title: "勉強",
-    hint: "集中できる場",
-    tone: "study",
-    match: /勉強|学習|study|学校|仕事/,
-  },
-  {
-    id: "chat",
-    title: "雑談",
-    hint: "気軽に話す",
-    tone: "chat",
-    match: /雑談|交流|フリー|talk|chat|おしゃべり/,
-  },
-];
+/** Major-category affordances for home / select — mirrors themeCatalog. */
+export const THEME_CARDS: ThemeCardDef[] = THEME_MAJOR_CATEGORIES.map(
+  (major) => ({
+    id: major.id,
+    title: major.label,
+    hint: major.hint,
+    tone: major.tone,
+  })
+);
 
 export function ThemeGlyph({ id }: { id: ThemeCardId }) {
   const common = {
@@ -61,7 +42,7 @@ export function ThemeGlyph({ id }: { id: ThemeCardId }) {
   };
 
   switch (id) {
-    case "game":
+    case "hobby":
       return (
         <svg {...common}>
           <rect x="3" y="8" width="18" height="11" rx="3" />
@@ -70,19 +51,19 @@ export function ThemeGlyph({ id }: { id: ThemeCardId }) {
           <path d="M7 13h2M8 12v2" />
         </svg>
       );
-    case "music":
-      return (
-        <svg {...common}>
-          <path d="M9 18V5l12-2v13" />
-          <circle cx="6" cy="18" r="3" />
-          <circle cx="18" cy="16" r="3" />
-        </svg>
-      );
-    case "study":
+    case "school":
       return (
         <svg {...common}>
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
+    case "daily":
+      return (
+        <svg {...common}>
+          <path d="M3 10.5 12 3l9 7.5" />
+          <path d="M5 9.5V21h14V9.5" />
+          <path d="M9 21v-6h6v6" />
         </svg>
       );
     case "chat":
@@ -98,7 +79,7 @@ type ThemeCardGridProps = {
   className?: string;
   /** When set, cards are buttons that call onPick instead of links. */
   onPick?: (id: ThemeCardId) => void;
-  /** Default link target when onPick is not used. */
+  /** Default link target when onPick is not used (ignored — uses cat deep-link). */
   href?: string;
   activeId?: ThemeCardId | null;
   trailing?: ReactNode;
@@ -109,7 +90,6 @@ type ThemeCardGridProps = {
 export function ThemeCardGrid({
   className,
   onPick,
-  href = "/class/select",
   activeId = null,
   title = "探す",
   listHref = "/class/select",
@@ -162,7 +142,7 @@ export function ThemeCardGrid({
           return (
             <Link
               key={card.id}
-              href={withDev(href)}
+              href={withDev(buildThemeSelectCategoryPath(card.id))}
               className={classNameCard}
             >
               {body}

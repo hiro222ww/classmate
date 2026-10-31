@@ -55,11 +55,7 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
-import {
-  ThemeCardGrid,
-  THEME_CARDS,
-  type ThemeCardId,
-} from "@/components/home/themeCards";
+import { ThemeCardGrid } from "@/components/home/themeCards";
 import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
@@ -77,6 +73,13 @@ import {
   resolveAdmissionStatusPillText,
   type AdmissionLoadState,
 } from "@/lib/admissionJoinGate";
+import {
+  THEME_CATALOG_QUERY_KEY,
+  buildSubCategoryRows,
+  getThemeMajorCategory,
+  parseThemeCatalogQuery,
+  type ThemeMajorCategoryId,
+} from "@/lib/themeCatalog";
 
 type World = {
   world_key: string;
@@ -146,92 +149,14 @@ type EntryBoard = {
   badge_label?: string | null;
 };
 
-/** Display-only grouping for existing topics (no dummy themes). */
-type ThemeCategoryId =
-  | "chat"
-  | "hobby"
-  | "game"
-  | "travel"
-  | "school"
-  | "night"
-  | "other";
-
 /**
  * Paid / unreleased themes are shown as non-interactive teasers.
  * Join / purchase / billing stay disabled — data is display-only.
  */
-const SHOW_PAID_THEMES_AS_TEASER = true;
 const PAID_THEME_TEASER_LABEL = "準備中";
-
-const THEME_CATEGORIES: {
-  id: ThemeCategoryId;
-  label: string;
-  tint: string;
-  border: string;
-}[] = [
-  {
-    id: "chat",
-    label: "雑談・交流",
-    tint: "linear-gradient(180deg, rgba(236,253,245,0.9), rgba(255,255,255,0.95))",
-    border: "rgba(16, 185, 129, 0.22)",
-  },
-  {
-    id: "hobby",
-    label: "趣味",
-    tint: "linear-gradient(180deg, rgba(255,247,237,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(251, 146, 60, 0.22)",
-  },
-  {
-    id: "game",
-    label: "ゲーム",
-    tint: "linear-gradient(180deg, rgba(245,243,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(167, 139, 250, 0.25)",
-  },
-  {
-    id: "travel",
-    label: "旅行",
-    tint: "linear-gradient(180deg, rgba(240,249,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(56, 189, 248, 0.28)",
-  },
-  {
-    id: "school",
-    label: "学校・仕事",
-    tint: "linear-gradient(180deg, rgba(239,246,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(96, 165, 250, 0.28)",
-  },
-  {
-    id: "night",
-    label: "夜・まったり",
-    tint: "linear-gradient(180deg, rgba(238,242,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(129, 140, 248, 0.28)",
-  },
-  {
-    id: "other",
-    label: "その他のテーマ",
-    tint: "linear-gradient(180deg, rgba(248,250,252,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(148, 163, 184, 0.3)",
-  },
-];
 
 const FREE_TINT =
   "linear-gradient(180deg, rgba(236,253,245,0.95) 0%, rgba(239,246,255,0.9) 100%)";
-
-function categorizeTheme(title: string, description: string): ThemeCategoryId {
-  const s = `${title} ${description}`.toLowerCase();
-  if (/ゲーム|game|esports|eスポーツ/.test(s)) return "game";
-  if (/旅行|travel|旅|観光/.test(s)) return "travel";
-  if (/夜|まったり|深夜|おやすみ|night/.test(s)) return "night";
-  if (
-    /男子校|女子校|学校|部活|スポーツ|仕事|職業|sports|work|identity|属性/.test(
-      s
-    )
-  ) {
-    return "school";
-  }
-  if (/趣味|hobby|創作|音楽|映画|アニメ|イラスト|漫画/.test(s)) return "hobby";
-  if (/雑談|交流|フリー|talk|chat|おしゃべり/.test(s)) return "chat";
-  return "other";
-}
 
 async function readJsonOrThrow(r: Response, label: string) {
   const raw = await r.text();
@@ -378,9 +303,41 @@ export default function SelectClient() {
   } | null>(null);
   const [joinedClassesLoading, setJoinedClassesLoading] = useState(false);
   const [joinedClassCount, setJoinedClassCount] = useState(0);
-  const [activeTheme, setActiveTheme] = useState<ThemeCardId | null>(null);
+  const catalogCatParam = searchParams.get(THEME_CATALOG_QUERY_KEY);
+  const [activeMajorId, setActiveMajorId] = useState<ThemeMajorCategoryId | null>(
+    () => parseThemeCatalogQuery(catalogCatParam)
+  );
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
   const themeBoardsRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setActiveMajorId(parseThemeCatalogQuery(catalogCatParam));
+  }, [catalogCatParam]);
+
+  function openMajorCategory(id: ThemeMajorCategoryId) {
+    setActiveMajorId(id);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set(THEME_CATALOG_QUERY_KEY, id);
+      window.history.replaceState(null, "", `${url.pathname}?${url.searchParams.toString()}`);
+    }
+    window.setTimeout(() => {
+      themeBoardsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 40);
+  }
+
+  function clearMajorCategory() {
+    setActiveMajorId(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(THEME_CATALOG_QUERY_KEY);
+      const q = url.searchParams.toString();
+      window.history.replaceState(null, "", q ? `${url.pathname}?${q}` : url.pathname);
+    }
+  }
 
   async function reloadCatalog() {
     try {
@@ -846,29 +803,20 @@ export default function SelectClient() {
     admissionText: joinWindowText,
   });
 
-  const themeGroups = useMemo(() => {
-    const paid = boards.filter((b) => b.monthly_price > 0);
-    const active = THEME_CARDS.find((t) => t.id === activeTheme) ?? null;
-    const filtered = active
-      ? paid.filter((b) => active.match.test(`${b.title} ${b.description}`))
-      : paid;
-    return THEME_CATEGORIES.map((cat) => ({
-      ...cat,
-      boards: filtered.filter(
-        (b) => categorizeTheme(b.title, b.description) === cat.id
-      ),
-    })).filter((g) => g.boards.length > 0);
-  }, [boards, activeTheme]);
+  const paidBoards = useMemo(
+    () => boards.filter((b) => b.monthly_price > 0),
+    [boards]
+  );
 
-  const compactThemeBoards = useMemo(() => {
-    const paid = boards.filter((b) => b.monthly_price > 0);
-    if (!activeTheme) return paid.slice(0, 8);
-    const active = THEME_CARDS.find((t) => t.id === activeTheme);
-    if (!active) return paid.slice(0, 8);
-    return paid
-      .filter((b) => active.match.test(`${b.title} ${b.description}`))
-      .slice(0, 8);
-  }, [boards, activeTheme]);
+  const activeMajor = useMemo(
+    () => getThemeMajorCategory(activeMajorId),
+    [activeMajorId]
+  );
+
+  const subCategoryRows = useMemo(() => {
+    if (!activeMajor) return [];
+    return buildSubCategoryRows(activeMajor, paidBoards);
+  }, [activeMajor, paidBoards]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
     if (!themeBillingEnabled) return true;
@@ -1307,7 +1255,7 @@ export default function SelectClient() {
             >
               {b.title}
             </strong>
-            {comingSoon && b.monthly_price > 0 && !compact ? (
+            {comingSoon && !compact ? (
               <span
                 style={{
                   display: "block",
@@ -1317,8 +1265,7 @@ export default function SelectClient() {
                   color: "#94a3b8",
                 }}
               >
-                {tierName(b.monthly_price)} · ¥
-                {b.monthly_price.toLocaleString("ja-JP")}/月
+                準備中のため参加できません
               </span>
             ) : null}
           </div>
@@ -1674,21 +1621,6 @@ export default function SelectClient() {
           <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
         ) : null}
 
-        <ThemeCardGrid
-          title="テーマ"
-          listHref={null}
-          activeId={activeTheme}
-          onPick={(id) => {
-            setActiveTheme((prev) => (prev === id ? null : id));
-            window.setTimeout(() => {
-              themeBoardsRef.current?.scrollIntoView({
-                behavior: "smooth",
-                block: "start",
-              });
-            }, 40);
-          }}
-        />
-
         <section
           ref={(node) => {
             themeBoardsRef.current = node;
@@ -1733,52 +1665,54 @@ export default function SelectClient() {
             }}
           />
 
-          {SHOW_PAID_THEMES_AS_TEASER && compactThemeBoards.length > 0 ? (
+          {!activeMajor ? (
+            <ThemeCardGrid
+              title="カテゴリー"
+              listHref={null}
+              onPick={(id) => {
+                openMajorCategory(id);
+              }}
+            />
+          ) : (
             <div className="cm-select-teaser-block">
               <div className="cm-home-section-head" style={{ marginBottom: 6 }}>
-                <h3 className="cm-home-section-title">
-                  {activeTheme
-                    ? `${THEME_CARDS.find((t) => t.id === activeTheme)?.title ?? "テーマ"} · 準備中`
-                    : "準備中のテーマ"}
-                </h3>
-                {activeTheme ? (
-                  <button
-                    type="button"
-                    className="cm-home-section-link"
-                    onClick={() => setActiveTheme(null)}
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                    }}
-                  >
-                    すべて
-                  </button>
-                ) : null}
+                <h3 className="cm-home-section-title">{activeMajor.label}</h3>
+                <button
+                  type="button"
+                  className="cm-home-section-link"
+                  onClick={() => clearMajorCategory()}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  戻る
+                </button>
               </div>
-              <p className="cm-select-teaser-note">まだ参加できません</p>
-              <div className="cm-select-theme-compact-list">
-                {compactThemeBoards.map((b) => {
-                  const group = themeGroups.find((g) =>
-                    g.boards.some((row) => row.key === b.key)
-                  );
-                  return (
-                    <BoardCard
-                      key={b.key}
-                      b={b}
-                      compact
-                      accent={
-                        group
-                          ? { tint: group.tint, border: group.border }
-                          : undefined
-                      }
-                    />
-                  );
-                })}
-              </div>
+              <p className="cm-select-teaser-note">
+                テーマ課金はすべて準備中です。参加・課金はできません。
+              </p>
+              <ul className="cm-select-subcat-list">
+                {subCategoryRows.map((row) => (
+                  <li key={row.id} className="cm-select-subcat-row">
+                    <div className="cm-select-subcat-copy">
+                      <strong className="cm-select-subcat-title">
+                        {row.label}
+                      </strong>
+                      {row.topic?.description ? (
+                        <span className="cm-select-subcat-desc">
+                          {row.topic.description}
+                        </span>
+                      ) : null}
+                    </div>
+                    <span className="cm-select-subcat-badge">準備中</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          ) : null}
+          )}
 
           {!loading && freeBoards.length === 0 ? (
             <div className="cm-select-empty">条件に合うテーマがありません</div>
