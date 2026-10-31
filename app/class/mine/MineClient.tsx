@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
@@ -25,12 +25,14 @@ import {
   type JoinedClassRow,
 } from "@/hooks/useJoinedClasses";
 import { withDev } from "@/lib/withDev";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 
 export default function MineClient() {
   const router = useRouter();
   const { loggedIn, accountLabel } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [openingClassId, setOpeningClassId] = useState("");
+  const [canCreateClasses, setCanCreateClasses] = useState(false);
   const {
     deviceId,
     loading,
@@ -39,6 +41,30 @@ export default function MineClient() {
     reload,
     setError,
   } = useJoinedClasses();
+
+  useEffect(() => {
+    const id = String(deviceId || getDeviceId() || "").trim();
+    if (!id) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const er = await fetch("/api/user/entitlements", {
+          method: "GET",
+          headers: await buildDeviceAuthHeaders(id),
+          cache: "no-store",
+        });
+        const ej = await er.json().catch(() => null);
+        if (!alive) return;
+        setCanCreateClasses(Boolean(ej?.can_create_classes));
+      } catch {
+        if (!alive) return;
+        setCanCreateClasses(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [deviceId]);
   const {
     enabled: notificationsEnabled,
     busy: notificationsBusy,
@@ -236,7 +262,7 @@ export default function MineClient() {
             />
           </section>
         ) : error ? null : classes.length === 0 ? (
-          <MyClassEmpty />
+          <MyClassEmpty canCreateClasses={canCreateClasses} />
         ) : (
           <div className="cm-my-class-list">
             {classes.map((row) => (

@@ -1,17 +1,20 @@
-import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { NextResponse } from "next/server";
+import { isDevFixtureAllowed } from "@/lib/devFixtureGuard";
 
 export async function POST() {
-  const device_id = 'localStorageから取得した値（仮）'
+  if (!isDevFixtureAllowed()) {
+    return NextResponse.json(
+      { ok: false, error: "not_available" },
+      { status: 404 }
+    );
+  }
 
-  await supabaseAdmin
-    .from('user_entitlements')
-    .update({
-      plan: 'plus',
-      can_create_classes: true,
-      class_slots: 3,
-    })
-    .eq('device_id', device_id)
-
-  return NextResponse.json({ ok: true })
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "disabled",
+      message: "Use /api/dev/set-entitlements in development only.",
+    },
+    { status: 410 }
+  );
 }

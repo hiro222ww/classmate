@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isDevFixtureAllowed } from "@/lib/devFixtureGuard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  if (!isDevFixtureAllowed()) {
+    return NextResponse.json(
+      { ok: false, error: "not_available" },
+      { status: 404 }
+    );
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
 
@@ -59,7 +67,7 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: e?.message ?? "unknown_error" },
+      { ok: false, error: e?.message ?? "unknown" },
       { status: 500 }
     );
   }

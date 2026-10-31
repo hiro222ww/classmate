@@ -58,6 +58,7 @@ import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import { ThemeCardGrid } from "@/components/home/themeCards";
 import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
+import { canJoinTopicByEntitlement } from "@/lib/topicJoinEntitlement";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
@@ -821,8 +822,12 @@ export default function SelectClient() {
   }, [activeMajor, paidBoards, catalogMajors]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
-    if (!themeBillingEnabled) return true;
-    return b.monthly_price <= topicPlan;
+    return canJoinTopicByEntitlement({
+      themeBillingEnabled,
+      monthlyPrice: b.monthly_price,
+      topicPlan,
+      themePass: Boolean(ent?.theme_pass),
+    });
   }
 
   function setSlotsLimitUi(classSlots?: number) {
@@ -856,11 +861,6 @@ export default function SelectClient() {
     console.log("[select] clicked board =", b, "entryMode =", entryMode, "forcedClassId =", forcedClassId);
     lastJoinBoardRef.current = b;
     setEntryFailure(null);
-
-    // Paid themes stay visible but never enter match-join or billing.
-    if (b.monthly_price > 0) {
-      return;
-    }
 
     if (
       !guardMatchJoinAdmission({
@@ -1147,11 +1147,13 @@ export default function SelectClient() {
     compact?: boolean;
   }) {
     const isFree = b.monthly_price <= 0;
-    const comingSoon = !isFree;
+    const locked = !hasBoardAccess(b);
     const teaserLabel =
       String(b.badge_label ?? "").trim() || PAID_THEME_TEASER_LABEL;
+    // Paid board without entitlement: show plan-required lock.
+    // When theme billing is off, hasBoardAccess is true → joinable.
+    const planLocked = !isFree && locked;
 
-    const locked = !hasBoardAccess(b);
     const profileMissing = hasProfile === false;
     const admissionClosed =
       joinWindowLoadState === "ready" && !joinWindowOpen;
@@ -1164,7 +1166,7 @@ export default function SelectClient() {
       ignoreAdmission: opsTestFlags.ignoreAdmission,
     };
     const joinDisabled =
-      comingSoon ||
+      planLocked ||
       busy ||
       !deviceId ||
       profileMissing ||
@@ -1172,21 +1174,22 @@ export default function SelectClient() {
       prefsNotReady;
 
     const enterReady =
-      !comingSoon &&
-      !locked &&
+      !planLocked &&
       !profileMissing &&
       canStartMatchJoin(matchJoinAdmissionGate);
 
-    const tint = comingSoon
+    const tint = planLocked
       ? "rgba(241, 245, 249, 0.92)"
       : accent?.tint ?? (isFree ? FREE_TINT : undefined);
-    const border = comingSoon
+    const border = planLocked
       ? "rgba(148, 163, 184, 0.35)"
       : accent?.border ?? (isFree ? "rgba(16, 185, 129, 0.28)" : undefined);
 
     // Keep button labels short; admission status lives in the page pill.
-    const actionLabel = comingSoon
-      ? teaserLabel
+    const actionLabel = planLocked
+      ? teaserLabel === PAID_THEME_TEASER_LABEL
+        ? "プランが必要"
+        : teaserLabel
       : profileMissing
         ? "登録が必要"
         : adminTestJoin
@@ -1196,10 +1199,10 @@ export default function SelectClient() {
     const renderJoinButton = (mode: MatchEntryMode, label: string) => (
       <MatchEntryButton
         mode={mode}
-        muted={comingSoon || !enterReady}
+        muted={planLocked || !enterReady}
         className="cm-board-enter"
         onClick={() => {
-          if (comingSoon) return;
+          if (planLocked) return;
           void joinMatchedBoard(b, { entryMode: mode });
         }}
         disabled={joinDisabled}
@@ -1222,20 +1225,20 @@ export default function SelectClient() {
         className={[
           "cm-board-card",
           "cm-select-theme-card",
-          comingSoon ? "cm-select-theme-card--teaser" : "",
+          planLocked ? "cm-select-theme-card--teaser" : "",
         ]
           .filter(Boolean)
           .join(" ")}
-        aria-disabled={comingSoon || undefined}
+        aria-disabled={planLocked || undefined}
         style={{
           padding: compact ? 12 : emphasizeFree ? 14 : 12,
           background: tint,
           border: border ? `1px solid ${border}` : undefined,
           borderRadius: compact ? 18 : 16,
-          boxShadow: comingSoon
+          boxShadow: planLocked
             ? "none"
             : "0 4px 14px rgba(15, 23, 42, 0.04)",
-          opacity: comingSoon ? 0.78 : 1,
+          opacity: planLocked ? 0.78 : 1,
         }}
       >
         <div
@@ -1252,12 +1255,12 @@ export default function SelectClient() {
               style={{
                 fontSize: compact ? 14 : emphasizeFree ? 16 : 15,
                 display: "block",
-                color: comingSoon ? "#64748b" : "#0f172a",
+                color: planLocked ? "#64748b" : "#0f172a",
               }}
             >
               {b.title}
             </strong>
-            {comingSoon && !compact ? (
+            {planLocked && !compact ? (
               <span
                 style={{
                   display: "block",
@@ -1267,7 +1270,7 @@ export default function SelectClient() {
                   color: "#94a3b8",
                 }}
               >
-                準備中のため参加できません
+                このテーマは課金プランが必要です
               </span>
             ) : null}
           </div>
@@ -1280,7 +1283,7 @@ export default function SelectClient() {
               flexShrink: 0,
             }}
           >
-            {comingSoon ? (
+            {planLocked ? (
               <span
                 style={{
                   fontSize: 11,
@@ -1292,7 +1295,7 @@ export default function SelectClient() {
                   padding: "3px 8px",
                 }}
               >
-                {teaserLabel === PAID_THEME_TEASER_LABEL ? "準備中" : teaserLabel}
+                {actionLabel ?? "プランが必要"}
               </span>
             ) : null}
             {b.is_sensitive ? (
@@ -1300,7 +1303,7 @@ export default function SelectClient() {
                 18+
               </span>
             ) : null}
-            {!comingSoon && profileMissing ? (
+            {!planLocked && profileMissing ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e" }}>
                 要登録
               </span>
@@ -1315,7 +1318,7 @@ export default function SelectClient() {
               whiteSpace: "pre-wrap",
               overflowWrap: "anywhere",
               wordBreak: "break-word",
-              color: comingSoon ? "#94a3b8" : "#475569",
+              color: planLocked ? "#94a3b8" : "#475569",
               lineHeight: 1.5,
               fontSize: 13,
             }}
@@ -1324,7 +1327,7 @@ export default function SelectClient() {
           </p>
         ) : null}
 
-        {!comingSoon ? (
+        {!planLocked ? (
           <div
             style={{
               display: "grid",
