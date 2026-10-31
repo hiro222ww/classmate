@@ -84,7 +84,7 @@ export default function WebMobileNavHost() {
         aboutHref={withDev("/about")}
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
-        displayName={accountLabel}
+        displayName={loggedIn ? accountLabel : "ゲスト"}
       />
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
         <IosWebPushInstallGuide

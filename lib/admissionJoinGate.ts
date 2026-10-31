@@ -44,11 +44,11 @@ export function resolveAdmissionStatusNotice(params: {
   admissionText?: string | null;
 }): AdmissionStatusNotice | null {
   if (params.loadState === "loading") {
-    return { kind: "loading", text: "受付状況を確認中…" };
+    return { kind: "loading", text: "受付を確認中…" };
   }
 
   if (params.loadState === "error") {
-    return { kind: "error", text: "受付状況を確認できませんでした" };
+    return { kind: "error", text: "受付を確認できません" };
   }
 
   if (!params.joinWindowOpen) {
@@ -68,16 +68,16 @@ export function resolveAdmissionStatusPillText(params: {
   admissionText?: string | null;
 }): string | null {
   if (params.loadState === "loading") {
-    return "受付状況を確認中…";
+    return "受付を確認中…";
   }
 
   if (params.loadState === "error") {
-    return "受付状況を確認できませんでした";
+    return "受付を確認できません";
   }
 
   const raw = String(params.admissionText ?? "").trim();
   if (raw) return raw;
-  return params.joinWindowOpen ? "入学受付中" : "入学受付時間外";
+  return params.joinWindowOpen ? "受付中" : "受付時間外";
 }
 
 /**

@@ -788,7 +788,7 @@ export default function SelectClient() {
     result.push({
       key: "free",
       title: "フリー",
-      description: "同年代と気軽に話そう",
+      description: "",
       world_key: "default",
       topic_key: null,
       is_sensitive: false,
@@ -1211,19 +1211,14 @@ export default function SelectClient() {
       ? "rgba(148, 163, 184, 0.35)"
       : accent?.border ?? (isFree ? "rgba(16, 185, 129, 0.28)" : undefined);
 
+    // Keep button labels short; admission status lives in the page pill.
     const actionLabel = comingSoon
       ? teaserLabel
       : profileMissing
-        ? "プロフィール登録が必要"
+        ? "登録が必要"
         : adminTestJoin
           ? "テスト入室"
-          : joinWindowLoadState === "loading"
-            ? "受付状況を確認中…"
-            : joinWindowLoadState === "error"
-              ? "受付状況を確認できませんでした"
-              : admissionClosed
-                ? "入学受付時間外"
-                : null;
+          : null;
 
     const renderJoinButton = (mode: MatchEntryMode, label: string) => (
       <MatchEntryButton
@@ -1287,7 +1282,7 @@ export default function SelectClient() {
                 color: comingSoon ? "#64748b" : "#0f172a",
               }}
             >
-              {isFree ? "テーマフリー" : b.title}
+              {b.title}
             </strong>
             {comingSoon && b.monthly_price > 0 ? (
               <span
@@ -1365,8 +1360,8 @@ export default function SelectClient() {
             marginTop: 12,
           }}
         >
-          {renderJoinButton("voice", "通話で始める")}
-          {renderJoinButton("chat", "チャットで始める")}
+          {renderJoinButton("voice", "通話")}
+          {renderJoinButton("chat", "チャット")}
         </div>
       </div>
     );
@@ -1428,7 +1423,7 @@ export default function SelectClient() {
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
-      <HomeBrandVisual menuButton={menuButton} showIntro={false} />
+      <HomeBrandVisual menuButton={isApp ? menuButton : undefined} />
 
       <HomeMenuSheet
         open={menuOpen}
@@ -1493,7 +1488,7 @@ export default function SelectClient() {
           style={{ ...DASH_CARD, marginTop: 16, borderColor: "#fde68a" }}
         >
           <div style={{ fontWeight: 900, fontSize: 15, color: "#92400e" }}>
-            プロフィール登録が必要です
+            プロフィール登録が必要
           </div>
           <Link
             href={withDev(buildProfileEditPath(selectSelfPath))}
@@ -1507,7 +1502,7 @@ export default function SelectClient() {
               textDecoration: "none",
             }}
           >
-            プロフィール登録
+            登録する
           </Link>
         </section>
       ) : null}
@@ -1588,18 +1583,9 @@ export default function SelectClient() {
 
       <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
         <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 900,
-              color: "#0f172a",
-              letterSpacing: 0.01,
-              lineHeight: 1.25,
-            }}
-          >
-            テーマを選ぶ
-          </h2>
+          <header className="cm-page-heading">
+            <h1>探す</h1>
+          </header>
         </div>
 
         <div
@@ -1611,34 +1597,27 @@ export default function SelectClient() {
           }}
         >
           <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 10px",
-              borderRadius: 999,
-              background: joinWindowOpen
-                ? "rgba(236, 253, 245, 0.95)"
-                : "rgba(241, 245, 249, 0.95)",
-              border: "1px solid rgba(148, 163, 184, 0.28)",
-              fontSize: 12,
-              fontWeight: 800,
-              color: "#334155",
-            }}
+            className={[
+              "cm-admission-pill",
+              joinWindowLoadState === "error"
+                ? "cm-admission-pill--error"
+                : joinWindowLoadState === "loading"
+                  ? "cm-admission-pill--loading"
+                  : joinWindowOpen
+                    ? "cm-admission-pill--open"
+                    : "cm-admission-pill--closed",
+            ].join(" ")}
+            role="status"
           >
             <span
+              aria-hidden
               style={{
                 width: 7,
                 height: 7,
-                borderRadius: "50%",
-                background:
-                  joinWindowLoadState === "error"
-                    ? "#f59e0b"
-                    : joinWindowLoadState === "loading"
-                      ? "#94a3b8"
-                      : joinWindowOpen
-                        ? "#16a34a"
-                        : "#94a3b8",
+                borderRadius: 999,
+                background: "currentColor",
+                opacity: 0.85,
+                display: "inline-block",
               }}
             />
             {admissionPillText}
@@ -1701,13 +1680,13 @@ export default function SelectClient() {
             }}
           >
             <span style={{ fontSize: 13, fontWeight: 800 }}>
-              所属中のクラス
-              <span style={{ marginLeft: 8, color: "#059669" }}>
-                {joinedClassCount}件
+              マイクラス
+              <span style={{ marginLeft: 8, color: "var(--cm-online, #12a879)" }}>
+                {joinedClassCount}
               </span>
             </span>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-              マイクラスへ ›
+              ›
             </span>
           </Link>
         ) : null}
@@ -1723,7 +1702,7 @@ export default function SelectClient() {
               color: "#78716c",
             }}
           >
-            現在は入学受付時間外です。運営テストモードでテスト入室できます。
+            受付時間外（テスト入室可）
           </p>
         ) : null}
 
@@ -1740,17 +1719,9 @@ export default function SelectClient() {
         />
 
         <section style={{ display: "grid", gap: 10 }}>
-          <h3
-            style={{
-              margin: 0,
-              fontSize: 16,
-              fontWeight: 900,
-              color: "#0f172a",
-            }}
-          >
-            テーマフリー
-          </h3>
-          {admissionStatusNotice ? (
+          {admissionStatusNotice &&
+          joinWindowLoadState === "error" &&
+          !admissionPillText ? (
             <div
               role="status"
               className="cm-select-admission-status"
@@ -1765,35 +1736,30 @@ export default function SelectClient() {
                   margin: 0,
                   fontSize: 13,
                   fontWeight: 700,
-                  color:
-                    admissionStatusNotice.kind === "error"
-                      ? "#b45309"
-                      : "#78716c",
+                  color: "#b45309",
                   lineHeight: 1.45,
                 }}
               >
                 {admissionStatusNotice.text}
               </p>
-              {admissionStatusNotice.kind === "error" ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void reloadJoinWindow();
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 999,
-                    border: "1px solid rgba(148, 163, 184, 0.45)",
-                    background: "#fff",
-                    fontSize: 12,
-                    fontWeight: 800,
-                    color: "#475569",
-                    cursor: "pointer",
-                  }}
-                >
-                  更新
-                </button>
-              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  void reloadJoinWindow();
+                }}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(148, 163, 184, 0.45)",
+                  background: "#fff",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  color: "#475569",
+                  cursor: "pointer",
+                }}
+              >
+                更新
+              </button>
             </div>
           ) : null}
           <div
@@ -1812,16 +1778,7 @@ export default function SelectClient() {
         {SHOW_PAID_THEMES_AS_TEASER && themeGroups.length > 0 ? (
           <section style={{ display: "grid", gap: 16 }}>
             <div>
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: 16,
-                  fontWeight: 900,
-                  color: "#0f172a",
-                }}
-              >
-                テーマから探す
-              </h3>
+              <h3 className="cm-home-section-title">テーマ</h3>
             </div>
 
             {themeGroups.map((group) => (
