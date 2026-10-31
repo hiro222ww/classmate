@@ -13,6 +13,10 @@ import {
   useSearchParams,
 } from "next/navigation";
 import { ChalkboardRoomShell } from "./ChalkboardRoomShell";
+import {
+  RoomAvatarStrip,
+  type RoomAvatarStripMember,
+} from "@/components/room/RoomAvatarStrip";
 import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { supabase } from "@/lib/supabaseClient";
@@ -53,15 +57,12 @@ import {
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
 import SessionMessages from "@/components/SessionMessages";
-import MemberModerationButtons from "@/components/MemberModerationButtons";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import InviteJoinProgress, {
   type InvitePrepStageId,
 } from "@/components/InviteJoinProgress";
 import MemberJoinBanner from "@/components/MemberJoinBanner";
-import MemberListAvatar from "@/components/MemberListAvatar";
 import {
-  MembersLoadingPanel,
   LoadErrorPanel,
   softUpdatingBadgeStyle,
   LoadSpinner,
@@ -76,14 +77,11 @@ import {
   type MemberJoinEvent,
 } from "@/lib/memberJoinNotify";
 import {
-  LIST_MEMBER_AVATAR_PX,
   normalizeMemberDeviceId,
   type MemberProfileTarget,
 } from "@/lib/memberProfileView";
 import MeetingPlanSection from "@/components/MeetingPlanSection";
 import CallRequestSection from "@/components/CallRequestSection";
-import { HelpTip } from "@/components/HelpTip";
-import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { fetchWithRetry } from "@/lib/retryableFetch";
 import { postClassPresence } from "@/lib/postClassPresence";
 import {
@@ -152,7 +150,6 @@ import {
   logParticipationStatusDecision,
   mapPresenceApiRow,
   participationStatusLabel,
-  participationStatusStyle,
   PRESENCE_FRESH_MS_ROOM,
   resolveParticipationDisplay,
   type ParticipationSource,
@@ -727,25 +724,6 @@ function dedupeMembers(
   return me ? [me, ...sortedOthers] : sortedOthers;
 }
 
-
-function MemberAvatar({
-  src,
-  label,
-  isMe,
-}: {
-  src?: string | null;
-  label: string;
-  isMe: boolean;
-}) {
-  return (
-    <MemberListAvatar
-      avatarUrl={src}
-      label={label}
-      sizePx={LIST_MEMBER_AVATAR_PX}
-      isMe={isMe}
-    />
-  );
-}
 
 export default function RoomClient() {
   const router = useRouter();
@@ -4363,10 +4341,71 @@ const name = rawName === "You" ? "参加者" : rawName;
     lobbyMemberCount,
   ]);
 
-  const shellTitle = topicTitle || "ルーム";
+  const shellTitle =
+    String(classLabel || "").trim() ||
+    String(topicTitle || "").trim() ||
+    "ルーム";
   const shellSubtitle = classLabel
     ? `${classLabel} / ${subtitle}`
     : subtitle;
+  const roomStatusTone =
+    status === "active" || status === "in_call" ? "incall" : "waiting";
+  const roomStatusLabel =
+    roomStatusTone === "incall" ? "通話中" : "待機中";
+  const topicForCategory = String(topicTitle || "").trim();
+  const roomCategoryLabel =
+    topicForCategory &&
+    topicForCategory !== "ルーム" &&
+    topicForCategory !== shellTitle
+      ? topicForCategory
+      : "フリークラス";
+
+  const inviteFriends = useCallback(async () => {
+    if (!sessionId || !classId) {
+      alert("まだ招待リンクを作れません。");
+      return;
+    }
+    const inviterName = normalizeName(displayName) || "友達";
+    const inviteUrl = buildInviteRoomUrl({
+      classId,
+      sessionId,
+      inviter: inviterName,
+    });
+    const result = await shareOrCopyInviteUrl({
+      url: inviteUrl,
+      title: "Classmate",
+      text: `${inviterName}さんから通話に招待されています`,
+    });
+    if (result.ok && result.method === "clipboard") {
+      alert("招待リンクをコピーしました");
+    } else if (!result.ok) {
+      alert("招待リンクを共有できませんでした");
+    }
+  }, [sessionId, classId, displayName]);
+
+  const avatarStripMembers = useMemo((): RoomAvatarStripMember[] => {
+    return visibleMembers.map((m) => {
+      const did = String(m.device_id ?? "").trim();
+      const isMe = did === String(deviceId ?? "").trim();
+      const label = isMe
+        ? resolveDisplayName({
+            profileDisplayName: displayName,
+            sessionMemberDisplayName: m.display_name,
+          }).displayName
+        : formatMemberDisplayName(m);
+      return {
+        id: did || label,
+        label,
+        photoPath: m.photo_path ?? null,
+        avatarUrl:
+          m.avatar_url ||
+          (m.photo_path && publicStorageBase
+            ? `${publicStorageBase}/${m.photo_path}`
+            : null),
+        isMe,
+      };
+    });
+  }, [visibleMembers, deviceId, displayName, publicStorageBase]);
 
   const roomInviteUrl = useMemo(
     () =>
@@ -4427,7 +4466,12 @@ const name = rawName === "You" ? "参加者" : rawName;
       >
         <ChalkboardRoomShell
           title={shellTitle}
+          categoryLabel={roomCategoryLabel}
+          countLabel={subtitle}
+          statusLabel={roomStatusLabel}
+          statusTone={roomStatusTone}
           subtitle={shellSubtitle}
+          boardMode="compact"
           lines={
             err
               ? [err]
@@ -4440,15 +4484,30 @@ const name = rawName === "You" ? "参加者" : rawName;
                     inviter
                       ? `${inviter}さんに招待されています`
                       : "このクラスに招待されています",
-                    "参加中のメンバーと会話を始めましょう",
                   ]
-                : autoCallAttemptedRef.current
-                  ? ["通話開始ボタンを押して、通話を開始してください。"]
-                  : status === "forming"
-                    ? ["通話画面へ進みます。1人でも黒板と募集状態を確認できます。"]
-                    : status === "active"
-                      ? ["通話を開始できます。"]
-                      : []
+                : []
+          }
+          avatarStrip={
+            <RoomAvatarStrip
+              members={avatarStripMembers}
+              capacity={capacity}
+              onInvite={() => {
+                void inviteFriends();
+              }}
+              inviteDisabled={!sessionId || !classId}
+              onMemberClick={(member) => {
+                const did = String(member.id ?? "").trim();
+                if (!did || !deviceId) return;
+                setProfileTarget({
+                  deviceId: did,
+                  viewerDeviceId: deviceId,
+                  classId,
+                  sessionId,
+                  displayName: member.label,
+                  photoPath: member.photoPath ?? null,
+                });
+              }}
+            />
           }
           onHome={goHome}
           homeLabel={roomExitLabel}
@@ -4600,117 +4659,8 @@ const name = rawName === "You" ? "参加者" : rawName;
               />
             ) : null}
 
-            <div
-              className="cm-paper-card cm-room-invite"
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 14,
-                padding: 12,
-                background: "#fff",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 10,
-                flexWrap: "wrap",
-              }}
-            >
-              <HelpTip
-                label="招待リンクについて"
-                content="この待機ルームに直接参加できるリンクをコピーします。"
-              >
-                <span className="cm-section-title" style={{ fontWeight: 900 }}>
-                  友達を招待する
-                </span>
-              </HelpTip>
-
-              <button
-                type="button"
-                className={
-                  sessionId && classId ? "cm-cta-primary cm-room-invite-btn" : ""
-                }
-                onClick={async () => {
-                  if (!sessionId || !classId) {
-                    alert("まだ招待リンクを作れません。");
-                    return;
-                  }
-
-                  const inviterName = normalizeName(displayName) || "友達";
-
-                  const inviteUrl = buildInviteRoomUrl({
-                    classId,
-                    sessionId,
-                    inviter: inviterName,
-                  });
-
-                  const result = await shareOrCopyInviteUrl({
-                    url: inviteUrl,
-                    title: "Classmate",
-                    text: `${inviterName}さんから通話に招待されています`,
-                  });
-                  if (result.ok && result.method === "clipboard") {
-                    alert("招待リンクをコピーしました");
-                  } else if (result.ok && result.method === "prompt") {
-                    // prompt already shown
-                  } else if (!result.ok) {
-                    alert("招待リンクを共有できませんでした");
-                  }
-                }}
-                disabled={!sessionId || !classId}
-                style={{
-                  border: "none",
-                  borderRadius: 999,
-                  padding: "10px 14px",
-                  background: !sessionId || !classId ? "#9ca3af" : "#111827",
-                  color: "#fff",
-                  fontWeight: 900,
-                  cursor: !sessionId || !classId ? "not-allowed" : "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                友達を招待する
-              </button>
-            </div>
-
-            <div
-              className="cm-paper-card cm-room-members"
-              style={{
-                border: "1px solid #e5e7eb",
-                borderRadius: 14,
-                padding: 12,
-                background: "#fff",
-              }}
-            >
-              <div
-                style={{
-                  fontWeight: 900,
-                  marginBottom: 8,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span className="cm-section-title cm-emblem-heading">
-                  <ClassmateEmblem size="xs" variant="muted" decorative />
-                  参加メンバー
-                </span>
-                <span style={{ color: "#6b7280", fontWeight: 800, fontSize: 12 }}>
-                  {subtitle}
-                </span>
-                {membersListRefreshing && membersListInitialFetchDone ? (
-                  <span
-                    className="cm-room-refreshing-badge"
-                    style={softUpdatingBadgeStyle}
-                  >
-                    <LoadSpinner size={10} />
-                    更新中
-                  </span>
-                ) : null}
-              </div>
-
-              {membersLoadState === "loading" && visibleMembers.length === 0 ? (
-                <MembersLoadingPanel />
-              ) : membersLoadState === "error" && visibleMembers.length === 0 ? (
+            {membersLoadState === "error" && visibleMembers.length === 0 ? (
+              <div className="cm-paper-card" style={{ padding: 12 }}>
                 <LoadErrorPanel
                   message={
                     membersListFetchError ||
@@ -4720,216 +4670,25 @@ const name = rawName === "You" ? "参加者" : rawName;
                     void fetchStatus({ force: true, reason: "members_retry" });
                   }}
                 />
-              ) : membersLoadState === "empty" ? (
-                <div className="cm-room-empty-members" style={{ color: "#6b7280" }}>
-                  まだ参加者はいません
-                </div>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {membersLoadState === "loading" || membersListRefreshing ? (
-                    <div
-                      className="cm-room-refreshing-badge"
-                      style={{
-                        ...softUpdatingBadgeStyle,
-                        width: "fit-content",
-                        marginBottom: 4,
-                      }}
-                    >
-                      <LoadSpinner size={10} />
-                      参加状況を更新中
-                    </div>
-                  ) : null}
-                  {visibleMembers.map((m) => {
-                    const did = String(m.device_id ?? "").trim();
-                    const isMe = did === String(deviceId ?? "").trim();
-                    const highlighted = highlightMemberIds.has(did);
+              </div>
+            ) : null}
 
-                    const label = isMe
-                      ? resolveDisplayName({
-                          profileDisplayName: displayName,
-                          sessionMemberDisplayName: m.display_name,
-                        }).displayName
-                      : formatMemberDisplayName(m);
-
-                    const prevStatuses = prevMemberStatusRef.current;
-                    // visibleMembers are current-session members; pass true so
-                    // call participants are not treated as offline when room
-                    // presence briefly drops during room→call handoff.
-                    const memberDisplay = resolveRoomMemberDisplay(
-                      m,
-                      presenceMap[did],
-                      sessionId,
-                      prevStatuses[did] ?? null,
-                      isMe,
-                      deviceId,
-                      lastInSessionAtRef.current[did] ?? Date.now(),
-                      prevMemberInternalRef.current[did] ?? null,
-                      true
-                    );
-                    const pill = participationStatusStyle(memberDisplay.status);
-
-                    return (
-                      <div
-                        key={did || "unknown"}
-                        className={[
-                          "cm-room-member-row",
-                          highlighted ? "cm-room-member-highlighted" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: highlighted
-                            ? "2px solid #34d399"
-                            : "1px solid #e5e7eb",
-                          background: highlighted ? "#ecfdf5" : "#fafafa",
-                          boxShadow: highlighted
-                            ? "0 0 0 3px rgba(52, 211, 153, 0.25)"
-                            : undefined,
-                          transition: "border-color 0.2s ease, background 0.2s ease",
-                        }}
-                      >
-                        <button
-                          type="button"
-                          disabled={!did || !deviceId}
-                          onClick={() => {
-                            if (!did || !deviceId) return;
-                            setProfileTarget({
-                              deviceId: did,
-                              viewerDeviceId: deviceId,
-                              classId,
-                              sessionId,
-                              displayName: label,
-                              photoPath: m.photo_path ?? null,
-                            });
-                          }}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 10,
-                            minWidth: 0,
-                            flex: 1,
-                            border: "none",
-                            background: "transparent",
-                            padding: 0,
-                            margin: 0,
-                            cursor: "pointer",
-                            textAlign: "left",
-                          }}
-                        >
-                          <MemberAvatar
-                            src={
-                              m.avatar_url ||
-                              (m.photo_path && publicStorageBase
-                                ? `${publicStorageBase}/${m.photo_path}`
-                                : null)
-                            }
-                            label={label}
-                            isMe={isMe}
-                          />
-
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <div
-                              style={{
-                                fontWeight: 800,
-                                color: "#111827",
-                                lineHeight: 1.2,
-                              }}
-                            >
-                              {label}
-                            </div>
-                          </div>
-                        </button>
-
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                            flexWrap: "wrap",
-                            justifyContent: "flex-end",
-                          }}
-                        >
-                          {isMe ? (
-                            <span style={{ fontSize: 12, color: "#6b7280" }}>
-                              自分
-                            </span>
-                          ) : null}
-
-                          <span
-                            style={{
-                              ...pill,
-                              fontSize: 11,
-                              fontWeight: 900,
-                              padding: "4px 8px",
-                              borderRadius: 999,
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {memberDisplay.label}
-                          </span>
-
-                          {!isMe && did ? (
-                            <details style={{ position: "relative" }}>
-                              <summary
-                                style={{
-                                  listStyle: "none",
-                                  cursor: "pointer",
-                                  fontSize: 18,
-                                  color: "#9ca3af",
-                                  lineHeight: 1,
-                                  width: 28,
-                                  height: 28,
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  borderRadius: 999,
-                                }}
-                              >
-                                ︙
-                              </summary>
-
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  right: 0,
-                                  top: 32,
-                                  zIndex: 20,
-                                  padding: 8,
-                                  borderRadius: 12,
-                                  border: "1px solid #e5e7eb",
-                                  background: "#fff",
-                                  boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-                                }}
-                              >
-                                <MemberModerationButtons
-                                  myDeviceId={deviceId}
-                                  targetDeviceId={did}
-                                  targetName={label}
-                                  sessionId={sessionId}
-                                  classId={classId}
-                                />
-                              </div>
-                            </details>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {membersListRefreshing && membersListInitialFetchDone ? (
+              <div
+                className="cm-room-refreshing-badge"
+                style={{ ...softUpdatingBadgeStyle, width: "fit-content" }}
+              >
+                <LoadSpinner size={10} />
+                参加状況を更新中
+              </div>
+            ) : null}
 
             <SessionMessages
               sessionId={sessionId}
               deviceId={deviceId}
               displayName={displayName}
               title="チャット"
-              maxHeight={320}
+              maxHeight={240}
             />
           </div>
         </ChalkboardRoomShell>
