@@ -255,7 +255,7 @@ export default function ClassCreatePage() {
         </section>
       ) : null}
 
-      {!permLoading && canCreate ? (
+      {!permLoading && canCreate && !showLoginGate ? (
         <section
           className="cm-paper-card"
           style={{
