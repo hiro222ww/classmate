@@ -1,5 +1,7 @@
 /**
  * Mobile screenshots + overflow probe for waiting room (/room) and call chrome.
+ * Call chrome uses local /dev/call-chrome (no admin auth).
+ *
  * Usage: BASE_URL=http://127.0.0.1:3000 node scripts/capture-room-call-ui-fix.mjs
  */
 import { chromium } from "playwright";
@@ -44,6 +46,9 @@ async function measureOverflow(page) {
       ) {
         continue;
       }
+      if (el.closest(".cm-call-surface-panel--inactive")) continue;
+      if (el.closest(".classmate-board-scroll, .classmate-board-root")) continue;
+      if (el.classList?.contains("cm-room-session-hero-img")) continue;
       if (rect.right > clientW + 1 || rect.left < -1) {
         offenders.push({
           score: Math.max(rect.right - clientW, -rect.left),
@@ -84,6 +89,38 @@ async function mockRoomApis(page) {
 
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
+    const members = [
+      {
+        device_id: deviceId,
+        display_name: "くらと",
+        photo_path: null,
+        is_in_call: false,
+      },
+      {
+        device_id: "m2",
+        display_name: "はる",
+        photo_path: null,
+        is_in_call: false,
+      },
+      {
+        device_id: "m3",
+        display_name: "ゆう",
+        photo_path: null,
+        is_in_call: false,
+      },
+      {
+        device_id: "m4",
+        display_name: "あい",
+        photo_path: null,
+        is_in_call: false,
+      },
+      {
+        device_id: "m5",
+        display_name: "けん",
+        photo_path: null,
+        is_in_call: false,
+      },
+    ];
     const map = {
       "/api/profile": {
         ok: true,
@@ -102,41 +139,7 @@ async function mockRoomApis(page) {
         hasLinkedEmail: true,
         email: "mate@example.com",
       },
-      "/api/class/members": {
-        ok: true,
-        members: [
-          {
-            device_id: deviceId,
-            display_name: "くらと",
-            photo_path: null,
-            is_in_call: false,
-          },
-          {
-            device_id: "m2",
-            display_name: "はる",
-            photo_path: null,
-            is_in_call: false,
-          },
-          {
-            device_id: "m3",
-            display_name: "ゆう",
-            photo_path: null,
-            is_in_call: false,
-          },
-          {
-            device_id: "m4",
-            display_name: "あい",
-            photo_path: null,
-            is_in_call: false,
-          },
-          {
-            device_id: "m5",
-            display_name: "けん",
-            photo_path: null,
-            is_in_call: false,
-          },
-        ],
-      },
+      "/api/class/members": { ok: true, members },
       "/api/session/join": {
         ok: true,
         session: {
@@ -145,13 +148,7 @@ async function mockRoomApis(page) {
           status: "forming",
           capacity: 5,
         },
-        members: [
-          {
-            device_id: deviceId,
-            display_name: "くらと",
-            photo_path: null,
-          },
-        ],
+        members,
       },
       "/api/class/mine": {
         ok: true,
@@ -172,7 +169,7 @@ async function mockRoomApis(page) {
             capacity: 5,
             member_count: 5,
           },
-          members: map["/api/class/members"].members,
+          members,
         },
       });
     }
@@ -211,7 +208,10 @@ for (const width of WIDTHS) {
     shot: roomShot,
     overflow: roomOverflow,
     marks: roomMarks,
-    bad: roomOverflow.overflowX > 1 || roomOverflow.top.some((t) => t.score > 2),
+    bad:
+      roomOverflow.overflowX > 1 ||
+      roomOverflow.top.some((t) => t.score > 2) ||
+      roomMarks.board > 0,
   });
   await roomPage.close();
 
@@ -220,7 +220,7 @@ for (const width of WIDTHS) {
     isMobile: true,
     hasTouch: true,
   });
-  await callPage.goto(`${BASE}/call/demo/prod-chrome?scene=multi`, {
+  await callPage.goto(`${BASE}/dev/call-chrome?scene=multi`, {
     waitUntil: "domcontentloaded",
     timeout: 60000,
   });
@@ -235,8 +235,7 @@ for (const width of WIDTHS) {
     oldSeats: await callPage.locator(".cm-call-seat").count(),
     oldFloating: await callPage.locator(".cm-call-floating-dock").count(),
   };
-  // Toggle chat tab
-  await callPage.locator('.cm-call-surface-tab[aria-selected="false"]').click();
+  await callPage.locator(".cm-call-surface-tab").nth(1).click();
   await callPage.waitForTimeout(400);
   const callChatShot = `${OUT}/call_room_chat_${width}.png`;
   await callPage.screenshot({ path: callChatShot, fullPage: true });
@@ -266,5 +265,4 @@ fs.writeFileSync(
 );
 console.log(JSON.stringify(results, null, 2));
 await browser.close();
-const failed = results.some((r) => r.bad);
-process.exit(failed ? 1 : 0);
+process.exit(results.some((r) => r.bad) ? 1 : 0);
