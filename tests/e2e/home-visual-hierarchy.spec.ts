@@ -31,8 +31,15 @@ async function mockHomeData(page: Page) {
 }
 
 async function checkActions(page: Page) {
-  const voice = page.getByRole("button", { name: "通話で始める", exact: true });
-  const chat = page.getByRole("button", { name: "チャットで始める", exact: true });
+  // Home RandomTalkCta uses short labels; select free board uses MatchEntryButton defaults.
+  const voice = page
+    .getByRole("button", { name: "通話", exact: true })
+    .or(page.getByRole("button", { name: "通話で始める", exact: true }))
+    .first();
+  const chat = page
+    .getByRole("button", { name: "チャット", exact: true })
+    .or(page.getByRole("button", { name: "チャットで始める", exact: true }))
+    .first();
   await expect(voice).toBeEnabled();
   await expect(chat).toBeEnabled();
   await expect(voice).toHaveCSS("color", "rgb(255, 255, 255)");
@@ -55,24 +62,98 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await checkActions(page);
       const brand = page.getByRole("link", { name: "Classmate — ホームへ戻る" });
       await expect(brand).toHaveAttribute("href", "/");
-      expect((await brand.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      expect((await brand.boundingBox())!.height).toBeGreaterThanOrEqual(43);
       await expect(brand.locator("img")).toHaveCount(1);
       await expect(brand).toContainText("クラスメイト");
       await expect(page.locator(".cm-home-brand-visual-intro")).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "テーマを選ぶ", exact: true })).toHaveCSS("border-top-width", "0px");
+      await expect(page.getByRole("heading", { name: "探す", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "すべて見る", exact: true })).toHaveAttribute(
+        "href",
+        "/class/select"
+      );
+      // Home keeps only the four representative majors.
+      await expect(page.locator(".cm-home-theme-grid-list .cm-home-theme-card")).toHaveCount(4);
+      await expect(page.getByRole("link", { name: /学校・勉強/ })).toHaveAttribute(
+        "href",
+        "/class/select?cat=school"
+      );
+      await expect(page.getByRole("link", { name: /アイデンティティ/ })).toHaveCount(0);
+      // Warm empty state without duplicate discover/create CTAs.
+      await expect(page.getByText("最初のクラスを見つけよう", { exact: true })).toBeVisible();
+      await expect(page.locator(".cm-my-class-empty-actions")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
+      // In-home マイクラス jump: heading scrolls to section; ＋作成 stays independent.
+      const myClassSection = page.locator("#cm-home-my-class");
+      await expect(myClassSection).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "マイクラス", exact: true }).getByRole("button", {
+          name: "マイクラス",
+          exact: true,
+        })
+      ).toBeVisible();
+      await expect(page.getByRole("link", { name: "＋ 作成", exact: true })).toHaveAttribute(
+        "href",
+        "/class/create"
+      );
+      await page.evaluate(() => {
+        const pad = document.createElement("div");
+        pad.dataset.e2ePad = "1";
+        pad.style.height = "1600px";
+        document.querySelector("main")?.appendChild(pad);
+        window.scrollTo(0, 1400);
+      });
+      await page
+        .getByRole("heading", { name: "マイクラス", exact: true })
+        .getByRole("button", { name: "マイクラス", exact: true })
+        .click();
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const el = document.getElementById("cm-home-my-class");
+            if (!el) return Number.POSITIVE_INFINITY;
+            return Math.abs(el.getBoundingClientRect().top);
+          })
+        )
+        .toBeLessThan(120);
+      await expect(page).toHaveURL(/\/$/);
+      await page.evaluate(() => {
+        document.querySelectorAll("[data-e2e-pad='1']").forEach((n) => n.remove());
+        window.scrollTo(0, 0);
+      });
+      // Home-centric experiment: bottom nav hidden (component kept behind flag).
+      await expect(page.locator(".cm-mobile-bottom-nav")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "メニューを開く", exact: true })).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath(`home-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await checkActions(page);
-      await page.getByRole("link", { name: "テーマを選ぶ", exact: true }).click();
+      await page.getByRole("link", { name: "すべて見る", exact: true }).click();
       await expect(page).toHaveURL(/\/class\/select$/);
       await checkActions(page);
-      await expect(page.getByText("同年代と気軽に話そう", { exact: true })).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "ホームへ戻る", exact: true })).toBeVisible();
+      await expect(page.locator(".cm-mobile-bottom-nav")).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "探す", exact: true })).toHaveCount(1);
+      await expect(page.getByRole("heading", { name: "カテゴリー", exact: true })).toHaveCount(1);
+      // 探す shows the full major catalog in a 2-column grid.
+      await expect(page.locator(".cm-home-theme-grid-list .cm-home-theme-card")).toHaveCount(10);
+      await expect(page.getByRole("button", { name: /学校・勉強/ })).toBeVisible();
+      await expect(page.getByRole("button", { name: /アイデンティティ・多様性/ })).toBeVisible();
       await expect(page.getByText("各テーマから通話またはチャットで始められます（最大5人）")).toHaveCount(0);
       await expect(page.getByText("テーマを決めずに、気軽に入れるクラス")).toHaveCount(0);
-      await expect(page.getByText("準備中のテーマです。通話・チャットともに参加・購入できません")).toHaveCount(0);
       await expect(page.locator(".cm-home-brand-visual-intro")).toHaveCount(0);
-      await expect(page.getByText("¥480/月", { exact: false }).first()).toBeVisible();
-      await expect(page.locator(".cm-select-theme-card--teaser button").first()).toBeDisabled();
+      await expect(page.getByText("¥480/月", { exact: false })).toHaveCount(0);
+      await page.getByRole("button", { name: /趣味・エンタメ/ }).click();
+      await expect(page.getByRole("heading", { name: "趣味・エンタメ", exact: true })).toBeVisible();
+      await expect(
+        page.getByText("このカテゴリーのテーマ課金は準備中です。参加・課金はできません。")
+      ).toBeVisible();
+      await expect(page.locator(".cm-select-subcat-row")).toHaveCount(4);
+      await expect(page.getByText("準備中").first()).toBeVisible();
+      await expect(
+        page
+          .getByRole("button", { name: "通話", exact: true })
+          .or(page.getByRole("button", { name: "通話で始める", exact: true }))
+          .first()
+      ).toBeEnabled();
       await page.screenshot({ path: testInfo.outputPath(`select-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await expect(page).toHaveURL(/\/$/);

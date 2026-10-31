@@ -20,6 +20,11 @@ import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { RandomTalkCta } from "@/components/home/RandomTalkCta";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 import type { JoinedClassRow } from "@/hooks/useJoinedClasses";
 import {
   canStartMatchJoin,
@@ -441,7 +446,13 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
-  const { adminAuthenticated, opsTestFlags } = useDashboardAccountStatus(deviceId);
+  const {
+    adminAuthenticated,
+    opsTestFlags,
+    loggedIn,
+    accountLabel,
+  } = useDashboardAccountStatus(deviceId);
+  const [menuOpen, setMenuOpen] = useState(false);
   const {
     enabled: notificationsEnabled,
     toggle: toggleNotifications,
@@ -1959,6 +1970,29 @@ return () => {
       ? ""
       : "ゲスト");
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
+  const myClassSectionId = "cm-home-my-class";
+
+  const scrollToMyClassSection = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const el = document.getElementById(myClassSectionId);
+    if (!el) return;
+    // Avoid history/hash writes here — Next.js App Router patches history and a
+    // soft navigation can remount home (and bounce incomplete profile → onboarding).
+    // rAF helps iOS Safari apply scroll-margin after layout settles.
+    window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== `#${myClassSectionId}`) return;
+    // Wait a tick so layout (empty/list) is ready; works with 0 classes too.
+    const t = window.setTimeout(() => {
+      scrollToMyClassSection();
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [scrollToMyClassSection, visible.length]);
 
   async function tryOpenClassWithHintSession(params: {
     target: MineClass;
@@ -2625,6 +2659,53 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         notificationsBusy={notificationsBusy}
         onToggleNotifications={toggleNotifications}
         hideWebPush={isAppShellContext()}
+        trailing={
+          <button
+            type="button"
+            className="cm-hamburger-btn"
+            aria-label="メニューを開く"
+            onClick={() => setMenuOpen(true)}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="#374151"
+              strokeWidth="2"
+              strokeLinecap="round"
+              aria-hidden
+            >
+              <line x1="3" y1="5" x2="17" y2="5" />
+              <line x1="3" y1="10" x2="17" y2="10" />
+              <line x1="3" y1="15" x2="17" y2="15" />
+            </svg>
+          </button>
+        }
+      />
+
+      <HomeMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isAppShellContext()}
+        profileHref={withDev(buildProfileEditPath("/"))}
+        myClassesHref={withDev("/class/mine")}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/"))
+        }
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+        aboutHref={withDev("/about")}
+        legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={welcomeName || "ゲスト"}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
@@ -2710,9 +2791,21 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           </div>
         ) : null}
 
-        <section className="cm-home-my-class-section">
+        <section
+          id={myClassSectionId}
+          className="cm-home-my-class-section"
+        >
           <div className="cm-home-section-head">
-            <h2 className="cm-home-section-title">マイクラス</h2>
+            <h2 className="cm-home-section-title">
+              <button
+                type="button"
+                className="cm-home-my-class-jump"
+                onClick={() => scrollToMyClassSection()}
+                aria-controls={myClassSectionId}
+              >
+                マイクラス
+              </button>
+            </h2>
             <Link
               href={withDev("/class/create")}
               className="cm-home-section-link"
@@ -2747,12 +2840,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             })}
           </div>
         ) : (
-          <MyClassEmpty
-            onRandomFocus={() => {
-              const el = document.getElementById("cm-home-random");
-              el?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }}
-          />
+          <MyClassEmpty />
         )}
         </section>
       </div>

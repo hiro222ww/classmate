@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { withDev } from "@/lib/withDev";
+import { WEB_MOBILE_BOTTOM_NAV_ENABLED } from "@/components/nav/webMobileBottomNavFlag";
 
 export type MobileBottomNavTabId =
   | "home"
@@ -168,6 +169,9 @@ export default function MobileBottomNav({
 
 /** Routes where the web mobile bottom nav should stay hidden. */
 export function shouldHideMobileBottomNav(pathname: string): boolean {
+  // Home-centric experiment: keep the component, hide the bar globally.
+  if (!WEB_MOBILE_BOTTOM_NAV_ENABLED) return true;
+
   const p = String(pathname || "");
   if (!p) return true;
   if (p.startsWith("/call")) return true;

@@ -3,51 +3,45 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { withDev } from "@/lib/withDev";
+import {
+  THEME_OFFER_COMING_SOON_LABEL,
+  buildThemeSelectAllPath,
+  buildThemeSelectCategoryPath,
+  listFeaturedHomeMajorCategories,
+  listVisibleThemeMajorCategories,
+  type ThemeMajorCategoryDef,
+  type ThemeMajorCategoryId,
+} from "@/lib/themeCatalog";
 
-export type ThemeCardId = "game" | "music" | "study" | "chat";
+export type ThemeCardId = ThemeMajorCategoryId;
 
 export type ThemeCardDef = {
   id: ThemeCardId;
   title: string;
   hint: string;
-  tone: ThemeCardId;
-  /** Optional category match keys for select filtering. */
-  match: RegExp;
+  tone: string;
+  iconKey: string;
 };
 
-/** Visual theme affordances — not invented live rooms. */
-export const THEME_CARDS: ThemeCardDef[] = [
-  {
-    id: "game",
-    title: "ゲーム",
-    hint: "一緒に遊ぶ",
-    tone: "game",
-    match: /ゲーム|game|esports|eスポーツ/,
-  },
-  {
-    id: "music",
-    title: "音楽",
-    hint: "聴いて話す",
-    tone: "music",
-    match: /音楽|music|歌|メロディ/,
-  },
-  {
-    id: "study",
-    title: "勉強",
-    hint: "集中できる場",
-    tone: "study",
-    match: /勉強|学習|study|学校|仕事/,
-  },
-  {
-    id: "chat",
-    title: "雑談",
-    hint: "気軽に話す",
-    tone: "chat",
-    match: /雑談|交流|フリー|talk|chat|おしゃべり/,
-  },
-];
+function toCardDef(major: ThemeMajorCategoryDef): ThemeCardDef {
+  return {
+    id: major.id,
+    title: major.label,
+    hint: major.hint,
+    tone: major.tone,
+    iconKey: major.iconKey ?? major.tone ?? major.id,
+  };
+}
 
-export function ThemeGlyph({ id }: { id: ThemeCardId }) {
+/** All visible majors — static fallback. Prefer API-backed categories prop. */
+export const THEME_CARDS: ThemeCardDef[] =
+  listVisibleThemeMajorCategories().map(toCardDef);
+
+/** Home representative set (≤ 4). */
+export const FEATURED_THEME_CARDS: ThemeCardDef[] =
+  listFeaturedHomeMajorCategories().map(toCardDef);
+
+export function ThemeGlyph({ id }: { id: string }) {
   const common = {
     width: 22,
     height: 22,
@@ -61,7 +55,13 @@ export function ThemeGlyph({ id }: { id: ThemeCardId }) {
   };
 
   switch (id) {
-    case "game":
+    case "chat":
+      return (
+        <svg {...common}>
+          <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+        </svg>
+      );
+    case "hobby":
       return (
         <svg {...common}>
           <rect x="3" y="8" width="18" height="11" rx="3" />
@@ -70,22 +70,64 @@ export function ThemeGlyph({ id }: { id: ThemeCardId }) {
           <path d="M7 13h2M8 12v2" />
         </svg>
       );
-    case "music":
-      return (
-        <svg {...common}>
-          <path d="M9 18V5l12-2v13" />
-          <circle cx="6" cy="18" r="3" />
-          <circle cx="18" cy="16" r="3" />
-        </svg>
-      );
-    case "study":
+    case "school":
       return (
         <svg {...common}>
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
           <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
         </svg>
       );
-    case "chat":
+    case "daily":
+      return (
+        <svg {...common}>
+          <path d="M3 10.5 12 3l9 7.5" />
+          <path d="M5 9.5V21h14V9.5" />
+          <path d="M9 21v-6h6v6" />
+        </svg>
+      );
+    case "relationship":
+      return (
+        <svg {...common}>
+          <path d="M19.5 12.5c1.5-1.6 1.5-4.1 0-5.7a3.8 3.8 0 0 0-5.5 0L12 8.8l-2-2a3.8 3.8 0 0 0-5.5 0c-1.5 1.6-1.5 4.1 0 5.7L12 20l7.5-7.5z" />
+        </svg>
+      );
+    case "identity":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="8" r="3.5" />
+          <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
+        </svg>
+      );
+    case "beauty":
+      return (
+        <svg {...common}>
+          <path d="M12 3c2.5 3.5 6 5.2 6 9a6 6 0 1 1-12 0c0-3.8 3.5-5.5 6-9z" />
+        </svg>
+      );
+    case "sports":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3.6 9h16.8M3.6 15h16.8" />
+          <path d="M12 3a14 14 0 0 1 0 18A14 14 0 0 1 12 3z" />
+        </svg>
+      );
+    case "career":
+      return (
+        <svg {...common}>
+          <rect x="3" y="8" width="18" height="12" rx="2" />
+          <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          <path d="M3 13h18" />
+        </svg>
+      );
+    case "creative":
+      return (
+        <svg {...common}>
+          <path d="M12 19 5 12l7-9 7 9-7 7z" />
+          <path d="M12 19v3" />
+        </svg>
+      );
+    default:
       return (
         <svg {...common}>
           <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
@@ -98,36 +140,62 @@ type ThemeCardGridProps = {
   className?: string;
   /** When set, cards are buttons that call onPick instead of links. */
   onPick?: (id: ThemeCardId) => void;
-  /** Default link target when onPick is not used. */
+  /** Default link target when onPick is not used (ignored — uses cat deep-link). */
   href?: string;
   activeId?: ThemeCardId | null;
   trailing?: ReactNode;
   title?: string;
   listHref?: string | null;
+  /**
+   * `featured` — home representative majors (≤4).
+   * `all` — full visible catalog for 探す一覧.
+   */
+  variant?: "featured" | "all";
+  /** Override card source when needed (API-backed preferred). */
+  categories?: readonly ThemeMajorCategoryDef[];
+  showComingSoonHint?: boolean;
+  listLabel?: string;
 };
 
 export function ThemeCardGrid({
   className,
   onPick,
-  href = "/class/select",
   activeId = null,
   title = "探す",
   listHref = "/class/select",
+  variant = "featured",
+  categories,
+  showComingSoonHint = false,
+  listLabel = "すべて見る",
 }: ThemeCardGridProps) {
+  const majors =
+    categories ??
+    (variant === "all"
+      ? listVisibleThemeMajorCategories()
+      : listFeaturedHomeMajorCategories());
+
+  const resolvedListHref =
+    listHref === null
+      ? null
+      : listHref === "/class/select"
+        ? buildThemeSelectAllPath()
+        : listHref;
+
   return (
     <section
       className={["cm-home-theme-grid", className].filter(Boolean).join(" ")}
     >
       <div className="cm-home-section-head">
         <h2 className="cm-home-section-title">{title}</h2>
-        {listHref ? (
-          <Link href={withDev(listHref)} className="cm-home-section-link">
-            一覧
+        {resolvedListHref ? (
+          <Link href={withDev(resolvedListHref)} className="cm-home-section-link">
+            {listLabel}
           </Link>
         ) : null}
       </div>
       <div className="cm-home-theme-grid-list">
-        {THEME_CARDS.map((card) => {
+        {majors.map((major) => {
+          const card = toCardDef(major);
           const classNameCard = [
             "cm-home-theme-card",
             `cm-home-theme-card--${card.tone}`,
@@ -139,10 +207,14 @@ export function ThemeCardGrid({
           const body = (
             <>
               <span className="cm-home-theme-card-icon">
-                <ThemeGlyph id={card.id} />
+                <ThemeGlyph id={card.iconKey} />
               </span>
               <span className="cm-home-theme-card-title">{card.title}</span>
-              <span className="cm-home-theme-card-hint">{card.hint}</span>
+              <span className="cm-home-theme-card-hint">
+                {showComingSoonHint && major.status === "coming_soon"
+                  ? THEME_OFFER_COMING_SOON_LABEL
+                  : card.hint}
+              </span>
             </>
           );
 
@@ -162,7 +234,7 @@ export function ThemeCardGrid({
           return (
             <Link
               key={card.id}
-              href={withDev(href)}
+              href={withDev(buildThemeSelectCategoryPath(card.id))}
               className={classNameCard}
             >
               {body}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
+import { PageBackLink } from "@/components/nav/PageBackLink";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { useAuth } from "@/components/AuthProvider";
@@ -128,31 +129,31 @@ export default function MineClient() {
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
-      <HomeBrandVisual menuButton={isApp ? menuButton : undefined} />
+      <HomeBrandVisual menuButton={menuButton} />
 
-      {isApp ? (
-        <HomeMenuSheet
-          open={menuOpen}
-          onClose={() => setMenuOpen(false)}
-          notificationsEnabled={notificationsEnabled}
-          notificationsBusy={notificationsBusy}
-          onToggleNotifications={toggleNotifications}
-          hideWebPush={isApp}
-          profileHref={withDev(buildProfileEditPath("/class/mine"))}
-          myClassesHref={withDev("/class/mine")}
-          planHref={withDev("/premium")}
-          billingHref={withDev("/billing")}
-          accountHref={
-            loggedIn
-              ? withDev(buildShellAwareSettingsUrl())
-              : withDev(buildShellAwareLoginUrl("/class/mine"))
-          }
-          accountLabel={accountLabel}
-          loggedIn={loggedIn}
-          aboutHref={withDev("/about")}
-          legalHref={withDev("/terms")}
-        />
-      ) : null}
+      <HomeMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isApp}
+        profileHref={withDev(buildProfileEditPath("/class/mine"))}
+        myClassesHref={withDev("/class/mine")}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/class/mine"))
+        }
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+        aboutHref={withDev("/about")}
+        legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={loggedIn ? accountLabel : "ゲスト"}
+      />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
         <IosWebPushInstallGuide
@@ -163,6 +164,9 @@ export default function MineClient() {
 
       <div style={{ marginTop: 14, display: "grid", gap: 14 }}>
         <header className="cm-page-heading">
+          <div className="cm-page-back-row">
+            <PageBackLink fallbackHref="/" label="ホームへ戻る" />
+          </div>
           <div
             style={{
               display: "flex",

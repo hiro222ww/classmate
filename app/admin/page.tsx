@@ -46,6 +46,11 @@ const cards = [
     href: "/admin/topics",
   },
   {
+    title: "カテゴリー",
+    desc: "大・小カテゴリー、表示順、準備中/公開、ホーム掲載（最大4）",
+    href: "/admin/categories",
+  },
+  {
     title: "運用設定",
     desc: "スロット/テーマ課金ON/OFF・入学受付時間・募集締切・未成年登録",
     href: "/admin/settings",
