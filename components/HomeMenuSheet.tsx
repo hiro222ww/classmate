@@ -78,7 +78,7 @@ const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 14,
-  padding: "12px 8px",
+  padding: "14px 10px",
   borderBottom: "1px solid var(--cm-border, #e5eaf2)",
   textDecoration: "none",
   color: "var(--cm-text, #17233d)",
@@ -89,7 +89,7 @@ const rowStyle: React.CSSProperties = {
   border: "none",
   width: "100%",
   textAlign: "left",
-  minHeight: 44,
+  minHeight: 48,
   fontFamily: "inherit",
 };
 
@@ -136,20 +136,20 @@ export default function HomeMenuSheet({
         >
           <CmAvatar
             label={name}
-            sizePx={44}
+            sizePx={56}
             photoPath={photoPath}
             avatarUrl={avatarUrl}
           />
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="cm-menu-profile-name">{name}</div>
             <span className="cm-menu-profile-edit">
-              {loggedIn ? "プロフィール編集" : "プロフィール登録"}
+              {loggedIn ? "プロフィールを見る" : "プロフィール登録"}
             </span>
           </div>
           <span style={chevron}>›</span>
         </Link>
 
-        <div className="cm-menu-group-label">設定</div>
+        <div className="cm-menu-group-label">アカウント</div>
         {onToggleNotifications && !hideWebPush ? (
           <button
             type="button"
@@ -209,9 +209,9 @@ export default function HomeMenuSheet({
           <span style={chevron}>›</span>
         </Link>
 
-        <div className="cm-menu-group-label">その他</div>
+        <div className="cm-menu-group-label">サポート</div>
         <Link href={aboutHref} onClick={onClose} style={rowStyle}>
-          <span>About</span>
+          <span>Classmateについて</span>
           <span style={chevron}>›</span>
         </Link>
         <Link

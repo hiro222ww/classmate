@@ -55,6 +55,11 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
+import {
+  ThemeCardGrid,
+  THEME_CARDS,
+  type ThemeCardId,
+} from "@/components/home/themeCards";
 import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
@@ -373,7 +378,9 @@ export default function SelectClient() {
   } | null>(null);
   const [joinedClassesLoading, setJoinedClassesLoading] = useState(false);
   const [joinedClassCount, setJoinedClassCount] = useState(0);
+  const [activeTheme, setActiveTheme] = useState<ThemeCardId | null>(null);
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
+  const themeBoardsRef = useRef<HTMLElement | null>(null);
 
   async function reloadCatalog() {
     try {
@@ -841,13 +848,27 @@ export default function SelectClient() {
 
   const themeGroups = useMemo(() => {
     const paid = boards.filter((b) => b.monthly_price > 0);
+    const active = THEME_CARDS.find((t) => t.id === activeTheme) ?? null;
+    const filtered = active
+      ? paid.filter((b) => active.match.test(`${b.title} ${b.description}`))
+      : paid;
     return THEME_CATEGORIES.map((cat) => ({
       ...cat,
-      boards: paid.filter(
+      boards: filtered.filter(
         (b) => categorizeTheme(b.title, b.description) === cat.id
       ),
     })).filter((g) => g.boards.length > 0);
-  }, [boards]);
+  }, [boards, activeTheme]);
+
+  const compactThemeBoards = useMemo(() => {
+    const paid = boards.filter((b) => b.monthly_price > 0);
+    if (!activeTheme) return paid.slice(0, 8);
+    const active = THEME_CARDS.find((t) => t.id === activeTheme);
+    if (!active) return paid.slice(0, 8);
+    return paid
+      .filter((b) => active.match.test(`${b.title} ${b.description}`))
+      .slice(0, 8);
+  }, [boards, activeTheme]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
     if (!themeBillingEnabled) return true;
@@ -1168,10 +1189,12 @@ export default function SelectClient() {
     b,
     accent,
     emphasizeFree = false,
+    compact = false,
   }: {
     b: EntryBoard;
     accent?: { tint: string; border: string };
     emphasizeFree?: boolean;
+    compact?: boolean;
   }) {
     const isFree = b.monthly_price <= 0;
     const comingSoon = !isFree;
@@ -1255,10 +1278,10 @@ export default function SelectClient() {
           .join(" ")}
         aria-disabled={comingSoon || undefined}
         style={{
-          padding: emphasizeFree ? 16 : 12,
+          padding: compact ? 12 : emphasizeFree ? 14 : 12,
           background: tint,
           border: border ? `1px solid ${border}` : undefined,
-          borderRadius: 16,
+          borderRadius: compact ? 18 : 16,
           boxShadow: comingSoon
             ? "none"
             : "0 4px 14px rgba(15, 23, 42, 0.04)",
@@ -1277,14 +1300,14 @@ export default function SelectClient() {
             <strong
               className="cm-board-card-title"
               style={{
-                fontSize: emphasizeFree ? 17 : 15,
+                fontSize: compact ? 14 : emphasizeFree ? 16 : 15,
                 display: "block",
                 color: comingSoon ? "#64748b" : "#0f172a",
               }}
             >
               {b.title}
             </strong>
-            {comingSoon && b.monthly_price > 0 ? (
+            {comingSoon && b.monthly_price > 0 && !compact ? (
               <span
                 style={{
                   display: "block",
@@ -1320,23 +1343,23 @@ export default function SelectClient() {
                   padding: "3px 8px",
                 }}
               >
-                {teaserLabel === PAID_THEME_TEASER_LABEL ? "🔒 準備中" : teaserLabel}
+                {teaserLabel === PAID_THEME_TEASER_LABEL ? "準備中" : teaserLabel}
               </span>
             ) : null}
             {b.is_sensitive ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
-                🔞
+                18+
               </span>
             ) : null}
             {!comingSoon && profileMissing ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e" }}>
-                プロフィール未登録
+                要登録
               </span>
             ) : null}
           </div>
         </div>
 
-        {b.description ? (
+        {!compact && b.description ? (
           <p
             style={{
               margin: "8px 0 0",
@@ -1352,17 +1375,19 @@ export default function SelectClient() {
           </p>
         ) : null}
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-            gap: 8,
-            marginTop: 12,
-          }}
-        >
-          {renderJoinButton("voice", "通話")}
-          {renderJoinButton("chat", "チャット")}
-        </div>
+        {!comingSoon ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              marginTop: compact ? 10 : 12,
+            }}
+          >
+            {renderJoinButton("voice", "通話")}
+            {renderJoinButton("chat", "チャット")}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1581,21 +1606,13 @@ export default function SelectClient() {
         </div>
       ) : null}
 
-      <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
-        <div>
-          <header className="cm-page-heading">
-            <h1>探す</h1>
-          </header>
-        </div>
+      <div style={{ marginTop: 14, display: "grid", gap: 16 }}>
+        <header className="cm-page-heading cm-select-heading">
+          <h1>探す</h1>
+          <p>気になるテーマから選ぶ</p>
+        </header>
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
+        <div className="cm-select-meta-row">
           <span
             className={[
               "cm-admission-pill",
@@ -1623,22 +1640,11 @@ export default function SelectClient() {
             {admissionPillText}
           </span>
           {slotBillingEnabled ? (
-            <span
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid rgba(148, 163, 184, 0.28)",
-                fontSize: 12,
-                fontWeight: 700,
-                color: "#64748b",
-              }}
-            >
-              {`${slots}クラス枠`}
-            </span>
+            <span className="cm-select-slot-pill">{`${slots}クラス枠`}</span>
           ) : null}
           <button
             type="button"
+            className="cm-text-btn"
             onClick={() => {
               void reloadCatalog();
               void refreshCurrentClass();
@@ -1646,65 +1652,42 @@ export default function SelectClient() {
               void reloadJoinWindow();
             }}
             disabled={loading}
-            style={{
-              marginLeft: "auto",
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid #e2e8f0",
-              background: "#fff",
-              fontSize: 12,
-              fontWeight: 800,
-              color: "#64748b",
-              cursor: loading ? "default" : "pointer",
-            }}
+            style={{ marginLeft: "auto" }}
           >
             更新
           </button>
         </div>
 
         {showJoinedStrip ? (
-          <Link
-            href={withDev("/class/mine")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              padding: "10px 12px",
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.88)",
-              border: "1px solid rgba(148, 163, 184, 0.28)",
-              textDecoration: "none",
-              color: "#0f172a",
-              boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
-            }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 800 }}>
+          <Link href={withDev("/class/mine")} className="cm-select-mine-strip">
+            <span>
               マイクラス
-              <span style={{ marginLeft: 8, color: "var(--cm-online, #12a879)" }}>
-                {joinedClassCount}
-              </span>
+              <span className="cm-select-mine-strip-count">{joinedClassCount}</span>
             </span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-              ›
-            </span>
+            <span aria-hidden>›</span>
           </Link>
         ) : null}
 
         {!joinWindowOpen &&
         joinWindowLoadState === "ready" &&
         opsTestFlags.ignoreAdmission ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#78716c",
-            }}
-          >
-            受付時間外（テスト入室可）
-          </p>
+          <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
         ) : null}
+
+        <ThemeCardGrid
+          title="テーマ"
+          listHref={null}
+          activeId={activeTheme}
+          onPick={(id) => {
+            setActiveTheme((prev) => (prev === id ? null : id));
+            window.setTimeout(() => {
+              themeBoardsRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              });
+            }, 40);
+          }}
+        />
 
         <AgeFilterCard
           variant="compact"
@@ -1718,110 +1701,87 @@ export default function SelectClient() {
           }}
         />
 
-        <section style={{ display: "grid", gap: 10 }}>
+        <section
+          ref={(node) => {
+            themeBoardsRef.current = node;
+          }}
+          className="cm-select-boards"
+          style={{ display: "grid", gap: 12 }}
+        >
           {admissionStatusNotice &&
           joinWindowLoadState === "error" &&
           !admissionPillText ? (
-            <div
-              role="status"
-              className="cm-select-admission-status"
-              style={{
-                display: "grid",
-                gap: 8,
-                justifyItems: "start",
-              }}
-            >
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "#b45309",
-                  lineHeight: 1.45,
-                }}
-              >
-                {admissionStatusNotice.text}
-              </p>
+            <div role="status" className="cm-select-admission-status">
+              <p>{admissionStatusNotice.text}</p>
               <button
                 type="button"
+                className="cm-text-btn"
                 onClick={() => {
                   void reloadJoinWindow();
-                }}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  border: "1px solid rgba(148, 163, 184, 0.45)",
-                  background: "#fff",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  color: "#475569",
-                  cursor: "pointer",
                 }}
               >
                 更新
               </button>
             </div>
           ) : null}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: 12,
-            }}
-          >
+
+          <div className="cm-select-free-list">
             {freeBoards.map((b) => (
-              <BoardCard key={b.key} b={b} emphasizeFree />
+              <BoardCard key={b.key} b={b} emphasizeFree compact />
             ))}
           </div>
-        </section>
 
-        {SHOW_PAID_THEMES_AS_TEASER && themeGroups.length > 0 ? (
-          <section style={{ display: "grid", gap: 16 }}>
-            <div>
-              <h3 className="cm-home-section-title">テーマ</h3>
-            </div>
-
-            {themeGroups.map((group) => (
-              <div key={group.id} style={{ display: "grid", gap: 8 }}>
-                <h4
-                  style={{
-                    margin: 0,
-                    fontSize: 13,
-                    fontWeight: 900,
-                    color: "#475569",
-                    letterSpacing: "0.02em",
-                  }}
-                >
-                  {group.label}
-                </h4>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                    gap: 10,
-                  }}
-                >
-                  {group.boards.map((b) => (
+          {SHOW_PAID_THEMES_AS_TEASER && compactThemeBoards.length > 0 ? (
+            <>
+              <div className="cm-home-section-head" style={{ marginBottom: 0 }}>
+                <h3 className="cm-home-section-title">
+                  {activeTheme
+                    ? THEME_CARDS.find((t) => t.id === activeTheme)?.title ??
+                      "テーマ"
+                    : "準備中のテーマ"}
+                </h3>
+                {activeTheme ? (
+                  <button
+                    type="button"
+                    className="cm-home-section-link"
+                    onClick={() => setActiveTheme(null)}
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                    }}
+                  >
+                    すべて
+                  </button>
+                ) : null}
+              </div>
+              <div className="cm-select-theme-compact-list">
+                {compactThemeBoards.map((b) => {
+                  const group = themeGroups.find((g) =>
+                    g.boards.some((row) => row.key === b.key)
+                  );
+                  return (
                     <BoardCard
                       key={b.key}
                       b={b}
-                      accent={{ tint: group.tint, border: group.border }}
+                      compact
+                      accent={
+                        group
+                          ? { tint: group.tint, border: group.border }
+                          : undefined
+                      }
                     />
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            ))}
-          </section>
-        ) : null}
+            </>
+          ) : null}
 
-        {!loading && freeBoards.length === 0 ? (
-          <div
-            className="cm-select-empty"
-            style={{ marginTop: 4, fontSize: 12, color: "#666" }}
-          >
-            条件に合うテーマがありません
-          </div>
-        ) : null}
+          {!loading && freeBoards.length === 0 ? (
+            <div className="cm-select-empty">条件に合うテーマがありません</div>
+          ) : null}
+        </section>
       </div>
 
       <div style={{ height: 24 }} />

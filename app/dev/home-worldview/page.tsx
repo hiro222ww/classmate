@@ -6,9 +6,10 @@ import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { RandomTalkCta } from "@/components/home/RandomTalkCta";
+import { ThemeCardGrid } from "@/components/home/themeCards";
 
 /**
- * Visual fixture for home worldview polish — not production data.
+ * Visual fixture for home / select worldview polish — not production data.
  * /dev/home-worldview
  */
 export default function HomeWorldviewFixturePage() {
@@ -24,19 +25,41 @@ export default function HomeWorldviewFixturePage() {
       }}
     >
       <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-        DEV · home worldview fixture
+        DEV · home / select flow fixture
       </p>
 
-      <HomeHeader displayName="ゲスト" hideWebPush />
+      <HomeHeader displayName="ひろ" hideWebPush />
       <HomeHeroAtmosphere />
 
-      <section>
-        <div className="cm-home-section-head">
-          <h2 className="cm-home-section-title">マイクラス</h2>
-          <span className="cm-home-section-link">＋ 作成</span>
+      <div className="cm-home-flow">
+        <div className="cm-home-welcome">
+          <p className="cm-home-welcome-line">
+            <b>ひろ</b> さん
+          </p>
+          <div className="cm-home-welcome-meta">
+            <span className="cm-admission-pill cm-admission-pill--open">
+              <span
+                aria-hidden
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 999,
+                  background: "currentColor",
+                  display: "inline-block",
+                }}
+              />
+              受付中
+            </span>
+          </div>
         </div>
-        <MyClassEmpty />
-      </section>
+        <section className="cm-home-my-class-section">
+          <div className="cm-home-section-head">
+            <h2 className="cm-home-section-title">マイクラス</h2>
+            <span className="cm-home-section-link">＋ 作成</span>
+          </div>
+          <MyClassEmpty />
+        </section>
+      </div>
 
       <section>
         <div className="cm-home-section-head">
@@ -65,11 +88,15 @@ export default function HomeWorldviewFixturePage() {
       </section>
 
       <HomeThemeGrid />
+      <RandomTalkCta onVoiceJoin={() => {}} onChatJoin={() => {}} />
 
-      <RandomTalkCta
-        onVoiceJoin={() => {}}
-        onChatJoin={() => {}}
-      />
+      <hr style={{ border: 0, borderTop: "1px solid #e5eaf2", margin: "8px 0" }} />
+
+      <header className="cm-page-heading">
+        <h1>探す</h1>
+        <p>気になるテーマから選ぶ</p>
+      </header>
+      <ThemeCardGrid title="テーマ" listHref={null} />
     </main>
   );
 }

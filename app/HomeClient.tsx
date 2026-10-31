@@ -2636,86 +2636,90 @@ console.log("[home] resolved ids", { classId, sessionId, json });
 
       <HomeHeroAtmosphere className="cm-stagger-2" />
 
-      <div className="cm-home-welcome cm-stagger-3">
-        <p className="cm-home-welcome-line">
-          {authLoading || (authStatus === "authenticated" && !profileName) ? (
-            <>
-              <AuthTextSkeleton width={72} /> さん
-            </>
-          ) : (
-            <>
-              <b>{welcomeName}</b> さん
-            </>
-          )}
-        </p>
-        {authLoading ? (
-          <p className="cm-home-welcome-note">
-            {authSlow ? "読み込みが遅いです…" : "確認中…"}
-            {authError ? `（${authError}）` : ""}
+      <div className="cm-home-flow cm-stagger-3">
+        <div className="cm-home-welcome">
+          <p className="cm-home-welcome-line">
+            {authLoading || (authStatus === "authenticated" && !profileName) ? (
+              <>
+                <AuthTextSkeleton width={72} /> さん
+              </>
+            ) : (
+              <>
+                <b>{welcomeName}</b> さん
+              </>
+            )}
           </p>
-        ) : null}
-        {admissionPillText ? (
-          <div className="cm-home-welcome-meta">
-            <span
-              className={[
-                "cm-admission-pill",
-                joinWindowLoadState === "error"
-                  ? "cm-admission-pill--error"
-                  : joinWindowLoadState === "loading"
-                    ? "cm-admission-pill--loading"
-                    : joinWindowOpen
-                      ? "cm-admission-pill--open"
-                      : "cm-admission-pill--closed",
-              ].join(" ")}
-            >
+          {authLoading ? (
+            <p className="cm-home-welcome-note">
+              {authSlow ? "読み込みが遅いです…" : "確認中…"}
+              {authError ? `（${authError}）` : ""}
+            </p>
+          ) : null}
+          {admissionPillText ? (
+            <div className="cm-home-welcome-meta">
               <span
-                aria-hidden
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 999,
-                  background: "currentColor",
-                  opacity: 0.85,
-                  display: "inline-block",
-                }}
-              />
-              {admissionPillText}
-            </span>
-            {joinWindowLoadState === "error" ? (
-              <button
-                type="button"
-                className="cm-text-btn"
-                onClick={() => {
-                  void reloadJoinWindow();
-                }}
+                className={[
+                  "cm-admission-pill",
+                  joinWindowLoadState === "error"
+                    ? "cm-admission-pill--error"
+                    : joinWindowLoadState === "loading"
+                      ? "cm-admission-pill--loading"
+                      : joinWindowOpen
+                        ? "cm-admission-pill--open"
+                        : "cm-admission-pill--closed",
+                ].join(" ")}
               >
-                更新
-              </button>
-            ) : null}
-            {opsTestActive ? <StatusPill>テスト中</StatusPill> : null}
+                <span
+                  aria-hidden
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 999,
+                    background: "currentColor",
+                    opacity: 0.85,
+                    display: "inline-block",
+                  }}
+                />
+                {admissionPillText}
+              </span>
+              {joinWindowLoadState === "error" ? (
+                <button
+                  type="button"
+                  className="cm-text-btn"
+                  onClick={() => {
+                    void reloadJoinWindow();
+                  }}
+                >
+                  更新
+                </button>
+              ) : null}
+              {opsTestActive ? <StatusPill>テスト中</StatusPill> : null}
+            </div>
+          ) : null}
+          {adminCanBypassAdmission ? (
+            <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
+          ) : null}
+        </div>
+
+        {error ? (
+          <div
+            className="cm-home-error"
+            style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
+          >
+            {error}
           </div>
         ) : null}
-        {adminCanBypassAdmission ? (
-          <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
-        ) : null}
-      </div>
 
-      {error ? (
-        <div
-          className="cm-home-error"
-          style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
-        >
-          {error}
-        </div>
-      ) : null}
-
-      <section className="cm-stagger-3 cm-home-my-class-section">
-        <div className="cm-home-section-head">
-          <h2 className="cm-home-section-title">マイクラス</h2>
-          <Link href={withDev("/class/create")} className="cm-home-section-link">
-            ＋ 作成
-          </Link>
-        </div>
+        <section className="cm-home-my-class-section">
+          <div className="cm-home-section-head">
+            <h2 className="cm-home-section-title">マイクラス</h2>
+            <Link
+              href={withDev("/class/create")}
+              className="cm-home-section-link"
+            >
+              ＋ 作成
+            </Link>
+          </div>
         {myClassRows.length > 0 ? (
           <div className="cm-my-class-list">
             {myClassRows.slice(0, 6).map((row) => {
@@ -2750,7 +2754,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             }}
           />
         )}
-      </section>
+        </section>
+      </div>
 
       <HomeThemeGrid className="cm-stagger-4" />
 
