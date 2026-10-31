@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { isDefaultAvatarSrc } from "@/lib/defaultAvatar";
 import { getMemberAvatarUrl } from "@/lib/memberProfileView";
+import { DefaultAvatarMark } from "@/components/ui/DefaultAvatarMark";
 
 type CmAvatarProps = {
   label: string;
@@ -11,6 +13,20 @@ type CmAvatarProps = {
   isMe?: boolean;
   className?: string;
 };
+
+function resolvePhotoSrc(
+  avatarUrl: string | null | undefined,
+  photoPath: string | null | undefined
+): string | null {
+  const direct = String(avatarUrl ?? "").trim();
+  if (direct) {
+    return isDefaultAvatarSrc(direct) ? null : direct;
+  }
+  const path = String(photoPath ?? "").trim();
+  if (!path) return null;
+  const resolved = getMemberAvatarUrl(path);
+  return isDefaultAvatarSrc(resolved) ? null : resolved;
+}
 
 export function CmAvatar({
   label,
@@ -22,14 +38,17 @@ export function CmAvatar({
 }: CmAvatarProps) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const initial = (label.trim()[0] ?? "?").toUpperCase();
 
-  const src = useMemo(() => {
-    if (failed) return "/default-avatar.jpg";
-    const direct = String(avatarUrl ?? "").trim();
-    if (direct) return direct;
-    return getMemberAvatarUrl(photoPath);
-  }, [avatarUrl, failed, photoPath]);
+  useEffect(() => {
+    setFailed(false);
+    setLoaded(false);
+  }, [avatarUrl, photoPath]);
+
+  const photoSrc = useMemo(
+    () => (failed ? null : resolvePhotoSrc(avatarUrl, photoPath)),
+    [avatarUrl, failed, photoPath]
+  );
+  const showPhoto = Boolean(photoSrc) && loaded;
 
   return (
     <div
@@ -42,9 +61,6 @@ export function CmAvatar({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        fontSize: Math.max(11, Math.round(sizePx * 0.34)),
-        fontWeight: 900,
-        color: "var(--cm-muted, #64748b)",
         overflow: "hidden",
         flexShrink: 0,
         border: isMe
@@ -52,28 +68,35 @@ export function CmAvatar({
           : "1px solid var(--cm-border, #e5eaf2)",
         position: "relative",
       }}
+      aria-label={label || undefined}
       aria-hidden={!label}
     >
-      {!loaded ? <span>{initial}</span> : null}
-      <img
-        src={src}
-        alt=""
-        width={sizePx}
-        height={sizePx}
-        decoding="async"
-        onLoad={() => setLoaded(true)}
-        onError={() => {
-          if (!failed) setFailed(true);
-        }}
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          opacity: loaded ? 1 : 0,
-        }}
+      <DefaultAvatarMark
+        className="cm-avatar-default"
+        title={label ? `${label}のアバター` : undefined}
       />
+      {photoSrc ? (
+        <img
+          src={photoSrc}
+          alt=""
+          width={sizePx}
+          height={sizePx}
+          decoding="async"
+          onLoad={() => setLoaded(true)}
+          onError={() => {
+            setFailed(true);
+            setLoaded(false);
+          }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            opacity: showPhoto ? 1 : 0,
+          }}
+        />
+      ) : null}
     </div>
   );
 }

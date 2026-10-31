@@ -1,11 +1,13 @@
 "use client";
 
+import { DefaultAvatarMark } from "@/components/ui/DefaultAvatarMark";
+
 type MyClassEmptyProps = {
   className?: string;
 };
 
 /**
- * Warm empty preview for マイクラス.
+ * Compact empty preview for マイクラス.
  * Discover / create / random CTAs live elsewhere on home (no duplicate buttons).
  */
 export function MyClassEmpty({ className }: MyClassEmptyProps) {
@@ -14,14 +16,11 @@ export function MyClassEmpty({ className }: MyClassEmptyProps) {
       className={["cm-my-class-empty", className].filter(Boolean).join(" ")}
     >
       <div className="cm-my-class-empty-visual" aria-hidden>
-        <span className="cm-my-class-empty-orb cm-my-class-empty-orb--a" />
-        <span className="cm-my-class-empty-orb cm-my-class-empty-orb--b" />
-        <span className="cm-my-class-empty-orb cm-my-class-empty-orb--c" />
-        <span className="cm-my-class-empty-mark" />
+        <DefaultAvatarMark className="cm-my-class-empty-mark" />
       </div>
-      <p className="cm-empty-state-title">最初のクラスを見つけよう</p>
+      <p className="cm-empty-state-title">まだ参加しているクラスはありません</p>
       <p className="cm-empty-state-body">
-        下のカテゴリーやランダム通話から、気軽に始められます
+        気になるテーマから参加したり、自分でクラスを作ってみよう。
       </p>
     </div>
   );

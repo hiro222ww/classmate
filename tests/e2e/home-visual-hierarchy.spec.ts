@@ -82,7 +82,18 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       const myClassSection = page.locator("#cm-home-my-class");
       await expect(myClassSection.getByRole("heading", { name: "マイクラス", exact: true })).toHaveCount(1);
       await expect(page.getByRole("heading", { name: "マイクラス", exact: true })).toHaveCount(1);
-      await expect(myClassSection.getByText("最初のクラスを見つけよう", { exact: true })).toBeVisible();
+      await expect(
+        myClassSection.getByText("まだ参加しているクラスはありません", {
+          exact: true,
+        })
+      ).toBeVisible();
+      await expect(
+        myClassSection.getByText(
+          "気になるテーマから参加したり、自分でクラスを作ってみよう。",
+          { exact: true }
+        )
+      ).toBeVisible();
+      await expect(myClassSection.getByText("下のカテゴリーやランダム通話から", { exact: false })).toHaveCount(0);
       await expect(page.locator(".cm-my-class-empty-actions")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
       await expect(myClassSection.getByRole("link", { name: "＋ 作成", exact: true })).toHaveAttribute(

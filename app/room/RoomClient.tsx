@@ -59,6 +59,7 @@ import InviteJoinProgress, {
   type InvitePrepStageId,
 } from "@/components/InviteJoinProgress";
 import MemberJoinBanner from "@/components/MemberJoinBanner";
+import MemberListAvatar from "@/components/MemberListAvatar";
 import {
   MembersLoadingPanel,
   LoadErrorPanel,
@@ -737,26 +738,11 @@ function MemberAvatar({
   isMe: boolean;
 }) {
   return (
-    <img
-      src={src || "/default-avatar.jpg"}
-      alt={label}
-      loading="lazy"
-      decoding="async"
-      onError={(e) => {
-        if (e.currentTarget.src.includes("default-avatar")) return;
-        console.warn(`[avatar] load-failed label=${label.slice(0, 24)}`);
-        e.currentTarget.onerror = null;
-        e.currentTarget.src = "/default-avatar.jpg";
-      }}
-      style={{
-        width: LIST_MEMBER_AVATAR_PX,
-        height: LIST_MEMBER_AVATAR_PX,
-        borderRadius: "9999px",
-        objectFit: "cover",
-        background: "#e5e7eb",
-        border: isMe ? "2px solid #22c55e" : "1px solid #d1d5db",
-        flexShrink: 0,
-      }}
+    <MemberListAvatar
+      avatarUrl={src}
+      label={label}
+      sizePx={LIST_MEMBER_AVATAR_PX}
+      isMe={isMe}
     />
   );
 }

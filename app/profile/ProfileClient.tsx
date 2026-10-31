@@ -28,6 +28,7 @@ import {
 import { HelpTip } from "@/components/HelpTip";
 import Link from "next/link";
 import { authenticatedFetch } from "@/lib/authenticatedFetch";
+import { DEFAULT_AVATAR_SRC } from "@/lib/defaultAvatar";
 
 type Gender = "male" | "female" | "";
 
@@ -129,7 +130,7 @@ function writeStoredDisplayName(deviceId: string, name: string) {
 function getAvatarUrl(photoPath?: string | null) {
   let normalized = String(photoPath ?? "").trim();
 
-  if (!normalized) return "/default-avatar.jpg";
+  if (!normalized) return DEFAULT_AVATAR_SRC;
 
   if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
     return normalized;
@@ -148,7 +149,7 @@ function getAvatarUrl(photoPath?: string | null) {
     .getPublicUrl(normalized);
 
   const publicUrl = data?.publicUrl?.trim();
-  if (!publicUrl) return "/default-avatar.jpg";
+  if (!publicUrl) return DEFAULT_AVATAR_SRC;
 
   return `${publicUrl}?t=${encodeURIComponent(normalized)}`;
 }
@@ -393,7 +394,7 @@ export default function ProfileClient() {
   const previewUrl = useMemo(() => {
     if (localPreviewUrl) return localPreviewUrl;
     if (photoPath) return getAvatarUrl(photoPath);
-    return "/default-avatar.jpg";
+    return DEFAULT_AVATAR_SRC;
   }, [localPreviewUrl, photoPath]);
 
   async function handlePhotoChange(file: File | null) {
@@ -855,7 +856,7 @@ export default function ProfileClient() {
                 previewUrl,
               });
               e.currentTarget.onerror = null;
-              e.currentTarget.src = "/default-avatar.jpg";
+              e.currentTarget.src = DEFAULT_AVATAR_SRC;
             }}
             onLoad={() => {
               console.log("[profile preview ok]", {

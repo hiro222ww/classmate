@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   fetchMemberProfile,
-  getMemberAvatarUrl,
   isValidMemberProfileTarget,
   normalizeMemberDeviceId,
   type MemberProfileTarget,
@@ -21,6 +20,7 @@ import {
   buildProfileEditPath,
   sanitizeReturnTo,
 } from "@/lib/profileNavigation";
+import { CmAvatar } from "@/components/ui/CmAvatar";
 
 type MemberProfileModalProps = {
   target: MemberProfileTarget | null;
@@ -147,7 +147,6 @@ export default function MemberProfileModal({
   const isSelf =
     normalizeMemberDeviceId(target.deviceId) ===
     normalizeMemberDeviceId(target.viewerDeviceId);
-  const avatarUrl = getMemberAvatarUrl(photoPath);
   const ageLabel = formatProfileAgeLabel(age);
   const genderLabel = formatProfileGenderLabel(gender, profileComplete);
   const hobbiesLabel = formatOptionalProfileText(hobbies);
@@ -233,21 +232,11 @@ export default function MemberProfileModal({
             gap: 12,
           }}
         >
-          <img
-            src={avatarUrl}
-            alt={displayName}
-            onError={(event) => {
-              event.currentTarget.onerror = null;
-              event.currentTarget.src = "/default-avatar.jpg";
-            }}
-            style={{
-              width: 96,
-              height: 96,
-              borderRadius: "50%",
-              objectFit: "cover",
-              border: "2px solid #e5e7eb",
-              background: "#f3f4f6",
-            }}
+          <CmAvatar
+            label={displayName}
+            sizePx={96}
+            photoPath={photoPath}
+            isMe={isSelf}
           />
 
           <div
