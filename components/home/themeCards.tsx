@@ -8,7 +8,7 @@ import {
   buildThemeSelectAllPath,
   buildThemeSelectCategoryPath,
   listFeaturedHomeMajorCategories,
-  listThemeMajorCategories,
+  listVisibleThemeMajorCategories,
   type ThemeMajorCategoryDef,
   type ThemeMajorCategoryId,
 } from "@/lib/themeCatalog";
@@ -19,7 +19,8 @@ export type ThemeCardDef = {
   id: ThemeCardId;
   title: string;
   hint: string;
-  tone: ThemeCardId;
+  tone: string;
+  iconKey: string;
 };
 
 function toCardDef(major: ThemeMajorCategoryDef): ThemeCardDef {
@@ -28,18 +29,19 @@ function toCardDef(major: ThemeMajorCategoryDef): ThemeCardDef {
     title: major.label,
     hint: major.hint,
     tone: major.tone,
+    iconKey: major.iconKey ?? major.tone ?? major.id,
   };
 }
 
-/** All majors — prefer listThemeMajorCategories() for ordering. */
+/** All visible majors — static fallback. Prefer API-backed categories prop. */
 export const THEME_CARDS: ThemeCardDef[] =
-  listThemeMajorCategories().map(toCardDef);
+  listVisibleThemeMajorCategories().map(toCardDef);
 
 /** Home representative set (≤ 4). */
 export const FEATURED_THEME_CARDS: ThemeCardDef[] =
   listFeaturedHomeMajorCategories().map(toCardDef);
 
-export function ThemeGlyph({ id }: { id: ThemeCardId }) {
+export function ThemeGlyph({ id }: { id: string }) {
   const common = {
     width: 22,
     height: 22,
@@ -125,6 +127,12 @@ export function ThemeGlyph({ id }: { id: ThemeCardId }) {
           <path d="M12 19v3" />
         </svg>
       );
+    default:
+      return (
+        <svg {...common}>
+          <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+        </svg>
+      );
   }
 }
 
@@ -140,12 +148,13 @@ type ThemeCardGridProps = {
   listHref?: string | null;
   /**
    * `featured` — home representative majors (≤4).
-   * `all` — full catalog for 探す一覧.
+   * `all` — full visible catalog for 探す一覧.
    */
   variant?: "featured" | "all";
-  /** Override card source when needed. */
+  /** Override card source when needed (API-backed preferred). */
   categories?: readonly ThemeMajorCategoryDef[];
   showComingSoonHint?: boolean;
+  listLabel?: string;
 };
 
 export function ThemeCardGrid({
@@ -157,11 +166,12 @@ export function ThemeCardGrid({
   variant = "featured",
   categories,
   showComingSoonHint = false,
+  listLabel = "すべて見る",
 }: ThemeCardGridProps) {
   const majors =
     categories ??
     (variant === "all"
-      ? listThemeMajorCategories()
+      ? listVisibleThemeMajorCategories()
       : listFeaturedHomeMajorCategories());
 
   const resolvedListHref =
@@ -179,7 +189,7 @@ export function ThemeCardGrid({
         <h2 className="cm-home-section-title">{title}</h2>
         {resolvedListHref ? (
           <Link href={withDev(resolvedListHref)} className="cm-home-section-link">
-            一覧
+            {listLabel}
           </Link>
         ) : null}
       </div>
@@ -197,7 +207,7 @@ export function ThemeCardGrid({
           const body = (
             <>
               <span className="cm-home-theme-card-icon">
-                <ThemeGlyph id={card.id} />
+                <ThemeGlyph id={card.iconKey} />
               </span>
               <span className="cm-home-theme-card-title">{card.title}</span>
               <span className="cm-home-theme-card-hint">

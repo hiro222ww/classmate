@@ -1,18 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { withDev } from "@/lib/withDev";
-
 type MyClassEmptyProps = {
   className?: string;
-  onRandomFocus?: () => void;
 };
 
 /**
- * Compact empty state. Random talk is the priority cue, but the large CTA
- * lives only in RandomTalkCta — this just points there.
+ * Compact empty preview for マイクラス.
+ * Discover / create / random CTAs live outside this block.
  */
-export function MyClassEmpty({ className, onRandomFocus }: MyClassEmptyProps) {
+export function MyClassEmpty({ className }: MyClassEmptyProps) {
   return (
     <div
       className={["cm-my-class-empty", "cm-my-class-empty--compact", className]
@@ -26,33 +22,11 @@ export function MyClassEmpty({ className, onRandomFocus }: MyClassEmptyProps) {
           <span className="cm-my-class-empty-mark" />
         </div>
         <div className="cm-my-class-empty-copy">
-          <p className="cm-empty-state-title">最初のクラスを見つけよう</p>
-          <p className="cm-empty-state-body">下のランダム通話から始められます</p>
+          <p className="cm-empty-state-title">まだ所属クラスはありません</p>
+          <p className="cm-empty-state-body">
+            下のカテゴリーやランダム通話から始められます
+          </p>
         </div>
-      </div>
-      <div className="cm-my-class-empty-actions">
-        {onRandomFocus ? (
-          <button
-            type="button"
-            className="cm-home-discover-link"
-            onClick={onRandomFocus}
-          >
-            ランダム通話へ
-          </button>
-        ) : (
-          <Link
-            href={withDev("/#cm-home-random")}
-            className="cm-home-discover-link"
-          >
-            ランダム通話へ
-          </Link>
-        )}
-        <Link href={withDev("/class/select")} className="cm-text-btn">
-          探す
-        </Link>
-        <Link href={withDev("/class/create")} className="cm-text-btn">
-          作る
-        </Link>
       </div>
     </div>
   );

@@ -80,6 +80,7 @@ import {
   parseThemeCatalogQuery,
   type ThemeMajorCategoryId,
 } from "@/lib/themeCatalog";
+import { useVisibleThemeMajors } from "@/hooks/useThemeCatalog";
 
 type World = {
   world_key: string;
@@ -303,6 +304,7 @@ export default function SelectClient() {
   } | null>(null);
   const [joinedClassesLoading, setJoinedClassesLoading] = useState(false);
   const [joinedClassCount, setJoinedClassCount] = useState(0);
+  const { majors: catalogMajors } = useVisibleThemeMajors();
   const catalogCatParam = searchParams.get(THEME_CATALOG_QUERY_KEY);
   const [activeMajorId, setActiveMajorId] = useState<ThemeMajorCategoryId | null>(
     () => parseThemeCatalogQuery(catalogCatParam)
@@ -311,8 +313,8 @@ export default function SelectClient() {
   const themeBoardsRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    setActiveMajorId(parseThemeCatalogQuery(catalogCatParam));
-  }, [catalogCatParam]);
+    setActiveMajorId(parseThemeCatalogQuery(catalogCatParam, catalogMajors));
+  }, [catalogCatParam, catalogMajors]);
 
   function openMajorCategory(id: ThemeMajorCategoryId) {
     setActiveMajorId(id);
@@ -809,14 +811,14 @@ export default function SelectClient() {
   );
 
   const activeMajor = useMemo(
-    () => getThemeMajorCategory(activeMajorId),
-    [activeMajorId]
+    () => getThemeMajorCategory(activeMajorId, catalogMajors),
+    [activeMajorId, catalogMajors]
   );
 
   const subCategoryRows = useMemo(() => {
     if (!activeMajor) return [];
-    return buildSubCategoryRows(activeMajor, paidBoards);
-  }, [activeMajor, paidBoards]);
+    return buildSubCategoryRows(activeMajor, paidBoards, catalogMajors);
+  }, [activeMajor, paidBoards, catalogMajors]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
     if (!themeBillingEnabled) return true;
@@ -1669,6 +1671,7 @@ export default function SelectClient() {
             <ThemeCardGrid
               title="カテゴリー"
               variant="all"
+              categories={catalogMajors}
               listHref={null}
               showComingSoonHint
               onPick={(id) => {

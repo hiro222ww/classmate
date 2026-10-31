@@ -67,7 +67,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await expect(brand).toContainText("クラスメイト");
       await expect(page.locator(".cm-home-brand-visual-intro")).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "探す", exact: true })).toBeVisible();
-      await expect(page.getByRole("link", { name: "一覧", exact: true })).toHaveAttribute(
+      await expect(page.getByRole("link", { name: "すべて見る", exact: true })).toHaveAttribute(
         "href",
         "/class/select"
       );
@@ -78,10 +78,13 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
         "/class/select?cat=school"
       );
       await expect(page.getByRole("link", { name: /アイデンティティ/ })).toHaveCount(0);
+      // My-class empty no longer duplicates discover/create CTAs.
+      await expect(page.locator(".cm-my-class-empty-actions")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
       await page.screenshot({ path: testInfo.outputPath(`home-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await checkActions(page);
-      await page.getByRole("link", { name: "一覧", exact: true }).click();
+      await page.getByRole("link", { name: "すべて見る", exact: true }).click();
       await expect(page).toHaveURL(/\/class\/select$/);
       await checkActions(page);
       await expect(page.getByRole("heading", { name: "探す", exact: true })).toHaveCount(1);

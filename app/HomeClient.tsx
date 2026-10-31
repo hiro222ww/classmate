@@ -2747,12 +2747,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             })}
           </div>
         ) : (
-          <MyClassEmpty
-            onRandomFocus={() => {
-              const el = document.getElementById("cm-home-random");
-              el?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }}
-          />
+          <MyClassEmpty />
         )}
         </section>
       </div>

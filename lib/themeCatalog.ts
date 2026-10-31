@@ -8,20 +8,16 @@
  * - Availability is catalog-level so category/theme can go live independently later.
  */
 
-/** Catalog / theme offer state — switchable per major or subcategory later. */
-export type ThemeOfferStatus = "live" | "coming_soon";
+/**
+ * Catalog offer state — independent of Stripe / theme_billing_enabled.
+ * - live: listed and joinable when product allows (paid still gated separately)
+ * - coming_soon: listed but not joinable / not purchasable
+ * - hidden: not shown on 探す / ホーム
+ */
+export type ThemeOfferStatus = "live" | "coming_soon" | "hidden";
 
-export type ThemeMajorCategoryId =
-  | "chat"
-  | "hobby"
-  | "school"
-  | "daily"
-  | "relationship"
-  | "identity"
-  | "beauty"
-  | "sports"
-  | "career"
-  | "creative";
+/** Stable slug ids; admin may add additional strings. */
+export type ThemeMajorCategoryId = string;
 
 export type ThemeSubCategoryDef = {
   id: string;
@@ -30,6 +26,8 @@ export type ThemeSubCategoryDef = {
   topicKeys: readonly string[];
   /** Fallback match against title+description for uncatalogued topics. */
   match?: RegExp;
+  /** Serialized form of match (DB / API). */
+  matchPattern?: string | null;
   hint?: string;
   /**
    * Per-theme offer state. Defaults to major.status when omitted.
@@ -44,8 +42,11 @@ export type ThemeMajorCategoryDef = {
   id: ThemeMajorCategoryId;
   label: string;
   hint: string;
+  description?: string;
+  /** Icon key for ThemeGlyph (falls back to chat). */
+  iconKey?: string;
   /** CSS tone modifier (`cm-home-theme-card--{tone}`). */
-  tone: ThemeMajorCategoryId;
+  tone: string;
   tint: string;
   border: string;
   /** Category-level offer state (children may override). */
@@ -59,6 +60,7 @@ export type ThemeMajorCategoryDef = {
    * Assign orphan paid topics (no child topicKeys/match hit) to this major.
    */
   orphanMatch?: RegExp;
+  orphanMatchPattern?: string | null;
 };
 
 /** Query param used for major deep-links from home / share URLs. */
@@ -386,36 +388,183 @@ function byOrder<T extends { order?: number }>(a: T, b: T) {
   return (a.order ?? 0) - (b.order ?? 0);
 }
 
-export function listThemeMajorCategories(): ThemeMajorCategoryDef[] {
-  return [...THEME_MAJOR_CATEGORIES].sort(byOrder);
+export function isThemeOfferStatus(value: unknown): value is ThemeOfferStatus {
+  return value === "live" || value === "coming_soon" || value === "hidden";
+}
+
+export function sortThemeMajorCategories(
+  majors: readonly ThemeMajorCategoryDef[]
+): ThemeMajorCategoryDef[] {
+  return [...majors].sort(byOrder);
+}
+
+/** Default static catalog (seed / offline fallback). Prefer DB via /api/theme-catalog. */
+export function listThemeMajorCategories(
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
+): ThemeMajorCategoryDef[] {
+  return sortThemeMajorCategories(source);
+}
+
+/** Majors visible on 探す (excludes hidden). */
+export function listVisibleThemeMajorCategories(
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
+): ThemeMajorCategoryDef[] {
+  return listThemeMajorCategories(source).filter((c) => c.status !== "hidden");
 }
 
 /** Representative majors for the home grid (≤ FEATURED_HOME_MAJOR_LIMIT). */
-export function listFeaturedHomeMajorCategories(): ThemeMajorCategoryDef[] {
-  return listThemeMajorCategories()
+export function listFeaturedHomeMajorCategories(
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
+): ThemeMajorCategoryDef[] {
+  return listVisibleThemeMajorCategories(source)
     .filter((c) => c.featuredOnHome)
     .slice(0, FEATURED_HOME_MAJOR_LIMIT);
 }
 
 export function isThemeMajorCategoryId(
-  value: unknown
+  value: unknown,
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
 ): value is ThemeMajorCategoryId {
   const id = String(value ?? "").trim();
-  return THEME_MAJOR_CATEGORIES.some((c) => c.id === id);
+  return source.some((c) => c.id === id);
 }
 
 export function parseThemeCatalogQuery(
-  value: unknown
+  value: unknown,
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
 ): ThemeMajorCategoryId | null {
   const id = String(value ?? "").trim();
-  return isThemeMajorCategoryId(id) ? id : null;
+  return isThemeMajorCategoryId(id, source) ? id : null;
 }
 
 export function getThemeMajorCategory(
-  id: ThemeMajorCategoryId | null | undefined
+  id: ThemeMajorCategoryId | null | undefined,
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
 ): ThemeMajorCategoryDef | null {
   if (!id) return null;
-  return THEME_MAJOR_CATEGORIES.find((c) => c.id === id) ?? null;
+  return source.find((c) => c.id === id) ?? null;
+}
+
+export type ThemeSubCategoryDto = {
+  id: string;
+  label: string;
+  topicKeys: string[];
+  matchPattern: string | null;
+  hint: string | null;
+  status: ThemeOfferStatus | null;
+  order: number;
+};
+
+export type ThemeMajorCategoryDto = {
+  id: string;
+  label: string;
+  hint: string;
+  description: string;
+  iconKey: string;
+  tone: string;
+  tint: string;
+  border: string;
+  status: ThemeOfferStatus;
+  featuredOnHome: boolean;
+  order: number;
+  orphanMatchPattern: string | null;
+  children: ThemeSubCategoryDto[];
+};
+
+function patternFromRegExp(re: RegExp | undefined): string | null {
+  if (!re) return null;
+  return re.source;
+}
+
+function regExpFromPattern(pattern: string | null | undefined): RegExp | undefined {
+  const raw = String(pattern ?? "").trim();
+  if (!raw) return undefined;
+  try {
+    return new RegExp(raw, "i");
+  } catch {
+    return undefined;
+  }
+}
+
+export function serializeThemeMajorCategory(
+  major: ThemeMajorCategoryDef
+): ThemeMajorCategoryDto {
+  return {
+    id: major.id,
+    label: major.label,
+    hint: major.hint,
+    description: major.description ?? "",
+    iconKey: major.iconKey ?? major.tone ?? major.id,
+    tone: major.tone,
+    tint: major.tint,
+    border: major.border,
+    status: major.status,
+    featuredOnHome: Boolean(major.featuredOnHome),
+    order: major.order,
+    orphanMatchPattern:
+      major.orphanMatchPattern ?? patternFromRegExp(major.orphanMatch),
+    children: [...major.children]
+      .sort(byOrder)
+      .map((child) => ({
+        id: child.id,
+        label: child.label,
+        topicKeys: [...child.topicKeys],
+        matchPattern: child.matchPattern ?? patternFromRegExp(child.match),
+        hint: child.hint ?? null,
+        status: child.status ?? null,
+        order: child.order ?? 0,
+      })),
+  };
+}
+
+export function hydrateThemeMajorCategory(
+  dto: ThemeMajorCategoryDto
+): ThemeMajorCategoryDef {
+  const status = isThemeOfferStatus(dto.status) ? dto.status : "coming_soon";
+  return {
+    id: String(dto.id),
+    label: String(dto.label ?? "").trim() || String(dto.id),
+    hint: String(dto.hint ?? "").trim(),
+    description: String(dto.description ?? ""),
+    iconKey: String(dto.iconKey ?? dto.tone ?? dto.id),
+    tone: String(dto.tone ?? dto.id),
+    tint: String(dto.tint ?? ""),
+    border: String(dto.border ?? ""),
+    status,
+    featuredOnHome: Boolean(dto.featuredOnHome),
+    order: Number(dto.order) || 0,
+    orphanMatchPattern: dto.orphanMatchPattern ?? null,
+    orphanMatch: regExpFromPattern(dto.orphanMatchPattern),
+    children: (dto.children ?? []).map((child) => {
+      const childStatus = isThemeOfferStatus(child.status)
+        ? child.status
+        : undefined;
+      return {
+        id: String(child.id),
+        label: String(child.label ?? "").trim() || String(child.id),
+        topicKeys: Array.isArray(child.topicKeys)
+          ? child.topicKeys.map((k) => String(k))
+          : [],
+        matchPattern: child.matchPattern ?? null,
+        match: regExpFromPattern(child.matchPattern),
+        hint: child.hint ?? undefined,
+        status: childStatus,
+        order: Number(child.order) || 0,
+      };
+    }),
+  };
+}
+
+export function serializeThemeCatalog(
+  majors: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
+): ThemeMajorCategoryDto[] {
+  return listThemeMajorCategories(majors).map(serializeThemeMajorCategory);
+}
+
+export function hydrateThemeCatalog(
+  dtos: readonly ThemeMajorCategoryDto[]
+): ThemeMajorCategoryDef[] {
+  return sortThemeMajorCategories(dtos.map(hydrateThemeMajorCategory));
 }
 
 export function resolveSubCategoryStatus(
@@ -461,23 +610,25 @@ function sortedChildren(major: ThemeMajorCategoryDef) {
 
 /** Prefer topic_key child hits, then keyword child hits, then orphanMatch. */
 export function resolveMajorCategoryIdForTopic(
-  topic: ThemeCatalogTopicLike
+  topic: ThemeCatalogTopicLike,
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
 ): ThemeMajorCategoryId {
   const key = topicKeyOf(topic);
+  const majors = listThemeMajorCategories(source);
 
-  for (const major of listThemeMajorCategories()) {
+  for (const major of majors) {
     for (const child of sortedChildren(major)) {
       if (key && child.topicKeys.includes(key)) return major.id;
     }
   }
 
-  for (const major of listThemeMajorCategories()) {
+  for (const major of majors) {
     for (const child of sortedChildren(major)) {
       if (child.match && child.match.test(topicText(topic))) return major.id;
     }
   }
 
-  for (const major of listThemeMajorCategories()) {
+  for (const major of majors) {
     if (major.orphanMatch?.test(topicText(topic))) return major.id;
   }
 
@@ -486,10 +637,11 @@ export function resolveMajorCategoryIdForTopic(
 
 export function topicsForMajorCategory<T extends ThemeCatalogTopicLike>(
   majorId: ThemeMajorCategoryId,
-  topics: readonly T[]
+  topics: readonly T[],
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
 ): T[] {
   return topics.filter(
-    (topic) => resolveMajorCategoryIdForTopic(topic) === majorId
+    (topic) => resolveMajorCategoryIdForTopic(topic, source) === majorId
   );
 }
 
@@ -512,9 +664,10 @@ export type ThemeSubCategoryRow<
 
 export function buildSubCategoryRows<T extends ThemeCatalogTopicLike>(
   major: ThemeMajorCategoryDef,
-  paidTopics: readonly T[]
+  paidTopics: readonly T[],
+  source: readonly ThemeMajorCategoryDef[] = THEME_MAJOR_CATEGORIES
 ): ThemeSubCategoryRow<T>[] {
-  const inMajor = topicsForMajorCategory(major.id, paidTopics);
+  const inMajor = topicsForMajorCategory(major.id, paidTopics, source);
   const claimed = new Set<string>();
   const rows: ThemeSubCategoryRow<T>[] = [];
 
