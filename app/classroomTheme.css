@@ -2681,7 +2681,7 @@
   gap: 0;
   margin-top: 8px;
   /* Keep the section heading clear of iOS Safari chrome after scrollIntoView. */
-  scroll-margin-top: max(24px, calc(env(safe-area-inset-top, 0px) + 12px));
+  scroll-margin-top: max(72px, calc(env(safe-area-inset-top, 0px) + 56px));
 }
 
 .cm-home-scroll-end-pad {
