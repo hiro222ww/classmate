@@ -2672,11 +2672,25 @@
   flex-shrink: 0;
 }
 
+.cm-home-my-class-top {
+  margin-bottom: 0;
+}
+
 .cm-home-my-class-section {
   display: grid;
   gap: 0;
-  /* Keep the heading clear of iOS Safari chrome / page padding after scrollIntoView. */
+  margin-top: 8px;
+  /* Keep the section heading clear of iOS Safari chrome after scrollIntoView. */
   scroll-margin-top: max(24px, calc(env(safe-area-inset-top, 0px) + 12px));
+}
+
+.cm-home-scroll-end-pad {
+  height: min(55vh, 480px);
+  pointer-events: none;
+}
+
+.cm-home-my-class-section-head {
+  margin-bottom: 10px;
 }
 
 .cm-home-my-class-jump {

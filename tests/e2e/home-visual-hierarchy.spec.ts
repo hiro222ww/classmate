@@ -78,34 +78,27 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
         "/class/select?cat=school"
       );
       await expect(page.getByRole("link", { name: /アイデンティティ/ })).toHaveCount(0);
-      // Warm empty state without duplicate discover/create CTAs.
-      await expect(page.getByText("最初のクラスを見つけよう", { exact: true })).toBeVisible();
+      // Warm empty state without duplicate discover/create CTAs (section lives below talk).
+      const myClassSection = page.locator("#cm-home-my-class");
+      await expect(myClassSection.getByText("最初のクラスを見つけよう", { exact: true })).toBeVisible();
       await expect(page.locator(".cm-my-class-empty-actions")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
-      // In-home マイクラス jump: heading scrolls to section; ＋作成 stays independent.
-      const myClassSection = page.locator("#cm-home-my-class");
-      await expect(myClassSection).toBeVisible();
-      await expect(
-        page.getByRole("heading", { name: "マイクラス", exact: true }).getByRole("button", {
-          name: "マイクラス",
-          exact: true,
-        })
-      ).toBeVisible();
-      await expect(page.getByRole("link", { name: "＋ 作成", exact: true })).toHaveAttribute(
+      // Top マイクラス heading jumps in-home to the lower section; ＋作成 stays independent.
+      const myClassJump = page.locator("button.cm-home-my-class-jump");
+      await expect(myClassJump).toBeVisible();
+      await expect(page.locator(".cm-home-my-class-top").getByRole("link", { name: "＋ 作成", exact: true })).toHaveAttribute(
         "href",
         "/class/create"
       );
-      await page.evaluate(() => {
-        const pad = document.createElement("div");
-        pad.dataset.e2ePad = "1";
-        pad.style.height = "1600px";
-        document.querySelector("main")?.appendChild(pad);
-        window.scrollTo(0, 1400);
-      });
-      await page
-        .getByRole("heading", { name: "マイクラス", exact: true })
-        .getByRole("button", { name: "マイクラス", exact: true })
-        .click();
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const el = document.getElementById("cm-home-my-class");
+            return el ? el.getBoundingClientRect().top : Number.NEGATIVE_INFINITY;
+          })
+        )
+        .toBeGreaterThan(200);
+      await myClassJump.click();
       await expect
         .poll(async () =>
           page.evaluate(() => {
@@ -116,10 +109,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
         )
         .toBeLessThan(120);
       await expect(page).toHaveURL(/\/$/);
-      await page.evaluate(() => {
-        document.querySelectorAll("[data-e2e-pad='1']").forEach((n) => n.remove());
-        window.scrollTo(0, 0);
-      });
+      await page.evaluate(() => window.scrollTo(0, 0));
       // Home-centric experiment: bottom nav hidden (component kept behind flag).
       await expect(page.locator(".cm-mobile-bottom-nav")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "メニューを開く", exact: true })).toBeVisible();

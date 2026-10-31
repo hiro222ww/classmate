@@ -1978,9 +1978,11 @@ return () => {
     if (!el) return;
     // Avoid history/hash writes here — Next.js App Router patches history and a
     // soft navigation can remount home (and bounce incomplete profile → onboarding).
-    // rAF helps iOS Safari apply scroll-margin after layout settles.
+    // Double rAF helps iOS Safari apply scroll-margin after layout settles.
     window.requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     });
   }, []);
 
@@ -2791,58 +2793,25 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           </div>
         ) : null}
 
-        <section
-          id={myClassSectionId}
-          className="cm-home-my-class-section"
-        >
-          <div className="cm-home-section-head">
-            <h2 className="cm-home-section-title">
-              <button
-                type="button"
-                className="cm-home-my-class-jump"
-                onClick={() => scrollToMyClassSection()}
-                aria-controls={myClassSectionId}
-              >
-                マイクラス
-              </button>
-            </h2>
-            <Link
-              href={withDev("/class/create")}
-              className="cm-home-section-link"
+        {/* Top jump: heading scrolls to the my-class section lower on home. */}
+        <div className="cm-home-section-head cm-home-my-class-top">
+          <h2 className="cm-home-section-title">
+            <button
+              type="button"
+              className="cm-home-my-class-jump"
+              onClick={() => scrollToMyClassSection()}
+              aria-controls={myClassSectionId}
             >
-              ＋ 作成
-            </Link>
-          </div>
-        {myClassRows.length > 0 ? (
-          <div className="cm-my-class-list">
-            {myClassRows.slice(0, 6).map((row) => {
-              const members = membersByClass[row.classId] ?? [];
-              return (
-                <MyClassCard
-                  key={row.classId}
-                  row={row}
-                  opening={openingClassId === row.classId}
-                  disabled={Boolean(openingClassId)}
-                  memberCount={members.length}
-                  members={members.map((m) => ({
-                    deviceId: String(m.device_id ?? "").trim(),
-                    displayName: formatMemberDisplayName(m),
-                    photoPath: m.photo_path ?? null,
-                  }))}
-                  onOpen={(target) => {
-                    const mine = visible.find(
-                      (c) => String(c.id ?? "").trim() === target.classId
-                    );
-                    if (mine) void openClass(mine);
-                  }}
-                />
-              );
-            })}
-          </div>
-        ) : (
-          <MyClassEmpty />
-        )}
-        </section>
+              マイクラス
+            </button>
+          </h2>
+          <Link
+            href={withDev("/class/create")}
+            className="cm-home-section-link"
+          >
+            ＋ 作成
+          </Link>
+        </div>
       </div>
 
       <HomeThemeGrid className="cm-stagger-4" />
@@ -2902,6 +2871,47 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           }}
         />
       </div>
+
+      <section
+        id={myClassSectionId}
+        className="cm-home-my-class-section cm-stagger-5"
+        aria-label="マイクラス"
+      >
+        <div className="cm-home-section-head cm-home-my-class-section-head">
+          <h2 className="cm-home-section-title">マイクラス</h2>
+        </div>
+        {myClassRows.length > 0 ? (
+          <div className="cm-my-class-list">
+            {myClassRows.slice(0, 6).map((row) => {
+              const members = membersByClass[row.classId] ?? [];
+              return (
+                <MyClassCard
+                  key={row.classId}
+                  row={row}
+                  opening={openingClassId === row.classId}
+                  disabled={Boolean(openingClassId)}
+                  memberCount={members.length}
+                  members={members.map((m) => ({
+                    deviceId: String(m.device_id ?? "").trim(),
+                    displayName: formatMemberDisplayName(m),
+                    photoPath: m.photo_path ?? null,
+                  }))}
+                  onOpen={(target) => {
+                    const mine = visible.find(
+                      (c) => String(c.id ?? "").trim() === target.classId
+                    );
+                    if (mine) void openClass(mine);
+                  }}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <MyClassEmpty />
+        )}
+      </section>
+      {/* Lets #cm-home-my-class scroll fully to the top on short (0-class) pages. */}
+      <div className="cm-home-scroll-end-pad" aria-hidden />
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 
