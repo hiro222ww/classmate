@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import BottomSheet from "@/components/BottomSheet";
+import { CmAvatar } from "@/components/ui/CmAvatar";
 
 type HomeMenuSheetProps = {
   open: boolean;
@@ -18,103 +19,28 @@ type HomeMenuSheetProps = {
   accountLabel: string;
   loggedIn: boolean;
   aboutHref: string;
-  /** Single entry for terms / privacy / guidelines / commercial disclosure. */
   legalHref: string;
+  displayName?: string;
+  photoPath?: string | null;
+  avatarUrl?: string | null;
+  discoverHref?: string;
 };
 
 function GlyphBell({ enabled }: { enabled: boolean }) {
   return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" />
       <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-      {!enabled && (
-        <path d="M2 2l20 20" strokeOpacity="0.25" strokeWidth="1.6" />
-      )}
-    </svg>
-  );
-}
-
-function GlyphUser() {
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
-function GlyphCrown() {
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M3 7l4 4 5-8 5 8 4-4v14H3V7z" />
+      {!enabled && <path d="M2 2l20 20" strokeOpacity="0.25" strokeWidth="1.6" />}
     </svg>
   );
 }
 
 function GlyphCard() {
   return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="2" y="5" width="20" height="14" rx="2" />
       <line x1="2" y1="10" x2="22" y2="10" />
-    </svg>
-  );
-}
-
-function GlyphClasses() {
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
     </svg>
   );
 }
@@ -130,8 +56,7 @@ function GlyphGoogle() {
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 6,
-        background:
-          "conic-gradient(from 45deg, #ea4335, #fbbc05, #34a853, #4285f4, #ea4335)",
+        background: "conic-gradient(from 45deg, #ea4335, #fbbc05, #34a853, #4285f4, #ea4335)",
         flexShrink: 0,
       }}
     >
@@ -140,14 +65,23 @@ function GlyphGoogle() {
   );
 }
 
+function GlyphSettings() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
 const rowStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 14,
-  padding: "11px 8px",
-  borderBottom: "1px solid #f3f4f6",
+  padding: "14px 10px",
+  borderBottom: "1px solid var(--cm-border, #e5eaf2)",
   textDecoration: "none",
-  color: "#111827",
+  color: "var(--cm-text, #17233d)",
   fontSize: 15,
   fontWeight: 700,
   cursor: "pointer",
@@ -155,15 +89,22 @@ const rowStyle: React.CSSProperties = {
   border: "none",
   width: "100%",
   textAlign: "left",
+  minHeight: 48,
+  fontFamily: "inherit",
 };
 
 const chevron: React.CSSProperties = {
   marginLeft: "auto",
-  color: "#9ca3af",
+  color: "var(--cm-muted, #64748b)",
   fontSize: 16,
   flexShrink: 0,
 };
 
+/**
+ * Account / settings sheet. Primary navigation (home / discover / mine / plan)
+ * lives in MobileBottomNav — keep this focused on profile, notifications,
+ * billing, and service info.
+ */
 export default function HomeMenuSheet({
   open,
   onClose,
@@ -172,29 +113,43 @@ export default function HomeMenuSheet({
   onToggleNotifications,
   hideWebPush,
   profileHref,
-  myClassesHref,
-  planHref,
   billingHref,
   accountHref,
   accountLabel,
   loggedIn,
   aboutHref,
   legalHref,
+  displayName,
+  photoPath = null,
+  avatarUrl = null,
 }: HomeMenuSheetProps) {
+  const name = String(displayName || accountLabel || "ゲスト").trim() || "ゲスト";
+
   return (
     <BottomSheet open={open} onClose={onClose} title="メニュー">
-      <nav aria-label="ホームメニュー" style={{ display: "grid" }}>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: "#6b7280",
-            padding: "0 8px 2px",
-            letterSpacing: "0.04em",
-          }}
+      <nav aria-label="アカウントメニュー" style={{ display: "grid" }}>
+        <Link
+          href={profileHref}
+          onClick={onClose}
+          className="cm-menu-profile-block"
+          style={{ textDecoration: "none", color: "inherit" }}
         >
-          アカウント
-        </div>
+          <CmAvatar
+            label={name}
+            sizePx={48}
+            photoPath={photoPath}
+            avatarUrl={avatarUrl}
+          />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="cm-menu-profile-name">{name}</div>
+            <span className="cm-menu-profile-edit">
+              {loggedIn ? "プロフィールを見る" : "プロフィール登録"}
+            </span>
+          </div>
+          <span style={chevron}>›</span>
+        </Link>
+
+        <div className="cm-menu-group-label">アカウント</div>
         {onToggleNotifications && !hideWebPush ? (
           <button
             type="button"
@@ -211,7 +166,7 @@ export default function HomeMenuSheet({
             <span>通知</span>
             <span style={chevron}>
               {notificationsEnabled ? (
-                <span style={{ color: "#10b981", fontWeight: 900, fontSize: 13 }}>
+                <span style={{ color: "var(--cm-online, #12a879)", fontWeight: 900, fontSize: 13 }}>
                   ON
                 </span>
               ) : (
@@ -241,59 +196,30 @@ export default function HomeMenuSheet({
           </button>
         ) : null}
 
-        <Link href={profileHref} onClick={onClose} style={rowStyle}>
-          <GlyphUser />
-          <span>プロフィール編集</span>
+        <Link href={accountHref} onClick={onClose} style={rowStyle}>
+          {loggedIn ? <GlyphSettings /> : <GlyphGoogle />}
+          <span>{loggedIn ? "アカウント" : "ログイン"}</span>
           <span style={chevron}>›</span>
         </Link>
 
-        <Link href={myClassesHref} onClick={onClose} style={rowStyle}>
-          <GlyphClasses />
-          <span>マイクラス</span>
-          <span style={chevron}>›</span>
-        </Link>
-
-        <Link href={planHref} onClick={onClose} style={rowStyle}>
-          <GlyphCrown />
-          <span>プランを見る</span>
-          <span style={chevron}>›</span>
-        </Link>
-
+        <div className="cm-menu-group-label">お支払い</div>
         <Link href={billingHref} onClick={onClose} style={rowStyle}>
           <GlyphCard />
-          <span>お支払い・解約</span>
+          <span>お支払い</span>
           <span style={chevron}>›</span>
         </Link>
 
-        <Link href={accountHref} onClick={onClose} style={rowStyle}>
-          <GlyphGoogle />
-          <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
-          <span style={chevron}>›</span>
-        </Link>
-
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: "#6b7280",
-            padding: "10px 8px 2px",
-            letterSpacing: "0.04em",
-          }}
-        >
-          Classmate
-        </div>
-
+        <div className="cm-menu-group-label">サポート</div>
         <Link href={aboutHref} onClick={onClose} style={rowStyle}>
           <span>Classmateについて</span>
           <span style={chevron}>›</span>
         </Link>
-
         <Link
           href={legalHref}
           onClick={onClose}
           style={{ ...rowStyle, borderBottom: "none" }}
         >
-          <span>規約・ポリシー</span>
+          <span>規約</span>
           <span style={chevron}>›</span>
         </Link>
       </nav>

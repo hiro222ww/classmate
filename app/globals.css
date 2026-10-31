@@ -332,13 +332,51 @@ body.classmate-board-fullscreen .cm-call-root {
 .classmate-push-bell-icon {
   font-size: 18px;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transform-origin: 50% 0%;
+  line-height: 0;
 }
 
 .classmate-push-bell-label {
   letter-spacing: 0.04em;
   min-width: 1.6em;
   text-align: center;
+}
+
+.classmate-push-bell--compact {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+  border-width: 1px;
+  border-color: var(--cm-border, #e5eaf2);
+  background: #fff;
+  color: var(--cm-muted, #64748b);
+  position: relative;
+  box-shadow: none;
+  animation: none;
+}
+
+.classmate-push-bell--compact.classmate-push-bell--on {
+  border-color: rgba(18, 168, 121, 0.45);
+  background: rgba(18, 168, 121, 0.1);
+  color: var(--cm-online, #12a879);
+  box-shadow: none;
+  animation: none;
+}
+
+.classmate-push-bell-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 1.5px solid #fff;
 }
 
 .classmate-push-bell--wiggle .classmate-push-bell-icon {

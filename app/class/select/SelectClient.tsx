@@ -55,6 +55,7 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
+import { ThemeCardGrid } from "@/components/home/themeCards";
 import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
@@ -72,6 +73,14 @@ import {
   resolveAdmissionStatusPillText,
   type AdmissionLoadState,
 } from "@/lib/admissionJoinGate";
+import {
+  THEME_CATALOG_QUERY_KEY,
+  buildSubCategoryRows,
+  getThemeMajorCategory,
+  parseThemeCatalogQuery,
+  type ThemeMajorCategoryId,
+} from "@/lib/themeCatalog";
+import { useVisibleThemeMajors } from "@/hooks/useThemeCatalog";
 
 type World = {
   world_key: string;
@@ -141,92 +150,14 @@ type EntryBoard = {
   badge_label?: string | null;
 };
 
-/** Display-only grouping for existing topics (no dummy themes). */
-type ThemeCategoryId =
-  | "chat"
-  | "hobby"
-  | "game"
-  | "travel"
-  | "school"
-  | "night"
-  | "other";
-
 /**
  * Paid / unreleased themes are shown as non-interactive teasers.
  * Join / purchase / billing stay disabled — data is display-only.
  */
-const SHOW_PAID_THEMES_AS_TEASER = true;
 const PAID_THEME_TEASER_LABEL = "準備中";
-
-const THEME_CATEGORIES: {
-  id: ThemeCategoryId;
-  label: string;
-  tint: string;
-  border: string;
-}[] = [
-  {
-    id: "chat",
-    label: "雑談・交流",
-    tint: "linear-gradient(180deg, rgba(236,253,245,0.9), rgba(255,255,255,0.95))",
-    border: "rgba(16, 185, 129, 0.22)",
-  },
-  {
-    id: "hobby",
-    label: "趣味",
-    tint: "linear-gradient(180deg, rgba(255,247,237,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(251, 146, 60, 0.22)",
-  },
-  {
-    id: "game",
-    label: "ゲーム",
-    tint: "linear-gradient(180deg, rgba(245,243,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(167, 139, 250, 0.25)",
-  },
-  {
-    id: "travel",
-    label: "旅行",
-    tint: "linear-gradient(180deg, rgba(240,249,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(56, 189, 248, 0.28)",
-  },
-  {
-    id: "school",
-    label: "学校・仕事",
-    tint: "linear-gradient(180deg, rgba(239,246,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(96, 165, 250, 0.28)",
-  },
-  {
-    id: "night",
-    label: "夜・まったり",
-    tint: "linear-gradient(180deg, rgba(238,242,255,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(129, 140, 248, 0.28)",
-  },
-  {
-    id: "other",
-    label: "その他のテーマ",
-    tint: "linear-gradient(180deg, rgba(248,250,252,0.95), rgba(255,255,255,0.95))",
-    border: "rgba(148, 163, 184, 0.3)",
-  },
-];
 
 const FREE_TINT =
   "linear-gradient(180deg, rgba(236,253,245,0.95) 0%, rgba(239,246,255,0.9) 100%)";
-
-function categorizeTheme(title: string, description: string): ThemeCategoryId {
-  const s = `${title} ${description}`.toLowerCase();
-  if (/ゲーム|game|esports|eスポーツ/.test(s)) return "game";
-  if (/旅行|travel|旅|観光/.test(s)) return "travel";
-  if (/夜|まったり|深夜|おやすみ|night/.test(s)) return "night";
-  if (
-    /男子校|女子校|学校|部活|スポーツ|仕事|職業|sports|work|identity|属性/.test(
-      s
-    )
-  ) {
-    return "school";
-  }
-  if (/趣味|hobby|創作|音楽|映画|アニメ|イラスト|漫画/.test(s)) return "hobby";
-  if (/雑談|交流|フリー|talk|chat|おしゃべり/.test(s)) return "chat";
-  return "other";
-}
 
 async function readJsonOrThrow(r: Response, label: string) {
   const raw = await r.text();
@@ -373,7 +304,42 @@ export default function SelectClient() {
   } | null>(null);
   const [joinedClassesLoading, setJoinedClassesLoading] = useState(false);
   const [joinedClassCount, setJoinedClassCount] = useState(0);
+  const { majors: catalogMajors } = useVisibleThemeMajors();
+  const catalogCatParam = searchParams.get(THEME_CATALOG_QUERY_KEY);
+  const [activeMajorId, setActiveMajorId] = useState<ThemeMajorCategoryId | null>(
+    () => parseThemeCatalogQuery(catalogCatParam)
+  );
   const lastJoinBoardRef = useRef<EntryBoard | null>(null);
+  const themeBoardsRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setActiveMajorId(parseThemeCatalogQuery(catalogCatParam, catalogMajors));
+  }, [catalogCatParam, catalogMajors]);
+
+  function openMajorCategory(id: ThemeMajorCategoryId) {
+    setActiveMajorId(id);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set(THEME_CATALOG_QUERY_KEY, id);
+      window.history.replaceState(null, "", `${url.pathname}?${url.searchParams.toString()}`);
+    }
+    window.setTimeout(() => {
+      themeBoardsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 40);
+  }
+
+  function clearMajorCategory() {
+    setActiveMajorId(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(THEME_CATALOG_QUERY_KEY);
+      const q = url.searchParams.toString();
+      window.history.replaceState(null, "", q ? `${url.pathname}?${q}` : url.pathname);
+    }
+  }
 
   async function reloadCatalog() {
     try {
@@ -788,7 +754,7 @@ export default function SelectClient() {
     result.push({
       key: "free",
       title: "フリー",
-      description: "同年代と気軽に話そう",
+      description: "",
       world_key: "default",
       topic_key: null,
       is_sensitive: false,
@@ -839,15 +805,20 @@ export default function SelectClient() {
     admissionText: joinWindowText,
   });
 
-  const themeGroups = useMemo(() => {
-    const paid = boards.filter((b) => b.monthly_price > 0);
-    return THEME_CATEGORIES.map((cat) => ({
-      ...cat,
-      boards: paid.filter(
-        (b) => categorizeTheme(b.title, b.description) === cat.id
-      ),
-    })).filter((g) => g.boards.length > 0);
-  }, [boards]);
+  const paidBoards = useMemo(
+    () => boards.filter((b) => b.monthly_price > 0),
+    [boards]
+  );
+
+  const activeMajor = useMemo(
+    () => getThemeMajorCategory(activeMajorId, catalogMajors),
+    [activeMajorId, catalogMajors]
+  );
+
+  const subCategoryRows = useMemo(() => {
+    if (!activeMajor) return [];
+    return buildSubCategoryRows(activeMajor, paidBoards, catalogMajors);
+  }, [activeMajor, paidBoards, catalogMajors]);
 
   function hasBoardAccess(b: EntryBoard): boolean {
     if (!themeBillingEnabled) return true;
@@ -1168,10 +1139,12 @@ export default function SelectClient() {
     b,
     accent,
     emphasizeFree = false,
+    compact = false,
   }: {
     b: EntryBoard;
     accent?: { tint: string; border: string };
     emphasizeFree?: boolean;
+    compact?: boolean;
   }) {
     const isFree = b.monthly_price <= 0;
     const comingSoon = !isFree;
@@ -1211,19 +1184,14 @@ export default function SelectClient() {
       ? "rgba(148, 163, 184, 0.35)"
       : accent?.border ?? (isFree ? "rgba(16, 185, 129, 0.28)" : undefined);
 
+    // Keep button labels short; admission status lives in the page pill.
     const actionLabel = comingSoon
       ? teaserLabel
       : profileMissing
-        ? "プロフィール登録が必要"
+        ? "登録が必要"
         : adminTestJoin
           ? "テスト入室"
-          : joinWindowLoadState === "loading"
-            ? "受付状況を確認中…"
-            : joinWindowLoadState === "error"
-              ? "受付状況を確認できませんでした"
-              : admissionClosed
-                ? "入学受付時間外"
-                : null;
+          : null;
 
     const renderJoinButton = (mode: MatchEntryMode, label: string) => (
       <MatchEntryButton
@@ -1260,10 +1228,10 @@ export default function SelectClient() {
           .join(" ")}
         aria-disabled={comingSoon || undefined}
         style={{
-          padding: emphasizeFree ? 16 : 12,
+          padding: compact ? 12 : emphasizeFree ? 14 : 12,
           background: tint,
           border: border ? `1px solid ${border}` : undefined,
-          borderRadius: 16,
+          borderRadius: compact ? 18 : 16,
           boxShadow: comingSoon
             ? "none"
             : "0 4px 14px rgba(15, 23, 42, 0.04)",
@@ -1282,14 +1250,14 @@ export default function SelectClient() {
             <strong
               className="cm-board-card-title"
               style={{
-                fontSize: emphasizeFree ? 17 : 15,
+                fontSize: compact ? 14 : emphasizeFree ? 16 : 15,
                 display: "block",
                 color: comingSoon ? "#64748b" : "#0f172a",
               }}
             >
-              {isFree ? "テーマフリー" : b.title}
+              {b.title}
             </strong>
-            {comingSoon && b.monthly_price > 0 ? (
+            {comingSoon && !compact ? (
               <span
                 style={{
                   display: "block",
@@ -1299,8 +1267,7 @@ export default function SelectClient() {
                   color: "#94a3b8",
                 }}
               >
-                {tierName(b.monthly_price)} · ¥
-                {b.monthly_price.toLocaleString("ja-JP")}/月
+                準備中のため参加できません
               </span>
             ) : null}
           </div>
@@ -1325,23 +1292,23 @@ export default function SelectClient() {
                   padding: "3px 8px",
                 }}
               >
-                {teaserLabel === PAID_THEME_TEASER_LABEL ? "🔒 準備中" : teaserLabel}
+                {teaserLabel === PAID_THEME_TEASER_LABEL ? "準備中" : teaserLabel}
               </span>
             ) : null}
             {b.is_sensitive ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>
-                🔞
+                18+
               </span>
             ) : null}
             {!comingSoon && profileMissing ? (
               <span style={{ fontSize: 11, fontWeight: 700, color: "#92400e" }}>
-                プロフィール未登録
+                要登録
               </span>
             ) : null}
           </div>
         </div>
 
-        {b.description ? (
+        {!compact && b.description ? (
           <p
             style={{
               margin: "8px 0 0",
@@ -1357,17 +1324,19 @@ export default function SelectClient() {
           </p>
         ) : null}
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-            gap: 8,
-            marginTop: 12,
-          }}
-        >
-          {renderJoinButton("voice", "通話で始める")}
-          {renderJoinButton("chat", "チャットで始める")}
-        </div>
+        {!comingSoon ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 8,
+              marginTop: compact ? 10 : 12,
+            }}
+          >
+            {renderJoinButton("voice", "通話")}
+            {renderJoinButton("chat", "チャット")}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -1416,18 +1385,19 @@ export default function SelectClient() {
       style={
         {
           ...(isApp
-            ? { color: "#111" }
-            : { padding: "16px 16px 28px", maxWidth: 960, margin: "0 auto", color: "#111" }),
-          ["--dash-primary-bg-full" as any]:
-            "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
-          ["--dash-primary-shadow" as any]:
-            "0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3)",
+            ? { color: "var(--cm-text)" }
+            : {
+                padding: "16px 16px 28px",
+                maxWidth: 960,
+                margin: "0 auto",
+                color: "var(--cm-text)",
+              }),
         } as any
       }
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
-      <HomeBrandVisual menuButton={menuButton} showIntro={false} />
+      <HomeBrandVisual menuButton={menuButton} />
 
       <HomeMenuSheet
         open={menuOpen}
@@ -1449,6 +1419,8 @@ export default function SelectClient() {
         loggedIn={loggedIn}
         aboutHref={withDev("/about")}
         legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={profile?.display_name || "ゲスト"}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
@@ -1492,7 +1464,7 @@ export default function SelectClient() {
           style={{ ...DASH_CARD, marginTop: 16, borderColor: "#fde68a" }}
         >
           <div style={{ fontWeight: 900, fontSize: 15, color: "#92400e" }}>
-            プロフィール登録が必要です
+            プロフィール登録が必要
           </div>
           <Link
             href={withDev(buildProfileEditPath(selectSelfPath))}
@@ -1506,7 +1478,7 @@ export default function SelectClient() {
               textDecoration: "none",
             }}
           >
-            プロフィール登録
+            登録する
           </Link>
         </section>
       ) : null}
@@ -1585,80 +1557,56 @@ export default function SelectClient() {
         </div>
       ) : null}
 
-      <div style={{ marginTop: 18, display: "grid", gap: 18 }}>
-        <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: 22,
-              fontWeight: 900,
-              color: "#0f172a",
-              letterSpacing: 0.01,
-              lineHeight: 1.25,
-            }}
-          >
-            テーマを選ぶ
-          </h2>
-        </div>
+      <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
+        <header className="cm-page-heading cm-select-heading">
+          <h1>探す</h1>
+          <p>気になるテーマから選ぶ</p>
+        </header>
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
+        <div className="cm-select-meta-row">
           <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 10px",
-              borderRadius: 999,
-              background: joinWindowOpen
-                ? "rgba(236, 253, 245, 0.95)"
-                : "rgba(241, 245, 249, 0.95)",
-              border: "1px solid rgba(148, 163, 184, 0.28)",
-              fontSize: 12,
-              fontWeight: 800,
-              color: "#334155",
-            }}
+            className={[
+              "cm-admission-pill",
+              joinWindowLoadState === "error"
+                ? "cm-admission-pill--error"
+                : joinWindowLoadState === "loading"
+                  ? "cm-admission-pill--loading"
+                  : joinWindowOpen
+                    ? "cm-admission-pill--open"
+                    : "cm-admission-pill--closed",
+            ].join(" ")}
+            role="status"
           >
             <span
+              aria-hidden
               style={{
                 width: 7,
                 height: 7,
-                borderRadius: "50%",
-                background:
-                  joinWindowLoadState === "error"
-                    ? "#f59e0b"
-                    : joinWindowLoadState === "loading"
-                      ? "#94a3b8"
-                      : joinWindowOpen
-                        ? "#16a34a"
-                        : "#94a3b8",
+                borderRadius: 999,
+                background: "currentColor",
+                opacity: 0.85,
+                display: "inline-block",
               }}
             />
             {admissionPillText}
           </span>
           {slotBillingEnabled ? (
-            <span
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.85)",
-                border: "1px solid rgba(148, 163, 184, 0.28)",
-                fontSize: 12,
-                fontWeight: 700,
-                color: "#64748b",
-              }}
-            >
-              {`${slots}クラス枠`}
-            </span>
+            <span className="cm-select-slot-pill">{`${slots}クラス枠`}</span>
           ) : null}
+          <AgeFilterCard
+            variant="sheet"
+            deviceId={deviceId}
+            hasProfile={hasProfile}
+            disabled={loading}
+            onPrefsChange={setPrefs}
+            onPrefsLoadedChange={setPrefsLoaded}
+            onProfileRequired={() => {
+              goProfileIfNeeded("profile_required");
+            }}
+          />
           <button
             type="button"
+            className="cm-text-btn"
             onClick={() => {
               void reloadCatalog();
               void refreshCurrentClass();
@@ -1666,207 +1614,125 @@ export default function SelectClient() {
               void reloadJoinWindow();
             }}
             disabled={loading}
-            style={{
-              marginLeft: "auto",
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid #e2e8f0",
-              background: "#fff",
-              fontSize: 12,
-              fontWeight: 800,
-              color: "#64748b",
-              cursor: loading ? "default" : "pointer",
-            }}
+            style={{ marginLeft: "auto" }}
           >
             更新
           </button>
         </div>
 
         {showJoinedStrip ? (
-          <Link
-            href={withDev("/class/mine")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              padding: "10px 12px",
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.88)",
-              border: "1px solid rgba(148, 163, 184, 0.28)",
-              textDecoration: "none",
-              color: "#0f172a",
-              boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
-            }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 800 }}>
-              所属中のクラス
-              <span style={{ marginLeft: 8, color: "#059669" }}>
-                {joinedClassCount}件
-              </span>
+          <Link href={withDev("/class/mine")} className="cm-select-mine-strip">
+            <span>
+              マイクラス
+              <span className="cm-select-mine-strip-count">{joinedClassCount}</span>
             </span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>
-              マイクラスへ ›
-            </span>
+            <span aria-hidden>›</span>
           </Link>
         ) : null}
 
         {!joinWindowOpen &&
         joinWindowLoadState === "ready" &&
         opsTestFlags.ignoreAdmission ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#78716c",
-            }}
-          >
-            現在は入学受付時間外です。運営テストモードでテスト入室できます。
-          </p>
+          <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
         ) : null}
 
-        <AgeFilterCard
-          variant="compact"
-          deviceId={deviceId}
-          hasProfile={hasProfile}
-          disabled={loading}
-          onPrefsChange={setPrefs}
-          onPrefsLoadedChange={setPrefsLoaded}
-          onProfileRequired={() => {
-            goProfileIfNeeded("profile_required");
+        <section
+          ref={(node) => {
+            themeBoardsRef.current = node;
           }}
-        />
-
-        <section style={{ display: "grid", gap: 10 }}>
-          <h3
-            style={{
-              margin: 0,
-              fontSize: 16,
-              fontWeight: 900,
-              color: "#0f172a",
-            }}
-          >
-            テーマフリー
-          </h3>
-          {admissionStatusNotice ? (
-            <div
-              role="status"
-              className="cm-select-admission-status"
-              style={{
-                display: "grid",
-                gap: 8,
-                justifyItems: "start",
-              }}
-            >
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color:
-                    admissionStatusNotice.kind === "error"
-                      ? "#b45309"
-                      : "#78716c",
-                  lineHeight: 1.45,
+          className="cm-select-boards"
+          style={{ display: "grid", gap: 10 }}
+        >
+          {admissionStatusNotice &&
+          joinWindowLoadState === "error" &&
+          !admissionPillText ? (
+            <div role="status" className="cm-select-admission-status">
+              <p>{admissionStatusNotice.text}</p>
+              <button
+                type="button"
+                className="cm-text-btn"
+                onClick={() => {
+                  void reloadJoinWindow();
                 }}
               >
-                {admissionStatusNotice.text}
-              </p>
-              {admissionStatusNotice.kind === "error" ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void reloadJoinWindow();
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 999,
-                    border: "1px solid rgba(148, 163, 184, 0.45)",
-                    background: "#fff",
-                    fontSize: 12,
-                    fontWeight: 800,
-                    color: "#475569",
-                    cursor: "pointer",
-                  }}
-                >
-                  更新
-                </button>
-              ) : null}
+                更新
+              </button>
             </div>
           ) : null}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: 12,
-            }}
-          >
-            {freeBoards.map((b) => (
-              <BoardCard key={b.key} b={b} emphasizeFree />
-            ))}
-          </div>
-        </section>
 
-        {SHOW_PAID_THEMES_AS_TEASER && themeGroups.length > 0 ? (
-          <section style={{ display: "grid", gap: 16 }}>
-            <div>
-              <h3
-                style={{
-                  margin: 0,
-                  fontSize: 16,
-                  fontWeight: 900,
-                  color: "#0f172a",
-                }}
-              >
-                テーマから探す
-              </h3>
+          <div className="cm-select-free-block">
+            <div className="cm-select-free-list">
+              {freeBoards.map((b) => (
+                <BoardCard key={b.key} b={b} emphasizeFree compact />
+              ))}
             </div>
-
-            {themeGroups.map((group) => (
-              <div key={group.id} style={{ display: "grid", gap: 8 }}>
-                <h4
-                  style={{
-                    margin: 0,
-                    fontSize: 13,
-                    fontWeight: 900,
-                    color: "#475569",
-                    letterSpacing: "0.02em",
-                  }}
-                >
-                  {group.label}
-                </h4>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                    gap: 10,
-                  }}
-                >
-                  {group.boards.map((b) => (
-                    <BoardCard
-                      key={b.key}
-                      b={b}
-                      accent={{ tint: group.tint, border: group.border }}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </section>
-        ) : null}
-
-        {!loading && freeBoards.length === 0 ? (
-          <div
-            className="cm-select-empty"
-            style={{ marginTop: 4, fontSize: 12, color: "#666" }}
-          >
-            条件に合うテーマがありません
           </div>
-        ) : null}
+
+          {!activeMajor ? (
+            <ThemeCardGrid
+              title="カテゴリー"
+              variant="all"
+              categories={catalogMajors}
+              listHref={null}
+              showComingSoonHint
+              onPick={(id) => {
+                openMajorCategory(id);
+              }}
+            />
+          ) : (
+            <div className="cm-select-teaser-block">
+              <div className="cm-home-section-head" style={{ marginBottom: 6 }}>
+                <h3 className="cm-home-section-title">{activeMajor.label}</h3>
+                <button
+                  type="button"
+                  className="cm-home-section-link"
+                  onClick={() => clearMajorCategory()}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  戻る
+                </button>
+              </div>
+              <p className="cm-select-teaser-note">
+                {activeMajor.status === "coming_soon"
+                  ? "このカテゴリーのテーマ課金は準備中です。参加・課金はできません。"
+                  : "テーマを選んで参加できます。"}
+              </p>
+              <ul className="cm-select-subcat-list">
+                {subCategoryRows.map((row) => (
+                  <li key={row.id} className="cm-select-subcat-row">
+                    <div className="cm-select-subcat-copy">
+                      <strong className="cm-select-subcat-title">
+                        {row.label}
+                      </strong>
+                      {row.topic?.description ? (
+                        <span className="cm-select-subcat-desc">
+                          {row.topic.description}
+                        </span>
+                      ) : row.hint && row.hint !== "準備中" ? (
+                        <span className="cm-select-subcat-desc">{row.hint}</span>
+                      ) : null}
+                    </div>
+                    {row.comingSoon ? (
+                      <span className="cm-select-subcat-badge">準備中</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {!loading && freeBoards.length === 0 ? (
+            <div className="cm-select-empty">条件に合うテーマがありません</div>
+          ) : null}
+        </section>
       </div>
 
-      <div style={{ height: 24 }} />
+      <div style={{ height: 20 }} />
       <DevModeSwitcher />
     </main>
   );

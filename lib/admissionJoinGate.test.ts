@@ -77,7 +77,7 @@ describe("resolveAdmissionStatusNotice", () => {
         loadState: "loading",
         joinWindowOpen: false,
       })
-    ).toEqual({ kind: "loading", text: "受付状況を確認中…" });
+    ).toEqual({ kind: "loading", text: "受付を確認中…" });
   });
 
   it("shows error copy on fetch failure", () => {
@@ -86,7 +86,7 @@ describe("resolveAdmissionStatusNotice", () => {
         loadState: "error",
         joinWindowOpen: false,
       })
-    ).toEqual({ kind: "error", text: "受付状況を確認できませんでした" });
+    ).toEqual({ kind: "error", text: "受付を確認できません" });
   });
 
   it("shows closed copy only after ready with open=false", () => {
@@ -130,13 +130,13 @@ describe("resolveAdmissionStatusPillText", () => {
         loadState: "loading",
         joinWindowOpen: false,
       })
-    ).toBe("受付状況を確認中…");
+    ).toBe("受付を確認中…");
     expect(
       resolveAdmissionStatusPillText({
         loadState: "error",
         joinWindowOpen: false,
       })
-    ).toBe("受付状況を確認できませんでした");
+    ).toBe("受付を確認できません");
   });
 });
 

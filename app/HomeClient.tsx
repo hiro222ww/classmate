@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
@@ -12,8 +13,19 @@ import {
   logProfileExists,
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
-import { JoinNewCard } from "@/components/dashboard/JoinNewCard";
 import { buildThemeSelectPath } from "@/lib/joinMode";
+import { HomeHeader } from "@/components/home/HomeHeader";
+import { HomeHeroAtmosphere } from "@/components/home/HomeHeroAtmosphere";
+import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
+import { MyClassCard } from "@/components/home/MyClassCard";
+import { MyClassEmpty } from "@/components/home/MyClassEmpty";
+import { RandomTalkCta } from "@/components/home/RandomTalkCta";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
+import type { JoinedClassRow } from "@/hooks/useJoinedClasses";
 import {
   canStartMatchJoin,
   guardMatchJoinAdmission,
@@ -49,20 +61,18 @@ import InAppToastStack, {
   type InAppToastItem,
 } from "@/components/InAppToastStack";
 import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
-import HomeMenuSheet from "@/components/HomeMenuSheet";
-import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
-import { ClassmateEmblem } from "@/components/brand/ClassmateEmblem";
 import { useAuth } from "@/components/AuthProvider";
-import { buildShellAwareLoginUrl, buildShellAwareSettingsUrl } from "@/lib/appShellNavigation";
 import { isAppShellContext } from "@/lib/appShellContext";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
+import { CmAvatar } from "@/components/ui/CmAvatar";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
+import { hasCreateClassEntitlement } from "@/lib/classCreateGuards";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { supabase } from "@/lib/supabaseClient";
 import {
@@ -114,12 +124,11 @@ import {
   logHomePerf,
 } from "@/lib/homePerf";
 
-const HOME_CTA_GREEN_OVERRIDES_CSS = `
-/* Home page CTA should be green-ish (without changing disabled/loading logic). */
+const HOME_CTA_OVERRIDES_CSS = `
 .cm-home-body .cm-cta-primary:hover:not(:disabled) {
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.35) inset,
-    0 12px 26px rgba(16, 185, 129, 0.34) !important;
+    0 12px 26px rgba(52, 120, 246, 0.34) !important;
 }
 `;
 
@@ -131,6 +140,7 @@ type Profile = {
   declared_age?: number | null;
   declared_age_as_of?: string | null;
   age?: number | null;
+  photo_path?: string | null;
   minimum_profile?: boolean;
   profile_complete?: boolean;
 };
@@ -161,6 +171,18 @@ type MineClass = {
   active_call_request?: CallRequestPublic | null;
   unread_count?: number;
 };
+
+function toJoinedClassRow(c: MineClass): JoinedClassRow {
+  return {
+    classId: String(c.id ?? c.class_id ?? "").trim(),
+    name: String(c.name ?? "").trim() || "所属クラス",
+    topicKey: c.topic_key ?? null,
+    worldKey: c.world_key ?? null,
+    topicTitle: c.topic_title ?? null,
+    statusLabel: String(c.status_label ?? "").trim() || "所属中",
+    sessionId: String(c.session_id ?? "").trim() || null,
+  };
+}
 
 type ClassMember = {
   device_id: string;
@@ -426,7 +448,12 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
-  const { adminAuthenticated, opsTestFlags, loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const {
+    adminAuthenticated,
+    opsTestFlags,
+    loggedIn,
+    accountLabel,
+  } = useDashboardAccountStatus(deviceId);
   const [menuOpen, setMenuOpen] = useState(false);
   const {
     enabled: notificationsEnabled,
@@ -445,6 +472,10 @@ export default function HomeClient() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileChecked, setProfileChecked] = useState(false);
+  /** null = still loading; avoid flashing ＋作成 before entitlements resolve */
+  const [canCreateClasses, setCanCreateClasses] = useState<boolean | null>(
+    null
+  );
   const [classes, setClasses] = useState<MineClass[]>([]);
   const [recruitmentSessionTtlMinutes, setRecruitmentSessionTtlMinutes] =
     useState<number | null>(5);
@@ -875,6 +906,37 @@ export default function HomeClient() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    const id = String(deviceId ?? "").trim();
+    if (!id) {
+      setCanCreateClasses(null);
+      return;
+    }
+
+    let alive = true;
+    setCanCreateClasses(null);
+
+    void (async () => {
+      try {
+        const er = await fetch("/api/user/entitlements", {
+          method: "GET",
+          headers: await buildDeviceAuthHeaders(id),
+          cache: "no-store",
+        });
+        const ej = await er.json().catch(() => null);
+        if (!alive) return;
+        setCanCreateClasses(hasCreateClassEntitlement(ej));
+      } catch {
+        if (!alive) return;
+        setCanCreateClasses(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [deviceId]);
 
   useEffect(() => {
     if (!mounted || authStatus === "loading" || !profileChecked) return;
@@ -1945,6 +2007,56 @@ return () => {
       ? ""
       : "ゲスト");
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
+  const myClassSectionId = "cm-home-my-class";
+
+  const scrollToMyClassSection = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const el = document.getElementById(myClassSectionId);
+    if (!el) return;
+
+    const measureSafeAreaTop = () => {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText =
+        "position:fixed;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;";
+      document.body.appendChild(probe);
+      const height = probe.getBoundingClientRect().height;
+      probe.remove();
+      return height;
+    };
+
+    const header = document.querySelector<HTMLElement>(
+      ".cm-home-header, .cm-app-header"
+    );
+    const headerPos = header ? getComputedStyle(header).position : "";
+    const headerOverlaps =
+      headerPos === "sticky" || headerPos === "fixed";
+    const headerHeight =
+      headerOverlaps && header ? header.getBoundingClientRect().height : 0;
+    // Comfortable gap under iOS chrome even when the header scrolls away.
+    const offset = measureSafeAreaTop() + headerHeight + 16;
+
+    // Avoid history/hash writes — Next.js App Router can remount on hash changes.
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const y =
+          el.getBoundingClientRect().top +
+          (window.scrollY || window.pageYOffset) -
+          offset;
+        window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== `#${myClassSectionId}`) return;
+    // Wait a tick so layout (empty/list) is ready; works with 0 classes too.
+    const t = window.setTimeout(() => {
+      scrollToMyClassSection();
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [scrollToMyClassSection, visible.length]);
 
   async function tryOpenClassWithHintSession(params: {
     target: MineClass;
@@ -2573,18 +2685,12 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     return (
       <div
         className={homeStateClass}
-        style={
-          {
-            display: "grid",
-            gap: 16,
-            ["--dash-primary-bg-full" as any]:
-              "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
-            ["--dash-primary-shadow" as any]:
-              "0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3)",
-          } as any
-        }
+        style={{
+          display: "grid",
+          gap: 16,
+        }}
       >
-        <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_GREEN_OVERRIDES_CSS}</style>
+        <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_OVERRIDES_CSS}</style>
         <p
           className="cm-home-loading-line"
           style={{ margin: 0, color: "var(--cm-muted, #6b7280)" }}
@@ -2595,39 +2701,40 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     );
   }
 
+  const myClassRows = visible
+    .map(toJoinedClassRow)
+    .filter((row) => Boolean(row.classId));
+
   return (
     <div
       className={homeStateClass}
-      style={
-        {
-          display: "grid",
-          gap: 16,
-          ["--dash-primary-bg-full" as any]:
-            "linear-gradient(180deg, #059669 0%, #10b981 42%, #34d399 100%)",
-          ["--dash-primary-shadow" as any]:
-            "0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 8px 20px rgba(5, 150, 105, 0.3)",
-        } as any
-      }
+      style={{
+        display: "grid",
+        gap: 12,
+      }}
     >
-      <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_GREEN_OVERRIDES_CSS}</style>
+      <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_OVERRIDES_CSS}</style>
 
-      <HomeBrandVisual
-        showIntro={false}
-        menuButton={
+      <HomeHeader
+        displayName={welcomeName || "ゲスト"}
+        photoPath={profile?.photo_path ?? null}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isAppShellContext()}
+        trailing={
           <button
             type="button"
-            className="cm-hamburger-btn"
+            className="cm-app-header-menu-avatar"
             aria-label="メニューを開く"
+            aria-expanded={menuOpen}
             onClick={() => setMenuOpen(true)}
           >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#374151" strokeWidth="2" strokeLinecap="round" aria-hidden>
-              <line x1="3" y1="5" x2="17" y2="5" />
-              <line x1="3" y1="10" x2="17" y2="10" />
-              <line x1="3" y1="15" x2="17" y2="15" />
-            </svg>
-            {!notificationsEnabled && !isAppShellContext() ? (
-              <span className="cm-hamburger-dot" />
-            ) : null}
+            <CmAvatar
+              label={welcomeName || "ゲスト"}
+              sizePx={32}
+              photoPath={profile?.photo_path ?? null}
+            />
           </button>
         }
       />
@@ -2643,11 +2750,18 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         myClassesHref={withDev("/class/mine")}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
-        accountHref={loggedIn ? withDev(buildShellAwareSettingsUrl()) : withDev(buildShellAwareLoginUrl("/"))}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/"))
+        }
         accountLabel={accountLabel}
         loggedIn={loggedIn}
         aboutHref={withDev("/about")}
         legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={welcomeName || "ゲスト"}
+        photoPath={profile?.photo_path ?? null}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
@@ -2657,140 +2771,100 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         />
       ) : null}
 
-      {/* Welcome — directly on background, no card */}
-      <div className="cm-home-welcome cm-stagger-3">
-        <p style={{ margin: 0, fontSize: 14, color: "var(--cm-text, #374151)" }}>
-          {authLoading || (authStatus === "authenticated" && !profileName) ? (
-            <>
-              ようこそ、<AuthTextSkeleton width={96} /> さん
-            </>
-          ) : (
-            <>
-              ようこそ、<b>{welcomeName}</b> さん
-            </>
-          )}
-        </p>
-        {authLoading ? (
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 13,
-              color: "var(--cm-muted, #6b7280)",
-              fontWeight: 700,
-            }}
-          >
-            {authSlow
-              ? "読み込みに時間がかかっています"
-              : "アカウント情報を確認しています…"}
-            {authError ? `（${authError}）` : ""}
+      <HomeHeroAtmosphere className="cm-stagger-2" />
+
+      <div className="cm-home-flow cm-stagger-3">
+        <div className="cm-home-welcome">
+          <p className="cm-home-welcome-line">
+            {authLoading || (authStatus === "authenticated" && !profileName) ? (
+              <>
+                <AuthTextSkeleton width={72} /> さん
+              </>
+            ) : (
+              <>
+                <b>{welcomeName}</b> さん
+              </>
+            )}
           </p>
-        ) : authStatus === "authenticated" && !profileName ? (
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 13,
-              color: "var(--cm-muted, #6b7280)",
-              fontWeight: 700,
-            }}
-          >
-            アカウント情報を読み込んでいます
-          </p>
-        ) : null}
-        {admissionPillText ? (
-          <div
-            style={{
-              marginTop: 8,
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
-            <StatusPill>
+          {authLoading ? (
+            <p className="cm-home-welcome-note">
+              {authSlow ? "読み込みが遅いです…" : "確認中…"}
+              {authError ? `（${authError}）` : ""}
+            </p>
+          ) : null}
+          {admissionPillText ? (
+            <div className="cm-home-welcome-meta">
               <span
-                aria-hidden
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 999,
-                  background:
-                    joinWindowLoadState === "error"
-                      ? "#f59e0b"
-                      : joinWindowLoadState === "loading"
-                        ? "#94a3b8"
-                        : joinWindowOpen
-                          ? "#16a34a"
-                          : "#94a3b8",
-                  display: "inline-block",
-                }}
-              />
-              {admissionPillText}
-            </StatusPill>
-            {joinWindowLoadState === "error" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  void reloadJoinWindow();
-                }}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: "1px solid #e2e8f0",
-                  background: "#fff",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  color: "#64748b",
-                  cursor: "pointer",
-                }}
+                className={[
+                  "cm-admission-pill",
+                  joinWindowLoadState === "error"
+                    ? "cm-admission-pill--error"
+                    : joinWindowLoadState === "loading"
+                      ? "cm-admission-pill--loading"
+                      : joinWindowOpen
+                        ? "cm-admission-pill--open"
+                        : "cm-admission-pill--closed",
+                ].join(" ")}
               >
-                更新
-              </button>
-            ) : null}
-            {opsTestActive ? <StatusPill>運営テスト中</StatusPill> : null}
+                <span
+                  aria-hidden
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 999,
+                    background: "currentColor",
+                    opacity: 0.85,
+                    display: "inline-block",
+                  }}
+                />
+                {admissionPillText}
+              </span>
+              {joinWindowLoadState === "error" ? (
+                <button
+                  type="button"
+                  className="cm-text-btn"
+                  onClick={() => {
+                    void reloadJoinWindow();
+                  }}
+                >
+                  更新
+                </button>
+              ) : null}
+              {opsTestActive ? <StatusPill>テスト中</StatusPill> : null}
+            </div>
+          ) : null}
+          {adminCanBypassAdmission ? (
+            <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
+          ) : null}
+        </div>
+
+        {error ? (
+          <div
+            className="cm-home-error"
+            style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
+          >
+            {error}
           </div>
         ) : null}
-        {adminCanBypassAdmission ? (
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#78716c",
-            }}
-          >
-            現在は入学受付時間外です。運営テストモードでテスト入室できます。
-          </p>
-        ) : null}
+
+        {/* Compact in-home shortcut — not a second my-class section. */}
+        <button
+          type="button"
+          className="cm-home-my-class-shortcut"
+          onClick={() => scrollToMyClassSection()}
+          aria-controls={myClassSectionId}
+        >
+          <span>マイクラス</span>
+          <span className="cm-home-my-class-shortcut-chevron" aria-hidden>
+            ›
+          </span>
+        </button>
       </div>
 
-      {error ? (
-        <div
-          className="cm-home-error"
-          style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
-        >
-          {error}
-        </div>
-      ) : null}
+      <HomeThemeGrid className="cm-stagger-4" />
 
-      {/* One-decision CTA — hero only */}
-      <div
-        className={["cm-stagger-4", "cm-home-empty-emblem-wrap", "cm-home-talk-hero"].join(" ")}
-        style={{
-          display: "grid",
-          gap: 16,
-          gridTemplateColumns: "1fr",
-        }}
-      >
-        {!loading ? (
-          <ClassmateEmblem
-            size="lg"
-            variant="watermark"
-            decorative
-            className="cm-home-empty-emblem"
-          />
-        ) : null}
-        <JoinNewCard
-          className="home-dash-join"
+      <div className="cm-stagger-5 cm-home-talk-hero">
+        <RandomTalkCta
           voiceBusy={quickBusy}
           chatBusy={quickBusy}
           matchJoinDisabled={matchJoinBlocked}
@@ -2798,18 +2872,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           onAdmissionRefresh={() => {
             void reloadJoinWindow();
           }}
-          voiceLabel={
-            adminCanBypassAdmission
-              ? "管理者としてテスト入室（通話）"
-              : "通話で始める"
-          }
-          chatLabel={
-            adminCanBypassAdmission
-              ? "管理者としてテスト入室（チャット）"
-              : "チャットで始める"
-          }
-          themeSelectHref={withDev("/class/select")}
-          themeSelectLabel="テーマを選ぶ"
+          voiceLabel={adminCanBypassAdmission ? "テスト通話" : "通話"}
+          chatLabel={adminCanBypassAdmission ? "テストチャット" : "チャット"}
           onVoiceJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
@@ -2855,7 +2919,54 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         />
       </div>
 
-      {/* Joined classes: メニュー → マイクラス (/class/mine). Theme pick: /class/select?mode=… */}
+      {/* Sole my-class section (heading + create + list/empty). */}
+      <section
+        id={myClassSectionId}
+        className="cm-home-my-class-section cm-stagger-5"
+      >
+        <div className="cm-home-section-head">
+          <h2 className="cm-home-section-title">マイクラス</h2>
+          {canCreateClasses === true ? (
+            <Link
+              href={withDev("/class/create")}
+              className="cm-home-section-link"
+            >
+              ＋ 作成
+            </Link>
+          ) : null}
+        </div>
+        {myClassRows.length > 0 ? (
+          <div className="cm-my-class-list">
+            {myClassRows.slice(0, 6).map((row) => {
+              const members = membersByClass[row.classId] ?? [];
+              return (
+                <MyClassCard
+                  key={row.classId}
+                  row={row}
+                  opening={openingClassId === row.classId}
+                  disabled={Boolean(openingClassId)}
+                  memberCount={members.length}
+                  members={members.map((m) => ({
+                    deviceId: String(m.device_id ?? "").trim(),
+                    displayName: formatMemberDisplayName(m),
+                    photoPath: m.photo_path ?? null,
+                  }))}
+                  onOpen={(target) => {
+                    const mine = visible.find(
+                      (c) => String(c.id ?? "").trim() === target.classId
+                    );
+                    if (mine) void openClass(mine);
+                  }}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <MyClassEmpty canCreateClasses={canCreateClasses === true} />
+        )}
+      </section>
+      {/* Lets the section scroll fully under the top inset on short pages. */}
+      <div className="cm-home-scroll-end-pad" aria-hidden />
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 

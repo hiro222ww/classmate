@@ -30,14 +30,20 @@ export default function SiteFooter() {
     </>
   );
 
+  const hideForImmersive =
+    Boolean(pathname) &&
+    (pathname.startsWith("/call") || pathname.startsWith("/room"));
+
+  if (hideForImmersive) return null;
+
   return (
     <footer
       className="cm-site-footer"
       style={{
         padding: "24px 16px",
-        borderTop: "1px solid #e5e7eb",
+        borderTop: "1px solid var(--cm-border, #e5eaf2)",
         fontSize: 12,
-        color: "#6b7280",
+        color: "var(--cm-muted, #64748b)",
         textAlign: "center",
         background: "#fff",
       }}

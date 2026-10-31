@@ -9,6 +9,7 @@ import CallRoomView, {
 import { MicEntryGate } from "@/components/MicEntryGate";
 import SharedCanvasBoard from "@/app/call/SharedCanvasBoard";
 import type { CallPresenceToast } from "@/lib/callPresenceToasts";
+import { DEFAULT_AVATAR_SRC } from "@/lib/defaultAvatar";
 
 export type CallChromeScene =
   | "prep"
@@ -58,7 +59,7 @@ export default function CallProdChromeFixture() {
         device_id: "prod-self",
         display_name: "自分",
         photo_path: null,
-        avatar_url: "/default-avatar.jpg",
+        avatar_url: DEFAULT_AVATAR_SRC,
         is_in_call: true,
         screen: "call",
         lastSpokeAt:

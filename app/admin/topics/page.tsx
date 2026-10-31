@@ -512,7 +512,11 @@ useEffect(() => {
 
       <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
         世界観（worlds）は編集可能。テーマ（topics）には公開状態・受付状態・性別制限・表示順・価格を設定できます。
-        運用設定は
+        カテゴリー階層は
+        <a href="/admin/categories" style={{ marginInline: 4, fontWeight: 800 }}>
+          カテゴリー管理
+        </a>
+        、運用設定は
         <a href="/admin/settings" style={{ marginInline: 4, fontWeight: 800 }}>
           運用設定
         </a>

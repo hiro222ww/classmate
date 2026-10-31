@@ -9,6 +9,7 @@ import {
 import { HelpTip } from "@/components/HelpTip";
 import { LegalConsentCheckbox } from "@/components/LegalDocumentLinks";
 import { adultOnlyUserMessage } from "@/lib/agePolicyRules";
+import { DEFAULT_AVATAR_SRC } from "@/lib/defaultAvatar";
 
 export type ProfileChromeScene =
   | "empty"
@@ -223,7 +224,7 @@ export default function ProfileChromeFixture() {
             <FormFieldLabel>プロフィール写真（任意）</FormFieldLabel>
             <img
               className="cm-profile-avatar"
-              src="/default-avatar.jpg"
+              src={DEFAULT_AVATAR_SRC}
               alt="preview"
               style={{
                 width: 120,

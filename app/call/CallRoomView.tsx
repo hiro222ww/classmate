@@ -171,6 +171,7 @@ export default function CallRoomView({
       className={[
         "cm-classroom-scope",
         "cm-call-root",
+        "cm-call-root--redesign",
         inAppShell ? "app-immersive-inner app-immersive-inner--wide" : "",
       ]
         .filter(Boolean)
@@ -324,44 +325,17 @@ export default function CallRoomView({
                 : {
                     padding: "10px 14px",
                     borderRadius: 12,
-                    border: "1px solid #d1d5db",
+                    border: "1px solid var(--cm-border, #e5eaf2)",
                     background: "#fff",
-                    color: "#374151",
+                    color: "var(--cm-text, #17233d)",
                     fontWeight: 900,
                     fontSize: 13,
                     cursor: "pointer",
+                    minHeight: 44,
                   }
             }
           >
             プロフィール編集
-          </button>
-
-          <button
-            className={[
-              "cm-cta-primary",
-              "cm-call-action-btn",
-              inAppShell ? "app-shell-btn app-shell-btn--primary" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={onInviteFriends}
-            style={
-              inAppShell
-                ? undefined
-                : {
-                    padding: "12px 16px",
-                    borderRadius: 12,
-                    border: "1px solid #047857",
-                    background: "#059669",
-                    color: "#fff",
-                    fontWeight: 900,
-                    fontSize: 14,
-                    cursor: "pointer",
-                    boxShadow: "0 2px 8px rgba(5, 150, 105, 0.28)",
-                  }
-            }
-          >
-            友達を招待する
           </button>
 
           {inAppShell && onHome ? (
@@ -373,35 +347,6 @@ export default function CallRoomView({
               ホーム
             </button>
           ) : null}
-
-          <button
-            type="button"
-            className={[
-              "cm-room-ghost-btn",
-              "cm-call-action-btn",
-              "cm-call-exit-btn",
-              inAppShell ? "app-shell-btn app-shell-btn--danger" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            style={
-              inAppShell
-                ? undefined
-                : {
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #e5e7eb",
-                    background: "#fff",
-                    color: "#374151",
-                    fontWeight: 900,
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }
-            }
-            onClick={onExit}
-          >
-            退出
-          </button>
         </div>
       </div>
 
@@ -446,11 +391,11 @@ export default function CallRoomView({
       {classVoteSlot}
 
       <section
-        className="cm-paper-card cm-call-members"
+        className="cm-paper-card cm-call-members cm-call-members--compact"
         style={{
           marginTop: 16,
           padding: 14,
-          border: "1px solid #e5e7eb",
+          border: "1px solid var(--cm-border, #e5eaf2)",
           borderRadius: 18,
           background: "#fff",
         }}
@@ -782,13 +727,13 @@ export default function CallRoomView({
         style={{
           marginTop: 16,
           padding: 14,
-          border: "1px solid #e5e7eb",
+          border: "1px solid var(--cm-border, #e5eaf2)",
           borderRadius: 18,
           background: "#fff",
         }}
       >
         <div className="cm-section-title" style={{ fontWeight: 900, fontSize: 15 }}>
-          音声設定
+          音声状態
         </div>
 
         {showMicPermissionWarning ? (
@@ -826,6 +771,7 @@ export default function CallRoomView({
                   color: "#92400e",
                   fontWeight: 800,
                   cursor: "pointer",
+                  minHeight: 44,
                 }}
               >
                 もう一度試す
@@ -863,6 +809,7 @@ export default function CallRoomView({
                   color: "#374151",
                   fontWeight: 800,
                   cursor: "pointer",
+                  minHeight: 44,
                 }}
               >
                 音声を再接続
@@ -888,33 +835,9 @@ export default function CallRoomView({
             alignItems: "center",
           }}
         >
-          <button
-            className={[
-              "cm-call-mute-btn",
-              userMuted ? "cm-call-mute-btn--muted" : "cm-call-mute-btn--live",
-              muteButtonLabel === "聞き専" ? "cm-call-mute-btn--listen" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            disabled={muteDisabled || !micReady}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: userMuted ? "#fff" : "#111827",
-              color: userMuted ? "#111827" : "#fff",
-              fontWeight: 900,
-              cursor: micReady ? "pointer" : "not-allowed",
-              opacity: micReady ? 1 : 0.6,
-            }}
-            onClick={onMuteClick}
-          >
-            {muteButtonLabel}
-          </button>
-
           <div
             className="cm-call-mic-label"
-            style={{ fontSize: 12, color: "#374151", minWidth: 180 }}
+            style={{ fontSize: 12, color: "var(--cm-text)", minWidth: 120 }}
           >
             マイク入力: {(micLevel * 100).toFixed(1)}
           </div>
@@ -925,7 +848,7 @@ export default function CallRoomView({
               width: 140,
               height: 10,
               borderRadius: 999,
-              background: "#e5e7eb",
+              background: "var(--cm-border)",
               overflow: "hidden",
             }}
           >
@@ -934,7 +857,7 @@ export default function CallRoomView({
               style={{
                 width: `${Math.min(100, micLevel * 800)}%`,
                 height: "100%",
-                background: "#111827",
+                background: "var(--cm-blue)",
               }}
             />
           </div>
@@ -943,7 +866,44 @@ export default function CallRoomView({
 
       <section style={{ marginTop: 16 }}>{boardSlot}</section>
 
-      {messagesSlot ? <div style={{ marginTop: 16 }}>{messagesSlot}</div> : null}
+      {messagesSlot ? (
+        <div className="cm-call-messages-overlay">{messagesSlot}</div>
+      ) : null}
+
+      <div className="cm-call-floating-dock" role="toolbar" aria-label="通話操作">
+        <button
+          type="button"
+          className={[
+            "cm-call-mute-btn",
+            userMuted ? "cm-call-mute-btn--muted" : "cm-call-mute-btn--live",
+            muteButtonLabel === "聞き専" ? "cm-call-mute-btn--listen" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          disabled={muteDisabled || !micReady}
+          style={{
+            cursor: micReady ? "pointer" : "not-allowed",
+            opacity: micReady ? 1 : 0.6,
+          }}
+          onClick={onMuteClick}
+        >
+          {muteButtonLabel}
+        </button>
+        <button
+          type="button"
+          className="cm-call-dock-btn cm-call-dock-btn--invite"
+          onClick={onInviteFriends}
+        >
+          招待
+        </button>
+        <button
+          type="button"
+          className="cm-call-dock-btn cm-call-dock-btn--exit cm-call-exit-btn"
+          onClick={onExit}
+        >
+          退出
+        </button>
+      </div>
 
       {profileModalSlot}
     </main>
