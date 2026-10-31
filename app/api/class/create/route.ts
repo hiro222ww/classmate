@@ -3,12 +3,30 @@ import { supabaseServer } from "@/lib/supabaseServer";
 import { moderateUserText } from "@/lib/contentModeration";
 import { resolveApiActor } from "@/lib/actorIdentity";
 import { lookupEntitlements } from "@/lib/userIdentityMigration";
+import {
+  assertPublicCreateFlags,
+  hasCreateClassEntitlement,
+  normalizeCreateMinAge,
+} from "@/lib/classCreateGuards";
 
 export async function POST(req: Request) {
-  const { deviceId, name, description, worldKey, topicKey, minAge, isSensitive, isPremium } =
-    await req.json();
+  const body = await req.json().catch(() => ({}));
+  const {
+    deviceId,
+    name,
+    description,
+    worldKey,
+    topicKey,
+    minAge,
+    isSensitive,
+    isPremium,
+  } = body ?? {};
+
   if (!deviceId || !name) {
-    return NextResponse.json({ error: "deviceId & name required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "deviceId & name required" },
+      { status: 400 }
+    );
   }
 
   const actorResult = await resolveApiActor({ req, deviceId });
@@ -16,6 +34,22 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: actorResult.error, message: actorResult.message },
       { status: actorResult.status }
+    );
+  }
+
+  const flagCheck = assertPublicCreateFlags({ isSensitive, isPremium });
+  if (!flagCheck.ok) {
+    return NextResponse.json(
+      { ok: false, error: flagCheck.error, message: flagCheck.message },
+      { status: 403 }
+    );
+  }
+
+  const ageCheck = normalizeCreateMinAge(minAge);
+  if (!ageCheck.ok) {
+    return NextResponse.json(
+      { ok: false, error: ageCheck.error, message: ageCheck.message },
+      { status: 400 }
     );
   }
 
@@ -43,18 +77,15 @@ export async function POST(req: Request) {
     deviceId: actorResult.actor.deviceId,
   });
 
-  if (!entitlements) {
-    await sb
-      .from("user_entitlements")
-      .upsert(
-        {
-          device_id: actorResult.actor.deviceId,
-          user_id: actorResult.actor.userId || null,
-        },
-        { onConflict: "device_id" }
-      )
-      .select()
-      .maybeSingle();
+  if (!hasCreateClassEntitlement(entitlements)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "create_permission_denied",
+        message: "クラス作成にはクラス枠またはテーマ課金の契約が必要です。",
+      },
+      { status: 403 }
+    );
   }
 
   const { data, error } = await sb.rpc("create_class", {
@@ -63,11 +94,16 @@ export async function POST(req: Request) {
     p_description: classDescription,
     p_world_key: worldKey ?? "default",
     p_topic_key: topicKey ?? "free_talk",
-    p_min_age: Number(minAge ?? 0),
-    p_is_sensitive: Boolean(isSensitive),
-    p_is_premium: Boolean(isPremium),
+    p_min_age: ageCheck.minAge,
+    p_is_sensitive: false,
+    p_is_premium: false,
   });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 403 });
-  return NextResponse.json({ classId: data });
+  if (error) {
+    return NextResponse.json(
+      { ok: false, error: error.message || "create_class_failed" },
+      { status: 403 }
+    );
+  }
+  return NextResponse.json({ ok: true, classId: data });
 }

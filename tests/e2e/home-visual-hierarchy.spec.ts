@@ -89,17 +89,18 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       ).toBeVisible();
       await expect(
         myClassSection.getByText(
-          "気になるテーマから参加したり、自分でクラスを作ってみよう。",
+          "気になるテーマからクラスを探して参加してみよう。",
           { exact: true }
         )
       ).toBeVisible();
+      await expect(
+        myClassSection.getByText("自分でクラスを作ってみよう", { exact: false })
+      ).toHaveCount(0);
       await expect(myClassSection.getByText("下のカテゴリーやランダム通話から", { exact: false })).toHaveCount(0);
       await expect(page.locator(".cm-my-class-empty-actions")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
-      await expect(myClassSection.getByRole("link", { name: "＋ 作成", exact: true })).toHaveAttribute(
-        "href",
-        "/class/create"
-      );
+      // Free entitlements mock: hide create CTA until can_create_classes is true.
+      await expect(myClassSection.getByRole("link", { name: "＋ 作成", exact: true })).toHaveCount(0);
       const myClassShortcut = page.locator("button.cm-home-my-class-shortcut");
       await expect(myClassShortcut).toBeVisible();
       await expect

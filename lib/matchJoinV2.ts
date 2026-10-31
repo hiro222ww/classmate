@@ -55,6 +55,13 @@ import {
   shouldBypassJoinAgeGates,
   shouldBypassRecruitmentTimeGates,
 } from "@/lib/opsTestModeShared";
+import { isThemeBillingEnabled } from "@/lib/billingAvailability";
+import { lookupEntitlements } from "@/lib/userIdentityMigration";
+import {
+  canJoinTopicByEntitlement,
+  resolveEffectiveTopicPlan,
+  topicJoinDeniedMessage,
+} from "@/lib/topicJoinEntitlement";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -133,6 +140,8 @@ type TopicGenderRestrictionRow = {
   is_archived?: boolean | null;
   is_sensitive?: boolean | null;
   min_age?: number | null;
+  monthly_price?: number | null;
+  is_paid?: boolean | null;
 };
 
 function resolveJoinDisplayName(profile: ProfileRow) {
@@ -551,7 +560,9 @@ async function getTopicGenderRestriction(topicKey: string | null) {
 
   const { data, error } = await supabase
     .from("topics")
-    .select("topic_key,gender_restriction,accepting_new_users,is_active,is_archived,is_sensitive,min_age")
+    .select(
+      "topic_key,gender_restriction,accepting_new_users,is_active,is_archived,is_sensitive,min_age,monthly_price,is_paid"
+    )
     .eq("topic_key", topicKey)
     .limit(1)
     .maybeSingle();
@@ -574,6 +585,52 @@ async function getTopicGenderRestriction(topicKey: string | null) {
     ok: true as const,
     row: (data as TopicGenderRestrictionRow | null) ?? null,
   };
+}
+
+async function assertTopicJoinEntitlement(params: {
+  actor: ActorLookup;
+  topicRow: TopicGenderRestrictionRow | null;
+}): Promise<NextResponse | null> {
+  const row = params.topicRow;
+  if (!row?.topic_key) return null;
+
+  const monthlyPrice = Math.max(
+    0,
+    Number(row.monthly_price ?? 0) || (row.is_paid ? 1 : 0)
+  );
+  if (monthlyPrice <= 0) return null;
+
+  const themeBillingEnabled = await isThemeBillingEnabled();
+  const entitlements = await lookupEntitlements({
+    userId: params.actor.userId,
+    deviceId: params.actor.deviceId,
+  });
+  const topicPlan = resolveEffectiveTopicPlan({
+    topic_plan: entitlements?.topic_plan,
+    theme_pass: entitlements?.theme_pass,
+  });
+
+  if (
+    canJoinTopicByEntitlement({
+      themeBillingEnabled,
+      monthlyPrice,
+      topicPlan,
+      themePass: Boolean(entitlements?.theme_pass),
+    })
+  ) {
+    return null;
+  }
+
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "topic_plan_required",
+      message: topicJoinDeniedMessage(monthlyPrice),
+      monthlyPrice,
+      topicPlan,
+    },
+    { status: 403 }
+  );
 }
 
 function checkGenderRestriction(params: {
@@ -938,6 +995,14 @@ export async function matchJoinV2Post(req: Request) {
       );
       if (!topicGenderRes.ok) return topicGenderRes.response;
 
+      if (!membershipCheck.isMember) {
+        const planBlocked = await assertTopicJoinEntitlement({
+          actor,
+          topicRow: topicGenderRes.row,
+        });
+        if (planBlocked) return planBlocked;
+      }
+
       const genderBlocked = checkGenderRestriction({
         topic: topicGenderRes.row,
         profile: selfProfile,
@@ -990,6 +1055,14 @@ export async function matchJoinV2Post(req: Request) {
         topicKey,
       });
       if (!topicMemberRes.ok) return topicMemberRes.response;
+
+      if (!topicMemberRes.isMember) {
+        const planBlocked = await assertTopicJoinEntitlement({
+          actor,
+          topicRow: topicGenderRes.row,
+        });
+        if (planBlocked) return planBlocked;
+      }
 
       const genderBlocked = checkGenderRestriction({
         topic: topicGenderRes.row,
