@@ -6,6 +6,7 @@ import Link from "next/link";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { MyClassCard } from "@/components/home/MyClassCard";
+import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { useAuth } from "@/components/AuthProvider";
 import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
 import { HOME_DASHBOARD_LAYOUT_CSS } from "@/components/dashboard/dashboardStyles";
@@ -235,22 +236,7 @@ export default function MineClient() {
             />
           </section>
         ) : error ? null : classes.length === 0 ? (
-          <div className="cm-empty-state">
-            <p className="cm-empty-state-title">まだクラスがありません</p>
-            <p className="cm-empty-state-body">探すか、ランダム通話から参加</p>
-            <div className="cm-empty-state-actions">
-              <Link href={withDev("/class/select")} className="cm-home-discover-link">
-                探す
-              </Link>
-              <Link
-                href={withDev("/")}
-                className="cm-text-btn"
-                style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
-              >
-                ホームへ
-              </Link>
-            </div>
-          </div>
+          <MyClassEmpty />
         ) : (
           <div className="cm-my-class-list">
             {classes.map((row) => (

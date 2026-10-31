@@ -192,6 +192,9 @@ export default function UserLoginClient() {
 
           <header className="cm-page-heading">
             <h1 className="app-shell-title cm-section-title">ログイン</h1>
+            <p className="app-shell-subtitle cm-auth-lead">
+              Googleですぐに始められます
+            </p>
           </header>
 
           <section
@@ -244,23 +247,25 @@ export default function UserLoginClient() {
     >
       <HomeBrandVisual showIntro={false} />
 
-      <header
-        className="cm-auth-header cm-page-heading"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
-        <h1>ログイン</h1>
-        <HelpTip
-          label="ログインについて"
-          content="Google でログイン・登録できます。完了後、元の画面に戻ります。"
-        />
+      <header className="cm-auth-header cm-page-heading">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <h1>ログイン</h1>
+          <HelpTip
+            label="ログインについて"
+            content="Google でログイン・登録できます。完了後、元の画面に戻ります。"
+          />
+        </div>
+        <p className="cm-auth-lead">Googleですぐに始められます</p>
       </header>
 
       <section
-        className="cm-paper-card cm-auth-card"
+        className="cm-paper-card cm-auth-card cm-auth-card--hero"
         style={{
           display: "grid",
           gap: 10,

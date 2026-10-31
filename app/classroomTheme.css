@@ -2730,6 +2730,42 @@
   text-shadow: 0 1px 8px rgba(23, 35, 61, 0.35);
 }
 
+.cm-home-hero-atmosphere-bridge {
+  margin: 0;
+  padding: 10px 14px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cm-muted);
+  line-height: 1.4;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(247, 251, 255, 0.95));
+}
+
+.cm-home-flow {
+  display: grid;
+  gap: 12px;
+  padding: 12px 12px 14px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(247, 251, 255, 0.92) 100%);
+  border: 1px solid rgba(229, 234, 242, 0.95);
+  box-shadow: var(--cm-shadow-soft);
+}
+
+.cm-home-flow .cm-home-welcome {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.cm-home-flow .cm-home-welcome::before {
+  display: none;
+}
+
+.cm-home-flow .cm-home-section-head {
+  margin-bottom: 8px;
+}
+
 .cm-home-welcome-line {
   margin: 0;
   font-size: 14px;
@@ -2912,17 +2948,20 @@
   justify-items: center;
   text-align: center;
   padding: 22px 16px 18px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
-  border: 1px solid var(--cm-border);
+  border-radius: 20px;
+  background:
+    radial-gradient(120% 80% at 15% 0%, rgba(255, 228, 214, 0.55), transparent 50%),
+    radial-gradient(100% 70% at 90% 10%, rgba(219, 234, 254, 0.7), transparent 48%),
+    linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  border: 1px solid rgba(52, 120, 246, 0.12);
   box-shadow: var(--cm-shadow-soft);
 }
 
 .cm-my-class-empty-visual {
   position: relative;
-  width: 72px;
-  height: 56px;
-  margin-bottom: 2px;
+  width: 88px;
+  height: 64px;
+  margin-bottom: 4px;
 }
 
 .cm-my-class-empty-orb {
@@ -2932,35 +2971,73 @@
 }
 
 .cm-my-class-empty-orb--a {
-  width: 40px;
-  height: 40px;
-  left: 4px;
-  top: 8px;
+  width: 44px;
+  height: 44px;
+  left: 2px;
+  top: 10px;
   background: radial-gradient(circle at 30% 30%, #ffe4d6, #ffc4b0 70%);
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .cm-my-class-empty-orb--b {
-  width: 34px;
-  height: 34px;
-  right: 2px;
+  width: 36px;
+  height: 36px;
+  right: 4px;
   top: 4px;
   background: radial-gradient(circle at 30% 30%, #dbeafe, #93c5fd 70%);
   opacity: 0.95;
+}
+
+.cm-my-class-empty-orb--c {
+  width: 22px;
+  height: 22px;
+  left: 34px;
+  bottom: 2px;
+  background: radial-gradient(circle at 30% 30%, #fce7f3, #f9a8d4 70%);
+  opacity: 0.85;
 }
 
 .cm-my-class-empty-mark {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 28px;
-  height: 28px;
-  margin: -14px 0 0 -14px;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 35% 30%, #fff 0 28%, transparent 30%),
     linear-gradient(145deg, #5b93f8, #3478f6);
   box-shadow: 0 4px 12px rgba(52, 120, 246, 0.28);
+}
+
+.cm-my-class-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.cm-my-class-empty-primary,
+a.cm-my-class-empty-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: none;
+  background: var(--cm-primary-bg);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+  box-shadow: var(--cm-primary-shadow);
+  cursor: pointer;
+  font-family: inherit;
+  flex: 1 1 140px;
 }
 
 .cm-home-theme-grid {
@@ -2984,11 +3061,24 @@
   border: 1px solid transparent;
   min-height: 96px;
   box-shadow: var(--cm-shadow-soft);
-  transition: transform 140ms ease, box-shadow 140ms ease;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .cm-home-theme-card:active {
   transform: translateY(1px);
+}
+
+.cm-home-theme-card--active {
+  box-shadow: var(--cm-shadow);
+  border-color: rgba(52, 120, 246, 0.35) !important;
+  outline: 2px solid rgba(52, 120, 246, 0.18);
+  outline-offset: 1px;
 }
 
 .cm-home-theme-card--game {
@@ -3475,15 +3565,19 @@ body.cm-has-mobile-bottom-nav {
 .cm-menu-profile-block {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 8px 12px;
+  gap: 14px;
+  padding: 14px 10px 16px;
   border-bottom: 1px solid var(--cm-border);
-  margin-bottom: 2px;
-  min-height: 56px;
+  margin-bottom: 4px;
+  min-height: 72px;
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 0% 0%, rgba(231, 242, 255, 0.9), transparent 55%),
+    #fff;
 }
 
 .cm-menu-profile-name {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 900;
   color: var(--cm-text);
   overflow: hidden;
@@ -3499,6 +3593,85 @@ body.cm-has-mobile-bottom-nav {
 }
 
 .cm-menu-group-label {
-  padding-top: 12px !important;
-  padding-bottom: 0 !important;
+  padding-top: 16px !important;
+  padding-bottom: 2px !important;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.cm-select-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cm-select-slot-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.cm-select-mine-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  text-decoration: none;
+  color: var(--cm-text);
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: var(--cm-shadow-soft);
+}
+
+.cm-select-mine-strip-count {
+  margin-left: 8px;
+  color: var(--cm-online, #12a879);
+}
+
+.cm-select-free-list,
+.cm-select-theme-compact-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 420px) {
+  .cm-select-theme-compact-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.cm-select-admission-status {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.cm-select-admission-status p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #b45309;
+  line-height: 1.45;
+}
+
+.cm-select-empty {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #666;
+}
+
+.cm-auth-root .cm-auth-card--hero {
+  background:
+    radial-gradient(120% 80% at 10% 0%, rgba(231, 242, 255, 0.95), transparent 55%),
+    #fff !important;
 }
