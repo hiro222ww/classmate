@@ -2612,7 +2612,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       className={homeStateClass}
       style={{
         display: "grid",
-        gap: 16,
+        gap: 12,
       }}
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_OVERRIDES_CSS}</style>

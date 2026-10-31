@@ -1606,7 +1606,7 @@ export default function SelectClient() {
         </div>
       ) : null}
 
-      <div style={{ marginTop: 14, display: "grid", gap: 16 }}>
+      <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
         <header className="cm-page-heading cm-select-heading">
           <h1>探す</h1>
           <p>気になるテーマから選ぶ</p>
@@ -1689,24 +1689,12 @@ export default function SelectClient() {
           }}
         />
 
-        <AgeFilterCard
-          variant="compact"
-          deviceId={deviceId}
-          hasProfile={hasProfile}
-          disabled={loading}
-          onPrefsChange={setPrefs}
-          onPrefsLoadedChange={setPrefsLoaded}
-          onProfileRequired={() => {
-            goProfileIfNeeded("profile_required");
-          }}
-        />
-
         <section
           ref={(node) => {
             themeBoardsRef.current = node;
           }}
           className="cm-select-boards"
-          style={{ display: "grid", gap: 12 }}
+          style={{ display: "grid", gap: 10 }}
         >
           {admissionStatusNotice &&
           joinWindowLoadState === "error" &&
@@ -1725,19 +1713,32 @@ export default function SelectClient() {
             </div>
           ) : null}
 
-          <div className="cm-select-free-list">
-            {freeBoards.map((b) => (
-              <BoardCard key={b.key} b={b} emphasizeFree compact />
-            ))}
+          <div className="cm-select-free-block">
+            <div className="cm-select-free-list">
+              {freeBoards.map((b) => (
+                <BoardCard key={b.key} b={b} emphasizeFree compact />
+              ))}
+            </div>
           </div>
 
+          <AgeFilterCard
+            variant="compact"
+            deviceId={deviceId}
+            hasProfile={hasProfile}
+            disabled={loading}
+            onPrefsChange={setPrefs}
+            onPrefsLoadedChange={setPrefsLoaded}
+            onProfileRequired={() => {
+              goProfileIfNeeded("profile_required");
+            }}
+          />
+
           {SHOW_PAID_THEMES_AS_TEASER && compactThemeBoards.length > 0 ? (
-            <>
-              <div className="cm-home-section-head" style={{ marginBottom: 0 }}>
+            <div className="cm-select-teaser-block">
+              <div className="cm-home-section-head" style={{ marginBottom: 6 }}>
                 <h3 className="cm-home-section-title">
                   {activeTheme
-                    ? THEME_CARDS.find((t) => t.id === activeTheme)?.title ??
-                      "テーマ"
+                    ? `${THEME_CARDS.find((t) => t.id === activeTheme)?.title ?? "テーマ"} · 準備中`
                     : "準備中のテーマ"}
                 </h3>
                 {activeTheme ? (
@@ -1756,6 +1757,7 @@ export default function SelectClient() {
                   </button>
                 ) : null}
               </div>
+              <p className="cm-select-teaser-note">まだ参加できません</p>
               <div className="cm-select-theme-compact-list">
                 {compactThemeBoards.map((b) => {
                   const group = themeGroups.find((g) =>
@@ -1775,7 +1777,7 @@ export default function SelectClient() {
                   );
                 })}
               </div>
-            </>
+            </div>
           ) : null}
 
           {!loading && freeBoards.length === 0 ? (
@@ -1784,7 +1786,7 @@ export default function SelectClient() {
         </section>
       </div>
 
-      <div style={{ height: 24 }} />
+      <div style={{ height: 20 }} />
       <DevModeSwitcher />
     </main>
   );

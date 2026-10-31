@@ -72,8 +72,8 @@ export function CmAppHeader({
           <img
             src={BRAND_MARK_SRC}
             alt=""
-            width={36}
-            height={36}
+            width={32}
+            height={32}
             decoding="async"
             fetchPriority="high"
             aria-hidden
@@ -107,7 +107,7 @@ export function CmAppHeader({
               >
                 <CmAvatar
                   label={displayName}
-                  sizePx={36}
+                  sizePx={32}
                   photoPath={photoPath}
                   avatarUrl={avatarUrl}
                 />
