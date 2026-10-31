@@ -2,6 +2,10 @@
 
 import Link from "next/link";
 import React from "react";
+import {
+  RoomSessionHero,
+  type RoomSessionStatusTone,
+} from "@/components/room/RoomSessionHero";
 import { isAppShellContext, resolveShellDashboardPath } from "@/lib/appShellContext";
 import { withDev } from "@/lib/withDev";
 
@@ -16,10 +20,19 @@ export type ChalkboardCharacter = {
 
 type Props = {
   title: string;
+  /** Category / world label shown under the title (e.g. フリークラス). */
+  categoryLabel?: string;
+  /** Member count label (e.g. 1/5人). */
+  countLabel?: string;
+  statusLabel?: string;
+  statusTone?: RoomSessionStatusTone;
+  /** @deprecated Prefer categoryLabel + countLabel. Kept for call sites. */
   subtitle?: string;
   lines?: string[];
   right?: React.ReactNode;
   children: React.ReactNode;
+  /** Horizontal avatar strip rendered inside the hero. */
+  avatarStrip?: React.ReactNode;
 
   onBack?: () => void;
   /** Toolbar back label (default: 戻る) */
@@ -36,27 +49,24 @@ type Props = {
   returnTo?: string;
   /** Optional collab characters standing in front of the board. */
   characters?: ChalkboardCharacter[];
-};
-
-const WEB_GHOST_BTN: React.CSSProperties = {
-  display: "inline-block",
-  padding: "8px 10px",
-  borderRadius: 10,
-  background: "#f2f2f2",
-  color: "#111",
-  textDecoration: "none",
-  fontWeight: 900,
-  fontSize: 13,
-  border: "none",
-  cursor: "pointer",
+  /**
+   * Waiting-room board prominence.
+   * compact (default): small secondary board; hidden: omit; full: legacy size.
+   */
+  boardMode?: "compact" | "hidden" | "full";
 };
 
 export function ChalkboardRoomShell({
   title,
+  categoryLabel,
+  countLabel,
+  statusLabel,
+  statusTone = "waiting",
   subtitle,
-  lines = ["通話を開始する際は，通話開始ボタン(青)を押してください"],
+  lines = [],
   right,
   children,
+  avatarStrip,
   onBack,
   backLabel = "戻る",
   onHome,
@@ -66,10 +76,27 @@ export function ChalkboardRoomShell({
   startDisabled = false,
   startLabel = "通話を開始",
   characters = [],
+  boardMode = "compact",
 }: Props) {
   const isApp = isAppShellContext();
   const subtitleText = String(subtitle ?? "").trim();
-  const boardTitle = subtitleText ? `${title} (${subtitleText})` : title;
+  const resolvedCategory =
+    categoryLabel?.trim() ||
+    (subtitleText.includes("/")
+      ? subtitleText.split("/")[0]?.trim()
+      : subtitleText && !subtitleText.includes("人")
+        ? subtitleText
+        : "");
+  const resolvedCount =
+    countLabel?.trim() ||
+    (subtitleText.includes("/")
+      ? subtitleText.split("/").slice(1).join("/").trim()
+      : subtitleText.includes("人")
+        ? subtitleText
+        : "");
+  const boardTitle = resolvedCategory
+    ? `${title} (${resolvedCategory})`
+    : title;
 
   const moveHref = withDev("/class/select");
   const homeHref = withDev(
@@ -77,6 +104,7 @@ export function ChalkboardRoomShell({
   );
   const ghostBtnClass = [
     "cm-room-ghost-btn",
+    "cm-room-session-hero-iconbtn",
     isApp ? "app-shell-btn app-shell-btn--ghost" : "",
   ]
     .filter(Boolean)
@@ -91,6 +119,7 @@ export function ChalkboardRoomShell({
   const mainClass = [
     "cm-classroom-scope",
     "cm-room-scope",
+    "cm-room-scope--hero-v2",
     isApp ? "app-immersive-inner app-immersive-inner--wide" : "",
   ]
     .filter(Boolean)
@@ -100,6 +129,51 @@ export function ChalkboardRoomShell({
   const centerChars = characters.filter((c) => c.side === "center");
   const rightChars = characters.filter((c) => c.side === "right");
   const hasCharacters = characters.length > 0;
+  const showBoard = boardMode !== "hidden";
+
+  const toolbarLeft = onBack ? (
+    <button
+      type="button"
+      onClick={onBack}
+      className={ghostBtnClass}
+      aria-label={backLabel}
+    >
+      ←
+    </button>
+  ) : (
+    <Link href={homeHref} className={ghostBtnClass} aria-label={homeLabel}>
+      ←
+    </Link>
+  );
+
+  const toolbarRight = (
+    <>
+      <Link href={moveHref} className={ghostBtnClass}>
+        移動
+      </Link>
+      {onHome ? (
+        <button type="button" onClick={onHome} className={ghostBtnClass}>
+          {homeLabel}
+        </button>
+      ) : (
+        <Link href={homeHref} className={ghostBtnClass}>
+          {homeLabel}
+        </Link>
+      )}
+      {right}
+    </>
+  );
+
+  const primaryAction = onStartCall ? (
+    <button
+      type="button"
+      onClick={onStartCall}
+      disabled={startDisabled}
+      className={primaryBtnClass}
+    >
+      {startLabel}
+    </button>
+  ) : null;
 
   return (
     <main
@@ -107,187 +181,111 @@ export function ChalkboardRoomShell({
       style={
         isApp
           ? undefined
-          : { padding: 16, maxWidth: 980, margin: "0 auto" }
+          : { padding: "0 0 28px", maxWidth: 980, margin: "0 auto" }
       }
     >
-      <div className="cm-room-hero-bg cm-stagger-1">
-        <p className="cm-room-hero-title">{title}</p>
-        {subtitleText ? (
-          <p className="cm-room-hero-sub">{subtitleText}</p>
-        ) : (
-          <p className="cm-room-hero-sub">通話前ロビー · メンバーと準備できます</p>
-        )}
-        {onStartCall ? (
-          <button
-            type="button"
-            onClick={onStartCall}
-            disabled={startDisabled}
-            className={primaryBtnClass}
-            style={{
-              marginTop: 14,
-              minHeight: 48,
-              padding: "12px 20px",
-              borderRadius: 16,
-              border: "none",
-              background: startDisabled
-                ? "rgba(255,255,255,0.35)"
-                : "linear-gradient(180deg, #ffffff 0%, #e7f2ff 100%)",
-              color: startDisabled ? "rgba(255,255,255,0.8)" : "#1e3a5f",
-              fontWeight: 900,
-              fontSize: 15,
-              cursor: startDisabled ? "not-allowed" : "pointer",
-              boxShadow: startDisabled
-                ? "none"
-                : "0 8px 20px rgba(15, 23, 42, 0.18)",
-            }}
-          >
-            {startLabel}
-          </button>
-        ) : null}
-      </div>
+      <RoomSessionHero
+        title={title}
+        categoryLabel={resolvedCategory || undefined}
+        countLabel={resolvedCount || undefined}
+        statusLabel={statusLabel}
+        statusTone={statusTone}
+        primaryAction={primaryAction}
+        avatarStrip={avatarStrip}
+        toolbarLeft={toolbarLeft}
+        toolbarRight={toolbarRight}
+      />
 
-      <div
-        className={
-          isApp ? "app-immersive-toolbar cm-room-toolbar" : "cm-room-toolbar"
-        }
-        style={
-          isApp
-            ? undefined
-            : {
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }
-        }
-      >
-        {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            className={ghostBtnClass}
-            style={isApp ? undefined : WEB_GHOST_BTN}
-          >
-            {backLabel}
-          </button>
-        ) : null}
-
-        <Link
-          href={moveHref}
-          className={ghostBtnClass}
-          style={isApp ? undefined : WEB_GHOST_BTN}
-        >
-          移動
-        </Link>
-
-        {onHome ? (
-          <button
-            type="button"
-            onClick={onHome}
-            className={ghostBtnClass}
-            style={isApp ? undefined : WEB_GHOST_BTN}
-          >
-            {homeLabel}
-          </button>
-        ) : (
-          <Link
-            href={homeHref}
-            className={ghostBtnClass}
-            style={isApp ? undefined : WEB_GHOST_BTN}
-          >
-            {homeLabel}
-          </Link>
-        )}
-
-        {right}
-      </div>
-
-      <div
-        className={`cm-room-board-wrap${hasCharacters ? " has-characters" : ""}`}
-        style={{ marginTop: 8 }}
-      >
+      {showBoard ? (
         <div
-          className={
-            isApp
-              ? "app-immersive-board cm-room-chalkboard"
-              : "cm-room-chalkboard"
-          }
+          className={[
+            "cm-room-board-wrap",
+            boardMode === "compact" ? "cm-room-board-wrap--compact" : "",
+            hasCharacters ? "has-characters" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
         >
-          <div className="cm-room-chalkboard-surface" aria-hidden />
-          <div className="cm-room-chalkboard-writing">
-            <div
-              className={
-                isApp
-                  ? "app-immersive-board-title cm-room-board-title"
-                  : "cm-room-board-title"
-              }
-            >
-              {boardTitle}
+          <div
+            className={
+              isApp
+                ? "app-immersive-board cm-room-chalkboard"
+                : "cm-room-chalkboard"
+            }
+          >
+            <div className="cm-room-chalkboard-surface" aria-hidden />
+            <div className="cm-room-chalkboard-writing">
+              <div
+                className={
+                  isApp
+                    ? "app-immersive-board-title cm-room-board-title"
+                    : "cm-room-board-title"
+                }
+              >
+                {boardTitle}
+              </div>
+
+              {lines.length > 0 ? (
+                <div className="cm-room-board-lines">
+                  {lines.map((t, i) => (
+                    <div key={i} className="cm-room-board-line">
+                      {t}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
-            {lines.length > 0 ? (
-              <div className="cm-room-board-lines">
-                {lines.map((t, i) => (
-                  <div key={i} className="cm-room-board-line">
-                    {t}
-                  </div>
-                ))}
+            <div className="cm-room-chalkboard-tray" aria-hidden>
+              <span className="cm-room-chalkboard-chalk" />
+              <span className="cm-room-chalkboard-eraser" />
+            </div>
+
+            {hasCharacters ? (
+              <div className="cm-room-chalkboard-stage" aria-hidden={false}>
+                <div className="cm-room-chalkboard-stage-side is-left">
+                  {leftChars.map((c) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={c.id}
+                      className="cm-room-chalkboard-character"
+                      src={c.src}
+                      alt={c.alt}
+                      decoding="async"
+                    />
+                  ))}
+                </div>
+                <div className="cm-room-chalkboard-stage-side is-center">
+                  {centerChars.map((c) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={c.id}
+                      className="cm-room-chalkboard-character"
+                      src={c.src}
+                      alt={c.alt}
+                      decoding="async"
+                    />
+                  ))}
+                </div>
+                <div className="cm-room-chalkboard-stage-side is-right">
+                  {rightChars.map((c) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={c.id}
+                      className="cm-room-chalkboard-character"
+                      src={c.src}
+                      alt={c.alt}
+                      decoding="async"
+                    />
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
-
-          <div className="cm-room-chalkboard-tray" aria-hidden>
-            <span className="cm-room-chalkboard-chalk" />
-            <span className="cm-room-chalkboard-eraser" />
-          </div>
-
-          {hasCharacters ? (
-            <div className="cm-room-chalkboard-stage" aria-hidden={false}>
-              <div className="cm-room-chalkboard-stage-side is-left">
-                {leftChars.map((c) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={c.id}
-                    className="cm-room-chalkboard-character"
-                    src={c.src}
-                    alt={c.alt}
-                    decoding="async"
-                  />
-                ))}
-              </div>
-              <div className="cm-room-chalkboard-stage-side is-center">
-                {centerChars.map((c) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={c.id}
-                    className="cm-room-chalkboard-character"
-                    src={c.src}
-                    alt={c.alt}
-                    decoding="async"
-                  />
-                ))}
-              </div>
-              <div className="cm-room-chalkboard-stage-side is-right">
-                {rightChars.map((c) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={c.id}
-                    className="cm-room-chalkboard-character"
-                    src={c.src}
-                    alt={c.alt}
-                    decoding="async"
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
         </div>
-      </div>
+      ) : null}
 
-      <section className="cm-room-body" style={{ marginTop: 10, color: "#111" }}>
-        {children}
-      </section>
+      <section className="cm-room-body cm-room-body--hero-v2">{children}</section>
     </main>
   );
 }
