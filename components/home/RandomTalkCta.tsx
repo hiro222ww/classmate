@@ -6,6 +6,7 @@ import type { AdmissionStatusNotice } from "@/lib/admissionJoinGate";
 type RandomTalkCtaProps = {
   className?: string;
   heading?: string;
+  subcopy?: string | null;
   matchJoinDisabled?: boolean;
   joinDisabled?: boolean;
   voiceBusy?: boolean;
@@ -18,10 +19,11 @@ type RandomTalkCtaProps = {
   onChatJoin: () => void;
 };
 
-/** Primary home action — title + short CTAs only. */
+/** Gradient primary CTA card — voice first, chat secondary. */
 export function RandomTalkCta({
   className,
   heading = "ランダム通話",
+  subcopy = "今すぐ最大5人で話す",
   matchJoinDisabled,
   joinDisabled = false,
   voiceBusy = false,
@@ -39,11 +41,34 @@ export function RandomTalkCta({
 
   return (
     <section
+      id="cm-home-random"
       className={["cm-random-talk", "cm-random-talk--hero", className]
         .filter(Boolean)
         .join(" ")}
     >
-      <h2 className="cm-random-talk-heading">{heading}</h2>
+      <div className="cm-random-talk-banner">
+        <span className="cm-random-talk-glyph" aria-hidden>
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 3a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z" />
+            <path d="M5 11a7 7 0 0 0 14 0" />
+            <path d="M12 18v3" />
+            <path d="M8 21h8" />
+          </svg>
+        </span>
+        <div className="cm-random-talk-banner-copy">
+          <h2 className="cm-random-talk-heading">{heading}</h2>
+          {subcopy ? <p className="cm-random-talk-desc">{subcopy}</p> : null}
+        </div>
+      </div>
 
       {admissionStatusNotice ? (
         <div className="cm-random-talk-status" role="status">

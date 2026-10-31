@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { getDeviceId } from "@/lib/device";
 import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
@@ -13,9 +14,11 @@ import {
 } from "@/lib/entryFlowLog";
 import { DevPanel } from "@/components/DevPanel";
 import { buildThemeSelectPath } from "@/lib/joinMode";
-import Link from "next/link";
 import { HomeHeader } from "@/components/home/HomeHeader";
+import { HomeHeroAtmosphere } from "@/components/home/HomeHeroAtmosphere";
+import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
+import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { RandomTalkCta } from "@/components/home/RandomTalkCta";
 import type { JoinedClassRow } from "@/hooks/useJoinedClasses";
 import {
@@ -2609,7 +2612,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       className={homeStateClass}
       style={{
         display: "grid",
-        gap: 14,
+        gap: 16,
       }}
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_OVERRIDES_CSS}</style>
@@ -2630,6 +2633,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           onClose={dismissIosInstallGuide}
         />
       ) : null}
+
+      <HomeHeroAtmosphere className="cm-stagger-2" />
 
       <div className="cm-home-welcome cm-stagger-3">
         <p className="cm-home-welcome-line">
@@ -2704,8 +2709,52 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         </div>
       ) : null}
 
-      {/* Primary action first */}
-      <div className="cm-stagger-3 cm-home-talk-hero">
+      <section className="cm-stagger-3 cm-home-my-class-section">
+        <div className="cm-home-section-head">
+          <h2 className="cm-home-section-title">マイクラス</h2>
+          <Link href={withDev("/class/create")} className="cm-home-section-link">
+            ＋ 作成
+          </Link>
+        </div>
+        {myClassRows.length > 0 ? (
+          <div className="cm-my-class-list">
+            {myClassRows.slice(0, 6).map((row) => {
+              const members = membersByClass[row.classId] ?? [];
+              return (
+                <MyClassCard
+                  key={row.classId}
+                  row={row}
+                  opening={openingClassId === row.classId}
+                  disabled={Boolean(openingClassId)}
+                  memberCount={members.length}
+                  members={members.map((m) => ({
+                    deviceId: String(m.device_id ?? "").trim(),
+                    displayName: formatMemberDisplayName(m),
+                    photoPath: m.photo_path ?? null,
+                  }))}
+                  onOpen={(target) => {
+                    const mine = visible.find(
+                      (c) => String(c.id ?? "").trim() === target.classId
+                    );
+                    if (mine) void openClass(mine);
+                  }}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <MyClassEmpty
+            onRandomFocus={() => {
+              const el = document.getElementById("cm-home-random");
+              el?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          />
+        )}
+      </section>
+
+      <HomeThemeGrid className="cm-stagger-4" />
+
+      <div className="cm-stagger-5 cm-home-talk-hero">
         <RandomTalkCta
           voiceBusy={quickBusy}
           chatBusy={quickBusy}
@@ -2760,38 +2809,6 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           }}
         />
       </div>
-
-      {myClassRows.length > 0 ? (
-        <section className="cm-stagger-4" style={{ display: "grid", gap: 8 }}>
-          <h2 className="cm-home-section-title">マイクラス</h2>
-          <div className="cm-my-class-list">
-            {myClassRows.slice(0, 6).map((row) => (
-              <MyClassCard
-                key={row.classId}
-                row={row}
-                opening={openingClassId === row.classId}
-                disabled={Boolean(openingClassId)}
-                onOpen={(target) => {
-                  const mine = visible.find(
-                    (c) => String(c.id ?? "").trim() === target.classId
-                  );
-                  if (mine) void openClass(mine);
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <Link
-        href={withDev("/class/select")}
-        className="cm-home-discover cm-stagger-5"
-      >
-        <span className="cm-home-discover-copy">
-          <span className="cm-home-section-title">探す</span>
-        </span>
-        <span className="cm-home-discover-link">見る</span>
-      </Link>
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 
