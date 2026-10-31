@@ -55,7 +55,6 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
-import { PageBackLink } from "@/components/nav/PageBackLink";
 import { ThemeCardGrid } from "@/components/home/themeCards";
 import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
@@ -1560,9 +1559,6 @@ export default function SelectClient() {
 
       <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
         <header className="cm-page-heading cm-select-heading">
-          <div className="cm-page-back-row">
-            <PageBackLink fallbackHref="/" label="ホームへ戻る" />
-          </div>
           <h1>探す</h1>
           <p>気になるテーマから選ぶ</p>
         </header>
@@ -1597,6 +1593,17 @@ export default function SelectClient() {
           {slotBillingEnabled ? (
             <span className="cm-select-slot-pill">{`${slots}クラス枠`}</span>
           ) : null}
+          <AgeFilterCard
+            variant="sheet"
+            deviceId={deviceId}
+            hasProfile={hasProfile}
+            disabled={loading}
+            onPrefsChange={setPrefs}
+            onPrefsLoadedChange={setPrefsLoaded}
+            onProfileRequired={() => {
+              goProfileIfNeeded("profile_required");
+            }}
+          />
           <button
             type="button"
             className="cm-text-btn"
@@ -1660,18 +1667,6 @@ export default function SelectClient() {
               ))}
             </div>
           </div>
-
-          <AgeFilterCard
-            variant="compact"
-            deviceId={deviceId}
-            hasProfile={hasProfile}
-            disabled={loading}
-            onPrefsChange={setPrefs}
-            onPrefsLoadedChange={setPrefsLoaded}
-            onProfileRequired={() => {
-              goProfileIfNeeded("profile_required");
-            }}
-          />
 
           {!activeMajor ? (
             <ThemeCardGrid

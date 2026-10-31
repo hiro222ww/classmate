@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
-import { PageBackLink } from "@/components/nav/PageBackLink";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { useAuth } from "@/components/AuthProvider";
@@ -164,9 +163,6 @@ export default function MineClient() {
 
       <div style={{ marginTop: 14, display: "grid", gap: 14 }}>
         <header className="cm-page-heading">
-          <div className="cm-page-back-row">
-            <PageBackLink fallbackHref="/" label="ホームへ戻る" />
-          </div>
           <div
             style={{
               display: "flex",

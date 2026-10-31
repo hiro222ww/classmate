@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import BottomSheet from "@/components/BottomSheet";
 import { HelpTip } from "@/components/HelpTip";
 import { logMatchPrefsGet } from "@/lib/entryFlowLog";
 import {
@@ -26,8 +27,8 @@ type AgeFilterCardProps = {
   hasProfile: boolean | null;
   disabled?: boolean;
   className?: string;
-  /** compact = chip row for /class/select; card = full paper card (default) */
-  variant?: "card" | "compact";
+  /** sheet = select trigger + bottom sheet; compact/card = inline editors */
+  variant?: "card" | "compact" | "sheet";
   onPrefsChange?: (prefs: MatchPrefs) => void;
   onPrefsLoadedChange?: (loaded: boolean) => void;
   onProfileRequired?: () => void;
@@ -51,6 +52,7 @@ export function AgeFilterCard({
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const activePrefs = sanitizeActiveMatchPrefs(prefs);
   const lastOnPrefsRef = useRef<MatchPrefs>(defaultOnPrefs);
 
@@ -59,6 +61,7 @@ export function AgeFilterCard({
   const displayMaxAge = Math.max(activePrefs.min_age, activePrefs.max_age);
   const draftMinAge = Math.min(draftPrefs.min_age, draftPrefs.max_age);
   const draftMaxAge = Math.max(draftPrefs.min_age, draftPrefs.max_age);
+  const draftEnabled = !isAgeFilterOff(draftPrefs);
 
   const applyPrefs = useCallback(
     (next: MatchPrefs) => {
@@ -151,9 +154,26 @@ export function AgeFilterCard({
   );
 
   const openEditor = useCallback(() => {
-    setDraftPrefs(sanitizeActiveMatchPrefs(activePrefs));
+    setDraftPrefs(
+      isAgeFilterOff(activePrefs)
+        ? sanitizeActiveMatchPrefs(lastOnPrefsRef.current)
+        : sanitizeActiveMatchPrefs(activePrefs)
+    );
     setEditing(true);
   }, [activePrefs]);
+
+  const openSheet = useCallback(() => {
+    if (hasProfile === false) {
+      onProfileRequired?.();
+      return;
+    }
+    setDraftPrefs(
+      isAgeFilterOff(activePrefs)
+        ? AGE_FILTER_OFF_PREFS
+        : sanitizeActiveMatchPrefs(activePrefs)
+    );
+    setSheetOpen(true);
+  }, [activePrefs, hasProfile, onProfileRequired]);
 
   const finishEditing = useCallback(async () => {
     const ok = await savePrefs(draftPrefs);
@@ -161,6 +181,25 @@ export function AgeFilterCard({
       setEditing(false);
     }
   }, [draftPrefs, savePrefs]);
+
+  const applySheet = useCallback(async () => {
+    const next = draftEnabled
+      ? sanitizeActiveMatchPrefs(draftPrefs)
+      : AGE_FILTER_OFF_PREFS;
+    const ok = await savePrefs(next);
+    if (ok) setSheetOpen(false);
+  }, [draftEnabled, draftPrefs, savePrefs]);
+
+  const resetSheet = useCallback(async () => {
+    if (!isAgeFilterOff(activePrefs)) {
+      lastOnPrefsRef.current = sanitizeActiveMatchPrefs(activePrefs);
+    }
+    const ok = await savePrefs(AGE_FILTER_OFF_PREFS);
+    if (ok) {
+      setDraftPrefs(AGE_FILTER_OFF_PREFS);
+      setSheetOpen(false);
+    }
+  }, [activePrefs, savePrefs]);
 
   useEffect(() => {
     let alive = true;
@@ -380,6 +419,160 @@ export function AgeFilterCard({
       </div>
     </div>
   ) : null;
+
+  if (variant === "sheet") {
+    return (
+      <div className={["cm-age-filter-sheet-wrap", className].filter(Boolean).join(" ")}>
+        <button
+          type="button"
+          className={[
+            "cm-select-filter-btn",
+            ageFilterEnabled ? "cm-select-filter-btn--active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          onClick={openSheet}
+          disabled={!prefsLoaded || disabled || !deviceId}
+          aria-expanded={sheetOpen}
+          aria-haspopup="dialog"
+        >
+          <span>絞り込み</span>
+          {ageFilterEnabled ? (
+            <span className="cm-select-filter-btn-chip">
+              {displayMinAge}〜{displayMaxAge}歳
+            </span>
+          ) : (
+            <span className="cm-select-filter-btn-hint">指定なし</span>
+          )}
+        </button>
+
+        <BottomSheet
+          open={sheetOpen}
+          onClose={() => setSheetOpen(false)}
+          title="年齢の絞り込み"
+        >
+          <div className="cm-age-filter-sheet">
+            <p className="cm-age-filter-sheet-note">
+              初期は年齢指定なしです。表示するクラスを絞る設定で、入室制限とは別です。
+            </p>
+            <HelpTip label="年齢絞り込みについて" content={AGE_PREF_HELP_TEXT} />
+
+            <div
+              className="cm-age-filter-sheet-toggle"
+              role="group"
+              aria-label="年齢指定"
+            >
+              <button
+                type="button"
+                className={
+                  !draftEnabled
+                    ? "cm-age-filter-sheet-toggle-btn cm-age-filter-sheet-toggle-btn--on"
+                    : "cm-age-filter-sheet-toggle-btn"
+                }
+                disabled={controlsDisabled}
+                onClick={() => setDraftPrefs(AGE_FILTER_OFF_PREFS)}
+              >
+                指定なし
+              </button>
+              <button
+                type="button"
+                className={
+                  draftEnabled
+                    ? "cm-age-filter-sheet-toggle-btn cm-age-filter-sheet-toggle-btn--on"
+                    : "cm-age-filter-sheet-toggle-btn"
+                }
+                disabled={controlsDisabled}
+                onClick={() => {
+                  setDraftPrefs(
+                    sanitizeActiveMatchPrefs(
+                      isAgeFilterOff(draftPrefs)
+                        ? lastOnPrefsRef.current
+                        : draftPrefs
+                    )
+                  );
+                }}
+              >
+                年齢を指定
+              </button>
+            </div>
+
+            {draftEnabled ? (
+              <div className="cm-age-filter-sheet-sliders">
+                <div className="cm-age-filter-sheet-range-label">
+                  {draftMinAge}〜{draftMaxAge}歳
+                </div>
+                <label className="cm-age-filter-sheet-field">
+                  <span>最小</span>
+                  <input
+                    type="range"
+                    aria-label="最小年齢"
+                    min={sliderBounds.sliderMin}
+                    max={sliderBounds.sliderMax}
+                    value={draftMinAge}
+                    disabled={controlsDisabled}
+                    onChange={(e) => {
+                      const v = clampAge(
+                        Number(e.target.value),
+                        sliderBounds.sliderMin,
+                        sliderBounds.sliderMax
+                      );
+                      setDraftPrefs((p) => ({
+                        min_age: v,
+                        max_age: Math.max(v, p.max_age),
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="cm-age-filter-sheet-field">
+                  <span>最大</span>
+                  <input
+                    type="range"
+                    aria-label="最大年齢"
+                    min={sliderBounds.sliderMin}
+                    max={sliderBounds.sliderMax}
+                    value={draftMaxAge}
+                    disabled={controlsDisabled}
+                    onChange={(e) => {
+                      const v = clampAge(
+                        Number(e.target.value),
+                        sliderBounds.sliderMin,
+                        sliderBounds.sliderMax
+                      );
+                      setDraftPrefs((p) => ({
+                        min_age: Math.min(p.min_age, v),
+                        max_age: v,
+                      }));
+                    }}
+                  />
+                </label>
+              </div>
+            ) : (
+              <p className="cm-age-filter-sheet-off">年齢では絞り込みません</p>
+            )}
+
+            <div className="cm-age-filter-sheet-actions">
+              <button
+                type="button"
+                className="cm-age-filter-sheet-apply"
+                disabled={controlsDisabled}
+                onClick={() => void applySheet()}
+              >
+                {savingPrefs ? "保存中…" : "適用"}
+              </button>
+              <button
+                type="button"
+                className="cm-age-filter-sheet-reset"
+                disabled={controlsDisabled}
+                onClick={() => void resetSheet()}
+              >
+                リセット
+              </button>
+            </div>
+          </div>
+        </BottomSheet>
+      </div>
+    );
+  }
 
   if (variant === "compact") {
     return (

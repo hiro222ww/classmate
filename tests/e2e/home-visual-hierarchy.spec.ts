@@ -121,7 +121,10 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await page.getByRole("link", { name: "すべて見る", exact: true }).click();
       await expect(page).toHaveURL(/\/class\/select$/);
       await checkActions(page);
-      await expect(page.getByRole("button", { name: "ホームへ戻る", exact: true })).toBeVisible();
+      // Home via brand logo only — no duplicate 「ホームへ戻る」 on 探す.
+      await expect(page.getByRole("button", { name: "ホームへ戻る", exact: true })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: "Classmate — ホームへ戻る" })).toBeVisible();
+      await expect(page.locator("button.cm-select-filter-btn")).toBeVisible();
       await expect(page.locator(".cm-mobile-bottom-nav")).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "探す", exact: true })).toHaveCount(1);
       await expect(page.getByRole("heading", { name: "カテゴリー", exact: true })).toHaveCount(1);

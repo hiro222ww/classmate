@@ -3873,6 +3873,173 @@ body.cm-has-mobile-bottom-nav {
   color: #666;
 }
 
+.cm-age-filter-sheet-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.cm-select-filter-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--cm-border, #e5eaf2);
+  background: #fff;
+  color: var(--cm-text, #17233d);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cm-select-filter-btn--active {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(236, 253, 245, 0.95);
+  color: #065f46;
+}
+
+.cm-select-filter-btn-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.14);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.cm-select-filter-btn-hint {
+  color: var(--cm-muted, #64748b);
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.cm-select-filter-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cm-select-filter-btn:focus-visible {
+  outline: 2px solid var(--cm-blue, #3478f6);
+  outline-offset: 2px;
+}
+
+.cm-age-filter-sheet {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.cm-age-filter-sheet-note {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cm-muted, #64748b);
+  line-height: 1.45;
+}
+
+.cm-age-filter-sheet-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.cm-age-filter-sheet-toggle-btn {
+  appearance: none;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--cm-border, #e5eaf2);
+  background: #fff;
+  color: var(--cm-text, #17233d);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cm-age-filter-sheet-toggle-btn--on {
+  border-color: #111827;
+  background: #111827;
+  color: #fff;
+}
+
+.cm-age-filter-sheet-sliders {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--cm-border, #e5eaf2);
+  background: #f8fafc;
+}
+
+.cm-age-filter-sheet-range-label {
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--cm-text, #17233d);
+}
+
+.cm-age-filter-sheet-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cm-muted, #64748b);
+}
+
+.cm-age-filter-sheet-field input[type="range"] {
+  width: 100%;
+  min-height: 28px;
+}
+
+.cm-age-filter-sheet-off {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cm-muted, #64748b);
+}
+
+.cm-age-filter-sheet-actions {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cm-age-filter-sheet-apply,
+.cm-age-filter-sheet-reset {
+  appearance: none;
+  min-height: 48px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cm-age-filter-sheet-apply {
+  border: none;
+  background: var(--cm-blue, #3478f6);
+  color: #fff;
+}
+
+.cm-age-filter-sheet-reset {
+  border: 1px solid var(--cm-border, #e5eaf2);
+  background: #fff;
+  color: var(--cm-muted, #64748b);
+}
+
+.cm-age-filter-sheet-apply:disabled,
+.cm-age-filter-sheet-reset:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
 .cm-auth-root .cm-auth-card--hero {
   background:
     radial-gradient(120% 80% at 10% 0%, rgba(231, 242, 255, 0.95), transparent 55%),
