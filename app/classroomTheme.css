@@ -2675,6 +2675,32 @@
 .cm-home-my-class-section {
   display: grid;
   gap: 0;
+  /* Keep the heading clear of iOS Safari chrome / page padding after scrollIntoView. */
+  scroll-margin-top: max(24px, calc(env(safe-area-inset-top, 0px) + 12px));
+}
+
+.cm-home-my-class-jump {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cm-home-my-class-jump:focus-visible {
+  outline: 2px solid var(--cm-blue, #3478f6);
+  outline-offset: 3px;
+  border-radius: 6px;
 }
 
 /* Soft worldview hero — denser mobile height, keep faces/copy in frame */

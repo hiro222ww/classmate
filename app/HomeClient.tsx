@@ -1970,6 +1970,29 @@ return () => {
       ? ""
       : "ゲスト");
   const hasJoinedClasses = visible.length > 0 || Boolean(currentClass);
+  const myClassSectionId = "cm-home-my-class";
+
+  const scrollToMyClassSection = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const el = document.getElementById(myClassSectionId);
+    if (!el) return;
+    // Avoid history/hash writes here — Next.js App Router patches history and a
+    // soft navigation can remount home (and bounce incomplete profile → onboarding).
+    // rAF helps iOS Safari apply scroll-margin after layout settles.
+    window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== `#${myClassSectionId}`) return;
+    // Wait a tick so layout (empty/list) is ready; works with 0 classes too.
+    const t = window.setTimeout(() => {
+      scrollToMyClassSection();
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [scrollToMyClassSection, visible.length]);
 
   async function tryOpenClassWithHintSession(params: {
     target: MineClass;
@@ -2768,9 +2791,21 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           </div>
         ) : null}
 
-        <section className="cm-home-my-class-section">
+        <section
+          id={myClassSectionId}
+          className="cm-home-my-class-section"
+        >
           <div className="cm-home-section-head">
-            <h2 className="cm-home-section-title">マイクラス</h2>
+            <h2 className="cm-home-section-title">
+              <button
+                type="button"
+                className="cm-home-my-class-jump"
+                onClick={() => scrollToMyClassSection()}
+                aria-controls={myClassSectionId}
+              >
+                マイクラス
+              </button>
+            </h2>
             <Link
               href={withDev("/class/create")}
               className="cm-home-section-link"
