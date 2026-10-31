@@ -2631,52 +2631,26 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         />
       ) : null}
 
-      {/* Welcome — softened */}
       <div className="cm-home-welcome cm-stagger-3">
-        <p
-          style={{
-            margin: 0,
-            fontSize: 13,
-            color: "var(--cm-muted, #64748b)",
-            fontWeight: 600,
-          }}
-        >
+        <p className="cm-home-welcome-line">
           {authLoading || (authStatus === "authenticated" && !profileName) ? (
             <>
-              ようこそ、<AuthTextSkeleton width={96} /> さん
+              <AuthTextSkeleton width={72} /> さん
             </>
           ) : (
             <>
-              ようこそ、<b style={{ color: "var(--cm-text)" }}>{welcomeName}</b>{" "}
-              さん
+              <b>{welcomeName}</b> さん
             </>
           )}
         </p>
         {authLoading ? (
-          <p
-            style={{
-              margin: "6px 0 0",
-              fontSize: 12,
-              color: "var(--cm-muted, #64748b)",
-              fontWeight: 600,
-            }}
-          >
-            {authSlow
-              ? "読み込みに時間がかかっています"
-              : "アカウント情報を確認しています…"}
+          <p className="cm-home-welcome-note">
+            {authSlow ? "読み込みが遅いです…" : "確認中…"}
             {authError ? `（${authError}）` : ""}
           </p>
         ) : null}
         {admissionPillText ? (
-          <div
-            style={{
-              marginTop: 8,
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
+          <div className="cm-home-welcome-meta">
             <span
               className={[
                 "cm-admission-pill",
@@ -2705,37 +2679,19 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             {joinWindowLoadState === "error" ? (
               <button
                 type="button"
+                className="cm-text-btn"
                 onClick={() => {
                   void reloadJoinWindow();
-                }}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: "1px solid var(--cm-border)",
-                  background: "#fff",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  color: "var(--cm-muted)",
-                  cursor: "pointer",
                 }}
               >
                 更新
               </button>
             ) : null}
-            {opsTestActive ? <StatusPill>運営テスト中</StatusPill> : null}
+            {opsTestActive ? <StatusPill>テスト中</StatusPill> : null}
           </div>
         ) : null}
         {adminCanBypassAdmission ? (
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 12,
-              fontWeight: 700,
-              color: "var(--cm-muted)",
-            }}
-          >
-            現在は入学受付時間外です。運営テストモードでテスト入室できます。
-          </p>
+          <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
         ) : null}
       </div>
 
@@ -2748,33 +2704,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         </div>
       ) : null}
 
-      {myClassRows.length > 0 ? (
-        <section className="cm-stagger-3" style={{ display: "grid", gap: 10 }}>
-          <div>
-            <h2 className="cm-home-section-title">マイクラス</h2>
-            <p className="cm-home-section-sub">所属中のクラスにすぐ入れます</p>
-          </div>
-          <div className="cm-my-class-list">
-            {myClassRows.slice(0, 6).map((row) => (
-              <MyClassCard
-                key={row.classId}
-                row={row}
-                opening={openingClassId === row.classId}
-                disabled={Boolean(openingClassId)}
-                onOpen={(target) => {
-                  const mine = visible.find(
-                    (c) => String(c.id ?? "").trim() === target.classId
-                  );
-                  if (mine) void openClass(mine);
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Random talk CTA */}
-      <div className="cm-stagger-4 cm-home-talk-hero">
+      {/* Primary action first */}
+      <div className="cm-stagger-3 cm-home-talk-hero">
         <RandomTalkCta
           voiceBusy={quickBusy}
           chatBusy={quickBusy}
@@ -2783,12 +2714,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           onAdmissionRefresh={() => {
             void reloadJoinWindow();
           }}
-          voiceLabel={
-            adminCanBypassAdmission ? "テスト入室（通話）" : "通話で始める"
-          }
-          chatLabel={
-            adminCanBypassAdmission ? "テスト入室（チャット）" : "チャット"
-          }
+          voiceLabel={adminCanBypassAdmission ? "テスト通話" : "通話"}
+          chatLabel={adminCanBypassAdmission ? "テストチャット" : "チャット"}
           onVoiceJoin={() => {
             if (!hasMinimumProfile(profile)) {
               router.push("/onboarding");
@@ -2834,15 +2761,37 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         />
       </div>
 
-      <section className="cm-home-discover cm-stagger-5">
-        <div className="cm-home-discover-copy">
-          <h2 className="cm-home-section-title">発見</h2>
-          <p className="cm-home-section-sub">テーマからクラスを探せます</p>
-        </div>
-        <Link href={withDev("/class/select")} className="cm-home-discover-link">
-          テーマを選ぶ
-        </Link>
-      </section>
+      {myClassRows.length > 0 ? (
+        <section className="cm-stagger-4" style={{ display: "grid", gap: 8 }}>
+          <h2 className="cm-home-section-title">マイクラス</h2>
+          <div className="cm-my-class-list">
+            {myClassRows.slice(0, 6).map((row) => (
+              <MyClassCard
+                key={row.classId}
+                row={row}
+                opening={openingClassId === row.classId}
+                disabled={Boolean(openingClassId)}
+                onOpen={(target) => {
+                  const mine = visible.find(
+                    (c) => String(c.id ?? "").trim() === target.classId
+                  );
+                  if (mine) void openClass(mine);
+                }}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <Link
+        href={withDev("/class/select")}
+        className="cm-home-discover cm-stagger-5"
+      >
+        <span className="cm-home-discover-copy">
+          <span className="cm-home-section-title">探す</span>
+        </span>
+        <span className="cm-home-discover-link">見る</span>
+      </Link>
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 

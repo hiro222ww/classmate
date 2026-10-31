@@ -36,23 +36,6 @@ function GlyphBell({ enabled }: { enabled: boolean }) {
   );
 }
 
-function GlyphUser() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
-  );
-}
-
-function GlyphCrown() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 7l4 4 5-8 5 8 4-4v14H3V7z" />
-    </svg>
-  );
-}
-
 function GlyphCard() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -130,7 +113,6 @@ export default function HomeMenuSheet({
   onToggleNotifications,
   hideWebPush,
   profileHref,
-  planHref,
   billingHref,
   accountHref,
   accountLabel,
@@ -146,26 +128,28 @@ export default function HomeMenuSheet({
   return (
     <BottomSheet open={open} onClose={onClose} title="メニュー">
       <nav aria-label="アカウントメニュー" style={{ display: "grid" }}>
-        <div className="cm-menu-profile-block">
+        <Link
+          href={profileHref}
+          onClick={onClose}
+          className="cm-menu-profile-block"
+          style={{ textDecoration: "none", color: "inherit" }}
+        >
           <CmAvatar
             label={name}
-            sizePx={48}
+            sizePx={44}
             photoPath={photoPath}
             avatarUrl={avatarUrl}
           />
-          <div style={{ minWidth: 0 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
             <div className="cm-menu-profile-name">{name}</div>
-            <Link
-              href={profileHref}
-              onClick={onClose}
-              className="cm-menu-profile-edit"
-            >
-              プロフィールを編集
-            </Link>
+            <span className="cm-menu-profile-edit">
+              {loggedIn ? "プロフィール編集" : "プロフィール登録"}
+            </span>
           </div>
-        </div>
+          <span style={chevron}>›</span>
+        </Link>
 
-        <div className="cm-menu-group-label">アカウント</div>
+        <div className="cm-menu-group-label">設定</div>
         {onToggleNotifications && !hideWebPush ? (
           <button
             type="button"
@@ -212,33 +196,22 @@ export default function HomeMenuSheet({
           </button>
         ) : null}
 
-        <Link href={profileHref} onClick={onClose} style={rowStyle}>
-          <GlyphUser />
-          <span>プロフィール編集</span>
-          <span style={chevron}>›</span>
-        </Link>
-
         <Link href={accountHref} onClick={onClose} style={rowStyle}>
           {loggedIn ? <GlyphSettings /> : <GlyphGoogle />}
-          <span>{loggedIn ? accountLabel : "Google でログイン"}</span>
+          <span>{loggedIn ? "アカウント" : "ログイン"}</span>
           <span style={chevron}>›</span>
         </Link>
 
-        <div className="cm-menu-group-label">契約・プラン</div>
-        <Link href={planHref} onClick={onClose} style={rowStyle}>
-          <GlyphCrown />
-          <span>プランを見る</span>
-          <span style={chevron}>›</span>
-        </Link>
+        <div className="cm-menu-group-label">お支払い</div>
         <Link href={billingHref} onClick={onClose} style={rowStyle}>
           <GlyphCard />
-          <span>お支払い・解約</span>
+          <span>お支払い</span>
           <span style={chevron}>›</span>
         </Link>
 
-        <div className="cm-menu-group-label">サービス</div>
+        <div className="cm-menu-group-label">その他</div>
         <Link href={aboutHref} onClick={onClose} style={rowStyle}>
-          <span>Classmateについて</span>
+          <span>About</span>
           <span style={chevron}>›</span>
         </Link>
         <Link
@@ -246,7 +219,7 @@ export default function HomeMenuSheet({
           onClick={onClose}
           style={{ ...rowStyle, borderBottom: "none" }}
         >
-          <span>規約・ポリシー</span>
+          <span>規約</span>
           <span style={chevron}>›</span>
         </Link>
       </nav>

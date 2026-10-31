@@ -123,9 +123,7 @@ export function MinProfileOnboardingForm({
       >
         <header className="cm-auth-header cm-page-heading">
           <h1>はじめる</h1>
-          <p className="cm-auth-lead">
-            表示名と年齢だけで、最大5人の通話に参加できます。
-          </p>
+          <p className="cm-auth-lead">表示名と年齢を登録</p>
         </header>
 
         <FormSection

@@ -127,7 +127,7 @@ export default function MineClient() {
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
-      <HomeBrandVisual menuButton={isApp ? menuButton : undefined} showIntro={false} />
+      <HomeBrandVisual menuButton={isApp ? menuButton : undefined} />
 
       {isApp ? (
         <HomeMenuSheet
@@ -165,15 +165,12 @@ export default function MineClient() {
           <div
             style={{
               display: "flex",
-              alignItems: "flex-start",
+              alignItems: "center",
               justifyContent: "space-between",
               gap: 10,
             }}
           >
-            <div>
-              <h1>マイクラス</h1>
-              <p>所属しているクラスを選べます</p>
-            </div>
+            <h1>マイクラス</h1>
             <button
               type="button"
               className="cm-text-btn"
@@ -190,15 +187,7 @@ export default function MineClient() {
 
         {error ? (
           <div className="cm-empty-state" role="alert">
-            <div className="cm-empty-state-icon" aria-hidden>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 8v5" />
-                <path d="M12 16h.01" />
-              </svg>
-            </div>
             <p className="cm-empty-state-title">読み込めませんでした</p>
-            <p className="cm-empty-state-body">{error}</p>
             <div className="cm-empty-state-actions">
               <button
                 type="button"
@@ -208,10 +197,10 @@ export default function MineClient() {
                   if (id) void reload(id);
                 }}
               >
-                もう一度試す
+                再試行
               </button>
               <Link href={withDev("/class/select")} className="cm-home-discover-link">
-                テーマを探す
+                探す
               </Link>
             </div>
           </div>
@@ -247,26 +236,18 @@ export default function MineClient() {
           </section>
         ) : error ? null : classes.length === 0 ? (
           <div className="cm-empty-state">
-            <div className="cm-empty-state-icon" aria-hidden>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-              </svg>
-            </div>
-            <p className="cm-empty-state-title">まだ所属クラスがありません</p>
-            <p className="cm-empty-state-body">
-              テーマを選んでクラスに入るか、ランダム通話で同年代と話してみましょう。
-            </p>
+            <p className="cm-empty-state-title">まだクラスがありません</p>
+            <p className="cm-empty-state-body">探すか、ランダム通話から参加</p>
             <div className="cm-empty-state-actions">
               <Link href={withDev("/class/select")} className="cm-home-discover-link">
-                テーマを探す
+                探す
               </Link>
               <Link
                 href={withDev("/")}
                 className="cm-text-btn"
                 style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}
               >
-                ホームで通話する
+                ホームへ
               </Link>
             </div>
           </div>

@@ -6,7 +6,6 @@ import type { AdmissionStatusNotice } from "@/lib/admissionJoinGate";
 type RandomTalkCtaProps = {
   className?: string;
   heading?: string;
-  description?: string;
   matchJoinDisabled?: boolean;
   joinDisabled?: boolean;
   voiceBusy?: boolean;
@@ -19,18 +18,15 @@ type RandomTalkCtaProps = {
   onChatJoin: () => void;
 };
 
-/**
- * Compact random-talk strip — emphasized but not a huge card stack.
- */
+/** Primary home action — title + short CTAs only. */
 export function RandomTalkCta({
   className,
   heading = "ランダム通話",
-  description = "同年代と今すぐ話そう",
   matchJoinDisabled,
   joinDisabled = false,
   voiceBusy = false,
   chatBusy = false,
-  voiceLabel = "通話で始める",
+  voiceLabel = "通話",
   chatLabel = "チャット",
   admissionStatusNotice = null,
   onAdmissionRefresh,
@@ -43,12 +39,11 @@ export function RandomTalkCta({
 
   return (
     <section
-      className={["cm-random-talk", className].filter(Boolean).join(" ")}
+      className={["cm-random-talk", "cm-random-talk--hero", className]
+        .filter(Boolean)
+        .join(" ")}
     >
-      <div className="cm-random-talk-copy">
-        <h2 className="cm-random-talk-heading">{heading}</h2>
-        <p className="cm-random-talk-desc">{description}</p>
-      </div>
+      <h2 className="cm-random-talk-heading">{heading}</h2>
 
       {admissionStatusNotice ? (
         <div className="cm-random-talk-status" role="status">

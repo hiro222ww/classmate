@@ -48,7 +48,7 @@ export function MyClassCard({
           <span className="cm-my-class-card-topic">{row.topicTitle}</span>
         ) : null}
         <span className="cm-my-class-card-cta">
-          {opening ? "入室中…" : "クラスを開く"}
+          {opening ? "入室中…" : "開く"}
         </span>
       </div>
     </button>

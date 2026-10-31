@@ -190,11 +190,8 @@ export default function UserLoginClient() {
             <HomeBrandVisual />
           </div>
 
-          <header>
+          <header className="cm-page-heading">
             <h1 className="app-shell-title cm-section-title">ログイン</h1>
-            <p className="app-shell-subtitle">
-              Google アカウントで Classmate を続けます
-            </p>
           </header>
 
           <section
@@ -247,23 +244,26 @@ export default function UserLoginClient() {
     >
       <HomeBrandVisual showIntro={false} />
 
-      <header className="cm-auth-header cm-page-heading">
-        <h1>ようこそ</h1>
-        <p className="cm-auth-lead">
-          同年代と気軽に通話できる音声コミュニティです。Google
-          アカウントですぐ始められます。
-          <HelpTip
-            label="ログインについて"
-            content="Google アカウントでログインします。初めての方も同じボタンから登録できます。ログイン後、元の画面に戻ります。メール送信は使わないため、送信上限の影響を受けません。"
-          />
-        </p>
+      <header
+        className="cm-auth-header cm-page-heading"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <h1>ログイン</h1>
+        <HelpTip
+          label="ログインについて"
+          content="Google でログイン・登録できます。完了後、元の画面に戻ります。"
+        />
       </header>
 
       <section
         className="cm-paper-card cm-auth-card"
         style={{
           display: "grid",
-          gap: 12,
+          gap: 10,
         }}
       >
         <GoogleLoginButton
@@ -284,21 +284,9 @@ export default function UserLoginClient() {
             fontSize: 15,
             cursor: busy ? "default" : "pointer",
             opacity: busy ? 0.7 : 1,
-            minHeight: 48,
+            minHeight: 52,
           }}
         />
-        <p
-          style={{
-            margin: 0,
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--cm-muted)",
-            textAlign: "center",
-            lineHeight: 1.45,
-          }}
-        >
-          新規登録も同じボタンから。通話は少人数の安心なクラスで楽しめます。
-        </p>
       </section>
 
       {error ? (

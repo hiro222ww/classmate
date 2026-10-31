@@ -1,28 +1,21 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { HOME_INTRO } from "@/lib/seo";
 import { CmAppHeader } from "@/components/brand/CmAppHeader";
 
 type Props = {
   menuButton?: ReactNode;
+  /** @deprecated Ignored — headers stay compact and consistent. */
   showIntro?: boolean;
 };
 
 /**
- * Shared brand header used across web pages.
- * Delegates to CmAppHeader so size/spacing match home.
+ * Shared brand header — identical size/spacing to home (kana only, no long copy).
  */
-export function HomeBrandVisual({ menuButton, showIntro = true }: Props) {
-  const tagline = showIntro
-    ? HOME_INTRO.length > 28
-      ? `${HOME_INTRO.slice(0, 26).trimEnd()}…`
-      : HOME_INTRO
-    : null;
-
+export function HomeBrandVisual({ menuButton }: Props) {
   return (
     <CmAppHeader
-      tagline={tagline}
+      tagline={null}
       hideWebPush
       trailing={menuButton}
       className="cm-home-brand-visual cm-stagger-1"
