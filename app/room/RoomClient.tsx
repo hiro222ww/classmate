@@ -4471,7 +4471,7 @@ const name = rawName === "You" ? "参加者" : rawName;
           statusLabel={roomStatusLabel}
           statusTone={roomStatusTone}
           subtitle={shellSubtitle}
-          boardMode="compact"
+          boardMode="hidden"
           lines={
             err
               ? [err]
@@ -4486,6 +4486,17 @@ const name = rawName === "You" ? "参加者" : rawName;
                       : "このクラスに招待されています",
                   ]
                 : []
+          }
+          right={
+            <button
+              type="button"
+              className="cm-room-ghost-btn cm-room-session-hero-iconbtn"
+              onClick={() => router.push(profileEditHref)}
+              aria-label="プロフィール編集"
+              title="プロフィール編集"
+            >
+              ⚙
+            </button>
           }
           avatarStrip={
             <RoomAvatarStrip
@@ -4601,31 +4612,12 @@ const name = rawName === "You" ? "参加者" : rawName;
                 onHome={goHome}
               />
             ) : null}
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                type="button"
-                className="cm-room-ghost-btn"
-                onClick={() => router.push(profileEditHref)}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 10,
-                  border: "1px solid #d1d5db",
-                  background: "#fff",
-                  color: "#374151",
-                  fontWeight: 800,
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                プロフィール編集
-              </button>
-            </div>
-
             {classId ? (
               <MeetingPlanSection
                 classId={classId}
                 deviceId={deviceId}
                 plan={meetingPlan}
+                compact
                 onUpdated={setMeetingPlan}
               />
             ) : null}
@@ -4688,7 +4680,7 @@ const name = rawName === "You" ? "参加者" : rawName;
               deviceId={deviceId}
               displayName={displayName}
               title="チャット"
-              maxHeight={240}
+              maxHeight={180}
             />
           </div>
         </ChalkboardRoomShell>

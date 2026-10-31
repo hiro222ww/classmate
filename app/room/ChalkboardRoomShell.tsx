@@ -51,7 +51,8 @@ type Props = {
   characters?: ChalkboardCharacter[];
   /**
    * Waiting-room board prominence.
-   * compact (default): small secondary board; hidden: omit; full: legacy size.
+   * hidden (default): omit decorative board (hero already carries title);
+   * compact: small secondary board; full: legacy size.
    */
   boardMode?: "compact" | "hidden" | "full";
 };
@@ -76,7 +77,7 @@ export function ChalkboardRoomShell({
   startDisabled = false,
   startLabel = "通話を開始",
   characters = [],
-  boardMode = "compact",
+  boardMode = "hidden",
 }: Props) {
   const isApp = isAppShellContext();
   const subtitleText = String(subtitle ?? "").trim();
@@ -146,20 +147,43 @@ export function ChalkboardRoomShell({
     </Link>
   );
 
+  const shortHomeLabel =
+    homeLabel.includes("マイクラス")
+      ? "マイ"
+      : homeLabel.length > 4
+        ? "ホーム"
+        : homeLabel;
+
   const toolbarRight = (
     <>
-      <Link href={moveHref} className={ghostBtnClass}>
-        移動
-      </Link>
       {onHome ? (
-        <button type="button" onClick={onHome} className={ghostBtnClass}>
-          {homeLabel}
+        <button
+          type="button"
+          onClick={onHome}
+          className={ghostBtnClass}
+          aria-label={homeLabel}
+          title={homeLabel}
+        >
+          {shortHomeLabel}
         </button>
       ) : (
-        <Link href={homeHref} className={ghostBtnClass}>
-          {homeLabel}
+        <Link
+          href={homeHref}
+          className={ghostBtnClass}
+          aria-label={homeLabel}
+          title={homeLabel}
+        >
+          {shortHomeLabel}
         </Link>
       )}
+      <Link
+        href={moveHref}
+        className={`${ghostBtnClass} cm-room-session-hero-move`}
+        aria-label="クラスを移動"
+        title="クラスを移動"
+      >
+        移動
+      </Link>
       {right}
     </>
   );
@@ -195,6 +219,16 @@ export function ChalkboardRoomShell({
         toolbarLeft={toolbarLeft}
         toolbarRight={toolbarRight}
       />
+
+      {!showBoard && lines.length > 0 ? (
+        <div className="cm-room-inline-alert" role="status">
+          {lines.map((t, i) => (
+            <div key={i} className="cm-room-inline-alert-line">
+              {t}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {showBoard ? (
         <div

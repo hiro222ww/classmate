@@ -3797,6 +3797,8 @@ export default function CallClient() {
         });
       }}
       micLevel={micLevel}
+      roomTitle="通話ルーム"
+      categoryLabel="フリークラス"
       boardSlot={sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
       messagesSlot={
         <SessionMessages
@@ -3805,9 +3807,8 @@ export default function CallClient() {
           displayName={formatMemberDisplayName(
             members.find((m) => m.device_id === deviceId) ?? {}
           )}
-          title="メッセージ"
-          maxHeight={240}
-          collapsible
+          title="チャット"
+          maxHeight={320}
         />
       }
       profileModalSlot={
