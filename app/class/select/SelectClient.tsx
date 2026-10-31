@@ -55,6 +55,7 @@ import {
   PRIMARY_BTN,
 } from "@/components/dashboard/dashboardStyles";
 import { HomeBrandVisual } from "@/components/brand/HomeBrandVisual";
+import { PageBackLink } from "@/components/nav/PageBackLink";
 import { ThemeCardGrid } from "@/components/home/themeCards";
 import { MatchEntryButton } from "@/components/MatchEntryButton";
 import { useBillingCopy } from "@/hooks/useBillingCopy";
@@ -1397,7 +1398,7 @@ export default function SelectClient() {
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS}</style>
 
-      <HomeBrandVisual menuButton={isApp ? menuButton : undefined} />
+      <HomeBrandVisual menuButton={menuButton} />
 
       <HomeMenuSheet
         open={menuOpen}
@@ -1419,6 +1420,8 @@ export default function SelectClient() {
         loggedIn={loggedIn}
         aboutHref={withDev("/about")}
         legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={profile?.display_name || "ゲスト"}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
@@ -1557,6 +1560,9 @@ export default function SelectClient() {
 
       <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
         <header className="cm-page-heading cm-select-heading">
+          <div className="cm-page-back-row">
+            <PageBackLink fallbackHref="/" label="ホームへ戻る" />
+          </div>
           <h1>探す</h1>
           <p>気になるテーマから選ぶ</p>
         </header>

@@ -20,6 +20,11 @@ import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { RandomTalkCta } from "@/components/home/RandomTalkCta";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 import type { JoinedClassRow } from "@/hooks/useJoinedClasses";
 import {
   canStartMatchJoin,
@@ -441,7 +446,13 @@ export default function HomeClient() {
   }
 
   const [deviceId, setDeviceId] = useState("");
-  const { adminAuthenticated, opsTestFlags } = useDashboardAccountStatus(deviceId);
+  const {
+    adminAuthenticated,
+    opsTestFlags,
+    loggedIn,
+    accountLabel,
+  } = useDashboardAccountStatus(deviceId);
+  const [menuOpen, setMenuOpen] = useState(false);
   const {
     enabled: notificationsEnabled,
     toggle: toggleNotifications,
@@ -2625,6 +2636,53 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         notificationsBusy={notificationsBusy}
         onToggleNotifications={toggleNotifications}
         hideWebPush={isAppShellContext()}
+        trailing={
+          <button
+            type="button"
+            className="cm-hamburger-btn"
+            aria-label="メニューを開く"
+            onClick={() => setMenuOpen(true)}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="#374151"
+              strokeWidth="2"
+              strokeLinecap="round"
+              aria-hidden
+            >
+              <line x1="3" y1="5" x2="17" y2="5" />
+              <line x1="3" y1="10" x2="17" y2="10" />
+              <line x1="3" y1="15" x2="17" y2="15" />
+            </svg>
+          </button>
+        }
+      />
+
+      <HomeMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isAppShellContext()}
+        profileHref={withDev(buildProfileEditPath("/"))}
+        myClassesHref={withDev("/class/mine")}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/"))
+        }
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+        aboutHref={withDev("/about")}
+        legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={welcomeName || "ゲスト"}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (

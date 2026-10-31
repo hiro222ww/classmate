@@ -78,15 +78,21 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
         "/class/select?cat=school"
       );
       await expect(page.getByRole("link", { name: /アイデンティティ/ })).toHaveCount(0);
-      // My-class empty no longer duplicates discover/create CTAs.
+      // Warm empty state without duplicate discover/create CTAs.
+      await expect(page.getByText("最初のクラスを見つけよう", { exact: true })).toBeVisible();
       await expect(page.locator(".cm-my-class-empty-actions")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
+      // Home-centric experiment: bottom nav hidden (component kept behind flag).
+      await expect(page.locator(".cm-mobile-bottom-nav")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "メニューを開く", exact: true })).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath(`home-${viewport.width}.png`), animations: "disabled" });
       await brand.click();
       await checkActions(page);
       await page.getByRole("link", { name: "すべて見る", exact: true }).click();
       await expect(page).toHaveURL(/\/class\/select$/);
       await checkActions(page);
+      await expect(page.getByRole("button", { name: "ホームへ戻る", exact: true })).toBeVisible();
+      await expect(page.locator(".cm-mobile-bottom-nav")).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "探す", exact: true })).toHaveCount(1);
       await expect(page.getByRole("heading", { name: "カテゴリー", exact: true })).toHaveCount(1);
       // 探す shows the full major catalog in a 2-column grid.

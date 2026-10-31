@@ -44,7 +44,10 @@ export default function WebMobileNavHost() {
   } = useWebPushNotifications(deviceId, "web-bottom-nav");
 
   if (isAppShellContext()) return null;
-  if (shouldHideMobileBottomNav(pathname)) return null;
+
+  const hideBottomNav = shouldHideMobileBottomNav(pathname);
+  // When the bottom bar is off, page headers own the menu sheet.
+  if (hideBottomNav) return null;
 
   const menuOpen = menuPath === pathname;
   const returnPath = pathname || "/";

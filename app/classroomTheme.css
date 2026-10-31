@@ -2949,46 +2949,32 @@
 .cm-my-class-empty {
   display: grid;
   gap: 8px;
-  justify-items: stretch;
-  text-align: left;
-  padding: 10px 12px;
-  border-radius: 16px;
+  justify-items: center;
+  text-align: center;
+  padding: 22px 16px 18px;
+  border-radius: 20px;
   background:
-    radial-gradient(120% 80% at 15% 0%, rgba(255, 228, 214, 0.4), transparent 50%),
-    radial-gradient(100% 70% at 90% 10%, rgba(219, 234, 254, 0.55), transparent 48%),
+    radial-gradient(120% 80% at 15% 0%, rgba(255, 228, 214, 0.55), transparent 50%),
+    radial-gradient(100% 70% at 90% 10%, rgba(219, 234, 254, 0.7), transparent 48%),
     linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
   border: 1px solid rgba(52, 120, 246, 0.12);
-  box-shadow: none;
+  box-shadow: var(--cm-shadow-soft);
 }
 
-.cm-my-class-empty-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
+.cm-my-class-empty .cm-empty-state-title {
+  font-size: 15px;
 }
 
-.cm-my-class-empty-copy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.cm-my-class-empty--compact .cm-empty-state-title {
-  font-size: 13px;
-}
-
-.cm-my-class-empty--compact .cm-empty-state-body {
-  font-size: 11px;
-  max-width: none;
+.cm-my-class-empty .cm-empty-state-body {
+  font-size: 12px;
+  max-width: 16em;
 }
 
 .cm-my-class-empty-visual {
   position: relative;
-  width: 44px;
-  height: 44px;
-  margin-bottom: 0;
-  flex-shrink: 0;
+  width: 88px;
+  height: 64px;
+  margin-bottom: 4px;
 }
 
 .cm-my-class-empty-orb {
@@ -2998,74 +2984,76 @@
 }
 
 .cm-my-class-empty-orb--a {
-  width: 28px;
-  height: 28px;
-  left: 0;
+  width: 44px;
+  height: 44px;
+  left: 2px;
   top: 10px;
   background: radial-gradient(circle at 30% 30%, #ffe4d6, #ffc4b0 70%);
   opacity: 0.95;
 }
 
 .cm-my-class-empty-orb--b {
-  width: 24px;
-  height: 24px;
-  right: 0;
-  top: 2px;
+  width: 36px;
+  height: 36px;
+  right: 4px;
+  top: 4px;
   background: radial-gradient(circle at 30% 30%, #dbeafe, #93c5fd 70%);
   opacity: 0.95;
 }
 
 .cm-my-class-empty-orb--c {
-  display: none;
+  width: 22px;
+  height: 22px;
+  left: 34px;
+  bottom: 2px;
+  background: radial-gradient(circle at 30% 30%, #fce7f3, #f9a8d4 70%);
+  opacity: 0.85;
 }
 
 .cm-my-class-empty-mark {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 18px;
-  height: 18px;
-  margin: -9px 0 0 -9px;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 35% 30%, #fff 0 28%, transparent 30%),
     linear-gradient(145deg, #5b93f8, #3478f6);
-  box-shadow: 0 2px 8px rgba(52, 120, 246, 0.24);
+  box-shadow: 0 4px 12px rgba(52, 120, 246, 0.28);
 }
 
 .cm-my-class-empty-actions {
+  display: none;
+}
+
+.cm-page-back-row {
   display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-start;
-  margin-top: 0;
-  width: 100%;
+  margin-bottom: 4px;
 }
 
-.cm-my-class-empty-actions .cm-home-discover-link,
-.cm-my-class-empty-actions .cm-text-btn {
-  min-height: 36px;
-  padding: 6px 12px;
-  font-size: 12px;
-}
-
-.cm-my-class-empty-primary,
-a.cm-my-class-empty-primary {
+.cm-page-back-link {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-height: 36px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(52, 120, 246, 0.18);
-  background: var(--cm-blue-soft);
-  color: var(--cm-blue);
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
   font-size: 12px;
   font-weight: 800;
+  color: var(--cm-blue);
   text-decoration: none;
-  box-shadow: none;
   cursor: pointer;
-  font-family: inherit;
+}
+
+.cm-page-back-link > [aria-hidden] {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .cm-home-theme-grid {
