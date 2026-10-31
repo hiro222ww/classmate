@@ -65,6 +65,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { isAppShellContext } from "@/lib/appShellContext";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
+import { CmAvatar } from "@/components/ui/CmAvatar";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
@@ -1976,11 +1977,38 @@ return () => {
     if (typeof window === "undefined") return;
     const el = document.getElementById(myClassSectionId);
     if (!el) return;
-    // Avoid history/hash writes here — Next.js App Router patches history and a
-    // soft navigation can remount home (and bounce incomplete profile → onboarding).
-    // rAF helps iOS Safari apply scroll-margin after layout settles.
+
+    const measureSafeAreaTop = () => {
+      const probe = document.createElement("div");
+      probe.setAttribute("aria-hidden", "true");
+      probe.style.cssText =
+        "position:fixed;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;";
+      document.body.appendChild(probe);
+      const height = probe.getBoundingClientRect().height;
+      probe.remove();
+      return height;
+    };
+
+    const header = document.querySelector<HTMLElement>(
+      ".cm-home-header, .cm-app-header"
+    );
+    const headerPos = header ? getComputedStyle(header).position : "";
+    const headerOverlaps =
+      headerPos === "sticky" || headerPos === "fixed";
+    const headerHeight =
+      headerOverlaps && header ? header.getBoundingClientRect().height : 0;
+    // Comfortable gap under iOS chrome even when the header scrolls away.
+    const offset = measureSafeAreaTop() + headerHeight + 16;
+
+    // Avoid history/hash writes — Next.js App Router can remount on hash changes.
     window.requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.requestAnimationFrame(() => {
+        const y =
+          el.getBoundingClientRect().top +
+          (window.scrollY || window.pageYOffset) -
+          offset;
+        window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+      });
     });
   }, []);
 
@@ -2654,7 +2682,6 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       <HomeHeader
         displayName={welcomeName || "ゲスト"}
         photoPath={profile?.photo_path ?? null}
-        profileHref={withDev(buildProfileEditPath("/"))}
         notificationsEnabled={notificationsEnabled}
         notificationsBusy={notificationsBusy}
         onToggleNotifications={toggleNotifications}
@@ -2662,24 +2689,16 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         trailing={
           <button
             type="button"
-            className="cm-hamburger-btn"
+            className="cm-app-header-menu-avatar"
             aria-label="メニューを開く"
+            aria-expanded={menuOpen}
             onClick={() => setMenuOpen(true)}
           >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 20 20"
-              fill="none"
-              stroke="#374151"
-              strokeWidth="2"
-              strokeLinecap="round"
-              aria-hidden
-            >
-              <line x1="3" y1="5" x2="17" y2="5" />
-              <line x1="3" y1="10" x2="17" y2="10" />
-              <line x1="3" y1="15" x2="17" y2="15" />
-            </svg>
+            <CmAvatar
+              label={welcomeName || "ゲスト"}
+              sizePx={32}
+              photoPath={profile?.photo_path ?? null}
+            />
           </button>
         }
       />
@@ -2706,6 +2725,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
         displayName={welcomeName || "ゲスト"}
+        photoPath={profile?.photo_path ?? null}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
@@ -2791,58 +2811,18 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           </div>
         ) : null}
 
-        <section
-          id={myClassSectionId}
-          className="cm-home-my-class-section"
+        {/* Compact in-home shortcut — not a second my-class section. */}
+        <button
+          type="button"
+          className="cm-home-my-class-shortcut"
+          onClick={() => scrollToMyClassSection()}
+          aria-controls={myClassSectionId}
         >
-          <div className="cm-home-section-head">
-            <h2 className="cm-home-section-title">
-              <button
-                type="button"
-                className="cm-home-my-class-jump"
-                onClick={() => scrollToMyClassSection()}
-                aria-controls={myClassSectionId}
-              >
-                マイクラス
-              </button>
-            </h2>
-            <Link
-              href={withDev("/class/create")}
-              className="cm-home-section-link"
-            >
-              ＋ 作成
-            </Link>
-          </div>
-        {myClassRows.length > 0 ? (
-          <div className="cm-my-class-list">
-            {myClassRows.slice(0, 6).map((row) => {
-              const members = membersByClass[row.classId] ?? [];
-              return (
-                <MyClassCard
-                  key={row.classId}
-                  row={row}
-                  opening={openingClassId === row.classId}
-                  disabled={Boolean(openingClassId)}
-                  memberCount={members.length}
-                  members={members.map((m) => ({
-                    deviceId: String(m.device_id ?? "").trim(),
-                    displayName: formatMemberDisplayName(m),
-                    photoPath: m.photo_path ?? null,
-                  }))}
-                  onOpen={(target) => {
-                    const mine = visible.find(
-                      (c) => String(c.id ?? "").trim() === target.classId
-                    );
-                    if (mine) void openClass(mine);
-                  }}
-                />
-              );
-            })}
-          </div>
-        ) : (
-          <MyClassEmpty />
-        )}
-        </section>
+          <span>マイクラス</span>
+          <span className="cm-home-my-class-shortcut-chevron" aria-hidden>
+            ›
+          </span>
+        </button>
       </div>
 
       <HomeThemeGrid className="cm-stagger-4" />
@@ -2902,6 +2882,53 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           }}
         />
       </div>
+
+      {/* Sole my-class section (heading + create + list/empty). */}
+      <section
+        id={myClassSectionId}
+        className="cm-home-my-class-section cm-stagger-5"
+      >
+        <div className="cm-home-section-head">
+          <h2 className="cm-home-section-title">マイクラス</h2>
+          <Link
+            href={withDev("/class/create")}
+            className="cm-home-section-link"
+          >
+            ＋ 作成
+          </Link>
+        </div>
+        {myClassRows.length > 0 ? (
+          <div className="cm-my-class-list">
+            {myClassRows.slice(0, 6).map((row) => {
+              const members = membersByClass[row.classId] ?? [];
+              return (
+                <MyClassCard
+                  key={row.classId}
+                  row={row}
+                  opening={openingClassId === row.classId}
+                  disabled={Boolean(openingClassId)}
+                  memberCount={members.length}
+                  members={members.map((m) => ({
+                    deviceId: String(m.device_id ?? "").trim(),
+                    displayName: formatMemberDisplayName(m),
+                    photoPath: m.photo_path ?? null,
+                  }))}
+                  onOpen={(target) => {
+                    const mine = visible.find(
+                      (c) => String(c.id ?? "").trim() === target.classId
+                    );
+                    if (mine) void openClass(mine);
+                  }}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <MyClassEmpty />
+        )}
+      </section>
+      {/* Lets the section scroll fully under the top inset on short pages. */}
+      <div className="cm-home-scroll-end-pad" aria-hidden />
 
       {mounted ? <DevPanel deviceId={deviceId} /> : null}
 
