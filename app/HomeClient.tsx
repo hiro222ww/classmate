@@ -2528,7 +2528,6 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     opts: { source: string }
   ) {
     const classId = String(target.id ?? "").trim();
-    const title = formatClassLabel(target);
 
     if (!classId) return;
 
@@ -2544,7 +2543,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       return;
     }
 
-    if (!confirm(`「${title}」を抜けますか？`)) {
+    if (!confirm("このクラスから脱退しますか？")) {
       return;
     }
 
@@ -2720,7 +2719,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         onToggleNotifications={toggleNotifications}
         hideWebPush={isAppShellContext()}
         profileHref={withDev(buildProfileEditPath("/"))}
-        myClassesHref={withDev("/class/mine")}
+        myClassesHref={`${withDev("/")}#cm-home-my-class`}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={
@@ -2836,7 +2835,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
                   key={row.classId}
                   row={row}
                   opening={openingClassId === row.classId}
-                  disabled={Boolean(openingClassId)}
+                  leaving={leavingClassId === row.classId}
+                  disabled={Boolean(openingClassId || leavingClassId)}
                   memberCount={members.length}
                   members={members.map((m) => ({
                     deviceId: String(m.device_id ?? "").trim(),
@@ -2848,6 +2848,16 @@ console.log("[home] resolved ids", { classId, sessionId, json });
                       (c) => String(c.id ?? "").trim() === target.classId
                     );
                     if (mine) void openClass(mine);
+                  }}
+                  onLeave={(target) => {
+                    const mine = visible.find(
+                      (c) => String(c.id ?? "").trim() === target.classId
+                    );
+                    if (mine) {
+                      void leaveClass(mine, {
+                        source: CLASS_LEAVE_CONFIRMED_SOURCE,
+                      });
+                    }
                   }}
                 />
               );

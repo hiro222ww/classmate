@@ -128,7 +128,9 @@ export default function AppHomeClient() {
                 type="button"
                 className="app-shell-btn"
                 disabled={actionsLocked}
-                onClick={() => router.push(withDev("/class/mine"))}
+                onClick={() =>
+                  router.push(`${withDev("/app/home")}#cm-home-my-class`)
+                }
               >
                 マイクラス
               </button>

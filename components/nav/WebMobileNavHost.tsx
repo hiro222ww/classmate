@@ -74,7 +74,7 @@ export default function WebMobileNavHost() {
         onToggleNotifications={toggleNotifications}
         hideWebPush={false}
         profileHref={withDev(buildProfileEditPath(returnPath))}
-        myClassesHref={withDev("/class/mine")}
+        myClassesHref={`${withDev("/")}#cm-home-my-class`}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={

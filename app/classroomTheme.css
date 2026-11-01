@@ -3067,6 +3067,13 @@
   gap: 12px;
 }
 
+.cm-my-class-card-wrap {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
 .cm-my-class-card {
   display: grid;
   grid-template-columns: 76px 1fr;
@@ -3084,6 +3091,27 @@
   color: inherit;
   transition: transform 140ms ease, box-shadow 140ms ease;
   min-height: 84px;
+}
+
+.cm-my-class-card-leave {
+  appearance: none;
+  align-self: end;
+  justify-self: end;
+  margin: 0 2px 0 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #dc2626;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cm-my-class-card-leave:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .cm-my-class-card:hover:not(:disabled) {
@@ -4987,6 +5015,43 @@ body.cm-has-mobile-bottom-nav {
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+/* Waiting-room settings sheet rows */
+.cm-room-settings-list {
+  display: grid;
+  gap: 4px;
+  padding: 4px 0 8px;
+}
+
+.cm-room-settings-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.95);
+  color: var(--cm-text, #17233d);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.cm-room-settings-row:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cm-room-settings-row--danger {
+  color: #dc2626;
+  background: rgba(254, 242, 242, 0.95);
 }
 
 /* Compact recruitment status strip */

@@ -1407,7 +1407,7 @@ export default function SelectClient() {
         onToggleNotifications={toggleNotifications}
         hideWebPush={isApp}
         profileHref={withDev(buildProfileEditPath(selectSelfPath))}
-        myClassesHref={withDev("/class/mine")}
+        myClassesHref={`${withDev("/")}#cm-home-my-class`}
         planHref={withDev("/premium")}
         billingHref={withDev("/billing")}
         accountHref={
@@ -1526,7 +1526,7 @@ export default function SelectClient() {
           {joinLimitMessage}
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Link
-              href={withDev("/class/mine")}
+              href={`${withDev("/")}#cm-home-my-class`}
               style={{
                 padding: "8px 10px",
                 borderRadius: 10,
@@ -1621,7 +1621,7 @@ export default function SelectClient() {
         </div>
 
         {showJoinedStrip ? (
-          <Link href={withDev("/class/mine")} className="cm-select-mine-strip">
+          <Link href={`${withDev("/")}#cm-home-my-class`} className="cm-select-mine-strip">
             <span>
               マイクラス
               <span className="cm-select-mine-strip-count">{joinedClassCount}</span>
