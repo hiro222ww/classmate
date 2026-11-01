@@ -1025,10 +1025,15 @@ export default function SessionMessages({
         ) : null}
 
         <div
+          className="cm-room-msg-composer"
           style={{
             display: "flex",
-            gap: 8,
+            gap: 6,
             alignItems: "center",
+            width: "100%",
+            maxWidth: "100%",
+            minWidth: 0,
+            boxSizing: "border-box",
           }}
         >
           <button
@@ -1041,6 +1046,7 @@ export default function SessionMessages({
             }}
             style={{
               ...composerIconBtnStyle,
+              flex: "0 0 auto",
               color: showEmojiPicker ? "#0f766e" : "#475569",
               borderColor: showEmojiPicker ? "#99f6e4" : "#d1d5db",
               background: showEmojiPicker ? "#f0fdfa" : "#fff",
@@ -1053,6 +1059,7 @@ export default function SessionMessages({
             aria-label="画像を添付"
             style={{
               ...composerIconBtnStyle,
+              flex: "0 0 auto",
               cursor: sending ? "not-allowed" : "pointer",
               opacity: sending ? 0.6 : 1,
             }}
@@ -1105,12 +1112,14 @@ export default function SessionMessages({
             placeholder={pendingImage ? "送信ボタンで画像を送信" : "メッセージを入力"}
             disabled={sending}
             style={{
-              flex: 1,
+              flex: "1 1 auto",
               border: "1px solid #d1d5db",
               borderRadius: 999,
               padding: "10px 12px",
               background: "#fff",
               minWidth: 0,
+              maxWidth: "100%",
+              boxSizing: "border-box",
             }}
           />
 
@@ -1122,7 +1131,7 @@ export default function SessionMessages({
             style={{
               border: "none",
               borderRadius: 999,
-              padding: "10px 14px",
+              padding: "10px 12px",
               background:
                 sending || (!draft.trim() && !pendingImage)
                   ? "#9ca3af"
@@ -1134,9 +1143,11 @@ export default function SessionMessages({
                   ? "not-allowed"
                   : "pointer",
               whiteSpace: "nowrap",
+              flex: "0 0 auto",
+              writingMode: "horizontal-tb",
             }}
           >
-            {sending ? "送信中" : "送信"}
+            {sending ? "…" : "送信"}
           </button>
         </div>
       </div>

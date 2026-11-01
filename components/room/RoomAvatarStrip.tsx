@@ -22,11 +22,11 @@ type Props = {
   className?: string;
 };
 
-const AVATAR_PX = 56;
+const AVATAR_PX = 48;
 
 /**
- * Horizontal presence strip: filled avatars, empty placeholders, trailing invite.
- * Matches the reference room hero member row.
+ * Horizontal presence strip: filled avatars, empty placeholders, invite.
+ * Invite consumes one seat slot so capacity+invite never overflows the row.
  */
 export function RoomAvatarStrip({
   members,
@@ -39,11 +39,21 @@ export function RoomAvatarStrip({
 }: Props) {
   const safeCapacity = Math.max(1, Math.min(8, Math.floor(capacity) || 5));
   const shown = members.slice(0, safeCapacity);
-  const emptyCount = Math.max(0, safeCapacity - shown.length);
+  const remaining = Math.max(0, safeCapacity - shown.length);
+  const showInvite = typeof onInvite === "function";
+  // Keep total chips <= capacity (invite replaces one empty seat when possible).
+  const emptyCount = Math.max(0, remaining - (showInvite ? 1 : 0));
+  const inviteOverflow = showInvite && remaining === 0;
 
   return (
     <div
-      className={["cm-room-avatar-strip", className].filter(Boolean).join(" ")}
+      className={[
+        "cm-room-avatar-strip",
+        inviteOverflow ? "cm-room-avatar-strip--with-overflow-invite" : "",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       role="list"
       aria-label="参加メンバー"
     >
@@ -78,7 +88,19 @@ export function RoomAvatarStrip({
         </button>
       ))}
 
-      {onInvite ? (
+      {Array.from({ length: emptyCount }).map((_, i) => (
+        <div
+          key={`empty-${i}`}
+          role="listitem"
+          className="cm-room-avatar-chip cm-room-avatar-chip--empty"
+          aria-hidden
+        >
+          <span className="cm-room-avatar-chip-face cm-room-avatar-chip-face--empty" />
+          <span className="cm-room-avatar-chip-name">空席</span>
+        </div>
+      ))}
+
+      {showInvite ? (
         <button
           type="button"
           role="listitem"
@@ -93,18 +115,6 @@ export function RoomAvatarStrip({
           <span className="cm-room-avatar-chip-name">{inviteLabel}</span>
         </button>
       ) : null}
-
-      {Array.from({ length: emptyCount }).map((_, i) => (
-        <div
-          key={`empty-${i}`}
-          role="listitem"
-          className="cm-room-avatar-chip cm-room-avatar-chip--empty"
-          aria-hidden
-        >
-          <span className="cm-room-avatar-chip-face cm-room-avatar-chip-face--empty" />
-          <span className="cm-room-avatar-chip-name">空席</span>
-        </div>
-      ))}
     </div>
   );
 }
