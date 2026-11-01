@@ -29,6 +29,13 @@ import {
   sanitizeDisplayName,
   upsertRows,
 } from "./board/chalkDraw";
+import {
+  canvasCssToLogical,
+  getBoardViewTransform,
+  logicalToCanvasX,
+  logicalToCanvasY,
+  type BoardFitMode,
+} from "./board/boardView";
 
 import { useBoardSounds } from "./board/useBoardSounds";
 
@@ -83,26 +90,28 @@ function boardTouchAction(
 
 const BOARD_ASPECT = `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`;
 
-/** Letterboxed surface: never stretch logical strokes to a different aspect. */
-function boardSurfaceLayoutStyle(isFullscreen: boolean, isTouchLike: boolean): CSSProperties {
+/**
+ * Normal: stable CSS aspect box (width-driven). Never write pixel heights in JS.
+ * Fullscreen: fill the scroll/viewport area; logical mapping uses uniform cover.
+ */
+function boardSurfaceLayoutStyle(isFullscreen: boolean, _isTouchLike: boolean): CSSProperties {
   if (isFullscreen) {
     return {
       position: "relative",
-      width: "auto",
-      maxWidth: "100%",
-      height: "auto",
-      maxHeight: "100%",
+      width: "100%",
+      height: "100%",
+      maxWidth: "none",
+      maxHeight: "none",
       minWidth: 0,
       minHeight: 0,
-      aspectRatio: BOARD_ASPECT,
-      margin: "0 auto",
-      borderRadius: 10,
-      border: "2px solid #073126",
+      margin: 0,
+      borderRadius: 0,
+      border: "none",
       background: BOARD_BG,
-      boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
+      boxShadow: "none",
       overflow: "hidden",
-      flex: "0 1 auto",
-      alignSelf: "center",
+      flex: "1 1 auto",
+      alignSelf: "stretch",
       ...BOARD_TOUCH_GUARD,
     };
   }
@@ -111,9 +120,12 @@ function boardSurfaceLayoutStyle(isFullscreen: boolean, isTouchLike: boolean): C
     position: "relative",
     width: "100%",
     maxWidth: "none",
+    height: "auto",
     margin: "0 auto",
     minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
-    minHeight: isTouchLike ? 420 : 620,
+    // Width + aspect-ratio alone define height. Avoid minHeight fighting aspect
+    // (that pair was part of the "keeps growing taller" loop with canvas px sizes).
+    minHeight: 0,
     aspectRatio: BOARD_ASPECT,
     borderRadius: 16,
     border: "2px solid #073126",
@@ -211,42 +223,20 @@ function SharedCanvasBoardPreview({
   };
 
   const layoutPreviewSurface = () => {
-    const scroll = scrollRef.current;
     const surface = surfaceRef.current;
-    const layer = rootRef.current;
-    if (!surface || !isFullscreen) {
-      if (surface) {
-        surface.style.width = "";
-        surface.style.height = "";
-      }
+    if (!surface) return;
+    if (!isFullscreen) {
+      surface.style.width = "";
+      surface.style.height = "";
+      surface.style.aspectRatio = "";
+      surface.style.flex = "";
       return;
     }
-    const toolbar = layer?.querySelector(".cm-board-toolbar") as HTMLElement | null;
-    const toolbarH = toolbar?.offsetHeight ?? 40;
-    const availW = Math.max(
-      scroll?.clientWidth ?? 0,
-      layer?.clientWidth ?? 0,
-      window.innerWidth
-    ) - 4;
-    const availH =
-      Math.max(
-        scroll?.clientHeight ?? 0,
-        (layer?.clientHeight ?? 0) > 0
-          ? (layer?.clientHeight ?? 0) - toolbarH - 10
-          : 0,
-        window.innerHeight - toolbarH - 24
-      ) - 4;
-    if (availW < 2 || availH < 2) return;
-    const aspect = BOARD_LOGICAL_WIDTH / BOARD_LOGICAL_HEIGHT;
-    let w = availW;
-    let h = w / aspect;
-    if (h > availH) {
-      h = availH;
-      w = h * aspect;
-    }
-    surface.style.width = `${Math.floor(w)}px`;
-    surface.style.height = `${Math.floor(h)}px`;
+    // Fill the scroll viewport — no letterboxed inner rect.
+    surface.style.width = "100%";
+    surface.style.height = "100%";
     surface.style.aspectRatio = "unset";
+    surface.style.flex = "1 1 auto";
   };
 
   useEffect(() => {
@@ -439,8 +429,8 @@ function SharedCanvasBoardPreview({
           overflowX: isFullscreen ? "hidden" : "auto",
           overflowY: "hidden",
           display: isFullscreen ? "flex" : undefined,
-          alignItems: isFullscreen ? "center" : undefined,
-          justifyContent: isFullscreen ? "center" : undefined,
+          alignItems: isFullscreen ? "stretch" : undefined,
+          justifyContent: isFullscreen ? "stretch" : undefined,
           ...BOARD_TOUCH_GUARD,
         }}
       >
@@ -508,6 +498,9 @@ function SharedCanvasBoardLive({
   const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const nativeFsRef = useRef(false);
+  const viewFitRef = useRef<BoardFitMode>("contain");
+  const lastCanvasSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
+  const resizingRef = useRef(false);
 
   const drawingRef = useRef(false);
   const pointsRef = useRef<StrokePoint[]>([]);
@@ -579,6 +572,7 @@ function SharedCanvasBoardLive({
   toolRef.current = tool;
   penColorLiveRef.current = penColor;
   penWidthLiveRef.current = penWidth;
+  viewFitRef.current = isFullscreen ? "cover" : "contain";
 
   const sounds = useBoardSounds();
 
@@ -752,7 +746,8 @@ function SharedCanvasBoardLive({
           points: row.points ?? [],
         },
         w,
-        h
+        h,
+        viewFitRef.current
       );
     }
 
@@ -769,7 +764,8 @@ function SharedCanvasBoardLive({
             points: pts,
           },
           w,
-          h
+          h,
+          viewFitRef.current
         );
       }
     }
@@ -783,73 +779,60 @@ function SharedCanvasBoardLive({
           points: pointsRef.current,
         },
         w,
-        h
+        h,
+        viewFitRef.current
       );
     }
   };
 
-  const layoutFullscreenSurface = () => {
-    const scroll = boardScrollRef.current;
+  const clearSurfaceInlineSize = () => {
     const boardSurface = boardSurfaceRef.current;
-    const layer = rootRef.current;
-    if (!boardSurface || !isFullscreen) return;
-
-    const toolbar = layer?.querySelector(".cm-board-toolbar") as HTMLElement | null;
-    const toolbarH = toolbar?.offsetHeight ?? 40;
-    const layerW = layer?.clientWidth ?? 0;
-    const layerH = layer?.clientHeight ?? 0;
-    const scrollW = scroll?.clientWidth ?? 0;
-    const scrollH = scroll?.clientHeight ?? 0;
-
-    // Prefer the real fullscreen layer box — scroll flex height can be stale
-    // right after portal / requestFullscreen.
-    const availW = Math.max(scrollW, layerW, window.innerWidth) - 4;
-    const availH =
-      Math.max(
-        scrollH,
-        layerH > 0 ? layerH - toolbarH - 10 : 0,
-        window.innerHeight - toolbarH - 24
-      ) - 4;
-    if (availW < 2 || availH < 2) return;
-
-    const aspect = BOARD_LOGICAL_WIDTH / BOARD_LOGICAL_HEIGHT;
-    let w = availW;
-    let h = w / aspect;
-    if (h > availH) {
-      h = availH;
-      w = h * aspect;
-    }
-
-    boardSurface.style.width = `${Math.floor(w)}px`;
-    boardSurface.style.height = `${Math.floor(h)}px`;
-    boardSurface.style.maxWidth = "100%";
-    boardSurface.style.maxHeight = "100%";
-    boardSurface.style.aspectRatio = "unset";
+    if (!boardSurface) return;
+    boardSurface.style.width = "";
+    boardSurface.style.height = "";
+    boardSurface.style.maxWidth = "";
+    boardSurface.style.maxHeight = "";
+    boardSurface.style.aspectRatio = "";
+    boardSurface.style.flex = "";
+    boardSurface.style.alignSelf = "";
+    boardSurface.style.borderRadius = "";
+    boardSurface.style.border = "";
   };
 
   const resizeCanvas = () => {
     const canvas = canvasRef.current;
     const boardSurface = boardSurfaceRef.current;
-    if (!canvas || !boardSurface) return;
+    if (!canvas || !boardSurface || resizingRef.current) return;
 
-    if (isFullscreen) {
-      layoutFullscreenSurface();
-    } else {
-      boardSurface.style.width = "";
-      boardSurface.style.height = "";
-      boardSurface.style.aspectRatio = "";
+    resizingRef.current = true;
+    try {
+      if (!isFullscreen) {
+        // Normal mode size comes only from CSS (width + aspect-ratio).
+        clearSurfaceInlineSize();
+      }
+
+      const w = Math.max(1, Math.floor(boardSurface.clientWidth));
+      const h = Math.max(1, Math.floor(boardSurface.clientHeight));
+      if (w < 2 || h < 2) return;
+
+      const prev = lastCanvasSizeRef.current;
+      if (prev.w === w && prev.h === h && canvas.width === w && canvas.height === h) {
+        return;
+      }
+
+      lastCanvasSizeRef.current = { w, h };
+
+      // Buffer matches CSS box. Never assign canvas.style width/height in px —
+      // that expanded the parent and fed a ResizeObserver height loop.
+      canvas.width = w;
+      canvas.height = h;
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+
+      paintBase();
+    } finally {
+      resizingRef.current = false;
     }
-
-    const rect = boardSurface.getBoundingClientRect();
-    const w = Math.max(320, Math.floor(rect.width));
-    const h = Math.max(240, Math.floor(rect.height));
-
-    canvas.width = w;
-    canvas.height = h;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
-
-    paintBase();
   };
 
   const loadAll = async () => {
@@ -925,21 +908,12 @@ function SharedCanvasBoardLive({
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
 
-    let x = e.clientX - rect.left;
-    let y = e.clientY - rect.top;
+    const xCss = e.clientX - rect.left;
+    const yCss = e.clientY - rect.top;
 
-    if (opts?.clamp !== false) {
-      // Keep Pencil strokes alive near edges instead of dropping the point.
-      x = Math.min(rect.width, Math.max(0, x));
-      y = Math.min(rect.height, Math.max(0, y));
-    } else if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-      return null;
-    }
-
-    return {
-      x: (x / rect.width) * BOARD_LOGICAL_WIDTH,
-      y: (y / rect.height) * BOARD_LOGICAL_HEIGHT,
-    };
+    // Map through the same uniform contain/cover transform used for painting.
+    const view = getBoardViewTransform(rect.width, rect.height, viewFitRef.current);
+    return canvasCssToLogical(xCss, yCss, view, opts);
   };
 
   const drawLocalSegment = (from: StrokePoint, to: StrokePoint) => {
@@ -950,8 +924,9 @@ function SharedCanvasBoardLive({
     const { w, h } = getCanvasSize();
     if (w <= 0 || h <= 0) return;
 
-    const mapX = (x: number) => (x / BOARD_LOGICAL_WIDTH) * w;
-    const mapY = (y: number) => (y / BOARD_LOGICAL_HEIGHT) * h;
+    const view = getBoardViewTransform(w, h, viewFitRef.current);
+    const mapX = (x: number) => logicalToCanvasX(x, view);
+    const mapY = (y: number) => logicalToCanvasY(y, view);
 
     const strokeColor = strokeColorRef.current;
     const strokeWidth = strokeWidthRef.current;
@@ -1418,6 +1393,8 @@ function SharedCanvasBoardLive({
 
   useEffect(() => {
     setBoardFullscreenLock(isFullscreen);
+    lastCanvasSizeRef.current = { w: 0, h: 0 };
+
     if (!isFullscreen) {
       const layer = rootRef.current;
       if (layer) {
@@ -1426,6 +1403,11 @@ function SharedCanvasBoardLive({
         layer.style.width = "";
         layer.style.height = "";
       }
+      clearSurfaceInlineSize();
+      requestAnimationFrame(() => {
+        resizeCanvas();
+        redrawScene();
+      });
       return () => setBoardFullscreenLock(false);
     }
 
@@ -1436,6 +1418,7 @@ function SharedCanvasBoardLive({
       if (!rootRef.current) return;
       nativeFsRef.current = await tryRequestNativeFullscreen(rootRef.current);
       requestAnimationFrame(() => {
+        lastCanvasSizeRef.current = { w: 0, h: 0 };
         resizeCanvas();
         redrawScene();
       });
@@ -1443,6 +1426,7 @@ function SharedCanvasBoardLive({
 
     const onVv = () => {
       syncLayerToVisualViewport(rootRef.current);
+      lastCanvasSizeRef.current = { w: 0, h: 0 };
       resizeCanvas();
       redrawScene();
     };
@@ -1498,12 +1482,21 @@ function SharedCanvasBoardLive({
     return () => window.removeEventListener("keydown", onKey);
   }, [isFullscreen]);
 
-  // Re-measure after portal remount / aspect letterbox layout.
+  // Re-measure after portal remount / viewport changes — guarded against loops.
   useEffect(() => {
     const surface = boardSurfaceRef.current;
     if (!surface || typeof ResizeObserver === "undefined") return;
 
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((entries) => {
+      if (resizingRef.current) return;
+      const entry = entries[0];
+      const box = entry?.contentRect;
+      if (box) {
+        const w = Math.floor(box.width);
+        const h = Math.floor(box.height);
+        const prev = lastCanvasSizeRef.current;
+        if (prev.w === w && prev.h === h) return;
+      }
       resizeCanvas();
       redrawScene();
     });
@@ -1799,9 +1792,10 @@ function SharedCanvasBoardLive({
 
       if (prev) {
         const { w, h } = getCanvasSize();
+        const view = getBoardViewTransform(w, h, viewFitRef.current);
         const dt = Math.max(1, now - prev.t);
-        const dxPx = ((p.x - prev.x) / BOARD_LOGICAL_WIDTH) * w;
-        const dyPx = ((p.y - prev.y) / BOARD_LOGICAL_HEIGHT) * h;
+        const dxPx = (p.x - prev.x) * view.scale;
+        const dyPx = (p.y - prev.y) * view.scale;
         const distPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx);
 
         const speed01 = Math.max(0, Math.min(1, distPx / dt / 1.8));
@@ -2149,7 +2143,7 @@ function SharedCanvasBoardLive({
           marginTop: isFullscreen ? 0 : 10,
           flex: isFullscreen ? 1 : undefined,
           minHeight: isFullscreen ? 0 : undefined,
-          borderRadius: isFullscreen ? 12 : 16,
+          borderRadius: isFullscreen ? 0 : 16,
           border: isFullscreen ? "none" : "1px solid rgba(0,0,0,0.08)",
           background: isFullscreen ? BOARD_BG : BOARD_OUTER_BG,
           padding: isFullscreen ? 0 : 10,
@@ -2157,8 +2151,8 @@ function SharedCanvasBoardLive({
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
           display: isFullscreen ? "flex" : undefined,
-          alignItems: isFullscreen ? "center" : undefined,
-          justifyContent: isFullscreen ? "center" : undefined,
+          alignItems: isFullscreen ? "stretch" : undefined,
+          justifyContent: isFullscreen ? "stretch" : undefined,
           ...BOARD_TOUCH_GUARD,
           touchAction: boardTouchAction(touchMode),
           cursor: touchMode === "pan" && !isTouchLike ? "grab" : undefined,
