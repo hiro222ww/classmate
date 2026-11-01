@@ -28,8 +28,41 @@ export default function HomeWorldviewFixturePage() {
         DEV · home / select flow fixture
       </p>
 
-      <HomeHeader displayName="ひろ" hideWebPush />
-      <HomePromoBanner />
+      <HomePromoBanner
+        chrome={
+          <HomeHeader
+            variant="onHero"
+            displayName="ひろ"
+            hideWebPush={false}
+            notificationsEnabled
+            onToggleNotifications={() => {}}
+            trailing={
+              <button
+                type="button"
+                className="cm-app-header-menu-avatar"
+                aria-label="メニューを開く"
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 999,
+                    background: "linear-gradient(180deg,#c7d2fe,#93c5fd)",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: "#1e3a5f",
+                  }}
+                >
+                  ひ
+                </span>
+              </button>
+            }
+          />
+        }
+      />
 
       <HomeThemeGrid />
 

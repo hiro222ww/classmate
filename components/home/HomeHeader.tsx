@@ -7,21 +7,29 @@ import {
 
 type HomeHeaderProps = Omit<CmAppHeaderProps, "tagline" | "hideWebPush"> & {
   hideWebPush?: boolean;
+  /** Overlay on the photo hero (no white card). */
+  variant?: "card" | "onHero";
 };
 
 /**
- * Home header — same compact chrome as mine/select (no long intro under logo).
+ * Home header — card (other pages) or transparent overlay on the photo hero.
  */
 export function HomeHeader({
   hideWebPush = false,
+  variant = "card",
   ...rest
 }: HomeHeaderProps) {
+  const onHero = variant === "onHero";
   return (
     <CmAppHeader
       {...rest}
       tagline={null}
       hideWebPush={hideWebPush}
-      className={["cm-home-header", "cm-stagger-1", rest.className]
+      className={[
+        "cm-home-header",
+        onHero ? "cm-home-header--on-hero" : "cm-stagger-1",
+        rest.className,
+      ]
         .filter(Boolean)
         .join(" ")}
     />

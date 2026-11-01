@@ -2682,27 +2682,33 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     >
       <style>{HOME_DASHBOARD_LAYOUT_CSS + HOME_CTA_OVERRIDES_CSS}</style>
 
-      <HomeHeader
-        displayName={welcomeName || "ゲスト"}
-        photoPath={profile?.photo_path ?? null}
-        notificationsEnabled={notificationsEnabled}
-        notificationsBusy={notificationsBusy}
-        onToggleNotifications={toggleNotifications}
-        hideWebPush={isAppShellContext()}
-        trailing={
-          <button
-            type="button"
-            className="cm-app-header-menu-avatar"
-            aria-label="メニューを開く"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen(true)}
-          >
-            <CmAvatar
-              label={welcomeName || "ゲスト"}
-              sizePx={32}
-              photoPath={profile?.photo_path ?? null}
-            />
-          </button>
+      <HomePromoBanner
+        className="cm-stagger-1"
+        chrome={
+          <HomeHeader
+            variant="onHero"
+            displayName={welcomeName || "ゲスト"}
+            photoPath={profile?.photo_path ?? null}
+            notificationsEnabled={notificationsEnabled}
+            notificationsBusy={notificationsBusy}
+            onToggleNotifications={toggleNotifications}
+            hideWebPush={isAppShellContext()}
+            trailing={
+              <button
+                type="button"
+                className="cm-app-header-menu-avatar"
+                aria-label="メニューを開く"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen(true)}
+              >
+                <CmAvatar
+                  label={welcomeName || "ゲスト"}
+                  sizePx={32}
+                  photoPath={profile?.photo_path ?? null}
+                />
+              </button>
+            }
+          />
         }
       />
 
@@ -2737,8 +2743,6 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           onClose={dismissIosInstallGuide}
         />
       ) : null}
-
-      <HomePromoBanner className="cm-stagger-2" />
 
       {error ? (
         <div
