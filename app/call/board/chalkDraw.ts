@@ -1,10 +1,18 @@
 import {
   BOARD_BG,
-  BOARD_LOGICAL_HEIGHT,
-  BOARD_LOGICAL_WIDTH,
   type ChalkStrokeRow,
   type StrokePoint,
 } from "./chalkTypes";
+import {
+  getBoardViewTransform,
+  logicalToCanvasX,
+  logicalToCanvasY,
+  type BoardFitMode,
+  type BoardViewTransform,
+} from "./boardView";
+
+export type { BoardFitMode, BoardViewTransform };
+export { getBoardViewTransform, logicalToCanvasX, logicalToCanvasY };
 
 export function sanitizeDisplayName(v: string | null | undefined) {
   const s = String(v ?? "").trim();
@@ -56,13 +64,15 @@ export function drawStroke(
   ctx: CanvasRenderingContext2D,
   stroke: { color: string; width: number; points: StrokePoint[] },
   canvasW: number,
-  canvasH: number
+  canvasH: number,
+  fit: BoardFitMode = "contain"
 ) {
   const pts = stroke.points;
   if (!pts || pts.length === 0) return;
 
-  const mapX = (x: number) => (x / BOARD_LOGICAL_WIDTH) * canvasW;
-  const mapY = (y: number) => (y / BOARD_LOGICAL_HEIGHT) * canvasH;
+  const view = getBoardViewTransform(canvasW, canvasH, fit);
+  const mapX = (x: number) => logicalToCanvasX(x, view);
+  const mapY = (y: number) => logicalToCanvasY(y, view);
 
   ctx.save();
   applyStrokeStyle(ctx, stroke.color || "#ffffff", stroke.width || 3);

@@ -277,24 +277,30 @@ body.classmate-board-fullscreen .cm-call-root {
   padding: 0 !important;
   background: #0b3b2e !important;
   display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  align-items: stretch !important;
+  justify-content: stretch !important;
   overflow: hidden !important;
 }
 
-/* Keep logical board aspect (2200×1100); letterbox with board green — never stretch.
-   Width/height are set in JS (layoutFullscreenSurface) — do not !important them. */
+/* Fullscreen: canvas surface fills the scroll area (toolbar excluded).
+   Logical strokes map with uniform cover — no small centered drawable rect. */
 .classmate-board-fullscreen-layer .classmate-board-surface {
   min-width: 0 !important;
   min-height: 0 !important;
-  max-width: 100% !important;
-  max-height: 100% !important;
-  border-radius: 10px !important;
-  flex: 0 1 auto !important;
-  align-self: center;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  border: none !important;
+  flex: 1 1 auto !important;
+  align-self: stretch !important;
 }
 
 .classmate-board-fullscreen-layer .classmate-board-canvas {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
   touch-action: none !important;
   pointer-events: auto !important;
 }
