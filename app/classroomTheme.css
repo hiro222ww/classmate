@@ -4756,18 +4756,18 @@ body.cm-has-mobile-bottom-nav {
   margin-bottom: 0;
   border-radius: 0;
   box-shadow: none;
-  min-height: min(58vw, 320px);
+  min-height: min(64vw, 348px);
   /* Leave room so dock sits in the faded zone without covering avatars. */
   padding-bottom: 8px;
 }
 
 .cm-call-root--hero-v2 .cm-call-hero-stack > .cm-room-session-hero .cm-room-session-hero-inner {
-  padding-bottom: 72px;
-  grid-template-rows: auto minmax(80px, 1fr) auto;
+  padding-bottom: 76px;
+  grid-template-rows: auto minmax(108px, 1fr) auto;
 }
 
 .cm-call-root--hero-v2 .cm-call-hero-stack > .cm-room-session-hero .cm-room-session-hero-spacer {
-  min-height: 72px;
+  min-height: 108px;
 }
 
 /* Hide legacy recruitment status strip if any leftover markup appears. */
