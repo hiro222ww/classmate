@@ -10,6 +10,8 @@ export type HomeBannerKind =
   | "ad"
   | "seasonal";
 
+export type HomeBannerOverlayTone = "light" | "dark";
+
 export type HomeBanner = {
   id: string;
   /** Public image URL (e.g. /brand/...). */
@@ -30,6 +32,13 @@ export type HomeBanner = {
   endsAt?: string | null;
   /** When kind is "ad", UI may show an 広告 mark. */
   sponsoredLabel?: string | null;
+  /**
+   * Chrome / catchphrase contrast against the photo.
+   * light = white text (dark sky); dark = ink text (bright sky).
+   */
+  overlayTone?: HomeBannerOverlayTone;
+  /** Optional CSS color override for headline. */
+  headlineColor?: string | null;
 };
 
 /** Current sunset hero — sole default until more assets ship. */
@@ -45,6 +54,9 @@ export const DEFAULT_HOME_BANNERS: HomeBanner[] = [
     sortOrder: 10,
     startsAt: null,
     endsAt: null,
+    // Sky is bright; keep logo/actions dark and headline light over the grass.
+    overlayTone: "dark",
+    headlineColor: "#ffffff",
   },
 ];
 

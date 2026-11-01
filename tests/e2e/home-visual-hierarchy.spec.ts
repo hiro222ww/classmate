@@ -68,7 +68,10 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await checkActions(page);
       const brand = page.getByRole("link", { name: "Classmate — ホームへ戻る" });
       await expect(brand).toHaveAttribute("href", "/");
-      expect((await brand.boundingBox())!.height).toBeGreaterThanOrEqual(43);
+      // Header is overlaid on the photo hero (no separate white card).
+      await expect(page.locator(".cm-home-promo-banner .cm-home-header--on-hero")).toBeVisible();
+      await expect(page.locator(".cm-home-header:not(.cm-home-header--on-hero)")).toHaveCount(0);
+      expect((await brand.boundingBox())!.height).toBeGreaterThanOrEqual(32);
       await expect(brand.locator("img")).toHaveCount(1);
       await expect(brand).toContainText("クラスメイト");
       await expect(page.locator(".cm-home-brand-visual-intro")).toHaveCount(0);

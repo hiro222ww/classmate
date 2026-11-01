@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import {
   DEFAULT_HOME_BANNERS,
@@ -21,15 +22,22 @@ type HomePromoBannerProps = {
   banners?: HomeBanner[];
   /** Auto-advance when 2+ banners (ms). 0 disables. */
   autoPlayMs?: number;
+  /**
+   * Optional chrome layered on the photo (logo / notifications / profile).
+   * Stays mounted across banner slides so account controls remain stable.
+   */
+  chrome?: ReactNode;
 };
 
 /**
- * Home photo banner — single full-bleed visual today; data-ready for carousel / ads.
+ * Home photo banner — full-bleed visual with optional overlaid header chrome;
+ * data-ready for carousel / ads.
  */
 export function HomePromoBanner({
   className,
   banners = DEFAULT_HOME_BANNERS,
   autoPlayMs = 6500,
+  chrome,
 }: HomePromoBannerProps) {
   const active = useMemo(() => resolveActiveHomeBanners(banners), [banners]);
   const count = active.length;
@@ -88,6 +96,7 @@ export function HomePromoBanner({
   const showChrome = count > 1;
   const showAdMark =
     current.kind === "ad" || Boolean(current.sponsoredLabel?.trim());
+  const overlayTone = current.overlayTone ?? "light";
 
   const media = (
     <div
@@ -117,8 +126,20 @@ export function HomePromoBanner({
         />
       ))}
       <div className="cm-home-promo-banner-veil" aria-hidden />
+      {chrome ? (
+        <div className="cm-home-promo-banner-chrome">{chrome}</div>
+      ) : null}
       {current.headline ? (
-        <p className="cm-home-promo-banner-copy">{current.headline}</p>
+        <p
+          className="cm-home-promo-banner-copy"
+          style={
+            current.headlineColor
+              ? { color: current.headlineColor }
+              : undefined
+          }
+        >
+          {current.headline}
+        </p>
       ) : null}
       {showAdMark ? (
         <span className="cm-home-promo-banner-ad">
@@ -126,7 +147,11 @@ export function HomePromoBanner({
         </span>
       ) : null}
       {showChrome ? (
-        <div className="cm-home-promo-banner-dots" role="tablist" aria-label="バナー">
+        <div
+          className="cm-home-promo-banner-dots"
+          role="tablist"
+          aria-label="バナー"
+        >
           {active.map((banner, i) => (
             <button
               key={banner.id}
@@ -148,28 +173,33 @@ export function HomePromoBanner({
     </div>
   );
 
-  const body = current.href ? (
-    <Link href={current.href} className="cm-home-promo-banner-link">
-      {media}
-    </Link>
-  ) : (
-    media
-  );
+  // When chrome is present, avoid wrapping the whole media in a link so
+  // notification / profile controls stay clickable.
+  const body =
+    current.href && !chrome ? (
+      <Link href={current.href} className="cm-home-promo-banner-link">
+        {media}
+      </Link>
+    ) : (
+      media
+    );
 
   return (
     <section
       className={[
         "cm-home-promo-banner",
+        chrome ? "cm-home-promo-banner--with-chrome" : "",
         showChrome ? "cm-home-promo-banner--multi" : "",
+        `cm-home-promo-banner--tone-${overlayTone}`,
         className,
       ]
         .filter(Boolean)
         .join(" ")}
       aria-label="Classmate"
       aria-roledescription={showChrome ? "carousel" : undefined}
+      data-overlay-tone={overlayTone}
     >
       {body}
     </section>
   );
 }
-
