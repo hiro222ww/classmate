@@ -70,20 +70,26 @@ export function RoomSessionHero({
 
         <div className="cm-room-session-hero-copy">
           <h1 className="cm-room-session-hero-title">{title}</h1>
-          {metaParts.length > 0 ? (
-            <p className="cm-room-session-hero-meta">{metaParts.join(" · ")}</p>
-          ) : null}
-          {statusLabel ? (
-            <span
-              className={[
-                "cm-room-session-status",
-                `cm-room-session-status--${statusTone}`,
-              ].join(" ")}
-            >
-              <span className="cm-room-session-status-dot" aria-hidden />
-              {statusLabel}
-            </span>
-          ) : null}
+          {(metaParts.length > 0 || statusLabel) && (
+            <div className="cm-room-session-hero-meta-row">
+              {metaParts.length > 0 ? (
+                <p className="cm-room-session-hero-meta">
+                  {metaParts.join(" · ")}
+                </p>
+              ) : null}
+              {statusLabel ? (
+                <span
+                  className={[
+                    "cm-room-session-status",
+                    `cm-room-session-status--${statusTone}`,
+                  ].join(" ")}
+                >
+                  <span className="cm-room-session-status-dot" aria-hidden />
+                  {statusLabel}
+                </span>
+              ) : null}
+            </div>
+          )}
           {primaryAction ? (
             <div className="cm-room-session-hero-cta">{primaryAction}</div>
           ) : null}

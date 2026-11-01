@@ -3451,54 +3451,31 @@ export default function CallClient() {
   const recruitmentBanner =
     membersSyncRevision > 0 ? (
       <div
-        className="cm-call-banner cm-call-recruitment"
-        style={{
-          marginTop: 12,
-          padding: "12px 14px",
-          borderRadius: 12,
-          background:
-            recruitmentView.phase === "closed"
-              ? "#f8fafc"
-              : recruitmentView.phase === "closing_soon"
-                ? "#fff7ed"
-                : "#ecfdf5",
-          color:
-            recruitmentView.phase === "closed"
-              ? "#475569"
-              : recruitmentView.phase === "closing_soon"
-                ? "#9a3412"
-                : "#065f46",
-          border:
-            recruitmentView.phase === "closed"
-              ? "1px solid #e2e8f0"
-              : recruitmentView.phase === "closing_soon"
-                ? "1px solid #fed7aa"
-                : "1px solid #a7f3d0",
-          fontSize: 13,
-          fontWeight: 800,
-          display: "grid",
-          gap: 8,
-        }}
+        className={[
+          "cm-call-banner",
+          "cm-call-recruitment",
+          "cm-call-recruitment--lite",
+          `cm-call-recruitment--${recruitmentView.phase}`,
+        ].join(" ")}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 10,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <span>
-            {recruitmentView.label}
-            <span style={{ marginLeft: 8, fontWeight: 700, opacity: 0.85 }}>
-              {recruitmentView.memberCount}/{recruitmentView.capacity}人
+        <div className="cm-call-recruitment-row">
+          <div className="cm-call-recruitment-copy">
+            <span className="cm-call-recruitment-label">
+              {recruitmentView.label}
             </span>
-          </span>
+            <span className="cm-call-recruitment-count">
+              {recruitmentView.memberCount}/{recruitmentView.capacity}
+            </span>
+            {recruitmentView.detail ? (
+              <span className="cm-call-recruitment-detail">
+                {recruitmentView.detail}
+              </span>
+            ) : null}
+          </div>
           {recruitmentView.recruitingOpen ? (
             <button
               type="button"
-              className="cm-cta-primary cm-call-invite-prominent"
+              className="cm-call-recruitment-invite"
               onClick={() => {
                 void (async () => {
                   if (!sessionId || !classId) {
@@ -3518,54 +3495,20 @@ export default function CallClient() {
                   }
                 })();
               }}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 12,
-                border: "1px solid #047857",
-                background: "#059669",
-                color: "#fff",
-                fontWeight: 900,
-                fontSize: 13,
-                cursor: "pointer",
-                boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-              }}
             >
-              友達を招待する
+              招待
             </button>
           ) : null}
         </div>
-        {recruitmentView.detail ? (
-          <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9 }}>
-            {recruitmentView.detail}
-          </div>
-        ) : null}
         {recruitmentView.aloneWaitTimedOut ? (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              paddingTop: 4,
-            }}
-          >
+          <div className="cm-call-recruitment-actions">
             {recruitmentView.canExtendAloneWait ? (
               <button
                 type="button"
+                className="cm-call-recruitment-action cm-call-recruitment-action--primary"
                 disabled={lobbyExtendBusy || lobbyQuitBusy}
                 onClick={() => {
                   void extendAloneWait();
-                }}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  border: "1px solid #111827",
-                  background: "#111827",
-                  color: "#fff",
-                  fontWeight: 900,
-                  fontSize: 13,
-                  cursor:
-                    lobbyExtendBusy || lobbyQuitBusy ? "not-allowed" : "pointer",
-                  opacity: lobbyExtendBusy || lobbyQuitBusy ? 0.6 : 1,
                 }}
               >
                 {lobbyExtendBusy ? "延長中…" : "待機を続ける"}
@@ -3573,31 +3516,18 @@ export default function CallClient() {
             ) : null}
             <button
               type="button"
+              className="cm-call-recruitment-action"
               disabled={lobbyExtendBusy || lobbyQuitBusy}
               onClick={() => {
                 void quitAloneWaitAndGoHome();
               }}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 12,
-                border: "1px solid #d1d5db",
-                background: "#fff",
-                color: "#374151",
-                fontWeight: 900,
-                fontSize: 13,
-                cursor:
-                  lobbyExtendBusy || lobbyQuitBusy ? "not-allowed" : "pointer",
-                opacity: lobbyExtendBusy || lobbyQuitBusy ? 0.6 : 1,
-              }}
             >
-              {lobbyQuitBusy ? "退出中…" : "今回はやめる"}
+              {lobbyQuitBusy ? "退出中…" : "やめる"}
             </button>
           </div>
         ) : null}
         {lobbyExtendError ? (
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#dc2626" }}>
-            {lobbyExtendError}
-          </div>
+          <div className="cm-call-recruitment-error">{lobbyExtendError}</div>
         ) : null}
       </div>
     ) : null;

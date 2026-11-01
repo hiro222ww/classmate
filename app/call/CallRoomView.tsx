@@ -222,8 +222,6 @@ export default function CallRoomView({
       ? `${filled}/${capacity}人`
       : `--/${capacity}人`;
 
-  const statusMeta = membersLocked ? "参加人数" : "メンバー募集中";
-
   const avatarMembers = useMemo((): RoomAvatarStripMember[] => {
     return visibleMembers.map((m) => {
       const did = String(m.device_id ?? "").trim();
@@ -238,18 +236,14 @@ export default function CallRoomView({
         photoPath: m.photo_path,
         avatarUrl: m.avatar_url ?? null,
         isMe,
-        badge: speaking ? "発話中" : isMe ? "You" : null,
+        badge: speaking ? "発話中" : null,
       };
     });
   }, [visibleMembers, deviceId, nowMs]);
 
   const micOn = !userMuted && muteButtonLabel !== "聞き専";
   const micListen = muteButtonLabel === "聞き専";
-  const micLabel = micListen
-    ? "聞き専"
-    : userMuted
-      ? "マイク オフ"
-      : "マイク オン";
+  const micLabel = micListen ? "聞き専" : userMuted ? "ミュート" : "マイク";
 
   const moderationTargets = showMemberModeration
     ? visibleMembers.filter((m) => {
@@ -329,7 +323,7 @@ export default function CallRoomView({
         <RoomSessionHero
           title={roomTitle}
           categoryLabel={categoryLabel}
-          countLabel={`${statusMeta} ${countLabel}`}
+          countLabel={countLabel}
           statusLabel="通話中"
           statusTone="incall"
           toolbarLeft={
@@ -630,7 +624,7 @@ export default function CallRoomView({
               <DockShareIcon />
             </span>
             <span className="cm-call-dock-label">
-              {screenShareActive ? "共有中" : "画面共有"}
+              {screenShareActive ? "共有中" : "共有"}
             </span>
           </button>
 
