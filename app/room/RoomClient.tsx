@@ -32,13 +32,28 @@ import {
   isTerminalSessionStatus,
   storeHomeClassSessionHint,
 } from "@/lib/homeClassSessionHint";
-import { clearLocallyHiddenClass } from "@/lib/localHiddenClasses";
+import {
+  clearLocallyHiddenClass,
+  markLocallyHiddenClass,
+} from "@/lib/localHiddenClasses";
 import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import {
+  HOME_MY_CLASS_SECTION_ID,
+  isAppShellContext,
   resolveShellDashboardPath,
-  resolveShellMinePath,
 } from "@/lib/appShellContext";
+import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
+import { markClassLeftLocally } from "@/lib/leftClassMembership";
+import { RoomClassMenuSheet } from "@/components/room/RoomClassMenuSheet";
+import { RoomAccountAvatarButton } from "@/components/room/RoomAccountAvatarButton";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import {
   buildCurrentPathReturnTo,
@@ -783,6 +798,9 @@ export default function RoomClient() {
   const [lobbyNowMs, setLobbyNowMs] = useState(() => Date.now());
   const [lobbyExtendBusy, setLobbyExtendBusy] = useState(false);
   const [lobbyQuitBusy, setLobbyQuitBusy] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [classMenuOpen, setClassMenuOpen] = useState(false);
+  const [classLeaveBusy, setClassLeaveBusy] = useState(false);
   const [lobbyExtendError, setLobbyExtendError] = useState<string | null>(null);
   const lobbyJoinedTrackedKeyRef = useRef<string | null>(null);
 
@@ -794,6 +812,13 @@ export default function RoomClient() {
     if (!stored || stored === "You") return "";
     return stored;
   });
+  const [photoPath, setPhotoPath] = useState<string | null>(null);
+  const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const {
+    enabled: notificationsEnabled,
+    busy: notificationsBusy,
+    toggle: toggleNotifications,
+  } = useWebPushNotifications(deviceId, "room");
 
   const joinedSessionKeyRef = useRef<string | null>(null);
   const joinInFlightKeyRef = useRef<string | null>(null);
@@ -1345,16 +1370,13 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
   }, [bumpRoomAsync, cancelJoinRecoveryTimers]);
 
   /**
-   * Official joined class (mine / openJoinedClass) → マイクラス.
-   * Provisional / random room → dashboard (ホーム). Never used by /call.
+   * Always return to home (optionally scroll to マイクラス).
+   * Keeps session_members and class_memberships — not a class leave.
    */
-  const returnToMine = openJoinedClass || classVisibleInMine;
-  const roomExitHref = returnToMine
-    ? resolveShellMinePath()
-    : resolveShellDashboardPath();
-  const roomExitLabel = returnToMine ? "マイクラスへ戻る" : "ホーム";
+  const scrollHomeToMyClass = openJoinedClass || classVisibleInMine;
+  const roomExitHref = resolveShellDashboardPath();
+  const roomExitLabel = "ホーム";
 
-  /** Return to Home or Mine — keeps session_members and class_memberships; presence only. */
   const goHome = useCallback(() => {
     joinRetryCountByKeyRef.current.clear();
     cancelJoinRecoveryTimers("home_navigation");
@@ -1362,17 +1384,13 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
 
     const did = String(deviceId ?? "").trim();
     const cid = String(classId ?? "").trim();
-    const exitHref = withDev(roomExitHref);
+    const base = withDev(roomExitHref);
+    const exitHref = scrollHomeToMyClass
+      ? `${base}#${HOME_MY_CLASS_SECTION_ID}`
+      : base;
 
-    logNavigationIntent(
-      returnToMine ? "return_mine" : "return_home",
-      "RoomClient.goHome"
-    );
-    logRouteChange(
-      getCurrentPath(),
-      exitHref,
-      returnToMine ? "return_mine" : "return_home"
-    );
+    logNavigationIntent("return_home", "RoomClient.goHome");
+    logRouteChange(getCurrentPath(), exitHref, "return_home");
 
     if (cid) {
       clearLocallyHiddenClass(cid);
@@ -1392,7 +1410,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         .then((res) => {
           if (res.ok) {
             roomLog(
-              `[room] return-${returnToMine ? "mine" : "home"} presence=screen=home ` +
+              `[room] return-home presence=screen=home ` +
                 `class=${cid.slice(-6)} session=${sessionId.slice(-6)} ` +
                 `device=${did.slice(-4)}`
             );
@@ -1412,10 +1430,76 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     cancelJoinRecoveryTimers,
     classId,
     deviceId,
-    returnToMine,
     roomExitHref,
     router,
+    scrollHomeToMyClass,
     sessionId,
+  ]);
+
+  /**
+   * Explicit class leave (membership delete) — not the same as goHome / call exit.
+   * Reuses POST /api/class/leave (same as Home leaveClass).
+   */
+  const leaveClassAndGoHome = useCallback(async () => {
+    const cid = String(classId ?? "").trim();
+    const did = String(deviceId ?? getDeviceId() ?? "").trim();
+    if (!cid || !did || classLeaveBusy) return;
+
+    const ok = window.confirm("このクラスから脱退しますか？");
+    if (!ok) return;
+
+    setClassLeaveBusy(true);
+    setClassMenuOpen(false);
+
+    try {
+      const res = await fetch("/api/class/leave", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: did,
+          classId: cid,
+          source: CLASS_LEAVE_CONFIRMED_SOURCE,
+        }),
+        cache: "no-store",
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      const errorCode = String(json?.error ?? "").trim();
+      const alreadyLeft = errorCode === "not_member";
+
+      if ((res.ok && json?.ok) || alreadyLeft) {
+        markClassLeftLocally(cid);
+        markLocallyHiddenClass(cid);
+        markJoinedClassesStale();
+        joinRetryCountByKeyRef.current.clear();
+        cancelJoinRecoveryTimers("class_leave");
+        bumpRoomAsync("class_leave");
+        const homeHref = `${withDev(resolveShellDashboardPath())}#${HOME_MY_CLASS_SECTION_ID}`;
+        logNavigationIntent("class_leave_home", "RoomClient.leaveClassAndGoHome");
+        logRouteChange(getCurrentPath(), homeHref, "class_leave_home");
+        router.push(homeHref);
+        return;
+      }
+
+      alert(
+        errorCode === "missing_confirmed_source"
+          ? "クラス脱退は確認後にのみ実行できます。"
+          : errorCode || `leave_failed (${res.status})`
+      );
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "leave_failed");
+    } finally {
+      setClassLeaveBusy(false);
+    }
+  }, [
+    bumpRoomAsync,
+    cancelJoinRecoveryTimers,
+    classId,
+    classLeaveBusy,
+    deviceId,
+    router,
   ]);
 
   const quitLobbyAndGoHome = useCallback(async () => {
@@ -1748,6 +1832,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           const safeName = canonical === "You" ? "参加者" : canonical;
           setDisplayName(safeName);
           writeStoredDisplayName(deviceId, safeName);
+          const nextPhoto = String(data?.profile?.photo_path ?? "").trim();
+          setPhotoPath(nextPhoto || null);
         }
       } catch {
         if (!cancelled && !displayName) {
@@ -4488,15 +4574,24 @@ const name = rawName === "You" ? "参加者" : rawName;
                 : []
           }
           right={
-            <button
-              type="button"
-              className="cm-room-ghost-btn cm-room-session-hero-iconbtn"
-              onClick={() => router.push(profileEditHref)}
-              aria-label="プロフィール編集"
-              title="プロフィール編集"
-            >
-              ⚙
-            </button>
+            <>
+              <button
+                type="button"
+                className="cm-room-ghost-btn cm-room-session-hero-iconbtn cm-room-session-hero-more-btn"
+                onClick={() => setClassMenuOpen(true)}
+                aria-label="クラスメニュー"
+                title="クラス"
+                aria-expanded={classMenuOpen}
+              >
+                …
+              </button>
+              <RoomAccountAvatarButton
+                displayName={displayName || "ゲスト"}
+                photoPath={photoPath}
+                open={accountMenuOpen}
+                onOpen={() => setAccountMenuOpen(true)}
+              />
+            </>
           }
           avatarStrip={
             <RoomAvatarStrip
@@ -4694,6 +4789,40 @@ const name = rawName === "You" ? "参加者" : rawName;
         target={profileTarget}
         onClose={() => setProfileTarget(null)}
         returnTo={buildCurrentPathReturnTo(pathname, searchParams.toString())}
+      />
+
+      <HomeMenuSheet
+        open={accountMenuOpen}
+        onClose={() => setAccountMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isAppShellContext()}
+        profileHref={profileEditHref}
+        myClassesHref={`${withDev(resolveShellDashboardPath())}#${HOME_MY_CLASS_SECTION_ID}`}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/room"))
+        }
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+        aboutHref={withDev("/about")}
+        legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={displayName || "ゲスト"}
+        photoPath={photoPath}
+      />
+
+      <RoomClassMenuSheet
+        open={classMenuOpen}
+        onClose={() => setClassMenuOpen(false)}
+        onLeaveClass={() => {
+          void leaveClassAndGoHome();
+        }}
+        leaveBusy={classLeaveBusy}
       />
     </>
   );

@@ -44,9 +44,41 @@ export function resolveShellDashboardPath(): string {
   return isAppShellContext() ? APP_HOME : "/";
 }
 
-/** Official class room → マイクラス（Web / Capacitor 共通） */
+/** Home section id for マイクラス (hash target). */
+export const HOME_MY_CLASS_SECTION_ID = "cm-home-my-class";
+
+/**
+ * Legacy “mine page” path — now the home dashboard.
+ * Prefer {@link resolveShellMyClassHref} when scrolling to マイクラス.
+ */
 export function resolveShellMinePath(): string {
-  return "/class/mine";
+  return resolveShellDashboardPath();
+}
+
+/**
+ * Home URL that lands on the マイクラス section.
+ * Append hash after withDev() so ?dev= stays on the path, not the fragment.
+ */
+export function resolveShellMyClassHref(): string {
+  return `${resolveShellDashboardPath()}#${HOME_MY_CLASS_SECTION_ID}`;
+}
+
+/** withDev-safe href to the home マイクラス section. */
+export function withDevMyClassHref(): string {
+  return `${withDevSafePath(resolveShellDashboardPath())}#${HOME_MY_CLASS_SECTION_ID}`;
+}
+
+function withDevSafePath(path: string): string {
+  if (typeof window === "undefined") return path;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const dev = params.get("dev");
+    if (!dev) return path;
+    const sep = path.includes("?") ? "&" : "?";
+    return `${path}${sep}dev=${encodeURIComponent(dev)}`;
+  } catch {
+    return path;
+  }
 }
 
 function remapWebHomePath(path: string): string {

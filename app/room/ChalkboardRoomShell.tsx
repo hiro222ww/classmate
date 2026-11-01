@@ -132,12 +132,15 @@ export function ChalkboardRoomShell({
   const hasCharacters = characters.length > 0;
   const showBoard = boardMode !== "hidden";
 
-  const toolbarLeft = onBack ? (
+  // Prefer explicit onBack; otherwise ← uses onHome (keeps membership) or Link.
+  const goBack = onBack ?? onHome;
+  const toolbarLeft = goBack ? (
     <button
       type="button"
-      onClick={onBack}
+      onClick={goBack}
       className={ghostBtnClass}
-      aria-label={backLabel}
+      aria-label={backLabel === "戻る" ? homeLabel : backLabel}
+      title={homeLabel}
     >
       ←
     </button>
@@ -147,35 +150,9 @@ export function ChalkboardRoomShell({
     </Link>
   );
 
-  const shortHomeLabel =
-    homeLabel.includes("マイクラス")
-      ? "マイ"
-      : homeLabel.length > 4
-        ? "ホーム"
-        : homeLabel;
-
+  // No dedicated「マイ」text control — home is ← only; 移動 + settings stay right.
   const toolbarRight = (
     <>
-      {onHome ? (
-        <button
-          type="button"
-          onClick={onHome}
-          className={ghostBtnClass}
-          aria-label={homeLabel}
-          title={homeLabel}
-        >
-          {shortHomeLabel}
-        </button>
-      ) : (
-        <Link
-          href={homeHref}
-          className={ghostBtnClass}
-          aria-label={homeLabel}
-          title={homeLabel}
-        >
-          {shortHomeLabel}
-        </Link>
-      )}
       <Link
         href={moveHref}
         className={`${ghostBtnClass} cm-room-session-hero-move`}

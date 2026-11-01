@@ -147,7 +147,7 @@ export default function ClassCreatePage() {
       }
 
       alert("クラスを作成しました");
-      router.push(withDev("/class/mine"));
+      router.push(`${withDev("/")}#cm-home-my-class`);
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "failed");
     } finally {

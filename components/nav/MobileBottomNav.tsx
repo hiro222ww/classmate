@@ -39,9 +39,10 @@ const TABS: TabDef[] = [
   },
   {
     id: "mine",
-    href: "/class/mine",
+    href: "/#cm-home-my-class",
     label: "マイクラス",
-    match: (p) => p.startsWith("/class/mine"),
+    // Hash target on home — don't steal the ホーム tab active state.
+    match: () => false,
   },
   {
     id: "plan",

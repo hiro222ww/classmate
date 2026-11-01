@@ -29,7 +29,7 @@ export default function HomeMenuFixture() {
         notificationsBusy={false}
         onToggleNotifications={() => undefined}
         profileHref="/profile"
-        myClassesHref="/class/mine"
+        myClassesHref="/#cm-home-my-class"
         planHref="/premium"
         billingHref="/billing"
         accountHref="/settings"

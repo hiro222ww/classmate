@@ -8,6 +8,7 @@ import {
   type RoomAvatarStripMember,
 } from "@/components/room/RoomAvatarStrip";
 import { RoomSessionHero } from "@/components/room/RoomSessionHero";
+import { RoomAccountAvatarButton } from "@/components/room/RoomAccountAvatarButton";
 import { isAppShellContext } from "@/lib/appShellContext";
 import type { CallPresenceToast } from "@/lib/callPresenceToasts";
 import {
@@ -73,7 +74,14 @@ export type CallRoomViewProps = {
   roomTitle?: string;
   categoryLabel?: string;
 
-  onProfileEdit: () => void;
+  /** Opens shared account HomeMenuSheet (does not tear down the call). */
+  onOpenAccountMenu: () => void;
+  accountMenuOpen?: boolean;
+  accountDisplayName?: string;
+  accountPhotoPath?: string | null;
+  /** Opens class-only menu (leave). */
+  onOpenClassMenu?: () => void;
+  classMenuOpen?: boolean;
   onInviteFriends: () => void;
   onHome?: () => void;
   onExit: () => void;
@@ -176,7 +184,12 @@ export default function CallRoomView({
   callRequestLabel,
   roomTitle = "通話ルーム",
   categoryLabel = "フリークラス",
-  onProfileEdit,
+  onOpenAccountMenu,
+  accountMenuOpen = false,
+  accountDisplayName = "ゲスト",
+  accountPhotoPath = null,
+  onOpenClassMenu,
+  classMenuOpen = false,
   onInviteFriends,
   onHome,
   onExit,
@@ -342,15 +355,24 @@ export default function CallRoomView({
           }
           toolbarRight={
             <>
-              <button
-                type="button"
-                className="cm-room-ghost-btn cm-room-session-hero-iconbtn"
-                onClick={onProfileEdit}
-                aria-label="プロフィール編集"
-                title="プロフィール編集"
-              >
-                ⚙
-              </button>
+              {onOpenClassMenu ? (
+                <button
+                  type="button"
+                  className="cm-room-ghost-btn cm-room-session-hero-iconbtn cm-room-session-hero-more-btn"
+                  onClick={onOpenClassMenu}
+                  aria-label="クラスメニュー"
+                  title="クラス"
+                  aria-expanded={classMenuOpen}
+                >
+                  …
+                </button>
+              ) : null}
+              <RoomAccountAvatarButton
+                displayName={accountDisplayName}
+                photoPath={accountPhotoPath}
+                open={accountMenuOpen}
+                onOpen={onOpenAccountMenu}
+              />
             </>
           }
           avatarStrip={
@@ -369,6 +391,11 @@ export default function CallRoomView({
             />
           }
         />
+
+        {/* Near avatars: provisional free-match → formal class promote CTA */}
+        {classVoteSlot ? (
+          <div className="cm-call-class-promote-slot">{classVoteSlot}</div>
+        ) : null}
 
         {(meetingPlanLabel || callRequestLabel) && (
           <div className="cm-call-inline-banners">
@@ -452,7 +479,6 @@ export default function CallRoomView({
           ) : null}
 
           {bannerSlot}
-          {classVoteSlot}
 
           {showMicPermissionWarning ? (
             <div

@@ -30,7 +30,23 @@ import { queryMicrophonePermissionState } from "@/lib/micPermissionUi";
 import { supabase } from "@/lib/supabaseClient";
 import { getDeviceId } from "@/lib/device";
 import { withDev } from "@/lib/withDev";
-import { resolveShellDashboardPath } from "@/lib/appShellContext";
+import {
+  HOME_MY_CLASS_SECTION_ID,
+  isAppShellContext,
+  resolveShellDashboardPath,
+} from "@/lib/appShellContext";
+import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
+import { markClassLeftLocally } from "@/lib/leftClassMembership";
+import { markLocallyHiddenClass } from "@/lib/localHiddenClasses";
+import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import { RoomClassMenuSheet } from "@/components/room/RoomClassMenuSheet";
+import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 import {
   buildCurrentPathReturnTo,
   buildProfileEditPath,
@@ -206,7 +222,12 @@ import {
   setMemberNameCache,
   type MemberNameCache,
 } from "@/lib/memberNameCache";
-import { shouldShowClassVoteUi } from "@/lib/sessionClassVote";
+import {
+  canSubmitClassVote,
+  classVoteHint,
+  resolveClassVoteCtaLabel,
+  shouldShowClassVoteUi,
+} from "@/lib/sessionClassVote";
 
 type Member = {
   device_id: string;
@@ -412,6 +433,16 @@ export default function CallClient() {
   const returnTo = useMemo(() => {
     return withDev(resolveShellDashboardPath());
   }, []);
+
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [classMenuOpen, setClassMenuOpen] = useState(false);
+  const [classLeaveBusy, setClassLeaveBusy] = useState(false);
+  const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const {
+    enabled: notificationsEnabled,
+    busy: notificationsBusy,
+    toggle: toggleNotifications,
+  } = useWebPushNotifications(deviceId, "call");
 
   const [members, setMembers] = useState<Member[]>([]);
   const [presenceToasts, setPresenceToasts] = useState<CallPresenceToast[]>([]);
@@ -848,6 +879,7 @@ export default function CallClient() {
         setClassVotePromoted(true);
         setClassVoteLifecycle("official");
         setClassVoteCanShow(true);
+        markJoinedClassesStale();
       }
     } catch (err) {
       console.warn("[call] class-vote error", err);
@@ -3438,6 +3470,23 @@ export default function CallClient() {
       promoted: classVotePromoted,
     });
 
+  const classVoteSubmitReady = canSubmitClassVote({
+    memberCount: members.length,
+    membersLocked: classVoteMembersLocked,
+    lifecycle: classVoteLifecycle,
+    promoted: classVotePromoted,
+    selfVoted: classVoteSelfVoted,
+  });
+
+  const classVoteHintText = classVoteHint({
+    memberCount: members.length,
+    membersLocked: classVoteMembersLocked,
+    lifecycle: classVoteLifecycle,
+    promoted: classVotePromoted,
+    selfVoted: classVoteSelfVoted,
+    voteCount: classVoteCount,
+  });
+
   const recruitmentView = buildCallRecruitmentView({
     memberCount: Math.max(members.length, filled),
     capacity,
@@ -3494,63 +3543,102 @@ export default function CallClient() {
 
   const classVoteSlot = showClassVotePanel ? (
     <div
-      className="cm-call-banner cm-call-class-vote"
-      style={{
-        marginTop: 12,
-        padding: "12px 14px",
-        borderRadius: 12,
-        background: classVotePromoted ? "#ecfdf5" : "#f9fafb",
-        color: classVotePromoted ? "#065f46" : "#374151",
-        border: classVotePromoted ? "1px solid #a7f3d0" : "1px solid #e5e7eb",
-        fontSize: 13,
-        fontWeight: 800,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        flexWrap: "wrap",
-      }}
+      className={[
+        "cm-call-class-promote",
+        classVotePromoted ? "cm-call-class-promote--done" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div className="cm-call-class-promote-copy">
         {classVotePromoted ? (
-          <span>クラスが成立しました</span>
+          <p className="cm-call-class-promote-title">クラスが成立しました</p>
         ) : (
           <>
-            <span>希望 {classVoteCount}人</span>
-            {classVoteSelfVoted ? (
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#6b7280" }}>
-                投票済みです
-              </span>
+            <p className="cm-call-class-promote-title">
+              {classVoteSelfVoted
+                ? `希望 ${classVoteCount}人`
+                : "気が合ったら正式クラスに"}
+            </p>
+            {classVoteHintText ? (
+              <p className="cm-call-class-promote-hint">{classVoteHintText}</p>
             ) : null}
           </>
         )}
       </div>
-      {!classVotePromoted && !classVoteSelfVoted ? (
+      {!classVotePromoted ? (
         <button
           type="button"
-          className="cm-cta-primary cm-call-action-btn"
-          disabled={classVoteBusy}
+          className="cm-cta-primary cm-call-class-promote-btn"
+          disabled={classVoteBusy || !classVoteSubmitReady}
           onClick={() => {
             void handleClassVote();
           }}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid #111827",
-            background: classVoteBusy ? "#9ca3af" : "#111827",
-            color: "#fff",
-            fontWeight: 900,
-            fontSize: 13,
-            cursor: classVoteBusy ? "default" : "pointer",
-          }}
         >
-          {classVoteBusy ? "送信中…" : "このメンバーでクラスを作る"}
+          {resolveClassVoteCtaLabel({
+            busy: classVoteBusy,
+            selfVoted: classVoteSelfVoted,
+            promoted: classVotePromoted,
+          })}
         </button>
       ) : null}
     </div>
   ) : null;
 
+  const selfMember = members.find(
+    (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
+  );
+  const accountDisplayName =
+    formatMemberDisplayName(selfMember ?? {}) || accountLabel || "ゲスト";
+  const accountPhotoPath = selfMember?.photo_path ?? null;
+
+  const leaveClassAndGoHome = async () => {
+    const cid = String(classId ?? "").trim();
+    const did = String(deviceId ?? getDeviceId() ?? "").trim();
+    if (!cid || !did || classLeaveBusy) return;
+    if (!window.confirm("このクラスから脱退しますか？")) return;
+
+    setClassLeaveBusy(true);
+    setClassMenuOpen(false);
+    try {
+      // End local call state first without relying on room navigation.
+      markSelfLeftCall();
+      releaseSessionMic("class_leave", sessionId);
+
+      const res = await fetch("/api/class/leave", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: did,
+          classId: cid,
+          source: CLASS_LEAVE_CONFIRMED_SOURCE,
+        }),
+        cache: "no-store",
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+      };
+      const errorCode = String(json?.error ?? "").trim();
+      if ((res.ok && json?.ok) || errorCode === "not_member") {
+        markClassLeftLocally(cid);
+        markLocallyHiddenClass(cid);
+        markJoinedClassesStale();
+        router.push(
+          `${withDev(resolveShellDashboardPath())}#${HOME_MY_CLASS_SECTION_ID}`
+        );
+        return;
+      }
+      alert(errorCode || `leave_failed (${res.status})`);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "leave_failed");
+    } finally {
+      setClassLeaveBusy(false);
+    }
+  };
+
   return (
+    <>
     <CallRoomView
       voiceLayer={voiceLayerNode}
       entryGateSlot={entryGateSlot}
@@ -3570,7 +3658,12 @@ export default function CallClient() {
       callRequestLabel={
         callRequest?.is_active ? callRequest.display_label : null
       }
-      onProfileEdit={() => router.push(profileEditHref)}
+      onOpenAccountMenu={() => setAccountMenuOpen(true)}
+      accountMenuOpen={accountMenuOpen}
+      accountDisplayName={accountDisplayName}
+      accountPhotoPath={accountPhotoPath}
+      onOpenClassMenu={() => setClassMenuOpen(true)}
+      classMenuOpen={classMenuOpen}
       onInviteFriends={async () => {
         if (!sessionId || !classId) {
           alert("まだ招待リンクを作れません。");
@@ -3709,6 +3802,41 @@ export default function CallClient() {
         />
       }
     />
+
+    <HomeMenuSheet
+      open={accountMenuOpen}
+      onClose={() => setAccountMenuOpen(false)}
+      notificationsEnabled={notificationsEnabled}
+      notificationsBusy={notificationsBusy}
+      onToggleNotifications={toggleNotifications}
+      hideWebPush={isAppShellContext()}
+      profileHref={profileEditHref}
+      myClassesHref={`${withDev(resolveShellDashboardPath())}#${HOME_MY_CLASS_SECTION_ID}`}
+      planHref={withDev("/premium")}
+      billingHref={withDev("/billing")}
+      accountHref={
+        loggedIn
+          ? withDev(buildShellAwareSettingsUrl())
+          : withDev(buildShellAwareLoginUrl("/call"))
+      }
+      accountLabel={accountLabel}
+      loggedIn={loggedIn}
+      aboutHref={withDev("/about")}
+      legalHref={withDev("/terms")}
+      discoverHref={withDev("/class/select")}
+      displayName={accountDisplayName}
+      photoPath={accountPhotoPath}
+    />
+
+    <RoomClassMenuSheet
+      open={classMenuOpen}
+      onClose={() => setClassMenuOpen(false)}
+      onLeaveClass={() => {
+        void leaveClassAndGoHome();
+      }}
+      leaveBusy={classLeaveBusy}
+    />
+    </>
   );
 
 }

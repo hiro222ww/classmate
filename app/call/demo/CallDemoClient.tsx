@@ -554,6 +554,21 @@ export default function CallDemoClient() {
     return <p style={{ padding: 16 }}>デモを読み込み中…</p>;
   }
 
+  // Display-only: mirrors production provisional→official promote chrome.
+  const classVoteSlot: ReactNode = (
+    <div className="cm-call-class-promote">
+      <div className="cm-call-class-promote-copy">
+        <p className="cm-call-class-promote-title">気が合ったら正式クラスに</p>
+        <p className="cm-call-class-promote-hint">
+          賛成が3人集まると正式クラスになります
+        </p>
+      </div>
+      <button type="button" className="cm-cta-primary cm-call-class-promote-btn">
+        このメンバーでクラスを作る
+      </button>
+    </div>
+  );
+
   return (
     <>
       <CallRoomView
@@ -573,9 +588,11 @@ export default function CallDemoClient() {
         callRequestLabel={
           state.board.statusText ? state.board.statusText : null
         }
-        onProfileEdit={() => {
+        onOpenAccountMenu={() => {
           /* demo: no navigation */
         }}
+        accountDisplayName="デモ"
+        accountPhotoPath={null}
         onInviteFriends={() => {
           /* demo: no clipboard invite */
         }}
@@ -587,6 +604,7 @@ export default function CallDemoClient() {
         }
         showWaitingForOthers={state.uiScene === "waiting"}
         bannerSlot={bannerSlot}
+        classVoteSlot={classVoteSlot}
         visibleMembers={viewMembers}
         deviceId={selfDeviceId}
         nowMs={nowMs}

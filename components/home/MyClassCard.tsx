@@ -14,10 +14,13 @@ type MyClassCardProps = {
   row: JoinedClassRow;
   opening?: boolean;
   disabled?: boolean;
+  leaving?: boolean;
   members?: MyClassMemberPreview[];
   memberCount?: number;
   capacity?: number;
   onOpen: (row: JoinedClassRow) => void;
+  /** Optional explicit class leave (membership) — not the same as opening/exiting a call. */
+  onLeave?: (row: JoinedClassRow) => void;
 };
 
 function coverTone(row: JoinedClassRow): string {
@@ -43,12 +46,18 @@ export function MyClassCard({
   row,
   opening = false,
   disabled = false,
+  leaving = false,
   members = [],
   memberCount,
   capacity = 5,
   onOpen,
+  onLeave,
 }: MyClassCardProps) {
-  const label = opening ? "入室中…" : row.statusLabel || "所属中";
+  const label = leaving
+    ? "脱退中…"
+    : opening
+      ? "入室中…"
+      : row.statusLabel || "所属中";
   const tone = statusTone(label, Boolean(row.sessionId));
   const previews = members.filter((m) => Boolean(m.deviceId)).slice(0, 4);
   const count =
@@ -58,46 +67,58 @@ export function MyClassCard({
   const overflow = Math.max(0, count - previews.length);
 
   return (
-    <button
-      type="button"
-      className={`cm-my-class-card cm-my-class-card--${coverTone(row)}`}
-      disabled={disabled}
-      onClick={() => onOpen(row)}
-      aria-label={`${row.name}を開く`}
-    >
-      <div className="cm-my-class-card-cover" aria-hidden />
-      <div className="cm-my-class-card-body">
-        <div className="cm-my-class-card-title-row">
-          <span className="cm-my-class-card-title">{row.name}</span>
-          <CmStatusPill tone={tone}>{label}</CmStatusPill>
+    <div className={`cm-my-class-card-wrap cm-my-class-card--${coverTone(row)}`}>
+      <button
+        type="button"
+        className={`cm-my-class-card cm-my-class-card--${coverTone(row)}`}
+        disabled={disabled || leaving}
+        onClick={() => onOpen(row)}
+        aria-label={`${row.name}を開く`}
+      >
+        <div className="cm-my-class-card-cover" aria-hidden />
+        <div className="cm-my-class-card-body">
+          <div className="cm-my-class-card-title-row">
+            <span className="cm-my-class-card-title">{row.name}</span>
+            <CmStatusPill tone={tone}>{label}</CmStatusPill>
+          </div>
+          {row.topicTitle ? (
+            <span className="cm-my-class-card-topic">{row.topicTitle}</span>
+          ) : null}
+          <div className="cm-my-class-card-meta">
+            {previews.length > 0 ? (
+              <div className="cm-my-class-card-avatars" aria-hidden>
+                {previews.map((m) => (
+                  <CmAvatar
+                    key={m.deviceId}
+                    label={m.displayName || "?"}
+                    photoPath={m.photoPath}
+                    sizePx={24}
+                    className="cm-my-class-card-avatar"
+                  />
+                ))}
+                {overflow > 0 ? (
+                  <span className="cm-my-class-card-avatar-more">+{overflow}</span>
+                ) : null}
+              </div>
+            ) : (
+              <span className="cm-my-class-card-cta">開く</span>
+            )}
+            <span className="cm-my-class-card-count">
+              {count}/{capacity}人
+            </span>
+          </div>
         </div>
-        {row.topicTitle ? (
-          <span className="cm-my-class-card-topic">{row.topicTitle}</span>
-        ) : null}
-        <div className="cm-my-class-card-meta">
-          {previews.length > 0 ? (
-            <div className="cm-my-class-card-avatars" aria-hidden>
-              {previews.map((m) => (
-                <CmAvatar
-                  key={m.deviceId}
-                  label={m.displayName || "?"}
-                  photoPath={m.photoPath}
-                  sizePx={24}
-                  className="cm-my-class-card-avatar"
-                />
-              ))}
-              {overflow > 0 ? (
-                <span className="cm-my-class-card-avatar-more">+{overflow}</span>
-              ) : null}
-            </div>
-          ) : (
-            <span className="cm-my-class-card-cta">開く</span>
-          )}
-          <span className="cm-my-class-card-count">
-            {count}/{capacity}人
-          </span>
-        </div>
-      </div>
-    </button>
+      </button>
+      {onLeave ? (
+        <button
+          type="button"
+          className="cm-my-class-card-leave"
+          disabled={disabled || leaving}
+          onClick={() => onLeave(row)}
+        >
+          {leaving ? "脱退中…" : "脱退"}
+        </button>
+      ) : null}
+    </div>
   );
 }

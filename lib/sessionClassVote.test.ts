@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   CLASS_VOTE_THRESHOLD,
   buildClassVoteStatusView,
+  canSubmitClassVote,
+  classVoteHint,
   hasEnoughClassVotes,
   normalizeClassVoteDeviceId,
   normalizeOptionalClassId,
   normalizeSessionId,
   parsePromoteRpcResult,
+  resolveClassVoteCtaLabel,
   shouldShowClassVoteUi,
 } from "./sessionClassVote";
 
@@ -55,7 +58,16 @@ describe("sessionClassVote helpers", () => {
     expect(parsePromoteRpcResult(null).ok).toBe(false);
   });
 
-  it("shows vote UI only when locked provisional with 3+ members", () => {
+  it("shows vote panel for any provisional call (discoverable early)", () => {
+    expect(
+      shouldShowClassVoteUi({
+        memberCount: 1,
+        membersLocked: false,
+        lifecycle: "provisional",
+        promoted: false,
+      })
+    ).toBe(true);
+
     expect(
       shouldShowClassVoteUi({
         memberCount: 3,
@@ -68,17 +80,8 @@ describe("sessionClassVote helpers", () => {
     expect(
       shouldShowClassVoteUi({
         memberCount: 3,
-        membersLocked: false,
-        lifecycle: "provisional",
-        promoted: false,
-      })
-    ).toBe(false);
-
-    expect(
-      shouldShowClassVoteUi({
-        memberCount: 2,
         membersLocked: true,
-        lifecycle: "provisional",
+        lifecycle: "official",
         promoted: false,
       })
     ).toBe(false);
@@ -91,6 +94,38 @@ describe("sessionClassVote helpers", () => {
         promoted: true,
       })
     ).toBe(true);
+  });
+
+  it("only allows submit when locked provisional with 3+ members", () => {
+    expect(
+      canSubmitClassVote({
+        memberCount: 3,
+        membersLocked: true,
+        lifecycle: "provisional",
+        promoted: false,
+        selfVoted: false,
+      })
+    ).toBe(true);
+
+    expect(
+      canSubmitClassVote({
+        memberCount: 2,
+        membersLocked: true,
+        lifecycle: "provisional",
+        promoted: false,
+        selfVoted: false,
+      })
+    ).toBe(false);
+
+    expect(
+      canSubmitClassVote({
+        memberCount: 3,
+        membersLocked: false,
+        lifecycle: "provisional",
+        promoted: false,
+        selfVoted: false,
+      })
+    ).toBe(false);
   });
 
   it("builds status view with canShowVoteUi", () => {
@@ -107,5 +142,49 @@ describe("sessionClassVote helpers", () => {
     expect(view.selfVoted).toBe(true);
     expect(view.canShowVoteUi).toBe(true);
     expect(view.voteCount).toBe(1);
+  });
+
+  it("returns helpful hints before submit is ready", () => {
+    expect(
+      classVoteHint({
+        memberCount: 1,
+        membersLocked: false,
+        lifecycle: "provisional",
+        promoted: false,
+        selfVoted: false,
+        voteCount: 0,
+      })
+    ).toMatch(/3人以上/);
+  });
+
+  it("labels the promote CTA for each vote state", () => {
+    expect(
+      resolveClassVoteCtaLabel({
+        busy: false,
+        selfVoted: false,
+        promoted: false,
+      })
+    ).toBe("このメンバーでクラスを作る");
+    expect(
+      resolveClassVoteCtaLabel({
+        busy: true,
+        selfVoted: false,
+        promoted: false,
+      })
+    ).toBe("送信中…");
+    expect(
+      resolveClassVoteCtaLabel({
+        busy: false,
+        selfVoted: true,
+        promoted: false,
+      })
+    ).toBe("投票済み");
+    expect(
+      resolveClassVoteCtaLabel({
+        busy: false,
+        selfVoted: true,
+        promoted: true,
+      })
+    ).toBe("クラス成立");
   });
 });
