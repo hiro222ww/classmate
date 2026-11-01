@@ -15,7 +15,7 @@ import {
 import { DevPanel } from "@/components/DevPanel";
 import { buildThemeSelectPath } from "@/lib/joinMode";
 import { HomeHeader } from "@/components/home/HomeHeader";
-import { HomeHeroAtmosphere } from "@/components/home/HomeHeroAtmosphere";
+import { HomePromoBanner } from "@/components/home/HomePromoBanner";
 import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
@@ -30,7 +30,6 @@ import {
   canStartMatchJoin,
   guardMatchJoinAdmission,
   resolveAdmissionStatusNotice,
-  resolveAdmissionStatusPillText,
   type AdmissionLoadState,
 } from "@/lib/admissionJoinGate";
 import { trackFunnelEvent } from "@/lib/funnelEvents";
@@ -64,7 +63,6 @@ import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
 import { useAuth } from "@/components/AuthProvider";
 import { isAppShellContext } from "@/lib/appShellContext";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
-import { AuthTextSkeleton } from "@/components/AuthLoadingUI";
 import { CmAvatar } from "@/components/ui/CmAvatar";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
@@ -403,31 +401,11 @@ function pushBrowserNotification(
   new Notification(title, { body });
 }
 
-function StatusPill({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        fontSize: 11,
-        padding: "5px 10px",
-        borderRadius: 999,
-        background: "var(--cm-beige, #f3f4f6)",
-        color: "var(--cm-muted, #4b5563)",
-        fontWeight: 800,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
 export default function HomeClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { status: authStatus, slow: authSlow, error: authError } = useAuth();
+  const { status: authStatus } = useAuth();
 
   const dev = (searchParams.get("dev") ?? "").trim();
 
@@ -523,17 +501,6 @@ export default function HomeClient() {
     joinWindowOpen,
     admissionText: joinWindowText,
   });
-  const admissionPillText = resolveAdmissionStatusPillText({
-    loadState: joinWindowLoadState,
-    joinWindowOpen,
-    admissionText: joinWindowText,
-  });
-  const opsTestActive =
-    adminAuthenticated &&
-    (opsTestFlags.ignoreAdmission ||
-      opsTestFlags.ignoreAge ||
-      opsTestFlags.allowMinorProfile ||
-      opsTestFlags.ignoreRecruitment);
   const [openingClassId, setOpeningClassId] = useState<string | null>(null);
   const [leavingClassId, setLeavingClassId] = useState<string | null>(null);
 
@@ -2771,97 +2738,18 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         />
       ) : null}
 
-      <HomeHeroAtmosphere className="cm-stagger-2" />
+      <HomePromoBanner className="cm-stagger-2" />
 
-      <div className="cm-home-flow cm-stagger-3">
-        <div className="cm-home-welcome">
-          <p className="cm-home-welcome-line">
-            {authLoading || (authStatus === "authenticated" && !profileName) ? (
-              <>
-                <AuthTextSkeleton width={72} /> さん
-              </>
-            ) : (
-              <>
-                <b>{welcomeName}</b> さん
-              </>
-            )}
-          </p>
-          {authLoading ? (
-            <p className="cm-home-welcome-note">
-              {authSlow ? "読み込みが遅いです…" : "確認中…"}
-              {authError ? `（${authError}）` : ""}
-            </p>
-          ) : null}
-          {admissionPillText ? (
-            <div className="cm-home-welcome-meta">
-              <span
-                className={[
-                  "cm-admission-pill",
-                  joinWindowLoadState === "error"
-                    ? "cm-admission-pill--error"
-                    : joinWindowLoadState === "loading"
-                      ? "cm-admission-pill--loading"
-                      : joinWindowOpen
-                        ? "cm-admission-pill--open"
-                        : "cm-admission-pill--closed",
-                ].join(" ")}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    background: "currentColor",
-                    opacity: 0.85,
-                    display: "inline-block",
-                  }}
-                />
-                {admissionPillText}
-              </span>
-              {joinWindowLoadState === "error" ? (
-                <button
-                  type="button"
-                  className="cm-text-btn"
-                  onClick={() => {
-                    void reloadJoinWindow();
-                  }}
-                >
-                  更新
-                </button>
-              ) : null}
-              {opsTestActive ? <StatusPill>テスト中</StatusPill> : null}
-            </div>
-          ) : null}
-          {adminCanBypassAdmission ? (
-            <p className="cm-home-welcome-note">受付時間外（テスト入室可）</p>
-          ) : null}
-        </div>
-
-        {error ? (
-          <div
-            className="cm-home-error"
-            style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
-          >
-            {error}
-          </div>
-        ) : null}
-
-        {/* Compact in-home shortcut — not a second my-class section. */}
-        <button
-          type="button"
-          className="cm-home-my-class-shortcut"
-          onClick={() => scrollToMyClassSection()}
-          aria-controls={myClassSectionId}
+      {error ? (
+        <div
+          className="cm-home-error cm-stagger-3"
+          style={{ color: "#dc2626", fontWeight: 800, fontSize: 13 }}
         >
-          <span>マイクラス</span>
-          <span className="cm-home-my-class-shortcut-chevron" aria-hidden>
-            ›
-          </span>
-        </button>
-      </div>
+          {error}
+        </div>
+      ) : null}
 
-      <HomeThemeGrid className="cm-stagger-4" />
+      <HomeThemeGrid className="cm-stagger-3" />
 
       <div className="cm-stagger-5 cm-home-talk-hero">
         <RandomTalkCta

@@ -2784,67 +2784,144 @@
   outline-offset: 2px;
 }
 
-/* Soft worldview hero — denser mobile height, keep faces/copy in frame */
+/* Home promo / atmosphere banner — full-bleed photo (no white caption band) */
+.cm-home-promo-banner,
 .cm-home-hero-atmosphere {
   position: relative;
   overflow: hidden;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.7);
   box-shadow: var(--cm-shadow-soft);
-  background:
-    radial-gradient(120% 80% at 20% 10%, rgba(255, 214, 196, 0.55), transparent 55%),
-    radial-gradient(100% 70% at 90% 0%, rgba(167, 201, 255, 0.45), transparent 50%),
-    linear-gradient(160deg, #fff4ee 0%, #eaf3ff 55%, #f7fbff 100%);
+  background: #1b2838;
   min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
+.cm-home-promo-banner-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.cm-home-promo-banner-media,
 .cm-home-hero-atmosphere-media {
   position: relative;
-  min-height: 112px;
+  width: 100%;
+  /* Reserve 16:9 box to avoid CLS; soft max keeps mobile height calm. */
+  aspect-ratio: 16 / 9;
+  min-height: 160px;
+  max-height: min(56vw, 248px);
+  overflow: hidden;
+  background: #1b2838;
 }
 
+.cm-home-promo-banner-img,
 .cm-home-hero-atmosphere-img {
   display: block;
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: 118px;
+  height: 100%;
   object-fit: cover;
-  object-position: center 48%;
+  object-position: center 42%;
+  opacity: 0;
+  transition: opacity 420ms ease;
+  pointer-events: none;
+  user-select: none;
 }
 
+.cm-home-promo-banner-img--active,
+.cm-home-hero-atmosphere-img {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-home-promo-banner-img {
+    transition: none;
+  }
+}
+
+.cm-home-promo-banner-veil,
 .cm-home-hero-atmosphere-veil {
   position: absolute;
   inset: 0;
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.02) 0%,
-    rgba(248, 250, 255, 0.08) 40%,
-    rgba(23, 35, 61, 0.34) 100%
+    rgba(248, 250, 255, 0.04) 45%,
+    rgba(23, 35, 61, 0.42) 100%
   );
   pointer-events: none;
+  z-index: 1;
 }
 
+.cm-home-promo-banner-copy,
 .cm-home-hero-atmosphere-copy {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 8px;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
   margin: 0;
+  z-index: 2;
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
   letter-spacing: 0.02em;
-  line-height: 1.3;
-  text-shadow: 0 1px 8px rgba(23, 35, 61, 0.4);
+  line-height: 1.35;
+  text-shadow: 0 1px 10px rgba(23, 35, 61, 0.5);
 }
 
+.cm-home-promo-banner--multi .cm-home-promo-banner-copy {
+  bottom: 28px;
+}
+
+.cm-home-promo-banner-ad {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.cm-home-promo-banner-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.cm-home-promo-banner-dot {
+  appearance: none;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+
+.cm-home-promo-banner-dot--active {
+  background: #fff;
+  width: 14px;
+}
+
+/* Legacy white bridge caption — removed from markup; keep rule inert. */
 .cm-home-hero-atmosphere-bridge {
-  margin: 0;
-  padding: 7px 12px 8px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--cm-muted);
-  line-height: 1.35;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(247, 251, 255, 0.95));
+  display: none !important;
 }
 
 .cm-home-flow {

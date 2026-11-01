@@ -107,26 +107,35 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 900 
       await expect(page.getByRole("button", { name: "ランダム通話へ", exact: true })).toHaveCount(0);
       // Free entitlements mock: hide create CTA until can_create_classes is true.
       await expect(myClassSection.getByRole("link", { name: "＋ 作成", exact: true })).toHaveCount(0);
-      const myClassShortcut = page.locator("button.cm-home-my-class-shortcut");
-      await expect(myClassShortcut).toBeVisible();
+      // Upper welcome card + my-class shortcut removed; sole my-class is the lower section.
+      await expect(page.locator("button.cm-home-my-class-shortcut")).toHaveCount(0);
+      await expect(page.locator(".cm-home-welcome")).toHaveCount(0);
+      await expect(page.locator(".cm-home-hero-atmosphere-bridge")).toHaveCount(0);
+      await expect(page.getByText("同じ空気感の人と、いま話そう", { exact: true })).toHaveCount(0);
+      const promoBanner = page.locator(".cm-home-promo-banner");
+      await expect(promoBanner).toBeVisible();
+      await expect(promoBanner.getByText("人との出会いで景色が変わる", { exact: true })).toBeVisible();
+      await expect(promoBanner.locator(".cm-home-promo-banner-dots")).toHaveCount(0);
       await expect
         .poll(async () =>
           page.evaluate(() => {
-            const el = document.getElementById("cm-home-my-class");
-            return el ? el.getBoundingClientRect().top : Number.NEGATIVE_INFINITY;
+            const banner = document.querySelector(".cm-home-promo-banner");
+            const search = document.querySelector(".cm-home-theme-grid");
+            const talk = document.querySelector(".cm-home-talk-hero");
+            const my = document.getElementById("cm-home-my-class");
+            if (!banner || !search || !talk || !my) return false;
+            const b = banner.getBoundingClientRect();
+            const s = search.getBoundingClientRect();
+            const t = talk.getBoundingClientRect();
+            const m = my.getBoundingClientRect();
+            const orderOk =
+              b.bottom <= s.top + 2 &&
+              s.bottom <= t.top + 2 &&
+              t.bottom <= m.top + 2;
+            return orderOk && m.top > 200;
           })
         )
-        .toBeGreaterThan(200);
-      await myClassShortcut.click();
-      await expect
-        .poll(async () =>
-          page.evaluate(() => {
-            const el = document.getElementById("cm-home-my-class");
-            if (!el) return Number.POSITIVE_INFINITY;
-            return Math.abs(el.getBoundingClientRect().top);
-          })
-        )
-        .toBeLessThan(140);
+        .toBe(true);
       await expect(page).toHaveURL(/\/$/);
       await page.evaluate(() => window.scrollTo(0, 0));
       // Home-centric experiment: bottom nav hidden; avatar opens the account menu.

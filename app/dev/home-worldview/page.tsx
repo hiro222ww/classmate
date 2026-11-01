@@ -1,7 +1,7 @@
 "use client";
 
 import { HomeHeader } from "@/components/home/HomeHeader";
-import { HomeHeroAtmosphere } from "@/components/home/HomeHeroAtmosphere";
+import { HomePromoBanner } from "@/components/home/HomePromoBanner";
 import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
@@ -29,37 +29,27 @@ export default function HomeWorldviewFixturePage() {
       </p>
 
       <HomeHeader displayName="ひろ" hideWebPush />
-      <HomeHeroAtmosphere />
+      <HomePromoBanner />
 
-      <div className="cm-home-flow">
-        <div className="cm-home-welcome">
-          <p className="cm-home-welcome-line">
-            <b>ひろ</b> さん
-          </p>
-          <div className="cm-home-welcome-meta">
-            <span className="cm-admission-pill cm-admission-pill--open">
-              <span
-                aria-hidden
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 999,
-                  background: "currentColor",
-                  display: "inline-block",
-                }}
-              />
-              受付中
-            </span>
-          </div>
-        </div>
-        <section className="cm-home-my-class-section">
-          <div className="cm-home-section-head">
-            <h2 className="cm-home-section-title">マイクラス</h2>
-            <span className="cm-home-section-link">＋ 作成</span>
-          </div>
-          <MyClassEmpty />
-        </section>
+      <HomeThemeGrid />
+
+      <div className="cm-home-talk-hero">
+        <RandomTalkCta
+          voiceBusy={false}
+          chatBusy={false}
+          matchJoinDisabled={false}
+          onVoiceJoin={() => {}}
+          onChatJoin={() => {}}
+        />
       </div>
+
+      <section className="cm-home-my-class-section">
+        <div className="cm-home-section-head">
+          <h2 className="cm-home-section-title">マイクラス</h2>
+          <span className="cm-home-section-link">＋ 作成</span>
+        </div>
+        <MyClassEmpty />
+      </section>
 
       <section>
         <div className="cm-home-section-head">
@@ -79,24 +69,18 @@ export default function HomeWorldviewFixturePage() {
             members={[
               { deviceId: "a", displayName: "A" },
               { deviceId: "b", displayName: "B" },
-              { deviceId: "c", displayName: "C" },
             ]}
-            memberCount={3}
             onOpen={() => {}}
           />
         </div>
       </section>
 
-      <HomeThemeGrid />
-      <RandomTalkCta onVoiceJoin={() => {}} onChatJoin={() => {}} />
-
-      <hr style={{ border: 0, borderTop: "1px solid #e5eaf2", margin: "8px 0" }} />
-
-      <header className="cm-page-heading">
-        <h1>探す</h1>
-        <p>気になるテーマから選ぶ</p>
-      </header>
-      <ThemeCardGrid title="テーマ" listHref={null} />
+      <section>
+        <div className="cm-home-section-head">
+          <h2 className="cm-home-section-title">テーマカード見本</h2>
+        </div>
+        <ThemeCardGrid />
+      </section>
     </main>
   );
 }
