@@ -70,8 +70,9 @@ export function parsePromoteRpcResult(raw: unknown): PromoteRpcResult {
 }
 
 /**
- * Decide whether the in-call "make a class" UI should appear.
- * Requires members locked (or already promoted) and at least 3 members in call.
+ * Decide whether the in-call "make a class" panel should appear.
+ * Visible for any provisional free-match call (and after promote) so the
+ * path is discoverable before members lock — submit stays gated separately.
  */
 export function shouldShowClassVoteUi(params: {
   memberCount: number;
@@ -83,9 +84,53 @@ export function shouldShowClassVoteUi(params: {
     .trim()
     .toLowerCase();
   if (params.promoted) return true;
+  return lifecycle === "provisional";
+}
+
+/**
+ * When the primary CTA may submit a yes-vote (membership is stable enough).
+ * Does not change promote RPC threshold or theme-billing rules.
+ */
+export function canSubmitClassVote(params: {
+  memberCount: number;
+  membersLocked: boolean;
+  lifecycle: string | null | undefined;
+  promoted: boolean;
+  selfVoted: boolean;
+}): boolean {
+  if (params.promoted || params.selfVoted) return false;
+  const lifecycle = String(params.lifecycle ?? "")
+    .trim()
+    .toLowerCase();
   if (lifecycle !== "provisional") return false;
   if (params.memberCount < CLASS_VOTE_THRESHOLD) return false;
-  return params.membersLocked;
+  return params.membersLocked === true;
+}
+
+/** Short hint under the CTA while waiting for lock / members. */
+export function classVoteHint(params: {
+  memberCount: number;
+  membersLocked: boolean;
+  lifecycle: string | null | undefined;
+  promoted: boolean;
+  selfVoted: boolean;
+  voteCount: number;
+}): string | null {
+  if (params.promoted) return null;
+  const lifecycle = String(params.lifecycle ?? "")
+    .trim()
+    .toLowerCase();
+  if (lifecycle !== "provisional") return null;
+  if (params.selfVoted) {
+    return `希望 ${Math.max(0, params.voteCount)} / ${CLASS_VOTE_THRESHOLD}人 — ほかの参加者の投票を待っています`;
+  }
+  if (params.memberCount < CLASS_VOTE_THRESHOLD) {
+    return `気が合ったら正式クラスにできます（${CLASS_VOTE_THRESHOLD}人以上で投票）`;
+  }
+  if (!params.membersLocked) {
+    return "募集が締まると、このメンバーでクラスを作れます";
+  }
+  return `賛成が${CLASS_VOTE_THRESHOLD}人集まると正式クラスになります`;
 }
 
 export function buildClassVoteStatusView(params: {
@@ -113,4 +158,15 @@ export function buildClassVoteStatusView(params: {
       promoted: params.promoted,
     }),
   };
+}
+
+export function resolveClassVoteCtaLabel(params: {
+  busy: boolean;
+  selfVoted: boolean;
+  promoted: boolean;
+}): string {
+  if (params.promoted) return "クラス成立";
+  if (params.busy) return "送信中…";
+  if (params.selfVoted) return "投票済み";
+  return "このメンバーでクラスを作る";
 }

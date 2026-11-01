@@ -392,6 +392,11 @@ export default function CallRoomView({
           }
         />
 
+        {/* Near avatars: provisional free-match → formal class promote CTA */}
+        {classVoteSlot ? (
+          <div className="cm-call-class-promote-slot">{classVoteSlot}</div>
+        ) : null}
+
         {(meetingPlanLabel || callRequestLabel) && (
           <div className="cm-call-inline-banners">
             {meetingPlanLabel ? (
@@ -474,7 +479,6 @@ export default function CallRoomView({
           ) : null}
 
           {bannerSlot}
-          {classVoteSlot}
 
           {showMicPermissionWarning ? (
             <div

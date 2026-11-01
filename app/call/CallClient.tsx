@@ -222,7 +222,12 @@ import {
   setMemberNameCache,
   type MemberNameCache,
 } from "@/lib/memberNameCache";
-import { shouldShowClassVoteUi } from "@/lib/sessionClassVote";
+import {
+  canSubmitClassVote,
+  classVoteHint,
+  resolveClassVoteCtaLabel,
+  shouldShowClassVoteUi,
+} from "@/lib/sessionClassVote";
 
 type Member = {
   device_id: string;
@@ -874,6 +879,7 @@ export default function CallClient() {
         setClassVotePromoted(true);
         setClassVoteLifecycle("official");
         setClassVoteCanShow(true);
+        markJoinedClassesStale();
       }
     } catch (err) {
       console.warn("[call] class-vote error", err);
@@ -3464,6 +3470,23 @@ export default function CallClient() {
       promoted: classVotePromoted,
     });
 
+  const classVoteSubmitReady = canSubmitClassVote({
+    memberCount: members.length,
+    membersLocked: classVoteMembersLocked,
+    lifecycle: classVoteLifecycle,
+    promoted: classVotePromoted,
+    selfVoted: classVoteSelfVoted,
+  });
+
+  const classVoteHintText = classVoteHint({
+    memberCount: members.length,
+    membersLocked: classVoteMembersLocked,
+    lifecycle: classVoteLifecycle,
+    promoted: classVotePromoted,
+    selfVoted: classVoteSelfVoted,
+    voteCount: classVoteCount,
+  });
+
   const recruitmentView = buildCallRecruitmentView({
     memberCount: Math.max(members.length, filled),
     capacity,
@@ -3520,57 +3543,43 @@ export default function CallClient() {
 
   const classVoteSlot = showClassVotePanel ? (
     <div
-      className="cm-call-banner cm-call-class-vote"
-      style={{
-        marginTop: 12,
-        padding: "12px 14px",
-        borderRadius: 12,
-        background: classVotePromoted ? "#ecfdf5" : "#f9fafb",
-        color: classVotePromoted ? "#065f46" : "#374151",
-        border: classVotePromoted ? "1px solid #a7f3d0" : "1px solid #e5e7eb",
-        fontSize: 13,
-        fontWeight: 800,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        flexWrap: "wrap",
-      }}
+      className={[
+        "cm-call-class-promote",
+        classVotePromoted ? "cm-call-class-promote--done" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div className="cm-call-class-promote-copy">
         {classVotePromoted ? (
-          <span>クラスが成立しました</span>
+          <p className="cm-call-class-promote-title">クラスが成立しました</p>
         ) : (
           <>
-            <span>希望 {classVoteCount}人</span>
-            {classVoteSelfVoted ? (
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#6b7280" }}>
-                投票済みです
-              </span>
+            <p className="cm-call-class-promote-title">
+              {classVoteSelfVoted
+                ? `希望 ${classVoteCount}人`
+                : "気が合ったら正式クラスに"}
+            </p>
+            {classVoteHintText ? (
+              <p className="cm-call-class-promote-hint">{classVoteHintText}</p>
             ) : null}
           </>
         )}
       </div>
-      {!classVotePromoted && !classVoteSelfVoted ? (
+      {!classVotePromoted ? (
         <button
           type="button"
-          className="cm-cta-primary cm-call-action-btn"
-          disabled={classVoteBusy}
+          className="cm-cta-primary cm-call-class-promote-btn"
+          disabled={classVoteBusy || !classVoteSubmitReady}
           onClick={() => {
             void handleClassVote();
           }}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid #111827",
-            background: classVoteBusy ? "#9ca3af" : "#111827",
-            color: "#fff",
-            fontWeight: 900,
-            fontSize: 13,
-            cursor: classVoteBusy ? "default" : "pointer",
-          }}
         >
-          {classVoteBusy ? "送信中…" : "このメンバーでクラスを作る"}
+          {resolveClassVoteCtaLabel({
+            busy: classVoteBusy,
+            selfVoted: classVoteSelfVoted,
+            promoted: classVotePromoted,
+          })}
         </button>
       ) : null}
     </div>
