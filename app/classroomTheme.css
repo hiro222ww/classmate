@@ -4324,7 +4324,9 @@ body.cm-has-mobile-bottom-nav {
   box-shadow: 0 10px 24px rgba(52, 120, 246, 0.28) !important;
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff !important;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.28),
+    0 0 1px rgba(0, 0, 0, 0.2);
 }
 
 .cm-room-session-hero-cta .cm-room-start-btn:disabled {
