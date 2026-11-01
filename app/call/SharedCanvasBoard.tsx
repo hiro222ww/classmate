@@ -92,134 +92,57 @@ function SharedCanvasBoardPreview({
   return (
     <div
       className="classmate-board-root"
-      style={{ marginTop: 10, ...BOARD_TOUCH_GUARD }}
+      style={{ marginTop: 0, ...BOARD_TOUCH_GUARD }}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-          ...BOARD_TOUCH_GUARD,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-            flex: "1 1 auto",
-            minWidth: 0,
-            ...BOARD_TOUCH_GUARD,
-          }}
-        >
-          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
-            太さ
-            <input
-              type="range"
-              min={1}
-              max={10}
-              value={4}
-              disabled
-              readOnly
-              style={{ marginLeft: 8, verticalAlign: "middle" }}
-            />
-          </label>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="cm-board-toolbar" style={BOARD_TOUCH_GUARD}>
+        <div className="cm-board-toolbar-primary" style={BOARD_TOUCH_GUARD}>
+          <div className="cm-board-swatches" style={BOARD_TOUCH_GUARD}>
             {CHALK_COLORS.map((c) => (
               <button
                 key={c.value}
                 type="button"
                 title={c.name}
                 disabled
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 999,
-                  border:
-                    c.value === CHALK_COLORS[0]?.value
-                      ? "2px solid #111"
-                      : "1px solid #bbb",
-                  background: c.value,
-                  cursor: "default",
-                  opacity: 0.85,
-                }}
+                className={[
+                  "cm-board-swatch",
+                  c.value === CHALK_COLORS[0]?.value
+                    ? "cm-board-swatch--active"
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                style={{ background: c.value, opacity: 0.9 }}
               />
             ))}
-
+            <button type="button" disabled className="cm-board-tool-chip">
+              消し
+            </button>
+          </div>
+          <div className="cm-board-toolbar-quick">
             <button
               type="button"
               disabled
-              style={{
-                padding: "8px 10px",
-                borderRadius: 12,
-                border: "1px solid #ddd",
-                background: "#fff",
-                color: "#111",
-                fontWeight: 900,
-                cursor: "default",
-                opacity: 0.85,
-              }}
+              className="cm-board-tool-chip cm-board-tool-chip--active"
             >
-              黒板消し
+              描く
+            </button>
+            <button type="button" disabled className="cm-board-tool-chip">
+              移動
+            </button>
+            <button type="button" disabled className="cm-board-tool-more" aria-label="黒板ツール">
+              ⋯
             </button>
           </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-            flexShrink: 0,
-          }}
-        >
-          <button
-            type="button"
-            disabled
-            style={{
-              padding: "8px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: "#fff",
-              color: "#111827",
-              fontWeight: 900,
-              cursor: "default",
-              opacity: 0.85,
-            }}
-          >
-            全画面
-          </button>
-          <button
-            type="button"
-            disabled
-            aria-label="黒板をすべて消す"
-            style={{
-              padding: "8px 12px",
-              borderRadius: 12,
-              border: "1px solid #fca5a5",
-              background: "#fff5f5",
-              color: "#b91c1c",
-              fontWeight: 900,
-              cursor: "default",
-              opacity: 0.85,
-            }}
-          >
-            🗑 全消し
-          </button>
         </div>
       </div>
 
       <div
         className="classmate-board-scroll"
         style={{
-          marginTop: 10,
-          borderRadius: 16,
-          border: "1px solid rgba(0,0,0,0.08)",
+          marginTop: 8,
+          borderRadius: 18,
+          border: "none",
+          boxShadow: "inset 0 0 0 1px rgba(15,23,42,0.05)",
           background: BOARD_OUTER_BG,
           padding: 10,
           overflowX: "auto",
@@ -324,6 +247,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
 
   toolRef.current = tool;
   penColorLiveRef.current = penColor;
@@ -1599,182 +1523,119 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         ...BOARD_TOUCH_GUARD,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "center",
-          justifyContent: "space-between",
-          ...BOARD_TOUCH_GUARD,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-            flex: "1 1 auto",
-            minWidth: 0,
-            ...BOARD_TOUCH_GUARD,
-          }}
-        >
-          <label style={{ fontSize: 12, fontWeight: 900, color: "#374151" }}>
-            太さ
-            <input
-              type="range"
-              min={1}
-              max={10}
-              value={penWidth}
-              onChange={(e) => setPenWidth(Number(e.target.value))}
-              style={{ marginLeft: 8, verticalAlign: "middle" }}
-            />
-          </label>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="cm-board-toolbar" style={BOARD_TOUCH_GUARD}>
+        <div className="cm-board-toolbar-primary" style={BOARD_TOUCH_GUARD}>
+          <div className="cm-board-swatches" style={BOARD_TOUCH_GUARD}>
             {CHALK_COLORS.map((c) => (
               <button
                 key={c.value}
                 type="button"
                 title={c.name}
+                className={[
+                  "cm-board-swatch",
+                  tool === "chalk" && penColor === c.value
+                    ? "cm-board-swatch--active"
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 onClick={() => {
                   setTool("chalk");
                   setPenColor(c.value);
                 }}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 999,
-                  border:
-                    tool === "chalk" && penColor === c.value
-                      ? "2px solid #111"
-                      : "1px solid #bbb",
-                  background: c.value,
-                  cursor: "pointer",
-                }}
+                style={{ background: c.value }}
               />
             ))}
-
             <button
               type="button"
+              className={[
+                "cm-board-tool-chip",
+                tool === "eraser" ? "cm-board-tool-chip--active" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               onClick={() => setTool("eraser")}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 12,
-                border:
-                  tool === "eraser" ? "2px solid #111" : "1px solid #ddd",
-                background: "#fff",
-                color: "#111",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
             >
-              黒板消し
+              消し
+            </button>
+          </div>
+
+          <div className="cm-board-toolbar-quick">
+            <button
+              type="button"
+              className={[
+                "cm-board-tool-chip",
+                touchMode === "draw" ? "cm-board-tool-chip--active" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={() => setTouchMode("draw")}
+            >
+              描く
+            </button>
+            <button
+              type="button"
+              className={[
+                "cm-board-tool-chip",
+                touchMode === "pan" ? "cm-board-tool-chip--active" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={() => setTouchMode("pan")}
+            >
+              移動
+            </button>
+            <button
+              type="button"
+              className={[
+                "cm-board-tool-more",
+                toolsExpanded ? "cm-board-tool-more--open" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              aria-expanded={toolsExpanded}
+              aria-label="黒板ツールをさらに表示"
+              onClick={() => setToolsExpanded((v) => !v)}
+            >
+              ⋯
             </button>
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-            flexShrink: 0,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setIsFullscreen((prev) => !prev)}
-            style={{
-              padding: isTouchLike ? "10px 14px" : "8px 12px",
-              minHeight: isTouchLike ? 44 : undefined,
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: isFullscreen ? "#111827" : "#fff",
-              color: isFullscreen ? "#fff" : "#111827",
-              fontWeight: 900,
-              cursor: "pointer",
-            }}
-          >
-            {isFullscreen ? "全画面を閉じる" : "全画面"}
-          </button>
-
-          <button
-            type="button"
-            onClick={requestClear}
-            aria-label="黒板をすべて消す"
-            style={{
-              padding: isTouchLike ? "10px 14px" : "8px 12px",
-              minHeight: isTouchLike ? 44 : undefined,
-              borderRadius: 12,
-              border: "1px solid #fca5a5",
-              background: "#fff5f5",
-              color: "#b91c1c",
-              fontWeight: 900,
-              cursor: "pointer",
-              boxShadow: "0 0 0 1px rgba(185, 28, 28, 0.08)",
-            }}
-          >
-            🗑 全消し
-          </button>
-        </div>
-      </div>
-
-      <div
-        style={{
-          marginTop: 8,
-          display: "flex",
-          gap: 8,
-          flexWrap: "wrap",
-          alignItems: "center",
-          flexShrink: 0,
-          ...BOARD_TOUCH_GUARD,
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setTouchMode("draw")}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 999,
-            border:
-              touchMode === "draw" ? "2px solid #111" : "1px solid #d1d5db",
-            background: touchMode === "draw" ? "#111827" : "#fff",
-            color: touchMode === "draw" ? "#fff" : "#111827",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          描画モード
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setTouchMode("pan")}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 999,
-            border: touchMode === "pan" ? "2px solid #111" : "1px solid #d1d5db",
-            background: touchMode === "pan" ? "#111827" : "#fff",
-            color: touchMode === "pan" ? "#fff" : "#111827",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          移動モード
-        </button>
-
-        <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 800 }}>
-          {touchMode === "draw"
-            ? isTouchLike
-              ? "1本指で描画 / ペンダブルタップで黒板消し"
-              : "ドラッグで描画 / ペンダブルタップで黒板消し"
-            : isTouchLike
-              ? "スワイプで黒板を移動"
-              : "ドラッグで黒板を移動"}
-        </span>
+        {toolsExpanded ? (
+          <div className="cm-board-toolbar-more" style={BOARD_TOUCH_GUARD}>
+            <label className="cm-board-width">
+              太さ
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={penWidth}
+                onChange={(e) => setPenWidth(Number(e.target.value))}
+              />
+            </label>
+            <button
+              type="button"
+              className={[
+                "cm-board-tool-chip",
+                isFullscreen ? "cm-board-tool-chip--active" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onClick={() => setIsFullscreen((prev) => !prev)}
+            >
+              {isFullscreen ? "閉じる" : "全画面"}
+            </button>
+            <button
+              type="button"
+              className="cm-board-tool-chip cm-board-tool-chip--danger"
+              onClick={requestClear}
+              aria-label="黒板をすべて消す"
+            >
+              全消し
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {info ? (
