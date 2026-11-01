@@ -162,6 +162,24 @@ export default function CallProdChromeFixture() {
         ]
       : [];
 
+  const classVoteSlot =
+    scene === "prep" || scene === "solo" || showGate ? null : (
+      <div className="cm-call-class-promote">
+        <div className="cm-call-class-promote-copy">
+          <p className="cm-call-class-promote-title">気が合ったら正式クラスに</p>
+          <p className="cm-call-class-promote-hint">
+            賛成が3人集まると正式クラスになります
+          </p>
+        </div>
+        <button
+          type="button"
+          className="cm-cta-primary cm-call-class-promote-btn"
+        >
+          このメンバーでクラスを作る
+        </button>
+      </div>
+    );
+
   return (
     <CallRoomView
       entryGateSlot={
@@ -194,6 +212,7 @@ export default function CallProdChromeFixture() {
       onInviteFriends={() => undefined}
       onExit={() => undefined}
       showWaitingForOthers={scene === "prep" || scene === "solo"}
+      classVoteSlot={classVoteSlot}
       visibleMembers={visibleMembers}
       deviceId="prod-self"
       nowMs={nowMs}
