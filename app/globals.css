@@ -226,10 +226,12 @@ html.classmate-board-fullscreen body {
   overscroll-behavior: none;
   height: 100%;
   height: 100dvh;
+  touch-action: none;
 }
 
 body.classmate-board-fullscreen {
   overflow: hidden;
+  position: relative;
 }
 
 /* Keep messages / call chrome from stealing Apple Pencil hits under the board. */
@@ -240,7 +242,10 @@ body.classmate-board-fullscreen .cm-call-root {
 
 .classmate-board-fullscreen-layer {
   position: fixed !important;
-  inset: 0 !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 20000 !important;
   box-sizing: border-box;
   width: 100% !important;
@@ -250,13 +255,13 @@ body.classmate-board-fullscreen .cm-call-root {
   margin: 0 !important;
   display: flex !important;
   flex-direction: column !important;
-  gap: 8px;
+  gap: 6px;
   padding:
-    max(8px, env(safe-area-inset-top, 0px))
-    max(10px, env(safe-area-inset-right, 0px))
-    max(8px, env(safe-area-inset-bottom, 0px))
-    max(10px, env(safe-area-inset-left, 0px)) !important;
-  background: #0f172a !important;
+    max(6px, env(safe-area-inset-top, 0px))
+    max(8px, env(safe-area-inset-right, 0px))
+    max(6px, env(safe-area-inset-bottom, 0px))
+    max(8px, env(safe-area-inset-left, 0px)) !important;
+  background: #0b3b2e !important;
   overflow: hidden !important;
   overscroll-behavior: none;
   touch-action: none;
@@ -268,69 +273,102 @@ body.classmate-board-fullscreen .cm-call-root {
   min-height: 0 !important;
   margin-top: 0 !important;
   border: none !important;
-  border-radius: 16px !important;
+  border-radius: 0 !important;
   padding: 0 !important;
-  background: transparent !important;
+  background: #0b3b2e !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
 }
 
+/* Keep logical board aspect (2200×1100); letterbox with board green — never stretch.
+   Width/height are set in JS (layoutFullscreenSurface) — do not !important them. */
 .classmate-board-fullscreen-layer .classmate-board-surface {
   min-width: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 100% !important;
-  border-radius: 16px !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border-radius: 10px !important;
+  flex: 0 1 auto !important;
+  align-self: center;
+}
+
+.classmate-board-fullscreen-layer .classmate-board-canvas {
+  touch-action: none !important;
+  pointer-events: auto !important;
 }
 
 .classmate-board-fullscreen-layer .cm-board-toolbar {
   position: relative;
   z-index: 2;
+  flex: 0 0 auto;
   margin: 0 !important;
-  padding: 8px 10px;
-  border-radius: 18px;
-  background: rgba(15, 23, 42, 0.72);
+  padding: 4px 6px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.78);
   border: 1px solid rgba(148, 163, 184, 0.28);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  gap: 4px;
 }
 
-.classmate-board-fullscreen-layer .cm-board-fs-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 2px;
+.classmate-board-fullscreen-layer .cm-board-toolbar-primary {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.classmate-board-fullscreen-layer .cm-board-swatches {
+  flex: 1 1 auto;
+  gap: 5px;
+}
+
+.classmate-board-fullscreen-layer .cm-board-swatch {
+  width: 18px;
+  height: 18px;
+}
+
+.classmate-board-fullscreen-layer .cm-board-toolbar-quick {
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 
 .classmate-board-fullscreen-layer .cm-board-fs-status {
-  font-size: 11px;
+  flex: 0 0 auto;
+  font-size: 10px;
   font-weight: 800;
   color: #cbd5e1;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .classmate-board-fullscreen-layer .cm-board-fs-exit {
   appearance: none;
   border: 1px solid rgba(148, 163, 184, 0.45);
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
   color: #f8fafc;
   border-radius: 999px;
-  padding: 7px 12px;
-  font-size: 12px;
+  padding: 5px 10px;
+  font-size: 11px;
   font-weight: 800;
   font-family: inherit;
   cursor: pointer;
+  flex: 0 0 auto;
 }
 
 .classmate-board-fullscreen-layer .cm-board-toolbar-more {
   background: rgba(15, 23, 42, 0.45);
   border-color: rgba(148, 163, 184, 0.25);
+  padding: 6px 8px;
 }
 
 .classmate-board-fullscreen-layer .cm-board-tool-chip {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(148, 163, 184, 0.35);
   color: #e2e8f0;
+  padding: 4px 8px;
+  font-size: 10px;
 }
 
 .classmate-board-fullscreen-layer .cm-board-tool-chip--active {
@@ -346,6 +384,8 @@ body.classmate-board-fullscreen .cm-call-root {
 }
 
 .classmate-board-fullscreen-layer .cm-board-tool-more {
+  width: 28px;
+  height: 28px;
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(148, 163, 184, 0.35);
   color: #e2e8f0;
@@ -353,6 +393,10 @@ body.classmate-board-fullscreen .cm-call-root {
 
 .classmate-board-fullscreen-layer .cm-board-width {
   color: #cbd5e1;
+}
+
+.classmate-board-fullscreen-layer .cm-board-width input {
+  width: 72px;
 }
 
 .classmate-board-fullscreen-layer label,
@@ -368,6 +412,15 @@ body.classmate-board-fullscreen .cm-call-root {
 body.classmate-board-fullscreen .cm-call-root audio,
 body.classmate-board-fullscreen .classmate-board-fullscreen-layer {
   pointer-events: auto !important;
+}
+
+/* Native Fullscreen API (desktop / iPadOS where supported) */
+.classmate-board-fullscreen-layer:fullscreen,
+.classmate-board-fullscreen-layer:-webkit-full-screen {
+  width: 100% !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  background: #0b3b2e !important;
 }
 
 .classmate-push-bell-wrap {
