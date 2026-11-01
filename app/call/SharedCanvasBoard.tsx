@@ -37,6 +37,8 @@ type SharedCanvasBoardProps = {
   /** Static chrome only — no Supabase / realtime / drawing (demo & screenshots). */
   previewOnly?: boolean;
   previewOverlayText?: string;
+  /** Dev/test: in-memory strokes only (no Supabase / realtime). */
+  localOnly?: boolean;
 };
 
 const BOARD_REALTIME_RESUBSCRIBE_MS = 4000;
@@ -79,26 +81,240 @@ function boardTouchAction(
   return touchMode === "pan" ? "pan-x pan-y" : "none";
 }
 
+const BOARD_ASPECT = `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`;
+
+/** Letterboxed surface: never stretch logical strokes to a different aspect. */
+function boardSurfaceLayoutStyle(isFullscreen: boolean, isTouchLike: boolean): CSSProperties {
+  if (isFullscreen) {
+    return {
+      position: "relative",
+      width: "auto",
+      maxWidth: "100%",
+      height: "auto",
+      maxHeight: "100%",
+      minWidth: 0,
+      minHeight: 0,
+      aspectRatio: BOARD_ASPECT,
+      margin: "0 auto",
+      borderRadius: 10,
+      border: "2px solid #073126",
+      background: BOARD_BG,
+      boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
+      overflow: "hidden",
+      flex: "0 1 auto",
+      alignSelf: "center",
+      ...BOARD_TOUCH_GUARD,
+    };
+  }
+
+  return {
+    position: "relative",
+    width: "100%",
+    maxWidth: "none",
+    margin: "0 auto",
+    minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
+    minHeight: isTouchLike ? 420 : 620,
+    aspectRatio: BOARD_ASPECT,
+    borderRadius: 16,
+    border: "2px solid #073126",
+    background: BOARD_BG,
+    boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
+    overflow: "hidden",
+    ...BOARD_TOUCH_GUARD,
+  };
+}
+
+type FsDoc = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+
+type FsEl = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+};
+
+async function tryRequestNativeFullscreen(el: HTMLElement): Promise<boolean> {
+  const node = el as FsEl;
+  try {
+    if (typeof node.requestFullscreen === "function") {
+      await node.requestFullscreen();
+      return document.fullscreenElement === el;
+    }
+    if (typeof node.webkitRequestFullscreen === "function") {
+      await node.webkitRequestFullscreen();
+      const doc = document as FsDoc;
+      return (doc.webkitFullscreenElement ?? document.fullscreenElement) === el;
+    }
+  } catch {
+    // iOS Safari rejects element fullscreen for arbitrary nodes — CSS fallback.
+  }
+  return false;
+}
+
+async function tryExitNativeFullscreen(): Promise<void> {
+  const doc = document as FsDoc;
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      await document.exitFullscreen();
+      return;
+    }
+    if (doc.webkitFullscreenElement && doc.webkitExitFullscreen) {
+      await doc.webkitExitFullscreen();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function syncLayerToVisualViewport(layer: HTMLElement | null) {
+  if (!layer) return;
+  const vv = window.visualViewport;
+  if (!vv) {
+    layer.style.top = "0px";
+    layer.style.left = "0px";
+    layer.style.width = "100%";
+    layer.style.height = "100dvh";
+    return;
+  }
+  layer.style.top = `${vv.offsetTop}px`;
+  layer.style.left = `${vv.offsetLeft}px`;
+  layer.style.width = `${vv.width}px`;
+  layer.style.height = `${vv.height}px`;
+}
+
 function SharedCanvasBoardPreview({
   overlayText,
 }: {
   overlayText?: string;
 }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const nativeFsRef = useRef(false);
   const isTouchLike =
     typeof window !== "undefined" &&
     (("ontouchstart" in window && navigator.maxTouchPoints > 0) ||
       window.matchMedia("(pointer: coarse)").matches);
 
+  const exitFullscreen = () => {
+    nativeFsRef.current = false;
+    setIsFullscreen(false);
+    setToolsExpanded(false);
+    void tryExitNativeFullscreen();
+  };
+
+  const enterFullscreen = () => {
+    setToolsExpanded(false);
+    setIsFullscreen(true);
+  };
+
+  const layoutPreviewSurface = () => {
+    const scroll = scrollRef.current;
+    const surface = surfaceRef.current;
+    const layer = rootRef.current;
+    if (!surface || !isFullscreen) {
+      if (surface) {
+        surface.style.width = "";
+        surface.style.height = "";
+      }
+      return;
+    }
+    const toolbar = layer?.querySelector(".cm-board-toolbar") as HTMLElement | null;
+    const toolbarH = toolbar?.offsetHeight ?? 40;
+    const availW = Math.max(
+      scroll?.clientWidth ?? 0,
+      layer?.clientWidth ?? 0,
+      window.innerWidth
+    ) - 4;
+    const availH =
+      Math.max(
+        scroll?.clientHeight ?? 0,
+        (layer?.clientHeight ?? 0) > 0
+          ? (layer?.clientHeight ?? 0) - toolbarH - 10
+          : 0,
+        window.innerHeight - toolbarH - 24
+      ) - 4;
+    if (availW < 2 || availH < 2) return;
+    const aspect = BOARD_LOGICAL_WIDTH / BOARD_LOGICAL_HEIGHT;
+    let w = availW;
+    let h = w / aspect;
+    if (h > availH) {
+      h = availH;
+      w = h * aspect;
+    }
+    surface.style.width = `${Math.floor(w)}px`;
+    surface.style.height = `${Math.floor(h)}px`;
+    surface.style.aspectRatio = "unset";
+  };
+
   useEffect(() => {
     setBoardFullscreenLock(isFullscreen);
-    return () => setBoardFullscreenLock(false);
+    if (!isFullscreen) {
+      const layer = rootRef.current;
+      if (layer) {
+        layer.style.top = "";
+        layer.style.left = "";
+        layer.style.width = "";
+        layer.style.height = "";
+      }
+      layoutPreviewSurface();
+      return () => setBoardFullscreenLock(false);
+    }
+
+    const layer = rootRef.current;
+    syncLayerToVisualViewport(layer);
+    void (async () => {
+      if (!layer) return;
+      nativeFsRef.current = await tryRequestNativeFullscreen(layer);
+      requestAnimationFrame(layoutPreviewSurface);
+    })();
+
+    const onVv = () => {
+      syncLayerToVisualViewport(rootRef.current);
+      layoutPreviewSurface();
+    };
+    window.visualViewport?.addEventListener("resize", onVv);
+    window.visualViewport?.addEventListener("scroll", onVv);
+    requestAnimationFrame(layoutPreviewSurface);
+    return () => {
+      setBoardFullscreenLock(false);
+      window.visualViewport?.removeEventListener("resize", onVv);
+      window.visualViewport?.removeEventListener("scroll", onVv);
+    };
   }, [isFullscreen]);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      const doc = document as FsDoc;
+      const active = Boolean(
+        document.fullscreenElement ?? doc.webkitFullscreenElement
+      );
+      if (!active && nativeFsRef.current) {
+        nativeFsRef.current = false;
+        setIsFullscreen(false);
+        setToolsExpanded(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener(
+      "webkitfullscreenchange",
+      onFsChange as EventListener
+    );
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener(
+        "webkitfullscreenchange",
+        onFsChange as EventListener
+      );
+    };
+  }, []);
 
   useEffect(() => {
     if (!isFullscreen) return;
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") setIsFullscreen(false);
+      if (ev.key === "Escape") exitFullscreen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -106,6 +322,7 @@ function SharedCanvasBoardPreview({
 
   const board = (
     <div
+      ref={rootRef}
       className={
         isFullscreen
           ? "classmate-board-root classmate-board-fullscreen-layer"
@@ -122,19 +339,6 @@ function SharedCanvasBoardPreview({
           .join(" ")}
         style={BOARD_TOUCH_GUARD}
       >
-        {isFullscreen ? (
-          <div className="cm-board-fs-topbar" style={BOARD_TOUCH_GUARD}>
-            <span className="cm-board-fs-status">通話中 · 黒板</span>
-            <button
-              type="button"
-              className="cm-board-fs-exit"
-              onClick={() => setIsFullscreen(false)}
-              aria-label="全画面を解除"
-            >
-              全画面解除
-            </button>
-          </div>
-        ) : null}
         <div className="cm-board-toolbar-primary" style={BOARD_TOUCH_GUARD}>
           <div className="cm-board-swatches" style={BOARD_TOUCH_GUARD}>
             {CHALK_COLORS.map((c) => (
@@ -173,17 +377,37 @@ function SharedCanvasBoardPreview({
               <button
                 type="button"
                 className="cm-board-tool-chip cm-board-tool-chip--fullscreen"
-                onClick={() => setIsFullscreen(true)}
+                onClick={enterFullscreen}
               >
                 全画面
               </button>
-            ) : null}
-            <button type="button" disabled className="cm-board-tool-more" aria-label="黒板ツール">
+            ) : (
+              <button
+                type="button"
+                className="cm-board-fs-exit"
+                onClick={exitFullscreen}
+                aria-label="全画面を解除"
+              >
+                解除
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={!isFullscreen}
+              className={[
+                "cm-board-tool-more",
+                toolsExpanded ? "cm-board-tool-more--open" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              aria-label="黒板ツール"
+              onClick={() => setToolsExpanded((v) => !v)}
+            >
               ⋯
             </button>
           </div>
         </div>
-        {isFullscreen ? (
+        {toolsExpanded ? (
           <div className="cm-board-toolbar-more" style={BOARD_TOUCH_GUARD}>
             <label className="cm-board-width">
               太さ
@@ -201,6 +425,7 @@ function SharedCanvasBoardPreview({
       </div>
 
       <div
+        ref={scrollRef}
         className="classmate-board-scroll"
         style={{
           marginTop: isFullscreen ? 0 : 8,
@@ -209,35 +434,24 @@ function SharedCanvasBoardPreview({
           borderRadius: isFullscreen ? 12 : 18,
           border: "none",
           boxShadow: "inset 0 0 0 1px rgba(15,23,42,0.05)",
-          background: BOARD_OUTER_BG,
+          background: isFullscreen ? BOARD_BG : BOARD_OUTER_BG,
           padding: isFullscreen ? 0 : 10,
           overflowX: isFullscreen ? "hidden" : "auto",
           overflowY: "hidden",
+          display: isFullscreen ? "flex" : undefined,
+          alignItems: isFullscreen ? "center" : undefined,
+          justifyContent: isFullscreen ? "center" : undefined,
           ...BOARD_TOUCH_GUARD,
         }}
       >
         <div
+          ref={surfaceRef}
           className="classmate-board-surface"
           style={{
-            position: "relative",
-            width: "100%",
-            maxWidth: "none",
-            margin: "0 auto",
-            minWidth: isFullscreen ? 0 : MOBILE_MIN_BOARD_WIDTH_PX,
-            minHeight: isFullscreen ? "100%" : isTouchLike ? 420 : 620,
-            height: isFullscreen ? "100%" : undefined,
-            aspectRatio: isFullscreen
-              ? undefined
-              : `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
-            borderRadius: isFullscreen ? 10 : 16,
-            border: "2px solid #073126",
-            background: BOARD_BG,
-            boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
-            overflow: "hidden",
+            ...boardSurfaceLayoutStyle(isFullscreen, isTouchLike),
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            ...BOARD_TOUCH_GUARD,
           }}
         >
           {overlayText ? (
@@ -278,7 +492,13 @@ function SharedCanvasBoardPreview({
   return board;
 }
 
-function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
+function SharedCanvasBoardLive({
+  sessionId,
+  localOnly = false,
+}: {
+  sessionId: string;
+  localOnly?: boolean;
+}) {
   const sessionIdRef = useRef(sessionId);
   const deviceIdRef = useRef("");
   const displayNameRef = useRef("");
@@ -286,6 +506,8 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const boardScrollRef = useRef<HTMLDivElement | null>(null);
   const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const nativeFsRef = useRef(false);
 
   const drawingRef = useRef(false);
   const pointsRef = useRef<StrokePoint[]>([]);
@@ -332,6 +554,27 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(false);
+
+  const exitFullscreen = () => {
+    if (drawingRef.current) {
+      // End in-progress stroke before remounting into the inline tree.
+      drawingRef.current = false;
+      setBoardDrawingLock(false);
+    }
+    nativeFsRef.current = false;
+    setIsFullscreen(false);
+    setToolsExpanded(false);
+    void tryExitNativeFullscreen();
+  };
+
+  const enterFullscreen = () => {
+    if (drawingRef.current) {
+      drawingRef.current = false;
+      setBoardDrawingLock(false);
+    }
+    setToolsExpanded(false);
+    setIsFullscreen(true);
+  };
 
   toolRef.current = tool;
   penColorLiveRef.current = penColor;
@@ -545,10 +788,57 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     }
   };
 
+  const layoutFullscreenSurface = () => {
+    const scroll = boardScrollRef.current;
+    const boardSurface = boardSurfaceRef.current;
+    const layer = rootRef.current;
+    if (!boardSurface || !isFullscreen) return;
+
+    const toolbar = layer?.querySelector(".cm-board-toolbar") as HTMLElement | null;
+    const toolbarH = toolbar?.offsetHeight ?? 40;
+    const layerW = layer?.clientWidth ?? 0;
+    const layerH = layer?.clientHeight ?? 0;
+    const scrollW = scroll?.clientWidth ?? 0;
+    const scrollH = scroll?.clientHeight ?? 0;
+
+    // Prefer the real fullscreen layer box — scroll flex height can be stale
+    // right after portal / requestFullscreen.
+    const availW = Math.max(scrollW, layerW, window.innerWidth) - 4;
+    const availH =
+      Math.max(
+        scrollH,
+        layerH > 0 ? layerH - toolbarH - 10 : 0,
+        window.innerHeight - toolbarH - 24
+      ) - 4;
+    if (availW < 2 || availH < 2) return;
+
+    const aspect = BOARD_LOGICAL_WIDTH / BOARD_LOGICAL_HEIGHT;
+    let w = availW;
+    let h = w / aspect;
+    if (h > availH) {
+      h = availH;
+      w = h * aspect;
+    }
+
+    boardSurface.style.width = `${Math.floor(w)}px`;
+    boardSurface.style.height = `${Math.floor(h)}px`;
+    boardSurface.style.maxWidth = "100%";
+    boardSurface.style.maxHeight = "100%";
+    boardSurface.style.aspectRatio = "unset";
+  };
+
   const resizeCanvas = () => {
     const canvas = canvasRef.current;
     const boardSurface = boardSurfaceRef.current;
     if (!canvas || !boardSurface) return;
+
+    if (isFullscreen) {
+      layoutFullscreenSurface();
+    } else {
+      boardSurface.style.width = "";
+      boardSurface.style.height = "";
+      boardSurface.style.aspectRatio = "";
+    }
 
     const rect = boardSurface.getBoundingClientRect();
     const w = Math.max(320, Math.floor(rect.width));
@@ -565,6 +855,10 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   const loadAll = async () => {
     const activeSessionId = sessionIdRef.current;
     if (!activeSessionId) return;
+    if (localOnly) {
+      redrawScene();
+      return;
+    }
 
     const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
@@ -602,7 +896,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   };
 
   const sendBroadcastStroke = async (payload: BroadcastStrokePayload) => {
-    if (!channelRef.current) return;
+    if (localOnly || !channelRef.current) return;
 
     return channelRef.current.send({
       type: "broadcast",
@@ -612,7 +906,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   };
 
   const sendBroadcastClear = async (payload: BroadcastClearPayload) => {
-    if (!channelRef.current) return;
+    if (localOnly || !channelRef.current) return;
 
     return channelRef.current.send({
       type: "broadcast",
@@ -711,6 +1005,17 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
     setPendingRows(upsertRows(pendingRowsRef.current, [optimisticRow]));
     redrawScene();
 
+    if (localOnly) {
+      setPersistedRows(
+        upsertRows(persistedRowsRef.current, [optimisticRow])
+      );
+      pendingRowsRef.current = pendingRowsRef.current.filter(
+        (row) => row.id !== optimisticRow.id
+      );
+      redrawScene();
+      return;
+    }
+
     const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
       .insert({
@@ -784,6 +1089,11 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       deviceId: deviceIdRef.current,
       clearAt: Date.now(),
     });
+
+    if (localOnly) {
+      setInfo("");
+      return;
+    }
 
     const { data, error } = await supabaseBrowser
       .from("call_chalk_strokes")
@@ -881,7 +1191,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || localOnly) return;
 
     realtimeSessionRef.current = sessionId;
     realtimeHadFailureRef.current = false;
@@ -1108,25 +1418,98 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     setBoardFullscreenLock(isFullscreen);
-    if (isFullscreen) {
+    if (!isFullscreen) {
+      const layer = rootRef.current;
+      if (layer) {
+        layer.style.top = "";
+        layer.style.left = "";
+        layer.style.width = "";
+        layer.style.height = "";
+      }
+      return () => setBoardFullscreenLock(false);
+    }
+
+    const layer = rootRef.current;
+    syncLayerToVisualViewport(layer);
+
+    void (async () => {
+      if (!rootRef.current) return;
+      nativeFsRef.current = await tryRequestNativeFullscreen(rootRef.current);
       requestAnimationFrame(() => {
         resizeCanvas();
         redrawScene();
       });
-    }
-    return () => setBoardFullscreenLock(false);
+    })();
+
+    const onVv = () => {
+      syncLayerToVisualViewport(rootRef.current);
+      resizeCanvas();
+      redrawScene();
+    };
+    window.visualViewport?.addEventListener("resize", onVv);
+    window.visualViewport?.addEventListener("scroll", onVv);
+
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      redrawScene();
+    });
+
+    return () => {
+      setBoardFullscreenLock(false);
+      window.visualViewport?.removeEventListener("resize", onVv);
+      window.visualViewport?.removeEventListener("scroll", onVv);
+    };
   }, [isFullscreen]);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      const doc = document as FsDoc;
+      const active = Boolean(
+        document.fullscreenElement ?? doc.webkitFullscreenElement
+      );
+      if (!active && nativeFsRef.current) {
+        nativeFsRef.current = false;
+        setIsFullscreen(false);
+        setToolsExpanded(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    document.addEventListener(
+      "webkitfullscreenchange",
+      onFsChange as EventListener
+    );
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      document.removeEventListener(
+        "webkitfullscreenchange",
+        onFsChange as EventListener
+      );
+    };
+  }, []);
 
   useEffect(() => {
     if (!isFullscreen) return;
 
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") setIsFullscreen(false);
+      if (ev.key === "Escape") exitFullscreen();
     };
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [isFullscreen]);
+
+  // Re-measure after portal remount / aspect letterbox layout.
+  useEffect(() => {
+    const surface = boardSurfaceRef.current;
+    if (!surface || typeof ResizeObserver === "undefined") return;
+
+    const ro = new ResizeObserver(() => {
+      resizeCanvas();
+      redrawScene();
+    });
+    ro.observe(surface);
+    return () => ro.disconnect();
+  }, [sessionId, isFullscreen]);
 
   useEffect(() => {
     const scroll = boardScrollRef.current;
@@ -1207,6 +1590,10 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Portal remount on fullscreen toggle recreates the <canvas>; this effect
+    // must re-bind listeners (isFullscreen is an intentional dependency).
+    canvas.dataset.drawBound = isFullscreen ? "fs" : "inline";
 
     const resetDrawingState = () => {
       drawingRef.current = false;
@@ -1593,10 +1980,12 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
       watchdogRef.current = null;
       forceAbort();
     };
-  }, [sessionId, sounds, isTouchLike, touchMode]);
+    // isFullscreen: portal remount recreates canvas; must rebind listeners.
+  }, [sessionId, sounds, isTouchLike, touchMode, isFullscreen]);
 
   const board = (
     <div
+      ref={rootRef}
       className={
         isFullscreen
           ? "classmate-board-root classmate-board-fullscreen-layer"
@@ -1616,20 +2005,6 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           .join(" ")}
         style={BOARD_TOUCH_GUARD}
       >
-        {isFullscreen ? (
-          <div className="cm-board-fs-topbar" style={BOARD_TOUCH_GUARD}>
-            <span className="cm-board-fs-status">通話中 · 黒板</span>
-            <button
-              type="button"
-              className="cm-board-fs-exit"
-              onClick={() => setIsFullscreen(false)}
-              aria-label="全画面を解除"
-            >
-              全画面解除
-            </button>
-          </div>
-        ) : null}
-
         <div className="cm-board-toolbar-primary" style={BOARD_TOUCH_GUARD}>
           <div className="cm-board-swatches" style={BOARD_TOUCH_GUARD}>
             {CHALK_COLORS.map((c) => (
@@ -1661,8 +2036,10 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
                 .filter(Boolean)
                 .join(" ")}
               onClick={() => setTool("eraser")}
+              aria-label="消しゴム"
+              title="消し"
             >
-              消し
+              {isFullscreen ? "消" : "消し"}
             </button>
           </div>
 
@@ -1695,13 +2072,22 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
               <button
                 type="button"
                 className="cm-board-tool-chip cm-board-tool-chip--fullscreen"
-                onClick={() => setIsFullscreen(true)}
+                onClick={enterFullscreen}
                 aria-label="黒板を全画面表示"
                 title="全画面"
               >
                 全画面
               </button>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                className="cm-board-fs-exit"
+                onClick={exitFullscreen}
+                aria-label="全画面を解除"
+              >
+                解除
+              </button>
+            )}
             <button
               type="button"
               className={[
@@ -1719,7 +2105,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           </div>
         </div>
 
-        {toolsExpanded || isFullscreen ? (
+        {toolsExpanded ? (
           <div className="cm-board-toolbar-more" style={BOARD_TOUCH_GUARD}>
             <label className="cm-board-width">
               太さ
@@ -1743,7 +2129,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         ) : null}
       </div>
 
-      {info ? (
+      {info && !isFullscreen ? (
         <div
           style={{
             marginTop: 8,
@@ -1764,12 +2150,15 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           flex: isFullscreen ? 1 : undefined,
           minHeight: isFullscreen ? 0 : undefined,
           borderRadius: isFullscreen ? 12 : 16,
-          border: "1px solid rgba(0,0,0,0.08)",
-          background: BOARD_OUTER_BG,
-          padding: isFullscreen ? 8 : 10,
+          border: isFullscreen ? "none" : "1px solid rgba(0,0,0,0.08)",
+          background: isFullscreen ? BOARD_BG : BOARD_OUTER_BG,
+          padding: isFullscreen ? 0 : 10,
           overflowX: isFullscreen ? "hidden" : "auto",
           overflowY: "hidden",
           WebkitOverflowScrolling: "touch",
+          display: isFullscreen ? "flex" : undefined,
+          alignItems: isFullscreen ? "center" : undefined,
+          justifyContent: isFullscreen ? "center" : undefined,
           ...BOARD_TOUCH_GUARD,
           touchAction: boardTouchAction(touchMode),
           cursor: touchMode === "pan" && !isTouchLike ? "grab" : undefined,
@@ -1779,22 +2168,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           ref={boardSurfaceRef}
           className="classmate-board-surface"
           style={{
-            position: "relative",
-            width: "100%",
-            maxWidth: "none",
-            margin: "0 auto",
-            minWidth: isFullscreen ? 0 : MOBILE_MIN_BOARD_WIDTH_PX,
-            minHeight: isFullscreen ? "100%" : isTouchLike ? 420 : 620,
-            height: isFullscreen ? "100%" : undefined,
-            aspectRatio: isFullscreen
-              ? undefined
-              : `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
-            borderRadius: isFullscreen ? 10 : 16,
-            border: "2px solid #073126",
-            background: BOARD_BG,
-            boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
-            overflow: "hidden",
-            ...BOARD_TOUCH_GUARD,
+            ...boardSurfaceLayoutStyle(isFullscreen, isTouchLike),
             touchAction: boardTouchAction(touchMode),
           }}
         >
@@ -1936,9 +2310,10 @@ export default function SharedCanvasBoard({
   sessionId,
   previewOnly = false,
   previewOverlayText,
+  localOnly = false,
 }: SharedCanvasBoardProps) {
   if (previewOnly) {
     return <SharedCanvasBoardPreview overlayText={previewOverlayText} />;
   }
-  return <SharedCanvasBoardLive sessionId={sessionId} />;
+  return <SharedCanvasBoardLive sessionId={sessionId} localOnly={localOnly} />;
 }
