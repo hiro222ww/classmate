@@ -899,10 +899,42 @@
   border-radius: 12px !important;
 }
 
+.cm-classroom-scope .cm-room-start-btn.cm-cta-primary {
+  /* Explicit white fill — do not rely on inheritance (iOS Safari button UA styles). */
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none !important;
+  font-weight: 900 !important;
+  letter-spacing: 0.04em;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.28),
+    0 0 1px rgba(0, 0, 0, 0.2);
+}
+
 .cm-classroom-scope .cm-room-start-btn.cm-cta-primary:not(:disabled) {
   background: var(--dash-primary-bg-full) !important;
   box-shadow: var(--dash-primary-shadow) !important;
   border: none !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  opacity: 1 !important;
+}
+
+.cm-classroom-scope .cm-room-start-btn.cm-cta-primary:disabled {
+  /* Dim the fill only — never fade the label via whole-button opacity. */
+  background: linear-gradient(
+    180deg,
+    #7aa7f8 0%,
+    #5b8ef0 48%,
+    #4a7de0 100%
+  ) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
 }
 
 .cm-classroom-scope .cm-room-board-wrap {
@@ -4283,16 +4315,25 @@ body.cm-has-mobile-bottom-nav {
 .cm-room-session-hero-cta .cm-room-start-btn {
   width: 100%;
   max-width: 100%;
-  min-height: 46px;
+  min-height: 48px;
   border-radius: 999px !important;
-  font-size: 15px !important;
+  font-size: 16px !important;
+  font-weight: 900 !important;
+  line-height: 1.2 !important;
   box-sizing: border-box;
   box-shadow: 0 10px 24px rgba(52, 120, 246, 0.28) !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.28),
+    0 0 1px rgba(0, 0, 0, 0.2);
 }
 
 .cm-room-session-hero-cta .cm-room-start-btn:disabled {
-  opacity: 0.65;
+  /* Keep label readable; background is dimmed in the scope rule above. */
+  opacity: 1 !important;
   cursor: not-allowed;
+  box-shadow: 0 6px 16px rgba(52, 120, 246, 0.16) !important;
 }
 
 .cm-room-session-hero-avatars {

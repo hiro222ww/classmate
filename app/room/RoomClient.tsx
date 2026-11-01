@@ -4552,7 +4552,11 @@ const name = rawName === "You" ? "参加者" : rawName;
             !roomSessionReady ||
             Date.now() < recentRematchUntilRef.current
           }
-          startLabel="通話開始"
+          startLabel={
+            !sessionId || !classId || sessionResolving || !roomSessionReady
+              ? "準備中…"
+              : "通話開始"
+          }
         >
           <div style={{ display: "grid", gap: 12 }}>
             <InAppBrowserNotice compact />
