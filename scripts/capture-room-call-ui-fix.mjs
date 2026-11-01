@@ -26,6 +26,10 @@ const user = {
 const token = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: user.id, exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url")}.test`;
 
 const WIDTHS = [375, 390, 430];
+const IPAD = [
+  { name: "ipad-portrait", width: 768, height: 1024 },
+  { name: "ipad-landscape", width: 1024, height: 768 },
+];
 
 async function measureOverflow(page) {
   return page.evaluate(() => {
@@ -66,6 +70,68 @@ async function measureOverflow(page) {
       scrollW,
       overflowX: scrollW - clientW,
       top: offenders.slice(0, 8),
+    };
+  });
+}
+
+async function probeHeroArtifact(page) {
+  return page.evaluate(() => {
+    const hero = document.querySelector(".cm-room-session-hero");
+    if (!hero) return { found: false };
+    const before = getComputedStyle(hero, "::before");
+    const media = hero.querySelector(".cm-room-session-hero-media");
+    const mediaBefore = media ? getComputedStyle(media, "::before") : null;
+    const firstChild = hero.querySelector(":scope > div:first-child");
+    const padLeft = firstChild
+      ? parseFloat(getComputedStyle(firstChild).paddingLeft || "0")
+      : 0;
+    return {
+      found: true,
+      beforeContent: before.content,
+      beforeDisplay: before.display,
+      beforeWidth: before.width,
+      mediaBeforeContent: mediaBefore?.content ?? null,
+      mediaBeforeDisplay: mediaBefore?.display ?? null,
+      firstChildPadLeft: padLeft,
+      heroHeight: Math.round(hero.getBoundingClientRect().height),
+    };
+  });
+}
+
+async function probeBoardChrome(page) {
+  return page.evaluate(() => {
+    const clientW = document.documentElement.clientWidth;
+    const swatches = document.querySelector(".cm-board-swatches");
+    const toolbar = document.querySelector(".cm-board-toolbar");
+    const fullscreenBtn = document.querySelector(
+      ".cm-board-tool-chip--fullscreen"
+    );
+    const recruitInvite = document.querySelector(".cm-call-recruitment-invite");
+    const heroInvite = document.querySelector(".cm-room-avatar-chip--invite");
+    const swatchRect = swatches?.getBoundingClientRect();
+    const toolbarRect = toolbar?.getBoundingClientRect();
+    return {
+      swatchCount: document.querySelectorAll(".cm-board-swatch").length,
+      swatchesOverflowPage: swatchRect
+        ? swatchRect.right > clientW + 1 || swatchRect.left < -1
+        : false,
+      toolbarOverflowPage: toolbarRect
+        ? toolbarRect.right > clientW + 1 || toolbarRect.left < -1
+        : false,
+      swatchesScrollable: swatches
+        ? swatches.scrollWidth > swatches.clientWidth + 1
+        : false,
+      hasFullscreenBtn: Boolean(fullscreenBtn),
+      fullscreenDisabled: fullscreenBtn
+        ? Boolean(fullscreenBtn.disabled)
+        : null,
+      recruitInviteCount: recruitInvite ? 1 : 0,
+      heroInviteCount: heroInvite ? 1 : 0,
+      pageOverflowX:
+        Math.max(
+          document.documentElement.scrollWidth,
+          document.body.scrollWidth
+        ) - clientW,
     };
   });
 }
@@ -228,13 +294,36 @@ for (const width of WIDTHS) {
   const callShot = `${OUT}/call_room_fix_${width}.png`;
   await callPage.screenshot({ path: callShot, fullPage: true });
   const callOverflow = await measureOverflow(callPage);
+  const heroProbe = await probeHeroArtifact(callPage);
+  const boardProbe = await probeBoardChrome(callPage);
   const callMarks = {
     hero: await callPage.locator(".cm-room-session-hero").count(),
     dock: await callPage.locator(".cm-call-dock").count(),
     tabs: await callPage.locator(".cm-call-surface-tab").count(),
     oldSeats: await callPage.locator(".cm-call-seat").count(),
     oldFloating: await callPage.locator(".cm-call-floating-dock").count(),
+    recruitInvite: await callPage.locator(".cm-call-recruitment-invite").count(),
+    heroInvite: await callPage.locator(".cm-room-avatar-chip--invite").count(),
+    fullscreenBtn: await callPage
+      .locator(".cm-board-tool-chip--fullscreen")
+      .count(),
   };
+
+  let fsOk = false;
+  let fsExitOk = false;
+  let fsShot = null;
+  if (callMarks.fullscreenBtn > 0) {
+    await callPage.locator(".cm-board-tool-chip--fullscreen").first().click();
+    await callPage.waitForTimeout(500);
+    fsOk = (await callPage.locator(".classmate-board-fullscreen-layer").count()) > 0;
+    fsShot = `${OUT}/call_board_fullscreen_${width}.png`;
+    await callPage.screenshot({ path: fsShot, fullPage: false });
+    await callPage.locator(".cm-board-fs-exit").first().click();
+    await callPage.waitForTimeout(400);
+    fsExitOk =
+      (await callPage.locator(".classmate-board-fullscreen-layer").count()) === 0;
+  }
+
   await callPage.locator(".cm-call-surface-tab").nth(1).click();
   await callPage.waitForTimeout(400);
   const callChatShot = `${OUT}/call_room_chat_${width}.png`;
@@ -245,8 +334,13 @@ for (const width of WIDTHS) {
     width,
     shot: callShot,
     chatShot: callChatShot,
+    fsShot,
     overflow: callOverflow,
+    heroProbe,
+    boardProbe,
     marks: callMarks,
+    fsOk,
+    fsExitOk,
     bad:
       callOverflow.overflowX > 1 ||
       callOverflow.top.some((t) => t.score > 2) ||
@@ -254,7 +348,65 @@ for (const width of WIDTHS) {
       callMarks.dock < 1 ||
       callMarks.tabs < 2 ||
       callMarks.oldSeats > 0 ||
-      callMarks.oldFloating > 0,
+      callMarks.oldFloating > 0 ||
+      callMarks.recruitInvite > 0 ||
+      callMarks.heroInvite < 1 ||
+      callMarks.fullscreenBtn < 1 ||
+      boardProbe.swatchesOverflowPage ||
+      boardProbe.toolbarOverflowPage ||
+      boardProbe.pageOverflowX > 1 ||
+      heroProbe.beforeContent === '" "' ||
+      (heroProbe.beforeDisplay &&
+        heroProbe.beforeDisplay !== "none" &&
+        heroProbe.beforeContent !== "none") ||
+      heroProbe.firstChildPadLeft >= 40 ||
+      !fsOk ||
+      !fsExitOk,
+  });
+  await callPage.close();
+}
+
+for (const pad of IPAD) {
+  const callPage = await browser.newPage({
+    viewport: { width: pad.width, height: pad.height },
+    hasTouch: true,
+  });
+  await callPage.goto(`${BASE}/dev/call-chrome?scene=multi`, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+  await callPage.waitForTimeout(2000);
+  const shot = `${OUT}/call_room_fix_${pad.name}.png`;
+  await callPage.screenshot({ path: shot, fullPage: true });
+  const boardProbe = await probeBoardChrome(callPage);
+  const heroProbe = await probeHeroArtifact(callPage);
+  let fsOk = false;
+  let fsShot = null;
+  if (boardProbe.hasFullscreenBtn) {
+    await callPage.locator(".cm-board-tool-chip--fullscreen").first().click();
+    await callPage.waitForTimeout(500);
+    fsOk = (await callPage.locator(".classmate-board-fullscreen-layer").count()) > 0;
+    fsShot = `${OUT}/call_board_fullscreen_${pad.name}.png`;
+    await callPage.screenshot({ path: fsShot, fullPage: false });
+    await callPage.locator(".cm-board-fs-exit").first().click();
+    await callPage.waitForTimeout(300);
+  }
+  results.push({
+    kind: "call-ipad",
+    name: pad.name,
+    width: pad.width,
+    height: pad.height,
+    shot,
+    fsShot,
+    boardProbe,
+    heroProbe,
+    fsOk,
+    bad:
+      boardProbe.swatchesOverflowPage ||
+      boardProbe.toolbarOverflowPage ||
+      boardProbe.pageOverflowX > 1 ||
+      boardProbe.recruitInviteCount > 0 ||
+      !fsOk,
   });
   await callPage.close();
 }

@@ -84,17 +84,57 @@ function SharedCanvasBoardPreview({
 }: {
   overlayText?: string;
 }) {
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const isTouchLike =
     typeof window !== "undefined" &&
     (("ontouchstart" in window && navigator.maxTouchPoints > 0) ||
       window.matchMedia("(pointer: coarse)").matches);
 
-  return (
+  useEffect(() => {
+    setBoardFullscreenLock(isFullscreen);
+    return () => setBoardFullscreenLock(false);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setIsFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isFullscreen]);
+
+  const board = (
     <div
-      className="classmate-board-root"
+      className={
+        isFullscreen
+          ? "classmate-board-root classmate-board-fullscreen-layer"
+          : "classmate-board-root"
+      }
       style={{ marginTop: 0, ...BOARD_TOUCH_GUARD }}
     >
-      <div className="cm-board-toolbar" style={BOARD_TOUCH_GUARD}>
+      <div
+        className={[
+          "cm-board-toolbar",
+          isFullscreen ? "cm-board-toolbar--fullscreen" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        style={BOARD_TOUCH_GUARD}
+      >
+        {isFullscreen ? (
+          <div className="cm-board-fs-topbar" style={BOARD_TOUCH_GUARD}>
+            <span className="cm-board-fs-status">通話中 · 黒板</span>
+            <button
+              type="button"
+              className="cm-board-fs-exit"
+              onClick={() => setIsFullscreen(false)}
+              aria-label="全画面を解除"
+            >
+              全画面解除
+            </button>
+          </div>
+        ) : null}
         <div className="cm-board-toolbar-primary" style={BOARD_TOUCH_GUARD}>
           <div className="cm-board-swatches" style={BOARD_TOUCH_GUARD}>
             {CHALK_COLORS.map((c) => (
@@ -129,23 +169,49 @@ function SharedCanvasBoardPreview({
             <button type="button" disabled className="cm-board-tool-chip">
               移動
             </button>
+            {!isFullscreen ? (
+              <button
+                type="button"
+                className="cm-board-tool-chip cm-board-tool-chip--fullscreen"
+                onClick={() => setIsFullscreen(true)}
+              >
+                全画面
+              </button>
+            ) : null}
             <button type="button" disabled className="cm-board-tool-more" aria-label="黒板ツール">
               ⋯
             </button>
           </div>
         </div>
+        {isFullscreen ? (
+          <div className="cm-board-toolbar-more" style={BOARD_TOUCH_GUARD}>
+            <label className="cm-board-width">
+              太さ
+              <input type="range" min={1} max={10} value={3} disabled />
+            </label>
+            <button
+              type="button"
+              disabled
+              className="cm-board-tool-chip cm-board-tool-chip--danger"
+            >
+              全消し
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <div
         className="classmate-board-scroll"
         style={{
-          marginTop: 8,
-          borderRadius: 18,
+          marginTop: isFullscreen ? 0 : 8,
+          flex: isFullscreen ? 1 : undefined,
+          minHeight: isFullscreen ? 0 : undefined,
+          borderRadius: isFullscreen ? 12 : 18,
           border: "none",
           boxShadow: "inset 0 0 0 1px rgba(15,23,42,0.05)",
           background: BOARD_OUTER_BG,
-          padding: 10,
-          overflowX: "auto",
+          padding: isFullscreen ? 0 : 10,
+          overflowX: isFullscreen ? "hidden" : "auto",
           overflowY: "hidden",
           ...BOARD_TOUCH_GUARD,
         }}
@@ -157,10 +223,13 @@ function SharedCanvasBoardPreview({
             width: "100%",
             maxWidth: "none",
             margin: "0 auto",
-            minWidth: MOBILE_MIN_BOARD_WIDTH_PX,
-            minHeight: isTouchLike ? 420 : 620,
-            aspectRatio: `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
-            borderRadius: 16,
+            minWidth: isFullscreen ? 0 : MOBILE_MIN_BOARD_WIDTH_PX,
+            minHeight: isFullscreen ? "100%" : isTouchLike ? 420 : 620,
+            height: isFullscreen ? "100%" : undefined,
+            aspectRatio: isFullscreen
+              ? undefined
+              : `${BOARD_LOGICAL_WIDTH} / ${BOARD_LOGICAL_HEIGHT}`,
+            borderRadius: isFullscreen ? 10 : 16,
             border: "2px solid #073126",
             background: BOARD_BG,
             boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06)",
@@ -192,6 +261,21 @@ function SharedCanvasBoardPreview({
       </div>
     </div>
   );
+
+  if (isFullscreen && typeof document !== "undefined") {
+    return (
+      <>
+        <div
+          className="classmate-board-fullscreen-placeholder"
+          aria-hidden
+          style={{ minHeight: 280, marginTop: 10 }}
+        />
+        {createPortal(board, document.body)}
+      </>
+    );
+  }
+
+  return board;
 }
 
 function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
@@ -1523,7 +1607,29 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
         ...BOARD_TOUCH_GUARD,
       }}
     >
-      <div className="cm-board-toolbar" style={BOARD_TOUCH_GUARD}>
+      <div
+        className={[
+          "cm-board-toolbar",
+          isFullscreen ? "cm-board-toolbar--fullscreen" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        style={BOARD_TOUCH_GUARD}
+      >
+        {isFullscreen ? (
+          <div className="cm-board-fs-topbar" style={BOARD_TOUCH_GUARD}>
+            <span className="cm-board-fs-status">通話中 · 黒板</span>
+            <button
+              type="button"
+              className="cm-board-fs-exit"
+              onClick={() => setIsFullscreen(false)}
+              aria-label="全画面を解除"
+            >
+              全画面解除
+            </button>
+          </div>
+        ) : null}
+
         <div className="cm-board-toolbar-primary" style={BOARD_TOUCH_GUARD}>
           <div className="cm-board-swatches" style={BOARD_TOUCH_GUARD}>
             {CHALK_COLORS.map((c) => (
@@ -1585,6 +1691,17 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
             >
               移動
             </button>
+            {!isFullscreen ? (
+              <button
+                type="button"
+                className="cm-board-tool-chip cm-board-tool-chip--fullscreen"
+                onClick={() => setIsFullscreen(true)}
+                aria-label="黒板を全画面表示"
+                title="全画面"
+              >
+                全画面
+              </button>
+            ) : null}
             <button
               type="button"
               className={[
@@ -1602,7 +1719,7 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
           </div>
         </div>
 
-        {toolsExpanded ? (
+        {toolsExpanded || isFullscreen ? (
           <div className="cm-board-toolbar-more" style={BOARD_TOUCH_GUARD}>
             <label className="cm-board-width">
               太さ
@@ -1614,18 +1731,6 @@ function SharedCanvasBoardLive({ sessionId }: { sessionId: string }) {
                 onChange={(e) => setPenWidth(Number(e.target.value))}
               />
             </label>
-            <button
-              type="button"
-              className={[
-                "cm-board-tool-chip",
-                isFullscreen ? "cm-board-tool-chip--active" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              onClick={() => setIsFullscreen((prev) => !prev)}
-            >
-              {isFullscreen ? "閉じる" : "全画面"}
-            </button>
             <button
               type="button"
               className="cm-board-tool-chip cm-board-tool-chip--danger"

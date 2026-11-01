@@ -3472,33 +3472,6 @@ export default function CallClient() {
               </span>
             ) : null}
           </div>
-          {recruitmentView.recruitingOpen ? (
-            <button
-              type="button"
-              className="cm-call-recruitment-invite"
-              onClick={() => {
-                void (async () => {
-                  if (!sessionId || !classId) {
-                    alert("まだ招待リンクを作れません。");
-                    return;
-                  }
-                  const inviteUrl = buildInviteRoomUrl({ classId, sessionId });
-                  const result = await shareOrCopyInviteUrl({
-                    url: inviteUrl,
-                    title: "Classmate",
-                    text: "通話に参加しませんか？",
-                  });
-                  if (result.ok && result.method === "clipboard") {
-                    alert("招待リンクをコピーしました");
-                  } else if (!result.ok) {
-                    alert("招待リンクを共有できませんでした");
-                  }
-                })();
-              }}
-            >
-              招待
-            </button>
-          ) : null}
         </div>
         {recruitmentView.aloneWaitTimedOut ? (
           <div className="cm-call-recruitment-actions">
