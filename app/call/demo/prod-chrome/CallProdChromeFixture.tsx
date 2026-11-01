@@ -187,7 +187,10 @@ export default function CallProdChromeFixture() {
       membersSyncRevision={1}
       showCallStuckReconnect={scene === "stuck"}
       onCallStuckReconnect={scene === "stuck" ? () => undefined : undefined}
-      onProfileEdit={() => undefined}
+      onOpenAccountMenu={() => undefined}
+      accountDisplayName="自分"
+      accountPhotoPath={null}
+      onOpenClassMenu={() => undefined}
       onInviteFriends={() => undefined}
       onExit={() => undefined}
       showWaitingForOthers={scene === "prep" || scene === "solo"}

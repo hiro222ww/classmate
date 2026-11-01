@@ -40,11 +40,20 @@ import { isDevMode, getDevUserKey } from "@/lib/devMode";
 import { withDev } from "@/lib/withDev";
 import {
   HOME_MY_CLASS_SECTION_ID,
+  isAppShellContext,
   resolveShellDashboardPath,
 } from "@/lib/appShellContext";
 import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import { markClassLeftLocally } from "@/lib/leftClassMembership";
-import { RoomSettingsSheet } from "@/components/room/RoomSettingsSheet";
+import { RoomClassMenuSheet } from "@/components/room/RoomClassMenuSheet";
+import { RoomAccountAvatarButton } from "@/components/room/RoomAccountAvatarButton";
+import HomeMenuSheet from "@/components/HomeMenuSheet";
+import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
+import {
+  buildShellAwareLoginUrl,
+  buildShellAwareSettingsUrl,
+} from "@/lib/appShellNavigation";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import {
   buildCurrentPathReturnTo,
@@ -789,7 +798,8 @@ export default function RoomClient() {
   const [lobbyNowMs, setLobbyNowMs] = useState(() => Date.now());
   const [lobbyExtendBusy, setLobbyExtendBusy] = useState(false);
   const [lobbyQuitBusy, setLobbyQuitBusy] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [classMenuOpen, setClassMenuOpen] = useState(false);
   const [classLeaveBusy, setClassLeaveBusy] = useState(false);
   const [lobbyExtendError, setLobbyExtendError] = useState<string | null>(null);
   const lobbyJoinedTrackedKeyRef = useRef<string | null>(null);
@@ -802,6 +812,13 @@ export default function RoomClient() {
     if (!stored || stored === "You") return "";
     return stored;
   });
+  const [photoPath, setPhotoPath] = useState<string | null>(null);
+  const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const {
+    enabled: notificationsEnabled,
+    busy: notificationsBusy,
+    toggle: toggleNotifications,
+  } = useWebPushNotifications(deviceId, "room");
 
   const joinedSessionKeyRef = useRef<string | null>(null);
   const joinInFlightKeyRef = useRef<string | null>(null);
@@ -1432,7 +1449,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     if (!ok) return;
 
     setClassLeaveBusy(true);
-    setSettingsOpen(false);
+    setClassMenuOpen(false);
 
     try {
       const res = await fetch("/api/class/leave", {
@@ -1815,6 +1832,8 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           const safeName = canonical === "You" ? "参加者" : canonical;
           setDisplayName(safeName);
           writeStoredDisplayName(deviceId, safeName);
+          const nextPhoto = String(data?.profile?.photo_path ?? "").trim();
+          setPhotoPath(nextPhoto || null);
         }
       } catch {
         if (!cancelled && !displayName) {
@@ -4555,16 +4574,24 @@ const name = rawName === "You" ? "参加者" : rawName;
                 : []
           }
           right={
-            <button
-              type="button"
-              className="cm-room-ghost-btn cm-room-session-hero-iconbtn"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="設定"
-              title="設定"
-              aria-expanded={settingsOpen}
-            >
-              ⚙
-            </button>
+            <>
+              <button
+                type="button"
+                className="cm-room-ghost-btn cm-room-session-hero-iconbtn cm-room-session-hero-more-btn"
+                onClick={() => setClassMenuOpen(true)}
+                aria-label="クラスメニュー"
+                title="クラス"
+                aria-expanded={classMenuOpen}
+              >
+                …
+              </button>
+              <RoomAccountAvatarButton
+                displayName={displayName || "ゲスト"}
+                photoPath={photoPath}
+                open={accountMenuOpen}
+                onOpen={() => setAccountMenuOpen(true)}
+              />
+            </>
           }
           avatarStrip={
             <RoomAvatarStrip
@@ -4764,10 +4791,34 @@ const name = rawName === "You" ? "参加者" : rawName;
         returnTo={buildCurrentPathReturnTo(pathname, searchParams.toString())}
       />
 
-      <RoomSettingsSheet
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+      <HomeMenuSheet
+        open={accountMenuOpen}
+        onClose={() => setAccountMenuOpen(false)}
+        notificationsEnabled={notificationsEnabled}
+        notificationsBusy={notificationsBusy}
+        onToggleNotifications={toggleNotifications}
+        hideWebPush={isAppShellContext()}
         profileHref={profileEditHref}
+        myClassesHref={`${withDev(resolveShellDashboardPath())}#${HOME_MY_CLASS_SECTION_ID}`}
+        planHref={withDev("/premium")}
+        billingHref={withDev("/billing")}
+        accountHref={
+          loggedIn
+            ? withDev(buildShellAwareSettingsUrl())
+            : withDev(buildShellAwareLoginUrl("/room"))
+        }
+        accountLabel={accountLabel}
+        loggedIn={loggedIn}
+        aboutHref={withDev("/about")}
+        legalHref={withDev("/terms")}
+        discoverHref={withDev("/class/select")}
+        displayName={displayName || "ゲスト"}
+        photoPath={photoPath}
+      />
+
+      <RoomClassMenuSheet
+        open={classMenuOpen}
+        onClose={() => setClassMenuOpen(false)}
         onLeaveClass={() => {
           void leaveClassAndGoHome();
         }}

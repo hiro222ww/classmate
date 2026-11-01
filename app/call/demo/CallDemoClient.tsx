@@ -573,9 +573,11 @@ export default function CallDemoClient() {
         callRequestLabel={
           state.board.statusText ? state.board.statusText : null
         }
-        onProfileEdit={() => {
+        onOpenAccountMenu={() => {
           /* demo: no navigation */
         }}
+        accountDisplayName="デモ"
+        accountPhotoPath={null}
         onInviteFriends={() => {
           /* demo: no clipboard invite */
         }}
