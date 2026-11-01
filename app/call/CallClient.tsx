@@ -3448,8 +3448,10 @@ export default function CallClient() {
     nowMs: nowMs || Date.now(),
   });
 
+  // Status/count live in the hero; skip the duplicate 募集カード.
+  // Keep alone-wait extend/quit as a rare functional prompt only.
   const recruitmentBanner =
-    membersSyncRevision > 0 ? (
+    recruitmentView.aloneWaitTimedOut || lobbyExtendError ? (
       <div
         className={[
           "cm-call-banner",
@@ -3458,21 +3460,6 @@ export default function CallClient() {
           `cm-call-recruitment--${recruitmentView.phase}`,
         ].join(" ")}
       >
-        <div className="cm-call-recruitment-row">
-          <div className="cm-call-recruitment-copy">
-            <span className="cm-call-recruitment-label">
-              {recruitmentView.label}
-            </span>
-            <span className="cm-call-recruitment-count">
-              {recruitmentView.memberCount}/{recruitmentView.capacity}
-            </span>
-            {recruitmentView.detail ? (
-              <span className="cm-call-recruitment-detail">
-                {recruitmentView.detail}
-              </span>
-            ) : null}
-          </div>
-        </div>
         {recruitmentView.aloneWaitTimedOut ? (
           <div className="cm-call-recruitment-actions">
             {recruitmentView.canExtendAloneWait ? (

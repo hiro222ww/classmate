@@ -23,8 +23,8 @@ type Props = {
 };
 
 /**
- * Soft sunset-style room hero used by waiting room (PR A).
- * Compact on mobile; room name + meta + status + optional CTA + avatar strip.
+ * Soft sunset-style room hero.
+ * Top: room meta · Mid: open visual · Bottom: avatars / invite.
  */
 export function RoomSessionHero({
   title,
@@ -57,43 +57,48 @@ export function RoomSessionHero({
       </div>
 
       <div className="cm-room-session-hero-inner">
-        {(toolbarLeft || toolbarRight) && (
-          <div className="cm-room-session-hero-toolbar">
-            <div className="cm-room-session-hero-toolbar-left">
-              {toolbarLeft}
-            </div>
-            <div className="cm-room-session-hero-toolbar-right">
-              {toolbarRight}
-            </div>
-          </div>
-        )}
-
-        <div className="cm-room-session-hero-copy">
-          <h1 className="cm-room-session-hero-title">{title}</h1>
-          {(metaParts.length > 0 || statusLabel) && (
-            <div className="cm-room-session-hero-meta-row">
-              {metaParts.length > 0 ? (
-                <p className="cm-room-session-hero-meta">
-                  {metaParts.join(" · ")}
-                </p>
-              ) : null}
-              {statusLabel ? (
-                <span
-                  className={[
-                    "cm-room-session-status",
-                    `cm-room-session-status--${statusTone}`,
-                  ].join(" ")}
-                >
-                  <span className="cm-room-session-status-dot" aria-hidden />
-                  {statusLabel}
-                </span>
-              ) : null}
+        <div className="cm-room-session-hero-top">
+          {(toolbarLeft || toolbarRight) && (
+            <div className="cm-room-session-hero-toolbar">
+              <div className="cm-room-session-hero-toolbar-left">
+                {toolbarLeft}
+              </div>
+              <div className="cm-room-session-hero-toolbar-right">
+                {toolbarRight}
+              </div>
             </div>
           )}
-          {primaryAction ? (
-            <div className="cm-room-session-hero-cta">{primaryAction}</div>
-          ) : null}
+
+          <div className="cm-room-session-hero-copy">
+            <h1 className="cm-room-session-hero-title">{title}</h1>
+            {(metaParts.length > 0 || statusLabel) && (
+              <div className="cm-room-session-hero-meta-row">
+                {metaParts.length > 0 ? (
+                  <p className="cm-room-session-hero-meta">
+                    {metaParts.join(" · ")}
+                  </p>
+                ) : null}
+                {statusLabel ? (
+                  <span
+                    className={[
+                      "cm-room-session-status",
+                      `cm-room-session-status--${statusTone}`,
+                    ].join(" ")}
+                  >
+                    <span className="cm-room-session-status-dot" aria-hidden />
+                    {statusLabel}
+                  </span>
+                ) : null}
+              </div>
+            )}
+            {primaryAction ? (
+              <div className="cm-room-session-hero-cta">{primaryAction}</div>
+            ) : null}
+          </div>
         </div>
+
+        {/* Keeps the mid band open so the sunset / people stay the visual focus. */}
+        <div className="cm-room-session-hero-spacer" aria-hidden />
 
         {avatarStrip ? (
           <div className="cm-room-session-hero-avatars">{avatarStrip}</div>
