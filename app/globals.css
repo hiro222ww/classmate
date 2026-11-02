@@ -328,6 +328,8 @@ body.classmate-board-fullscreen .cm-call-root {
 .classmate-board-fullscreen-layer .cm-board-swatches {
   flex: 1 1 auto;
   gap: 5px;
+  padding: 4px 6px;
+  scroll-padding-inline: 6px;
 }
 
 .classmate-board-fullscreen-layer .cm-board-swatch {
