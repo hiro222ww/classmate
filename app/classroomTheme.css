@@ -531,10 +531,8 @@
 
 @media (min-width: 720px) {
   .cm-home-body .cm-home-talk-hero {
-    max-width: 420px;
-    margin-left: auto;
-    margin-right: auto;
     width: 100%;
+    max-width: none;
   }
 
   .cm-home-talk-cta .cm-entry-button {
@@ -3465,6 +3463,9 @@
 .cm-random-talk {
   display: grid;
   gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 12px 12px 12px;
   border-radius: 18px;
   background:
@@ -3482,6 +3483,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .cm-random-talk-glyph {
@@ -3541,12 +3543,98 @@
   display: grid;
   grid-template-columns: 1.35fr 1fr;
   gap: 8px;
+  min-width: 0;
 }
 
 .cm-random-talk-actions .cm-entry-button {
   min-height: 44px;
+  min-width: 0;
   border-radius: 14px;
   font-size: 13px;
+}
+
+/* iPad+: expand to home content width; copy left / actions right */
+@media (min-width: 768px) {
+  .cm-random-talk {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 10px;
+    padding: 14px 16px;
+  }
+
+  .cm-random-talk-banner {
+    grid-column: 1;
+    gap: 12px;
+  }
+
+  .cm-random-talk-status {
+    grid-column: 1 / -1;
+  }
+
+  .cm-random-talk-actions {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: auto;
+  }
+
+  .cm-random-talk-actions .cm-entry-button {
+    flex: 0 0 auto;
+    min-width: 112px;
+    min-height: 48px !important;
+    padding: 12px 16px !important;
+    font-size: 14px !important;
+  }
+
+  .cm-random-talk-glyph {
+    width: 44px;
+    height: 44px;
+  }
+
+  .cm-random-talk-heading {
+    font-size: 17px;
+  }
+
+  .cm-random-talk-desc {
+    font-size: 13px;
+  }
+}
+
+/* Desktop: slightly roomier touch targets, still content-width aligned */
+@media (min-width: 1024px) {
+  .cm-random-talk {
+    padding: 16px 18px;
+    column-gap: 20px;
+  }
+
+  .cm-random-talk-actions .cm-entry-button {
+    min-width: 128px;
+    min-height: 52px;
+    padding: 12px 20px !important;
+    font-size: 15px !important;
+  }
+
+  .cm-random-talk-glyph {
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+  }
+
+  .cm-random-talk-glyph svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .cm-random-talk-heading {
+    font-size: 18px;
+  }
+
+  .cm-random-talk-desc {
+    font-size: 14px;
+  }
 }
 
 .cm-home-discover {
@@ -5391,7 +5479,10 @@ body.cm-has-mobile-bottom-nav {
   flex-wrap: nowrap;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding: 2px 0;
+  /* Keep leftmost white chalk + active ring fully visible (overflow clips shadows). */
+  padding: 4px 6px;
+  scroll-padding-inline: 6px;
+  scroll-snap-type: x proximity;
 }
 
 .cm-board-swatches::-webkit-scrollbar {
@@ -5407,6 +5498,7 @@ body.cm-has-mobile-bottom-nav {
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
   cursor: pointer;
   padding: 0;
+  scroll-snap-align: start;
 }
 
 .cm-board-swatch--active {
