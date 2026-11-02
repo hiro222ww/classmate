@@ -33,9 +33,7 @@ export default function HomeWorldviewFixturePage() {
           <HomeHeader
             variant="onHero"
             displayName="ひろ"
-            hideWebPush={false}
-            notificationsEnabled
-            onToggleNotifications={() => {}}
+            hideWebPush
             trailing={
               <button
                 type="button"

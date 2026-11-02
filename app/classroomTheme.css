@@ -2776,12 +2776,32 @@
   justify-content: center;
   min-width: 40px;
   min-height: 40px;
+  position: relative;
   -webkit-tap-highlight-color: transparent;
 }
 
 .cm-app-header-menu-avatar:focus-visible {
   outline: 2px solid var(--cm-blue, #3478f6);
   outline-offset: 2px;
+}
+
+/* Unread badge on account avatar (not push-OFF). */
+.cm-account-unread-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #ef4444;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.cm-room-session-hero-account-btn .cm-account-unread-dot {
+  border-color: rgba(255, 255, 255, 0.95);
 }
 
 /* Home promo / atmosphere banner — full-bleed photo (no white caption band) */
@@ -2914,23 +2934,19 @@
   gap: 8px;
 }
 
-.cm-home-header--on-hero .cm-app-header-menu-avatar,
-.cm-home-header--on-hero .classmate-push-bell {
+.cm-home-header--on-hero .cm-app-header-menu-avatar {
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.95);
   box-shadow: 0 6px 16px rgba(23, 35, 61, 0.12);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-}
-
-.cm-home-header--on-hero .cm-app-header-menu-avatar {
   width: 36px;
   height: 36px;
   border-radius: 999px;
   display: grid;
   place-items: center;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .cm-home-promo-banner-copy,
@@ -5179,6 +5195,7 @@ body.cm-has-mobile-bottom-nav {
 /* Hero account avatar (shared with home frosted pill look) */
 .cm-room-session-hero-account-btn {
   appearance: none;
+  position: relative;
   width: 36px;
   height: 36px;
   padding: 0;
@@ -5188,7 +5205,7 @@ body.cm-has-mobile-bottom-nav {
   box-shadow: 0 6px 16px rgba(23, 35, 61, 0.14);
   display: grid;
   place-items: center;
-  overflow: hidden;
+  overflow: visible;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   flex-shrink: 0;
