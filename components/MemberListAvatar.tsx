@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { debugVoiceThrottle } from "@/lib/debugVoiceLog";
-import { isDefaultAvatarSrc } from "@/lib/defaultAvatar";
-import { getMemberAvatarUrl } from "@/lib/memberProfileView";
+import { resolveAvatarPhotoSrc } from "@/lib/avatarUrl";
 import { DefaultAvatarMark } from "@/components/ui/DefaultAvatarMark";
 
 type MemberListAvatarProps = {
@@ -14,20 +13,6 @@ type MemberListAvatarProps = {
   isMe?: boolean;
   eager?: boolean;
 };
-
-function resolvePhotoSrc(
-  avatarUrl: string | null | undefined,
-  photoPath: string | null | undefined
-): string | null {
-  const direct = String(avatarUrl ?? "").trim();
-  if (direct) {
-    return isDefaultAvatarSrc(direct) ? null : direct;
-  }
-  const path = String(photoPath ?? "").trim();
-  if (!path) return null;
-  const resolved = getMemberAvatarUrl(path);
-  return isDefaultAvatarSrc(resolved) ? null : resolved;
-}
 
 export default function MemberListAvatar({
   photoPath,
@@ -46,7 +31,8 @@ export default function MemberListAvatar({
   }, [avatarUrl, photoPath]);
 
   const photoSrc = useMemo(
-    () => (failed ? null : resolvePhotoSrc(avatarUrl, photoPath)),
+    () =>
+      failed ? null : resolveAvatarPhotoSrc({ photoPath, avatarUrl }),
     [avatarUrl, failed, photoPath]
   );
   const showPhoto = Boolean(photoSrc) && loaded;

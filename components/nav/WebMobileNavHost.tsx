@@ -10,6 +10,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { IosWebPushInstallGuide } from "@/components/IosWebPushInstallGuide";
 import { getDeviceId } from "@/lib/device";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
+import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
 import { buildProfileEditPath } from "@/lib/profileNavigation";
 import {
   buildShellAwareLoginUrl,
@@ -42,6 +43,8 @@ export default function WebMobileNavHost() {
     iosInstallGuideOpen,
     dismissIosInstallGuide,
   } = useWebPushNotifications(deviceId, "web-bottom-nav");
+  const { photoPath: selfPhotoPath, displayName: selfDisplayName } =
+    useSelfProfilePhoto(deviceId);
 
   if (isAppShellContext()) return null;
 
@@ -87,7 +90,8 @@ export default function WebMobileNavHost() {
         aboutHref={withDev("/about")}
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
-        displayName={loggedIn ? accountLabel : "ゲスト"}
+        displayName={selfDisplayName || (loggedIn ? accountLabel : "ゲスト")}
+        photoPath={selfPhotoPath}
       />
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
         <IosWebPushInstallGuide

@@ -38,9 +38,11 @@ import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import { markClassLeftLocally } from "@/lib/leftClassMembership";
 import { markLocallyHiddenClass } from "@/lib/localHiddenClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { RoomClassMenuSheet } from "@/components/room/RoomClassMenuSheet";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import {
   buildShellAwareLoginUrl,
@@ -436,12 +438,16 @@ export default function CallClient() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [classMenuOpen, setClassMenuOpen] = useState(false);
   const [classLeaveBusy, setClassLeaveBusy] = useState(false);
+  const [classRoomTitle, setClassRoomTitle] = useState("通話ルーム");
+  const [classSystemName, setClassSystemName] = useState<string | null>(null);
+  const [classCoverPath, setClassCoverPath] = useState<string | null>(null);
   const [micDeviceOptions, setMicDeviceOptions] = useState<
     Array<{ deviceId: string; label: string }>
   >([]);
   const [selectedMicId, setSelectedMicId] = useState("");
   const setSelectedMicIdRef = useRef<(deviceId: string) => void>(() => {});
   const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const { photoPath: selfProfilePhotoPath } = useSelfProfilePhoto(deviceId);
   const {
     enabled: notificationsEnabled,
     busy: notificationsBusy,
@@ -733,6 +739,43 @@ export default function CallClient() {
       }
     }
   }, [nowMs, peerDiagnostics, peerStates, remoteAudioHealth]);
+
+  useEffect(() => {
+    if (!classId || !deviceId) {
+      setClassRoomTitle("通話ルーム");
+      setClassSystemName(null);
+      setClassCoverPath(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const headers = await buildDeviceAuthHeaders(deviceId);
+        const qs = new URLSearchParams({ classId, deviceId });
+        const res = await fetch(`/api/class/presentation?${qs.toString()}`, {
+          cache: "no-store",
+          headers,
+        });
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        const title = String(json?.title ?? "").trim();
+        if (title) setClassRoomTitle(title);
+        setClassSystemName(
+          json?.name != null ? String(json.name).trim() || null : null
+        );
+        setClassCoverPath(
+          json?.coverPath != null
+            ? String(json.coverPath).trim() || null
+            : null
+        );
+      } catch {
+        // Keep defaults when presentation is unavailable (pre-migration).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [classId, deviceId]);
 
   useEffect(() => {
     if (!classId || !deviceId) return;
@@ -2062,8 +2105,6 @@ export default function CallClient() {
     void manualPeerHardResetRef.current(remoteId);
   }, []);
 
-  const filled = members.length;
-
   const muteButtonLabel = useMemo(() => {
     if (voiceEntryMode === "listen_only") return "聞き専";
     if (!micReady) return "マイク準備中…";
@@ -2708,6 +2749,9 @@ export default function CallClient() {
       });
     });
   }, [sortedMembers, nowMs, membersSyncRevision, sessionId]);
+
+  // Hero count must match the in-call avatar strip (not the full session roster).
+  const filled = visibleMembers.length;
 
   useEffect(() => {
     const nameCache = memberNameCacheRef.current;
@@ -3494,7 +3538,9 @@ export default function CallClient() {
   );
   const accountDisplayName =
     formatMemberDisplayName(selfMember ?? {}) || accountLabel || "ゲスト";
-  const accountPhotoPath = selfMember?.photo_path ?? null;
+  // Prefer Classmate profile photo_path over session-derived fields.
+  const accountPhotoPath =
+    selfProfilePhotoPath || selfMember?.photo_path || null;
 
   const leaveClassAndGoHome = async () => {
     const cid = String(classId ?? "").trim();
@@ -3684,7 +3730,7 @@ export default function CallClient() {
         });
       }}
       micLevel={micLevel}
-      roomTitle="通話ルーム"
+      roomTitle={classRoomTitle || "通話ルーム"}
       categoryLabel="フリークラス"
       boardSlot={sessionId ? <SharedCanvasBoard sessionId={sessionId} /> : null}
       messagesSlot={
@@ -3744,6 +3790,17 @@ export default function CallClient() {
       onSelectMicId={(deviceId) => {
         setSelectedMicId(deviceId);
         setSelectedMicIdRef.current(deviceId);
+      }}
+      classId={classId}
+      deviceId={deviceId}
+      classTitle={classRoomTitle}
+      systemClassName={classSystemName}
+      coverPath={classCoverPath}
+      onClassPresentationSaved={(next) => {
+        const title = String(next.title ?? "").trim();
+        if (title) setClassRoomTitle(title);
+        setClassCoverPath(next.coverPath ?? null);
+        markJoinedClassesStale();
       }}
     />
     </>

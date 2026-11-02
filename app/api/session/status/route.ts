@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildProfilePhotoPublicUrl,
+  normalizeProfilePhotoPath,
+} from "@/lib/avatarUrl";
+import {
   logDisplayNameResolution,
   pickCanonicalSessionMembers,
   resolveDisplayName,
@@ -71,33 +75,7 @@ type PresenceInfo = {
 };
 
 function buildAvatarPublicUrl(photoPath: string | null | undefined) {
-  const normalized = normalizePhotoPath(photoPath);
-  if (!normalized) return null;
-
-  const base = (
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    process.env.SUPABASE_URL ||
-    ""
-  ).replace(/\/$/, "");
-
-  if (!base) return null;
-
-  return `${base}/storage/v1/object/public/profile-photos/${encodeURIComponent(normalized)}?v=${encodeURIComponent(normalized)}`;
-}
-
-function normalizePhotoPath(v: string | null | undefined) {
-  let s = String(v ?? "").trim();
-  if (!s) return null;
-
-  if (s.startsWith("profile-photos/")) {
-    s = s.replace(/^profile-photos\//, "");
-  }
-
-  if (s.startsWith("avatars/")) {
-    s = s.replace(/^avatars\//, "");
-  }
-
-  return s || null;
+  return buildProfilePhotoPublicUrl(photoPath);
 }
 
 function isFreshPresence(lastSeenAt: string | null, maxAgeMs = 20_000) {
@@ -280,7 +258,7 @@ function buildMembers(
         is_in_call: false,
       };
 
-      const photo_path = normalizePhotoPath(profile?.photo_path);
+      const photo_path = normalizeProfilePhotoPath(profile?.photo_path);
 
       return {
         device_id: deviceId,
@@ -317,7 +295,7 @@ function buildMembersFast(
         sessionMemberDisplayName: row.display_name,
       });
 
-      const photo_path = normalizePhotoPath(profile?.photo_path);
+      const photo_path = normalizeProfilePhotoPath(profile?.photo_path);
 
       return {
         device_id: deviceId,

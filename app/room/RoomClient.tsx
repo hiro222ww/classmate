@@ -47,6 +47,7 @@ import { CLASS_LEAVE_CONFIRMED_SOURCE } from "@/lib/classLeaveSource";
 import { markClassLeftLocally } from "@/lib/leftClassMembership";
 import { RoomClassMenuSheet } from "@/components/room/RoomClassMenuSheet";
 import { RoomAccountAvatarButton } from "@/components/room/RoomAccountAvatarButton";
+import { resolveClassTitle } from "@/lib/classPresentation";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
@@ -255,6 +256,8 @@ type MineClassRow = {
   class_id?: string;
   id?: string;
   name?: string;
+  display_name?: string | null;
+  cover_path?: string | null;
   world_key?: string | null;
   topic_key?: string | null;
   topic_title?: string | null;
@@ -334,8 +337,11 @@ function formatTopicTitleFromClassRow(c: MineClassRow | null | undefined) {
 }
 
 function formatClassLabelFromClassRow(c: MineClassRow | null | undefined) {
-  const raw = String(c?.name ?? "").trim();
-  if (raw) return raw;
+  const titled = resolveClassTitle({
+    name: c?.name,
+    display_name: c?.display_name,
+  });
+  if (titled && titled !== "クラス") return titled;
 
   const topicKey = String(c?.topic_key ?? "").trim();
   if (!topicKey) return "フリークラス";
@@ -4823,6 +4829,15 @@ const name = rawName === "You" ? "参加者" : rawName;
           void leaveClassAndGoHome();
         }}
         leaveBusy={classLeaveBusy}
+        classId={classId}
+        deviceId={deviceId}
+        classTitle={shellTitle}
+        systemClassName={classLabel || shellTitle}
+        onClassPresentationSaved={(next) => {
+          const title = String(next.title ?? "").trim();
+          if (title) setClassLabel(title);
+          markJoinedClassesStale();
+        }}
       />
     </>
   );
