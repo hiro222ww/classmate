@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { debugVoiceThrottle } from "@/lib/debugVoiceLog";
-import { resolveAvatarPhotoSrc } from "@/lib/avatarUrl";
 import { DefaultAvatarMark } from "@/components/ui/DefaultAvatarMark";
+import { useAvatarPhotoSrc } from "@/hooks/useAvatarPhotoSrc";
 
 type MemberListAvatarProps = {
   photoPath?: string | null;
@@ -22,20 +21,10 @@ export default function MemberListAvatar({
   isMe = false,
   eager = false,
 }: MemberListAvatarProps) {
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    setFailed(false);
-    setLoaded(false);
-  }, [avatarUrl, photoPath]);
-
-  const photoSrc = useMemo(
-    () =>
-      failed ? null : resolveAvatarPhotoSrc({ photoPath, avatarUrl }),
-    [avatarUrl, failed, photoPath]
-  );
-  const showPhoto = Boolean(photoSrc) && loaded;
+  const { photoSrc, showPhoto, onLoad, onError, failed } = useAvatarPhotoSrc({
+    photoPath,
+    avatarUrl,
+  });
 
   return (
     <div
@@ -63,7 +52,7 @@ export default function MemberListAvatar({
           height={sizePx}
           loading={eager ? "eager" : "lazy"}
           decoding="async"
-          onLoad={() => setLoaded(true)}
+          onLoad={onLoad}
           onError={() => {
             if (!failed) {
               debugVoiceThrottle(
@@ -77,8 +66,7 @@ export default function MemberListAvatar({
                 }
               );
             }
-            setFailed(true);
-            setLoaded(false);
+            onError();
           }}
           style={{
             position: "absolute",

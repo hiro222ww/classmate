@@ -440,8 +440,7 @@ export default function SelectClient() {
         });
         if (r.status >= 500) {
           setProfileLoadError(true);
-          setHasProfile(null);
-          setProfile(null);
+          // Keep last-good profile/photo on transient server errors.
           logProfileExists(id, false);
           return null;
         }
@@ -473,8 +472,7 @@ export default function SelectClient() {
     } catch (e) {
       console.error("[class/select] profile fetch failed", e);
       setProfileLoadError(true);
-      setHasProfile(null);
-      setProfile(null);
+      // Keep last-good profile/photo on network failures.
       logProfileExists(id, false);
       return null;
     }
