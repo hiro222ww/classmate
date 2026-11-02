@@ -190,6 +190,7 @@ import {
   LOCAL_LEFT_CALL_EXPLICIT_REASON,
   markLocalLeftCall,
 } from "@/lib/localCallExit";
+import { clearAutoCallOnce } from "@/lib/autoCallOnce";
 import {
   readSessionMembersSnapshot,
   writeSessionMembersSnapshot,
@@ -438,6 +439,8 @@ export default function CallClient() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [classMenuOpen, setClassMenuOpen] = useState(false);
   const [classLeaveBusy, setClassLeaveBusy] = useState(false);
+  const [callExitBusy, setCallExitBusy] = useState(false);
+  const callExitBusyRef = useRef(false);
   const [classRoomTitle, setClassRoomTitle] = useState("通話ルーム");
   const [classSystemName, setClassSystemName] = useState<string | null>(null);
   const [classCoverPath, setClassCoverPath] = useState<string | null>(null);
@@ -3553,6 +3556,7 @@ export default function CallClient() {
     try {
       // End local call state first without relying on room navigation.
       markSelfLeftCall();
+      clearAutoCallOnce(sessionId, deviceId);
       releaseSessionMic("class_leave", sessionId);
 
       const res = await fetch("/api/class/leave", {
@@ -3640,16 +3644,39 @@ export default function CallClient() {
         logNavigationIntent("return_home", "CallClient.home_button");
         router.push(withDev(resolveShellDashboardPath()));
       }}
+      exitDisabled={callExitBusy}
       onExit={() => {
-        const roomHref = withDev(
-          `/room?autojoin=0&classId=${encodeURIComponent(classId)}` +
-            `&sessionId=${encodeURIComponent(sessionId)}`
+        // Call leave only — keep class membership. Prefer home so the
+        // sunset room chrome cannot look like "exit did nothing", and so
+        // random-match autoCallOnce cannot bounce the user back into /call.
+        if (callExitBusyRef.current) return;
+        callExitBusyRef.current = true;
+        setCallExitBusy(true);
+
+        const homeHref = withDev(
+          `${resolveShellDashboardPath()}#${HOME_MY_CLASS_SECTION_ID}`
         );
-        logNavigationIntent("left_call_return_room", "CallClient.exit_button");
-        logRouteChange(getCurrentPath(), roomHref, "left_call_return_room");
-        markSelfLeftCall();
-        releaseSessionMic("call_exit", sessionId);
-        router.push(roomHref);
+        logNavigationIntent("left_call_return_home", "CallClient.exit_button");
+        logRouteChange(getCurrentPath(), homeHref, "left_call_return_home");
+
+        try {
+          markSelfLeftCall();
+        } catch (e) {
+          console.warn("[call] markSelfLeftCall threw during exit", e);
+        }
+        try {
+          clearAutoCallOnce(sessionId, deviceId);
+        } catch (e) {
+          console.warn("[call] clearAutoCallOnce failed during exit", e);
+        }
+        // Always stop local media even if presence/DB updates failed.
+        try {
+          releaseSessionMic("call_exit", sessionId);
+        } catch (e) {
+          console.warn("[call] releaseSessionMic threw during exit", e);
+        }
+
+        router.push(homeHref);
       }}
       fetchErrorCount={fetchErrorCount}
       showWaitingForOthers={false}
