@@ -5112,10 +5112,10 @@ body.cm-has-mobile-bottom-nav {
 
 .cm-call-dock {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   width: calc(100% - 28px);
-  max-width: 360px;
+  max-width: 320px;
   margin: -52px auto 0;
   padding: 8px 6px 10px;
   border-radius: 0;
@@ -5174,11 +5174,6 @@ body.cm-has-mobile-bottom-nav {
 .cm-call-dock-item--listen .cm-call-dock-icon {
   background: #f3f4f6;
   color: #6b7280;
-}
-
-.cm-call-dock-item--speaker-off .cm-call-dock-icon {
-  background: #f3f4f6;
-  color: #9ca3af;
 }
 
 .cm-call-dock-item--exit .cm-call-dock-icon {
