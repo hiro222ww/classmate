@@ -7,28 +7,33 @@ import {
   markAutoCallOnce,
 } from "./autoCallOnce";
 
-describe("call exit → home (not room remount)", () => {
-  it("wires red 退出 to home and clears auto-call once", () => {
+describe("call exit destination (class room vs random home)", () => {
+  it("wires red 退出 teardown and hard navigate helpers", () => {
     const source = readFileSync(
       join(process.cwd(), "app/call/CallClient.tsx"),
       "utf8"
     );
-    expect(source).toContain("left_call_return_home");
     expect(source).toContain("clearAutoCallOnce");
     expect(source).toContain('releaseSessionMic("call_exit"');
     expect(source).toContain("HOME_MY_CLASS_SECTION_ID");
-    expect(source).toContain("navigateCallExitHome");
+    expect(source).toContain("navigateCallExit");
     expect(source).toContain("buildCallExitHomeHref");
+    expect(source).toContain("buildCallExitWaitingRoomHref");
+    expect(source).toContain("shouldExitCallToWaitingRoom");
+    expect(source).toContain("left_call_return_home");
+    expect(source).toContain("left_call_return_room");
     // Soft Next push is unreliable in iOS Safari / Cap WebView shells.
     expect(source).not.toMatch(
       /onExit=\{\(\) => \{[\s\S]*?router\.push\(homeHref\)/
     );
+    expect(source).not.toMatch(
+      /onExit=\{\(\) => \{[\s\S]*?router\.push\(exitHref\)/
+    );
     // Exit must stay enabled during reconnect / fetch failures.
     expect(source).toContain("exitDisabled={false}");
-    // Must not navigate exit back into /room (looks like a no-op + rematch risk).
-    expect(source).not.toMatch(
-      /onExit=\{\(\) => \{[\s\S]*?\/room\?autojoin=0/
-    );
+    // Waiting-room return must use autojoin=0 via helper (not autojoin=1 rematch).
+    expect(source).toContain("buildCallExitWaitingRoomHref");
+    expect(source).toContain("handleVoiceCleanup");
   });
 
   it("keeps class leave as a separate membership-removing path", () => {
@@ -38,6 +43,17 @@ describe("call exit → home (not room remount)", () => {
     );
     expect(source).toContain("/api/class/leave");
     expect(source).toContain("leaveClassAndGoHome");
+  });
+
+  it("propagates openJoinedClass from room into /call for My Class exits", () => {
+    const source = readFileSync(
+      join(process.cwd(), "app/room/RoomClient.tsx"),
+      "utf8"
+    );
+    expect(source).toContain(
+      'callJoinedClass ? "&openJoinedClass=1" : ""'
+    );
+    expect(source).toContain("openJoinedClass || classVisibleInMine");
   });
 });
 

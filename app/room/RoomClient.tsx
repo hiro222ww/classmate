@@ -4246,10 +4246,11 @@ const name = rawName === "You" ? "参加者" : rawName;
         meta: { source: "auto_call" },
       });
 
+      const callJoinedClass = openJoinedClass || classVisibleInMine;
       const callHref = withDev(
         `/call?sessionId=${encodeURIComponent(identity.sessionId)}&classId=${encodeURIComponent(
           identity.classId
-        )}`
+        )}${callJoinedClass ? "&openJoinedClass=1" : ""}`
       );
       logNavigationIntent("room_auto_call", "RoomClient.auto_start");
       logRouteChange(getCurrentPath(), callHref, "room_auto_call");
@@ -4267,6 +4268,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     router,
     autojoin,
     openJoinedClass,
+    classVisibleInMine,
     err,
     visibleMembers,
     memberCount,
@@ -4638,11 +4640,14 @@ const name = rawName === "You" ? "参加者" : rawName;
               meta: { source: "manual" },
             });
             writeSessionMembersSnapshot(sessionId, classId, members);
+            const callJoinedClass = openJoinedClass || classVisibleInMine;
             router.push(
               withDev(
                 `/call?sessionId=${encodeURIComponent(
                   sessionId
-                )}&classId=${encodeURIComponent(classId)}`
+                )}&classId=${encodeURIComponent(classId)}${
+                  callJoinedClass ? "&openJoinedClass=1" : ""
+                }`
               )
             );
           }}

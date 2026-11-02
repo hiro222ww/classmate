@@ -193,7 +193,9 @@ import {
 import { clearAutoCallOnce } from "@/lib/autoCallOnce";
 import {
   buildCallExitHomeHref,
-  navigateCallExitHome,
+  buildCallExitWaitingRoomHref,
+  navigateCallExit,
+  shouldExitCallToWaitingRoom,
 } from "@/lib/callExitNavigate";
 import { isSelfVisibleOnCallStrip } from "@/lib/callConnectionNotice";
 import { resolveVoiceSelfReconnecting } from "@/lib/callVoiceReconnectUi";
@@ -373,6 +375,10 @@ export default function CallClient() {
 
   const sessionId = searchParams.get("sessionId") || "";
   const classId = searchParams.get("classId") || "";
+  const openJoinedClassParam = (() => {
+    const raw = (searchParams.get("openJoinedClass") ?? "").trim();
+    return raw === "1" || raw === "true";
+  })();
 
   const [deviceId] = useState(() => getDeviceId());
 
@@ -3691,9 +3697,9 @@ export default function CallClient() {
       exitDisabled={false}
       hasCallActiveRemotes={callActiveRemoteIds.length > 0}
       onExit={() => {
-        // Call leave only — keep class membership. Prefer home so the
-        // sunset room chrome cannot look like "exit did nothing", and so
-        // random-match autoCallOnce cannot bounce the user back into /call.
+        // Call leave only — keep class membership.
+        // Official / My Class → same-class waiting room.
+        // Random / provisional match → home (unchanged).
         // Debounce only — never permanently disable the button.
         if (callExitBusyRef.current) return;
         callExitBusyRef.current = true;
@@ -3701,14 +3707,28 @@ export default function CallClient() {
           callExitBusyRef.current = false;
         }, 2500);
 
-        // Hash MUST follow withDev() so ?dev= stays on the path, not fragment.
-        const homeHref = buildCallExitHomeHref({
-          dashboardPath: resolveShellDashboardPath(),
-          sectionId: HOME_MY_CLASS_SECTION_ID,
-          withDev,
+        const exitToWaitingRoom = shouldExitCallToWaitingRoom({
+          classId,
+          lifecycle: classVoteLifecycle,
+          openJoinedClass: openJoinedClassParam,
         });
-        logNavigationIntent("left_call_return_home", "CallClient.exit_button");
-        logRouteChange(getCurrentPath(), homeHref, "left_call_return_home");
+        const exitHref = exitToWaitingRoom
+          ? buildCallExitWaitingRoomHref({
+              classId,
+              sessionId,
+              withDev,
+              openJoinedClass: true,
+            })
+          : buildCallExitHomeHref({
+              dashboardPath: resolveShellDashboardPath(),
+              sectionId: HOME_MY_CLASS_SECTION_ID,
+              withDev,
+            });
+        const exitIntent = exitToWaitingRoom
+          ? "left_call_return_room"
+          : "left_call_return_home";
+        logNavigationIntent(exitIntent, "CallClient.exit_button");
+        logRouteChange(getCurrentPath(), exitHref, exitIntent);
 
         // Stop reconnect UI / repair loops before tearing down media.
         setShowCallStuckReconnect(false);
@@ -3741,7 +3761,7 @@ export default function CallClient() {
 
         // Hard navigate: Next soft push is unreliable in iOS Safari / Cap WebView.
         // Must run even when markSelfLeftCall / APIs fail.
-        navigateCallExitHome(homeHref);
+        navigateCallExit(exitHref);
       }}
       fetchErrorCount={fetchErrorCount}
       showWaitingForOthers={false}

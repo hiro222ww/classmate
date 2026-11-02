@@ -1,7 +1,10 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import {
   buildCallExitHomeHref,
+  buildCallExitWaitingRoomHref,
+  navigateCallExit,
   navigateCallExitHome,
+  shouldExitCallToWaitingRoom,
 } from "./callExitNavigate";
 
 describe("buildCallExitHomeHref", () => {
@@ -25,7 +28,82 @@ describe("buildCallExitHomeHref", () => {
   });
 });
 
-describe("navigateCallExitHome", () => {
+describe("buildCallExitWaitingRoomHref", () => {
+  it("builds /room with autojoin=0 and openJoinedClass=1", () => {
+    const href = buildCallExitWaitingRoomHref({
+      classId: "class-a",
+      sessionId: "session-a",
+      withDev: (path) => path,
+    });
+    expect(href).toContain("/room?");
+    expect(href).toContain("autojoin=0");
+    expect(href).toContain("classId=class-a");
+    expect(href).toContain("sessionId=session-a");
+    expect(href).toContain("openJoinedClass=1");
+  });
+
+  it("keeps ?dev= on the path via withDev", () => {
+    const href = buildCallExitWaitingRoomHref({
+      classId: "c1",
+      sessionId: "s1",
+      withDev: (path) => `${path}${path.includes("?") ? "&" : "?"}dev=1`,
+    });
+    expect(href).toMatch(/[?&]dev=1/);
+    expect(href).toContain("autojoin=0");
+  });
+});
+
+describe("shouldExitCallToWaitingRoom", () => {
+  it("routes official class to waiting room", () => {
+    expect(
+      shouldExitCallToWaitingRoom({
+        classId: "class-a",
+        lifecycle: "official",
+      })
+    ).toBe(true);
+  });
+
+  it("keeps provisional/random on home exit", () => {
+    expect(
+      shouldExitCallToWaitingRoom({
+        classId: "class-a",
+        lifecycle: "provisional",
+      })
+    ).toBe(false);
+  });
+
+  it("routes My Class openJoinedClass even before lifecycle loads", () => {
+    expect(
+      shouldExitCallToWaitingRoom({
+        classId: "class-a",
+        lifecycle: null,
+        openJoinedClass: true,
+      })
+    ).toBe(true);
+  });
+
+  it("keeps unknown lifecycle without openJoinedClass on home (random-safe)", () => {
+    expect(
+      shouldExitCallToWaitingRoom({
+        classId: "class-a",
+        lifecycle: null,
+        openJoinedClass: false,
+      })
+    ).toBe(false);
+  });
+
+  it("requires classId", () => {
+    expect(
+      shouldExitCallToWaitingRoom({
+        classId: "",
+        lifecycle: "official",
+        openJoinedClass: true,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("navigateCallExit", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -35,8 +113,10 @@ describe("navigateCallExitHome", () => {
     vi.stubGlobal("window", {
       location: { assign, href: "" },
     });
-    navigateCallExitHome("/#cm-home-my-class");
-    expect(assign).toHaveBeenCalledWith("/#cm-home-my-class");
+    navigateCallExit("/room?autojoin=0&classId=c1&sessionId=s1&openJoinedClass=1");
+    expect(assign).toHaveBeenCalledWith(
+      "/room?autojoin=0&classId=c1&sessionId=s1&openJoinedClass=1"
+    );
   });
 
   it("falls back to location.href when assign throws", () => {
