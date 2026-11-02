@@ -81,6 +81,12 @@ type CallVoiceLayerProps = {
   onVoiceLayerMountedChange?: (mounted: boolean) => void;
   onMicPermissionDeniedChange?: (denied: boolean) => void;
   onMicRetryReady?: (retry: () => Promise<boolean>) => void;
+  /** Expose mic device picker state for settings UI (not inline chrome). */
+  onMicDeviceOptionsChange?: (options: {
+    audioInputs: Array<{ deviceId: string; label: string }>;
+    selectedMicId: string;
+    setSelectedMicId: (deviceId: string) => void;
+  }) => void;
   onSoftResetExhausted?: (
     remoteId: string,
     reason: VoiceSoftResetTriggerReason
@@ -115,6 +121,7 @@ export default function CallVoiceLayer({
   onVoiceLayerMountedChange,
   onMicPermissionDeniedChange,
   onMicRetryReady,
+  onMicDeviceOptionsChange,
   onSoftResetExhausted,
   listenOnly = false,
   voiceEntryMode,
@@ -192,6 +199,22 @@ export default function CallVoiceLayer({
   useEffect(() => {
     onMicRetryReady?.(mic.retryMicPermission);
   }, [mic.retryMicPermission, onMicRetryReady]);
+
+  useEffect(() => {
+    onMicDeviceOptionsChange?.({
+      audioInputs: mic.audioInputs.map((d) => ({
+        deviceId: d.deviceId,
+        label: d.label || "マイク",
+      })),
+      selectedMicId: mic.selectedMicId,
+      setSelectedMicId: mic.setSelectedMicId,
+    });
+  }, [
+    mic.audioInputs,
+    mic.selectedMicId,
+    mic.setSelectedMicId,
+    onMicDeviceOptionsChange,
+  ]);
 
   useEffect(() => {
     onVoiceLayerMountedChange?.(true);
@@ -277,27 +300,6 @@ export default function CallVoiceLayer({
 
   return (
     <>
-      {mic.audioInputs.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          <select
-            value={mic.selectedMicId}
-            onChange={(e) => mic.setSelectedMicId(e.target.value)}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 10,
-              border: "1px solid #d1d5db",
-              fontSize: 12,
-            }}
-          >
-            {mic.audioInputs.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || "マイク"}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
       {Object.entries(peer.remoteAudios).map(([remoteId, state]) => (
         <RemoteAudio
           key={
