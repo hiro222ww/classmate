@@ -13,7 +13,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logCallEntryBlocked } from "@/lib/entryFlowLog";
 import { buildInviteRoomUrl } from "@/lib/appOrigin";
 import { shareOrCopyInviteUrl } from "@/lib/inviteShare";
-import { buildCallRecruitmentView } from "@/lib/callRecruitmentUi";
 import SharedCanvasBoard from "./SharedCanvasBoard";
 import CallRoomView from "./CallRoomView";
 import CallVoiceLayer from "./CallVoiceLayer";
@@ -476,9 +475,6 @@ export default function CallClient() {
   const [joinOpenUntil, setJoinOpenUntil] = useState<string | null>(null);
   const [membersLockedAt, setMembersLockedAt] = useState<string | null>(null);
   const [lobbyExtendedOnce, setLobbyExtendedOnce] = useState(false);
-  const [lobbyExtendBusy, setLobbyExtendBusy] = useState(false);
-  const [lobbyQuitBusy, setLobbyQuitBusy] = useState(false);
-  const [lobbyExtendError, setLobbyExtendError] = useState<string | null>(null);
   const [fetchErrorCount, setFetchErrorCount] = useState(0);
   const [nowMs, setNowMs] = useState(0);
   const [classVoteCount, setClassVoteCount] = useState(0);
@@ -892,58 +888,6 @@ export default function CallClient() {
       setClassVoteBusy(false);
     }
   }, [sessionId, deviceId, classId, classVoteBusy, classVoteSelfVoted]);
-
-  const extendAloneWait = useCallback(async () => {
-    if (lobbyExtendBusy || lobbyExtendedOnce || !sessionId || !deviceId) return;
-    setLobbyExtendBusy(true);
-    setLobbyExtendError(null);
-    try {
-      const res = await fetch("/api/session/lobby-extend", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId, deviceId }),
-        cache: "no-store",
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) {
-        if (json?.error === "already_extended") {
-          setLobbyExtendedOnce(true);
-          setLobbyExtendError("すでに延長済みです");
-        } else {
-          setLobbyExtendError("延長に失敗しました。もう一度お試しください。");
-        }
-        return;
-      }
-      setLobbyExtendedOnce(true);
-      if (json.created_at) {
-        setSessionCreatedAt(String(json.created_at));
-      }
-    } catch {
-      setLobbyExtendError("延長に失敗しました。通信環境を確認してください。");
-    } finally {
-      setLobbyExtendBusy(false);
-    }
-  }, [deviceId, lobbyExtendBusy, lobbyExtendedOnce, sessionId]);
-
-  const quitAloneWaitAndGoHome = useCallback(async () => {
-    if (lobbyQuitBusy) return;
-    setLobbyQuitBusy(true);
-    try {
-      if (sessionId && deviceId) {
-        await fetch("/api/session/leave", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId, deviceId }),
-          cache: "no-store",
-        }).catch(() => null);
-      }
-      logNavigationIntent("alone_wait_quit", "CallClient.alone_wait_quit");
-      releaseSessionMic("alone_wait_quit", sessionId);
-      router.push(withDev(resolveShellDashboardPath()));
-    } finally {
-      setLobbyQuitBusy(false);
-    }
-  }, [deviceId, lobbyQuitBusy, router, sessionId]);
 
   const membersDisplayedRef = useRef(false);
 
@@ -3497,61 +3441,9 @@ export default function CallClient() {
     voteCount: classVoteCount,
   });
 
-  const recruitmentView = buildCallRecruitmentView({
-    memberCount: Math.max(members.length, filled),
-    capacity,
-    membersLockedAt: membersLockedAt ?? (classVoteMembersLocked ? "locked" : null),
-    joinOpenUntil,
-    sessionCreatedAt,
-    lobbyExtendedOnce,
-    nowMs: nowMs || Date.now(),
-  });
-
-  // Status/count live in the hero — no green/orange recruitment cards.
-  // Only surface 5-minute alone-wait choices as a compact action notice.
-  const recruitmentBanner =
-    recruitmentView.aloneWaitTimedOut || lobbyExtendError ? (
-      <div className="cm-call-notice cm-call-notice--action" role="status">
-        {recruitmentView.aloneWaitTimedOut ? (
-          <>
-            <div className="cm-call-notice-title">
-              {recruitmentView.canExtendAloneWait
-                ? "まだ人が集まりません。どうしますか？"
-                : "まだ人が集まりません。今回はやめますか？"}
-            </div>
-            <div className="cm-call-notice-actions">
-              {recruitmentView.canExtendAloneWait ? (
-                <button
-                  type="button"
-                  className="cm-call-notice-btn cm-call-notice-btn--primary"
-                  disabled={lobbyExtendBusy || lobbyQuitBusy}
-                  onClick={() => {
-                    void extendAloneWait();
-                  }}
-                >
-                  {lobbyExtendBusy ? "延長中…" : "待機を続ける"}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="cm-call-notice-btn"
-                disabled={lobbyExtendBusy || lobbyQuitBusy}
-                onClick={() => {
-                  void quitAloneWaitAndGoHome();
-                }}
-              >
-                {lobbyQuitBusy ? "退出中…" : "やめる"}
-              </button>
-            </div>
-          </>
-        ) : null}
-        {lobbyExtendError ? (
-          <div className="cm-call-notice-body cm-call-notice-body--error">
-            {lobbyExtendError}
-          </div>
-        ) : null}
-      </div>
-    ) : null;
+  // Alone-wait timeout no longer shows a quit/extend card — users stay in
+  // recruiting status via the hero chip and leave with the red 退出 control.
+  const recruitmentBanner = null;
 
   const classVoteSlot = showClassVotePanel ? (
     <div

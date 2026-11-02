@@ -24,7 +24,7 @@ describe("buildCallRecruitmentView", () => {
     expect(view.aloneWaitTimedOut).toBe(false);
   });
 
-  it("marks alone wait timed out after 5 minutes for 1–2 members", () => {
+  it("marks alone wait timed out after 5 minutes for 1–2 members without quit copy", () => {
     const view = buildCallRecruitmentView({
       memberCount: 2,
       capacity: 5,
@@ -37,6 +37,10 @@ describe("buildCallRecruitmentView", () => {
     expect(view.memberCount).toBeLessThan(RECRUIT_SOFT_CLOSE_MEMBER_COUNT);
     expect(view.aloneWaitTimedOut).toBe(true);
     expect(view.canExtendAloneWait).toBe(true);
+    expect(view.label).toBe("募集中");
+    expect(view.detail).toContain("友達を招待できます");
+    expect(view.detail).not.toContain("やめますか");
+    expect(view.detail).not.toContain("どうしますか");
   });
 
   it("shows closing_soon while join_open_until remains", () => {

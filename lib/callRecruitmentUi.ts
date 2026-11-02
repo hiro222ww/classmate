@@ -147,11 +147,8 @@ export function buildCallRecruitmentView(params: {
     return {
       phase: "waiting_alone",
       label: "募集中",
-      detail: aloneWaitTimedOut
-        ? params.lobbyExtendedOnce
-          ? "まだ人が集まりません。今回はやめますか？"
-          : "5分経っても集まりませんでした。どうしますか？"
-        : `待機時間 ${formatElapsed(aloneElapsedMs)} · 友達を招待できます`,
+      // Keep waiting quietly — no quit/extend prompt cards in the call UI.
+      detail: `待機時間 ${formatElapsed(aloneElapsedMs)} · 友達を招待できます`,
       memberCount,
       capacity,
       recruitingOpen: true,

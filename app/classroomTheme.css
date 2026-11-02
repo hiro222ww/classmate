@@ -4588,6 +4588,25 @@ body.cm-has-mobile-bottom-nav {
   -webkit-backdrop-filter: blur(8px);
 }
 
+button.cm-room-session-status {
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+button.cm-room-session-status:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+.cm-room-session-status--action {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 .cm-room-session-status-dot {
   width: 7px;
   height: 7px;
