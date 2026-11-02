@@ -84,6 +84,8 @@ export type CallRoomViewProps = {
   onInviteFriends: () => void;
   onHome?: () => void;
   onExit: () => void;
+  /** Disables 退出 while leave teardown / navigation is in flight. */
+  exitDisabled?: boolean;
   /** Optional screen-share handler. Hidden when omitted. */
   onScreenShare?: () => void;
   screenShareActive?: boolean;
@@ -184,6 +186,7 @@ export default function CallRoomView({
   onInviteFriends,
   onHome,
   onExit,
+  exitDisabled = false,
   onScreenShare,
   screenShareActive = false,
   screenShareDisabled = false,
@@ -533,6 +536,8 @@ export default function CallRoomView({
             type="button"
             className="cm-call-dock-item cm-call-dock-item--exit cm-call-exit-btn"
             onClick={onExit}
+            disabled={exitDisabled}
+            aria-busy={exitDisabled || undefined}
             aria-label="退出"
           >
             <span className="cm-call-dock-icon">

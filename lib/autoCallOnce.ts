@@ -71,6 +71,18 @@ export function hasAutoCallOnce(sessionId: string, deviceId: string): boolean {
   }
 }
 
+/** Drop auto-call permission so explicit call exit cannot bounce back into /call. */
+export function clearAutoCallOnce(sessionId: string, deviceId: string) {
+  if (typeof window === "undefined") return;
+  const key = autoCallOnceStorageKey(sessionId, deviceId);
+  if (!key || key === `${KEY_PREFIX}:`) return;
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // ignore
+  }
+}
+
 /** Move one-time auto-call permission to a resolved session id. */
 export function transferAutoCallOnce(
   fromSessionId: string,

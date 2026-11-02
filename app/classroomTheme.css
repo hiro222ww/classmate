@@ -5128,15 +5128,31 @@ button.cm-room-session-status:focus-visible {
 .cm-call-root--hero-v2 .cm-call-hero-stack > .cm-call-inline-banners {
   margin-top: -4px;
   position: relative;
-  z-index: 4;
+  /* Below the dock so notices never swallow 退出 / mic taps (esp. iOS Safari). */
+  z-index: 2;
+  pointer-events: none;
 }
 
-/* When connection/action notices are visible, keep them above the dock. */
+.cm-call-root--hero-v2 .cm-call-hero-stack > .cm-call-inline-banners > * {
+  pointer-events: auto;
+}
+
+/* When connection/action notices are visible, keep them above the dock visually
+   but leave the dock higher in the stacking order for hit-testing. */
 .cm-call-root--hero-v2
   .cm-call-hero-stack
   > .cm-call-inline-banners:has(*)
   + .cm-call-dock {
   margin-top: 10px;
+}
+
+.cm-call-root--hero-v2 .cm-call-class-promote-slot {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.cm-call-root--hero-v2 .cm-call-class-promote-slot > * {
+  pointer-events: auto;
 }
 
 .cm-call-dock {
@@ -5155,7 +5171,9 @@ button.cm-room-session-status:focus-visible {
   -webkit-backdrop-filter: none;
   box-sizing: border-box;
   position: relative;
-  z-index: 3;
+  /* Above hero fade / banners / promote so 退出 stays tappable. */
+  z-index: 6;
+  pointer-events: auto;
 }
 
 .cm-call-dock-item {
