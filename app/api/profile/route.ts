@@ -376,6 +376,32 @@ export async function GET(req: Request) {
 
       if (byUser.data) {
         data = byUser.data;
+        // Auth user row can exist without photo_path while the device row
+        // still holds the Classmate photo (anon→Google link races). Prefer
+        // any non-null photo so /api/profile matches session member photos.
+        if (!normalizePhotoPath(data.photo_path)) {
+          const deviceFallback = await fetchProfileRowByFilter({
+            column: "device_id",
+            value: device_id,
+          });
+          if (!deviceFallback.error && deviceFallback.data) {
+            const devicePhoto = normalizePhotoPath(
+              deviceFallback.data.photo_path
+            );
+            if (devicePhoto) {
+              data = { ...data, photo_path: devicePhoto };
+            }
+            if (
+              !normalizeString(data.display_name) &&
+              normalizeString(deviceFallback.data.display_name)
+            ) {
+              data = {
+                ...data,
+                display_name: deviceFallback.data.display_name,
+              };
+            }
+          }
+        }
       }
     }
   }

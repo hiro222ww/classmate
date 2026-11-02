@@ -1270,11 +1270,6 @@ export default function RoomClient() {
   const [meetingPlan, setMeetingPlan] = useState<MeetingPlanPublic | null>(null);
   const [callRequest, setCallRequest] = useState<CallRequestPublic | null>(null);
 
-  const publicStorageBase =
-    process.env.NEXT_PUBLIC_SUPABASE_URL
-      ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/profile-photos`
-      : "";
-
 function setSoftConnectionError(kind: "status" | "messages") {
   if (kind === "status") {
     statusFailCountRef.current += 1;
@@ -1821,10 +1816,13 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
         }
 
         if (!res.ok || !data?.ok) {
-          if (!cancelled && !displayName) {
-            const fallback = readStoredDisplayName(deviceId) || "参加者";
-            const safeName = fallback === "You" ? "参加者" : fallback;
-            setDisplayName(safeName);
+          // Keep last-good photoPath; only seed displayName when empty.
+          if (!cancelled) {
+            setDisplayName((prev) => {
+              if (normalizeName(prev)) return prev;
+              const fallback = readStoredDisplayName(deviceId) || "参加者";
+              return fallback === "You" ? "参加者" : fallback;
+            });
           }
           return;
         }
@@ -1842,10 +1840,12 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           setPhotoPath(nextPhoto || null);
         }
       } catch {
-        if (!cancelled && !displayName) {
-          const fallback = readStoredDisplayName(deviceId) || "参加者";
-          const safeName = fallback === "You" ? "参加者" : fallback;
-          setDisplayName(safeName);
+        if (!cancelled) {
+          setDisplayName((prev) => {
+            if (normalizeName(prev)) return prev;
+            const fallback = readStoredDisplayName(deviceId) || "参加者";
+            return fallback === "You" ? "参加者" : fallback;
+          });
         }
       }
     }
@@ -1855,7 +1855,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     return () => {
       cancelled = true;
     };
-  }, [deviceId, displayName]);
+    // displayName must NOT be a dep — setting it re-fired this effect and
+    // raced a second profile fetch that could clear/overwrite photoPath.
+  }, [deviceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4488,16 +4490,14 @@ const name = rawName === "You" ? "参加者" : rawName;
       return {
         id: did || label,
         label,
+        // Prefer Classmate photo_path; let resolveAvatarPhotoSrc build the URL.
+        // Do not synthesize a second avatarUrl — broken encodings used to win.
         photoPath: m.photo_path ?? null,
-        avatarUrl:
-          m.avatar_url ||
-          (m.photo_path && publicStorageBase
-            ? `${publicStorageBase}/${m.photo_path}`
-            : null),
+        avatarUrl: m.avatar_url ?? null,
         isMe,
       };
     });
-  }, [visibleMembers, deviceId, displayName, publicStorageBase]);
+  }, [visibleMembers, deviceId, displayName]);
 
   const roomInviteUrl = useMemo(
     () =>

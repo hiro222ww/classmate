@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { resolveAvatarPhotoSrc } from "@/lib/avatarUrl";
 import { DefaultAvatarMark } from "@/components/ui/DefaultAvatarMark";
+import { useAvatarPhotoSrc } from "@/hooks/useAvatarPhotoSrc";
 
 type CmAvatarProps = {
   label: string;
@@ -21,22 +20,10 @@ export function CmAvatar({
   isMe = false,
   className,
 }: CmAvatarProps) {
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    setFailed(false);
-    setLoaded(false);
-  }, [avatarUrl, photoPath]);
-
-  const photoSrc = useMemo(
-    () =>
-      failed
-        ? null
-        : resolveAvatarPhotoSrc({ photoPath, avatarUrl }),
-    [avatarUrl, failed, photoPath]
-  );
-  const showPhoto = Boolean(photoSrc) && loaded;
+  const { photoSrc, showPhoto, onLoad, onError } = useAvatarPhotoSrc({
+    photoPath,
+    avatarUrl,
+  });
 
   return (
     <div
@@ -70,11 +57,8 @@ export function CmAvatar({
           width={sizePx}
           height={sizePx}
           decoding="async"
-          onLoad={() => setLoaded(true)}
-          onError={() => {
-            setFailed(true);
-            setLoaded(false);
-          }}
+          onLoad={onLoad}
+          onError={onError}
           style={{
             position: "absolute",
             inset: 0,

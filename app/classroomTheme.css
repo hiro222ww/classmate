@@ -5130,6 +5130,39 @@ button.cm-room-session-status:focus-visible {
   min-height: min(64vw, 348px);
   /* Leave room so dock sits in the faded zone without covering avatars. */
   padding-bottom: 8px;
+  /*
+   * Hero box (incl. empty bottom padding) must NOT steal taps from the dock
+   * that overlaps it via negative margin — iOS Safari often hit-tests the
+   * earlier stacking context under negative-margin siblings.
+   */
+  pointer-events: none;
+}
+
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-room-session-hero
+  .cm-room-session-hero-toolbar,
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-room-session-hero
+  .cm-room-session-hero-copy,
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-room-session-hero
+  .cm-room-session-hero-cta,
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-room-session-hero
+  .cm-room-avatar-chip,
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-room-session-hero
+  .cm-room-avatar-invite,
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-room-session-hero
+  .cm-room-session-status {
+  pointer-events: auto;
 }
 
 .cm-call-root--hero-v2 .cm-call-hero-stack > .cm-room-session-hero .cm-room-session-hero-inner {
@@ -5193,8 +5226,10 @@ button.cm-room-session-status:focus-visible {
   box-sizing: border-box;
   position: relative;
   /* Above hero fade / banners / promote so 退出 stays tappable. */
-  z-index: 6;
+  z-index: 30;
+  isolation: isolate;
   pointer-events: auto;
+  touch-action: manipulation;
 }
 
 .cm-call-dock-item {
