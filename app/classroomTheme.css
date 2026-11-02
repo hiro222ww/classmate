@@ -4508,6 +4508,32 @@ body.cm-has-mobile-bottom-nav {
   background: #22c55e;
 }
 
+.cm-room-session-status--reconnect {
+  background: rgba(255, 247, 237, 0.92);
+  color: #9a3412;
+  border-color: transparent;
+}
+
+.cm-room-session-status--reconnect .cm-room-session-status-dot {
+  background: #f59e0b;
+}
+
+.cm-room-session-status--error {
+  background: rgba(254, 242, 242, 0.94);
+  color: #991b1b;
+  border-color: transparent;
+}
+
+.cm-room-session-status--error .cm-room-session-status-dot {
+  background: #ef4444;
+}
+
+.cm-room-session-status--neutral {
+  background: rgba(248, 250, 252, 0.9);
+  color: #334155;
+  border-color: transparent;
+}
+
 .cm-room-session-hero-cta {
   margin-top: 2px;
   width: 100%;
@@ -5080,6 +5106,76 @@ body.cm-has-mobile-bottom-nav {
   box-sizing: border-box;
 }
 
+/* Compact connection / action notices — no large green/orange status cards */
+.cm-call-notice {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: 0 6px 16px rgba(23, 35, 61, 0.05);
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.cm-call-notice--warn,
+.cm-call-notice--error,
+.cm-call-notice--action {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.cm-call-notice-title {
+  font-size: 13px;
+  font-weight: 850;
+  color: #17233d;
+}
+
+.cm-call-notice-body {
+  font-size: 12px;
+  font-weight: 650;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.cm-call-notice-body--error {
+  color: #dc2626;
+}
+
+.cm-call-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cm-call-notice-btn {
+  appearance: none;
+  border: 1px solid rgba(209, 213, 219, 0.95);
+  border-radius: 999px;
+  padding: 8px 12px;
+  min-height: 40px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cm-call-notice-btn--primary {
+  border-color: transparent;
+  background: #111827;
+  color: #fff;
+}
+
+.cm-call-notice-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Hero account avatar (shared with home frosted pill look) */
 .cm-room-session-hero-account-btn {
   appearance: none;
@@ -5142,37 +5238,23 @@ body.cm-has-mobile-bottom-nav {
   background: rgba(254, 242, 242, 0.95);
 }
 
-/* Compact recruitment status strip */
-.cm-call-recruitment--lite {
+/* Legacy recruitment strip classes — neutralize colored cards if markup remains */
+.cm-call-recruitment--lite,
+.cm-call-recruitment--recruiting,
+.cm-call-recruitment--waiting_alone,
+.cm-call-recruitment--closing_soon,
+.cm-call-recruitment--closed {
   margin: 0 !important;
-  padding: 8px 12px !important;
-  border-radius: 16px !important;
-  border: 1px solid rgba(229, 234, 242, 0.75) !important;
-  background: rgba(255, 255, 255, 0.78) !important;
-  box-shadow: 0 8px 20px rgba(23, 35, 61, 0.04);
+  padding: 10px 12px !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(226, 232, 240, 0.95) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  box-shadow: 0 6px 16px rgba(23, 35, 61, 0.05);
   color: #334155 !important;
   font-size: 12px !important;
   font-weight: 700 !important;
   display: grid;
-  gap: 6px;
-}
-
-.cm-call-recruitment--recruiting,
-.cm-call-recruitment--waiting_alone {
-  background: rgba(236, 253, 245, 0.72) !important;
-  border-color: rgba(167, 243, 208, 0.55) !important;
-  color: #065f46 !important;
-}
-
-.cm-call-recruitment--closing_soon {
-  background: rgba(255, 247, 237, 0.8) !important;
-  border-color: rgba(253, 186, 116, 0.45) !important;
-  color: #9a3412 !important;
-}
-
-.cm-call-recruitment--closed {
-  background: rgba(248, 250, 252, 0.85) !important;
-  color: #64748b !important;
+  gap: 8px;
 }
 
 .cm-call-recruitment-row {

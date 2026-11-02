@@ -476,30 +476,18 @@ export default function CallDemoClient() {
         {bannerText ? (
           <div
             className={[
-              "cm-call-banner",
-              showExitConfirm
-                ? "cm-call-banner--warn"
-                : state.uiScene === "connecting" ||
-                    state.uiScene === "reconnecting"
-                  ? "cm-call-banner--warn"
-                  : "cm-call-banner--wait",
-            ].join(" ")}
-            style={{
-              marginTop: 12,
-              padding: "10px 12px",
-              borderRadius: 12,
-              background: showExitConfirm ? "#fff7ed" : "#f9fafb",
-              color: showExitConfirm ? "#9a3412" : "#6b7280",
-              border: "1px solid #e5e7eb",
-              fontSize: 13,
-              fontWeight: 800,
-            }}
+              "cm-call-notice",
+              showExitConfirm ? "cm-call-notice--action" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
-            {bannerText}
+            <div className="cm-call-notice-title">{bannerText}</div>
             {showExitConfirm ? (
-              <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+              <div className="cm-call-notice-actions">
                 <button
                   type="button"
+                  className="cm-call-notice-btn cm-call-notice-btn--primary"
                   onClick={() =>
                     updateState((prev) => ({
                       ...prev,
@@ -507,31 +495,15 @@ export default function CallDemoClient() {
                       board: { ...prev.board, statusText: "通話終了" },
                     }))
                   }
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #b91c1c",
-                    background: "#b91c1c",
-                    color: "#fff",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
                 >
                   退出する
                 </button>
                 <button
                   type="button"
+                  className="cm-call-notice-btn"
                   onClick={() =>
                     updateState((prev) => ({ ...prev, uiScene: "connected" }))
                   }
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #d1d5db",
-                    background: "#fff",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                  }}
                 >
                   キャンセル
                 </button>
@@ -602,9 +574,10 @@ export default function CallDemoClient() {
             uiScene: "exit_confirm",
           }))
         }
-        showWaitingForOthers={state.uiScene === "waiting"}
+        showWaitingForOthers={false}
         bannerSlot={bannerSlot}
         classVoteSlot={classVoteSlot}
+        membersLocked={true}
         visibleMembers={viewMembers}
         deviceId={selfDeviceId}
         nowMs={nowMs}

@@ -3497,46 +3497,48 @@ export default function CallClient() {
     nowMs: nowMs || Date.now(),
   });
 
-  // Status/count live in the hero; skip the duplicate 募集カード.
-  // Keep alone-wait extend/quit as a rare functional prompt only.
+  // Status/count live in the hero — no green/orange recruitment cards.
+  // Only surface 5-minute alone-wait choices as a compact action notice.
   const recruitmentBanner =
     recruitmentView.aloneWaitTimedOut || lobbyExtendError ? (
-      <div
-        className={[
-          "cm-call-banner",
-          "cm-call-recruitment",
-          "cm-call-recruitment--lite",
-          `cm-call-recruitment--${recruitmentView.phase}`,
-        ].join(" ")}
-      >
+      <div className="cm-call-notice cm-call-notice--action" role="status">
         {recruitmentView.aloneWaitTimedOut ? (
-          <div className="cm-call-recruitment-actions">
-            {recruitmentView.canExtendAloneWait ? (
+          <>
+            <div className="cm-call-notice-title">
+              {recruitmentView.canExtendAloneWait
+                ? "まだ人が集まりません。どうしますか？"
+                : "まだ人が集まりません。今回はやめますか？"}
+            </div>
+            <div className="cm-call-notice-actions">
+              {recruitmentView.canExtendAloneWait ? (
+                <button
+                  type="button"
+                  className="cm-call-notice-btn cm-call-notice-btn--primary"
+                  disabled={lobbyExtendBusy || lobbyQuitBusy}
+                  onClick={() => {
+                    void extendAloneWait();
+                  }}
+                >
+                  {lobbyExtendBusy ? "延長中…" : "待機を続ける"}
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="cm-call-recruitment-action cm-call-recruitment-action--primary"
+                className="cm-call-notice-btn"
                 disabled={lobbyExtendBusy || lobbyQuitBusy}
                 onClick={() => {
-                  void extendAloneWait();
+                  void quitAloneWaitAndGoHome();
                 }}
               >
-                {lobbyExtendBusy ? "延長中…" : "待機を続ける"}
+                {lobbyQuitBusy ? "退出中…" : "やめる"}
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="cm-call-recruitment-action"
-              disabled={lobbyExtendBusy || lobbyQuitBusy}
-              onClick={() => {
-                void quitAloneWaitAndGoHome();
-              }}
-            >
-              {lobbyQuitBusy ? "退出中…" : "やめる"}
-            </button>
-          </div>
+            </div>
+          </>
         ) : null}
         {lobbyExtendError ? (
-          <div className="cm-call-recruitment-error">{lobbyExtendError}</div>
+          <div className="cm-call-notice-body cm-call-notice-body--error">
+            {lobbyExtendError}
+          </div>
         ) : null}
       </div>
     ) : null;

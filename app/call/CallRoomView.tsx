@@ -10,6 +10,10 @@ import {
 import { RoomSessionHero } from "@/components/room/RoomSessionHero";
 import { RoomAccountAvatarButton } from "@/components/room/RoomAccountAvatarButton";
 import { isAppShellContext } from "@/lib/appShellContext";
+import {
+  CALL_RECONNECT_NOTICE_DELAY_MS,
+  resolveCallHeroConnectionState,
+} from "@/lib/callConnectionNotice";
 import type { CallPresenceToast } from "@/lib/callPresenceToasts";
 import {
   getCallSpeakerOn,
@@ -177,7 +181,7 @@ export default function CallRoomView({
   filled,
   capacity,
   membersSyncRevision,
-  membersLocked = false,
+  membersLocked,
   showCallStuckReconnect = false,
   onCallStuckReconnect,
   meetingPlanLabel,
@@ -197,7 +201,7 @@ export default function CallRoomView({
   screenShareActive = false,
   screenShareDisabled = false,
   fetchErrorCount = 0,
-  showWaitingForOthers = false,
+  showWaitingForOthers: _showWaitingForOthers = false,
   visibleMembers,
   deviceId,
   classId = "",
@@ -229,6 +233,26 @@ export default function CallRoomView({
   const [speakerOn, setSpeakerOnState] = useState(() => getCallSpeakerOn());
 
   useEffect(() => subscribeCallSpeaker(() => setSpeakerOnState(getCallSpeakerOn())), []);
+
+  // Brief reconnect blips stay silent; only prolonged issues surface a toast.
+  const [showProlongedReconnectNotice, setShowProlongedReconnectNotice] =
+    useState(false);
+  useEffect(() => {
+    if (!voiceSelfReconnecting || voiceJoinFatalError) {
+      setShowProlongedReconnectNotice(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setShowProlongedReconnectNotice(true);
+    }, CALL_RECONNECT_NOTICE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [voiceSelfReconnecting, voiceJoinFatalError]);
+
+  const heroConnection = resolveCallHeroConnectionState({
+    voiceJoinFatalError,
+    showProlongedReconnectNotice,
+    membersLocked,
+  });
 
   const countLabel =
     membersSyncRevision > 0
@@ -337,8 +361,8 @@ export default function CallRoomView({
           title={roomTitle}
           categoryLabel={categoryLabel}
           countLabel={countLabel}
-          statusLabel="通話中"
-          statusTone="incall"
+          statusLabel={heroConnection.statusLabel}
+          statusTone={heroConnection.statusTone}
           toolbarLeft={
             onHome ? (
               <button
@@ -417,61 +441,18 @@ export default function CallRoomView({
 
         <div className="cm-call-inline-banners">
           {fetchErrorCount >= 3 ? (
-            <div
-              className="cm-call-banner cm-call-banner--warn"
-              style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                background: "#fffbeb",
-                color: "#92400e",
-                border: "1px solid #fde68a",
-                fontSize: 13,
-                fontWeight: 800,
-              }}
-            >
-              通話メンバーの取得を再試行中です。接続中の通話は維持します。
-            </div>
-          ) : null}
-
-          {showWaitingForOthers ? (
-            <div
-              className="cm-call-banner cm-call-banner--wait"
-              style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                background: "#f9fafb",
-                color: "#6b7280",
-                border: "1px solid #e5e7eb",
-                fontSize: 13,
-                fontWeight: 800,
-              }}
-            >
-              他の参加者の参加を待っています。
+            <div className="cm-call-notice" role="status">
+              メンバー情報を再取得しています（通話は継続中）
             </div>
           ) : null}
 
           {isVoiceLayerDebugEnabled() && showCallStuckReconnect ? (
-            <div
-              className="cm-call-stuck"
-              style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
-            >
-              <span style={{ fontSize: 13, color: "#92400e", fontWeight: 800 }}>
-                接続処理が長時間続いています
-              </span>
+            <div className="cm-call-notice cm-call-notice--action" role="status">
+              <span>接続処理が長引いています</span>
               <button
                 type="button"
-                className="cm-call-warn-btn"
+                className="cm-call-notice-btn"
                 onClick={() => onCallStuckReconnect?.()}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 10,
-                  border: "1px solid #f59e0b",
-                  background: "#fffbeb",
-                  color: "#b45309",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                }}
               >
                 再接続
               </button>
@@ -481,41 +462,18 @@ export default function CallRoomView({
           {bannerSlot}
 
           {showMicPermissionWarning ? (
-            <div
-              className="cm-call-banner cm-call-banner--warn"
-              style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                background: "#fffbeb",
-                border: "1px solid #fde68a",
-                fontSize: 13,
-                color: "#92400e",
-              }}
-            >
-              <div style={{ fontWeight: 800 }}>
+            <div className="cm-call-notice cm-call-notice--warn" role="alert">
+              <div className="cm-call-notice-title">
                 {micPermissionWarningTitle || "マイク準備中…"}
               </div>
               {micPermissionWarningBody ? (
-                <div style={{ marginTop: 6, lineHeight: 1.65 }}>
-                  {micPermissionWarningBody}
-                </div>
+                <div className="cm-call-notice-body">{micPermissionWarningBody}</div>
               ) : null}
               {onRetryMic ? (
                 <button
                   type="button"
-                  className="cm-call-warn-btn"
+                  className="cm-call-notice-btn"
                   onClick={onRetryMic}
-                  style={{
-                    marginTop: 8,
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #d97706",
-                    background: "#fff",
-                    color: "#92400e",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    minHeight: 44,
-                  }}
                 >
                   もう一度試す
                 </button>
@@ -524,43 +482,26 @@ export default function CallRoomView({
           ) : null}
 
           {voiceJoinFatalError ? (
-            <div
-              className="cm-call-banner cm-call-banner--error"
-              style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                background: "#f9fafb",
-                border: "1px solid #e5e7eb",
-                fontSize: 13,
-                color: "#4b5563",
-                lineHeight: 1.65,
-              }}
-            >
-              <div>音声接続に失敗しました。もう一度参加してください。</div>
+            <div className="cm-call-notice cm-call-notice--error" role="alert">
+              <div className="cm-call-notice-title">
+                音声接続に失敗しました
+              </div>
+              <div className="cm-call-notice-body">
+                音声が使えない可能性があります。再試行してください。
+              </div>
               {onVoiceReconnect ? (
                 <button
                   type="button"
-                  className="cm-cta-secondary cm-call-reconnect-btn"
+                  className="cm-call-notice-btn cm-call-notice-btn--primary"
                   onClick={onVoiceReconnect}
-                  style={{
-                    marginTop: 8,
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    border: "1px solid #9ca3af",
-                    background: "#fff",
-                    color: "#374151",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    minHeight: 44,
-                  }}
                 >
                   音声を再接続
                 </button>
               ) : null}
             </div>
-          ) : voiceSelfReconnecting ? (
-            <div className="cm-call-reconnecting" style={{ fontSize: 12, color: "#9ca3af" }}>
-              再接続中…
+          ) : showProlongedReconnectNotice ? (
+            <div className="cm-call-notice" role="status">
+              接続が不安定です。再接続しています…
             </div>
           ) : null}
 
@@ -570,19 +511,8 @@ export default function CallRoomView({
               <button
                 key={`reconnect-${memberId}`}
                 type="button"
-                className="cm-call-warn-btn"
+                className="cm-call-notice-btn"
                 onClick={() => onManualAudioReconnect?.(memberId)}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #f59e0b",
-                  background: "#fffbeb",
-                  color: "#b45309",
-                  fontSize: 11,
-                  fontWeight: 800,
-                  cursor: "pointer",
-                  width: "fit-content",
-                }}
               >
                 {formatMemberDisplayName(member)} の音声を再接続
               </button>
