@@ -42,6 +42,7 @@ import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { RoomClassMenuSheet } from "@/components/room/RoomClassMenuSheet";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import {
   buildShellAwareLoginUrl,
@@ -438,6 +439,7 @@ export default function CallClient() {
   const [classMenuOpen, setClassMenuOpen] = useState(false);
   const [classLeaveBusy, setClassLeaveBusy] = useState(false);
   const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
+  const { photoPath: selfProfilePhotoPath } = useSelfProfilePhoto(deviceId);
   const {
     enabled: notificationsEnabled,
     busy: notificationsBusy,
@@ -3592,7 +3594,9 @@ export default function CallClient() {
   );
   const accountDisplayName =
     formatMemberDisplayName(selfMember ?? {}) || accountLabel || "ゲスト";
-  const accountPhotoPath = selfMember?.photo_path ?? null;
+  // Prefer Classmate profile photo_path over session-derived fields.
+  const accountPhotoPath =
+    selfProfilePhotoPath || selfMember?.photo_path || null;
 
   const leaveClassAndGoHome = async () => {
     const cid = String(classId ?? "").trim();
@@ -3837,6 +3841,8 @@ export default function CallClient() {
         void leaveClassAndGoHome();
       }}
       leaveBusy={classLeaveBusy}
+      classId={classId}
+      deviceId={deviceId}
     />
     </>
   );

@@ -1,12 +1,25 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import BottomSheet from "@/components/BottomSheet";
+import { ClassInfoEditSheet } from "@/components/room/ClassInfoEditSheet";
+import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 
 type RoomClassMenuSheetProps = {
   open: boolean;
   onClose: () => void;
   onLeaveClass: () => void;
   leaveBusy?: boolean;
+  classId?: string;
+  deviceId?: string;
+  classTitle?: string | null;
+  systemClassName?: string | null;
+  coverPath?: string | null;
+  onClassPresentationSaved?: (next: {
+    title: string;
+    displayName: string | null;
+    coverPath: string | null;
+  }) => void;
 };
 
 /**
@@ -18,21 +31,105 @@ export function RoomClassMenuSheet({
   onClose,
   onLeaveClass,
   leaveBusy = false,
+  classId = "",
+  deviceId = "",
+  classTitle = null,
+  systemClassName = null,
+  coverPath = null,
+  onClassPresentationSaved,
 }: RoomClassMenuSheetProps) {
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSupported, setEditSupported] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
+  const [loadedTitle, setLoadedTitle] = useState<string | null>(null);
+  const [loadedSystemName, setLoadedSystemName] = useState<string | null>(null);
+  const [loadedCoverPath, setLoadedCoverPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !classId || !deviceId) {
+      setEditSupported(false);
+      setCanEdit(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const headers = await buildDeviceAuthHeaders(deviceId);
+        const qs = new URLSearchParams({ classId, deviceId });
+        const res = await fetch(`/api/class/presentation?${qs.toString()}`, {
+          cache: "no-store",
+          headers,
+        });
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        setEditSupported(json?.editSupported === true);
+        setCanEdit(json?.canEdit === true);
+        setLoadedTitle(
+          json?.title != null ? String(json.title) : classTitle ?? null
+        );
+        setLoadedSystemName(
+          json?.name != null ? String(json.name) : systemClassName ?? null
+        );
+        setLoadedCoverPath(
+          json?.coverPath != null
+            ? String(json.coverPath)
+            : coverPath ?? null
+        );
+      } catch {
+        if (!cancelled) {
+          setEditSupported(false);
+          setCanEdit(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, classId, deviceId, classTitle, systemClassName, coverPath]);
+
   return (
-    <BottomSheet open={open} onClose={onClose} title="クラス">
-      <div className="cm-room-settings-list">
-        <button
-          type="button"
-          className="cm-room-settings-row cm-room-settings-row--danger"
-          disabled={leaveBusy}
-          onClick={() => {
-            onLeaveClass();
-          }}
-        >
-          {leaveBusy ? "脱退中…" : "クラスを脱退"}
-        </button>
-      </div>
-    </BottomSheet>
+    <>
+      <BottomSheet open={open && !editOpen} onClose={onClose} title="クラス">
+        <div className="cm-room-settings-list">
+          {editSupported && canEdit ? (
+            <button
+              type="button"
+              className="cm-room-settings-row"
+              onClick={() => setEditOpen(true)}
+            >
+              クラス情報を編集
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="cm-room-settings-row cm-room-settings-row--danger"
+            disabled={leaveBusy}
+            onClick={() => {
+              onLeaveClass();
+            }}
+          >
+            {leaveBusy ? "脱退中…" : "クラスを脱退"}
+          </button>
+        </div>
+      </BottomSheet>
+
+      <ClassInfoEditSheet
+        open={editOpen}
+        onClose={() => {
+          setEditOpen(false);
+          onClose();
+        }}
+        classId={classId}
+        deviceId={deviceId}
+        initialTitle={loadedTitle ?? classTitle}
+        initialSystemName={loadedSystemName ?? systemClassName}
+        initialCoverPath={loadedCoverPath ?? coverPath}
+        onSaved={(next) => {
+          onClassPresentationSaved?.(next);
+          setEditOpen(false);
+          onClose();
+        }}
+      />
+    </>
   );
 }

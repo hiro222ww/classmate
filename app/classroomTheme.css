@@ -5564,3 +5564,113 @@ body.cm-has-mobile-bottom-nav {
     height: min(48px, 12.5vw);
   }
 }
+
+/* Class presentation edit sheet */
+.cm-class-edit {
+  display: grid;
+  gap: 14px;
+  padding: 4px 2px 8px;
+}
+
+.cm-class-edit-cover-block {
+  display: grid;
+  gap: 10px;
+}
+
+.cm-class-edit-cover {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #dbeafe 0%, #fce7f3 55%, #fff7ed 100%);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+}
+
+.cm-class-edit-cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cm-class-edit-file-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cm-class-edit-text-btn {
+  appearance: none;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  min-height: 40px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #374151;
+  cursor: pointer;
+}
+
+.cm-class-edit-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.cm-class-edit-field input {
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  font-family: inherit;
+}
+
+.cm-class-edit-meta {
+  font-size: 12px;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.cm-class-edit-error {
+  font-size: 12px;
+  font-weight: 800;
+  color: #dc2626;
+}
+
+.cm-class-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.cm-class-edit-cancel {
+  appearance: none;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cm-class-edit-save {
+  min-height: 44px;
+  border-radius: 999px !important;
+  padding: 10px 18px !important;
+  font-size: 13px !important;
+  font-weight: 900 !important;
+}

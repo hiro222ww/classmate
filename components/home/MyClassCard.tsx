@@ -3,6 +3,10 @@
 import type { JoinedClassRow } from "@/hooks/useJoinedClasses";
 import { CmAvatar } from "@/components/ui/CmAvatar";
 import { CmStatusPill } from "@/components/ui/CmStatusPill";
+import {
+  buildClassCoverPublicUrl,
+  resolveClassTitle,
+} from "@/lib/classPresentation";
 
 export type MyClassMemberPreview = {
   deviceId: string;
@@ -65,6 +69,11 @@ export function MyClassCard({
       ? memberCount
       : previews.length;
   const overflow = Math.max(0, count - previews.length);
+  const title = resolveClassTitle({
+    name: row.name,
+    displayName: row.displayName,
+  });
+  const coverUrl = buildClassCoverPublicUrl(row.coverPath);
 
   return (
     <div className={`cm-my-class-card-wrap cm-my-class-card--${coverTone(row)}`}>
@@ -73,12 +82,24 @@ export function MyClassCard({
         className={`cm-my-class-card cm-my-class-card--${coverTone(row)}`}
         disabled={disabled || leaving}
         onClick={() => onOpen(row)}
-        aria-label={`${row.name}を開く`}
+        aria-label={`${title}を開く`}
       >
-        <div className="cm-my-class-card-cover" aria-hidden />
+        <div
+          className="cm-my-class-card-cover"
+          aria-hidden
+          style={
+            coverUrl
+              ? {
+                  backgroundImage: `url(${coverUrl})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }
+              : undefined
+          }
+        />
         <div className="cm-my-class-card-body">
           <div className="cm-my-class-card-title-row">
-            <span className="cm-my-class-card-title">{row.name}</span>
+            <span className="cm-my-class-card-title">{title}</span>
             <CmStatusPill tone={tone}>{label}</CmStatusPill>
           </div>
           {row.topicTitle ? (

@@ -4823,6 +4823,10 @@ const name = rawName === "You" ? "参加者" : rawName;
           void leaveClassAndGoHome();
         }}
         leaveBusy={classLeaveBusy}
+        classId={classId}
+        deviceId={deviceId}
+        classTitle={shellTitle}
+        systemClassName={classLabel || shellTitle}
       />
     </>
   );

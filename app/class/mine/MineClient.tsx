@@ -27,6 +27,7 @@ import {
 import { withDev } from "@/lib/withDev";
 import { buildDeviceAuthHeaders } from "@/lib/fetchCurrentClass";
 import { hasCreateClassEntitlement } from "@/lib/classCreateGuards";
+import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
 
 export default function MineClient() {
   const router = useRouter();
@@ -42,6 +43,8 @@ export default function MineClient() {
     reload,
     setError,
   } = useJoinedClasses();
+  const { photoPath: selfPhotoPath, displayName: selfDisplayName } =
+    useSelfProfilePhoto(deviceId);
 
   useEffect(() => {
     const id = String(deviceId || getDeviceId() || "").trim();
@@ -178,7 +181,8 @@ export default function MineClient() {
         aboutHref={withDev("/about")}
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
-        displayName={loggedIn ? accountLabel : "ゲスト"}
+        displayName={selfDisplayName || (loggedIn ? accountLabel : "ゲスト")}
+        photoPath={selfPhotoPath}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
