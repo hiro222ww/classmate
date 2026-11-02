@@ -191,6 +191,10 @@ import {
   markLocalLeftCall,
 } from "@/lib/localCallExit";
 import { clearAutoCallOnce } from "@/lib/autoCallOnce";
+import {
+  buildCallExitHomeHref,
+  navigateCallExitHome,
+} from "@/lib/callExitNavigate";
 import { isSelfVisibleOnCallStrip } from "@/lib/callConnectionNotice";
 import { resolveVoiceSelfReconnecting } from "@/lib/callVoiceReconnectUi";
 import {
@@ -3579,7 +3583,8 @@ export default function CallClient() {
   );
   const accountDisplayName =
     formatMemberDisplayName(selfMember ?? {}) || accountLabel || "ゲスト";
-  // Prefer Classmate profile photo_path over session-derived fields.
+  // Classmate profile photo_path is SoT. useSelfProfilePhoto keeps last-good
+  // during refresh; session member photo fills only when self path is empty.
   const accountPhotoPath =
     selfProfilePhotoPath || selfMember?.photo_path || null;
 
@@ -3696,15 +3701,23 @@ export default function CallClient() {
           callExitBusyRef.current = false;
         }, 2500);
 
-        const homeHref = withDev(
-          `${resolveShellDashboardPath()}#${HOME_MY_CLASS_SECTION_ID}`
-        );
+        // Hash MUST follow withDev() so ?dev= stays on the path, not fragment.
+        const homeHref = buildCallExitHomeHref({
+          dashboardPath: resolveShellDashboardPath(),
+          sectionId: HOME_MY_CLASS_SECTION_ID,
+          withDev,
+        });
         logNavigationIntent("left_call_return_home", "CallClient.exit_button");
         logRouteChange(getCurrentPath(), homeHref, "left_call_return_home");
 
         // Stop reconnect UI / repair loops before tearing down media.
         setShowCallStuckReconnect(false);
         setVoiceJoinFatalError(false);
+        try {
+          handleVoiceCleanup();
+        } catch (e) {
+          console.warn("[call] handleVoiceCleanup threw during exit", e);
+        }
         setPeerStates({});
         setPeerDiagnostics({});
         setRemoteAudioHealth({});
@@ -3726,7 +3739,9 @@ export default function CallClient() {
           console.warn("[call] releaseSessionMic threw during exit", e);
         }
 
-        router.push(homeHref);
+        // Hard navigate: Next soft push is unreliable in iOS Safari / Cap WebView.
+        // Must run even when markSelfLeftCall / APIs fail.
+        navigateCallExitHome(homeHref);
       }}
       fetchErrorCount={fetchErrorCount}
       showWaitingForOthers={false}

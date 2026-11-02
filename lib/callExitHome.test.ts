@@ -17,6 +17,12 @@ describe("call exit → home (not room remount)", () => {
     expect(source).toContain("clearAutoCallOnce");
     expect(source).toContain('releaseSessionMic("call_exit"');
     expect(source).toContain("HOME_MY_CLASS_SECTION_ID");
+    expect(source).toContain("navigateCallExitHome");
+    expect(source).toContain("buildCallExitHomeHref");
+    // Soft Next push is unreliable in iOS Safari / Cap WebView shells.
+    expect(source).not.toMatch(
+      /onExit=\{\(\) => \{[\s\S]*?router\.push\(homeHref\)/
+    );
     // Exit must stay enabled during reconnect / fetch failures.
     expect(source).toContain("exitDisabled={false}");
     // Must not navigate exit back into /room (looks like a no-op + rematch risk).

@@ -39,7 +39,8 @@ export type FatalErrorSnapshot = {
  * - app/class/select/SelectClient.tsx: location.href
  * - app/admin/*: location.href (admin only)
  * - components/DevModeSwitcher.tsx: location.href
- * - app/call/CallClient.tsx: router.push/replace (exit, profile, removed_from_session)
+ * - app/call/CallClient.tsx: location.assign via navigateCallExitHome (exit);
+ *   router.push/replace (profile, removed_from_session)
  * - app/room/RoomClient.tsx: router.replace (auto-call, rematch, removed)
  * - app/HomeClient.tsx, ProfileClient, etc.: router.push/replace (not on /call)
  * No window.location.reload in call/room/voice paths.
