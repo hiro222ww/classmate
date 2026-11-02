@@ -191,6 +191,8 @@ import {
   markLocalLeftCall,
 } from "@/lib/localCallExit";
 import { clearAutoCallOnce } from "@/lib/autoCallOnce";
+import { isSelfVisibleOnCallStrip } from "@/lib/callConnectionNotice";
+import { resolveVoiceSelfReconnecting } from "@/lib/callVoiceReconnectUi";
 import {
   readSessionMembersSnapshot,
   writeSessionMembersSnapshot,
@@ -439,7 +441,6 @@ export default function CallClient() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [classMenuOpen, setClassMenuOpen] = useState(false);
   const [classLeaveBusy, setClassLeaveBusy] = useState(false);
-  const [callExitBusy, setCallExitBusy] = useState(false);
   const callExitBusyRef = useRef(false);
   const [classRoomTitle, setClassRoomTitle] = useState("通話ルーム");
   const [classSystemName, setClassSystemName] = useState<string | null>(null);
@@ -948,6 +949,8 @@ export default function CallClient() {
           device_id: deviceId,
           display_name: "参加者",
           photo_path: null,
+          is_in_call: true,
+          screen: "call",
         },
       ];
     });
@@ -957,6 +960,17 @@ export default function CallClient() {
     (member: Member): Member => {
       const did = String(member.device_id ?? "").trim();
       if (!did) return member;
+
+      const viewerId = String(deviceId ?? "").trim();
+      // While still mounted on /call and not in an explicit exit, never demote
+      // self from sticky leave — that was emptying the strip to 0/5.
+      if (did === viewerId && !selfLeftCallRef.current) {
+        return {
+          ...member,
+          is_in_call: true,
+          screen: String(member.screen ?? "").trim() || "call",
+        };
+      }
 
       const locallyLeft =
         localExitedPeersRef.current.has(did) ||
@@ -970,7 +984,7 @@ export default function CallClient() {
         screen: "room",
       };
     },
-    [sessionId]
+    [deviceId, sessionId]
   );
 
   useEffect(() => {
@@ -2724,9 +2738,24 @@ export default function CallClient() {
   }, [members, speakingMemberId, peerStates]);
 
   const visibleMembers = useMemo(() => {
+    const viewerId = String(deviceId ?? "").trim();
     return sortedMembers.filter((member) => {
       const memberId = String(member.device_id ?? "").trim();
       if (!memberId) return false;
+      const selfExplicitLeft =
+        memberId === viewerId &&
+        (selfLeftCallRef.current ||
+          localExitedPeersRef.current.has(memberId) ||
+          hasLocalLeftCall(sessionId, memberId));
+      if (
+        isSelfVisibleOnCallStrip({
+          memberId,
+          viewerId,
+          explicitLeft: selfExplicitLeft,
+        })
+      ) {
+        return true;
+      }
       const localExitedCall =
         localExitedPeersRef.current.has(memberId) ||
         hasLocalLeftCall(sessionId, memberId);
@@ -2751,10 +2780,17 @@ export default function CallClient() {
         isInCall,
       });
     });
-  }, [sortedMembers, nowMs, membersSyncRevision, sessionId]);
+  }, [sortedMembers, nowMs, membersSyncRevision, sessionId, deviceId]);
 
   // Hero count must match the in-call avatar strip (not the full session roster).
   const filled = visibleMembers.length;
+
+  const callActiveRemoteIds = useMemo(() => {
+    const viewerId = String(deviceId ?? "").trim();
+    return visibleMembers
+      .map((m) => String(m.device_id ?? "").trim())
+      .filter((id) => id && id !== viewerId);
+  }, [visibleMembers, deviceId]);
 
   useEffect(() => {
     const nameCache = memberNameCacheRef.current;
@@ -2978,21 +3014,23 @@ export default function CallClient() {
     voiceLayerShouldRender &&
     (voiceEntryMode === "mic" || voiceEntryMode === "listen_only");
 
-  const voiceSelfReconnecting = useMemo(() => {
-    if (!voiceLayerActive || voiceJoinFatalError) return false;
-    const states = Object.values(peerStates);
-    const anyConnected = states.some((state) => state === "connected");
-    const peerReconnecting = Object.values(peerDiagnostics).some(
-      (diag) =>
-        diag?.autoHardResetInProgress === true ||
-        diag?.voicePeerRepairInProgress === true
-    );
-    if (peerReconnecting && !anyConnected) return true;
-    const peerConnecting = states.some((state) => state === "connecting");
-    // Avoid sticky "再接続中" while at least one peer is already connected.
-    if (anyConnected) return false;
-    return peerConnecting;
-  }, [peerDiagnostics, peerStates, voiceJoinFatalError, voiceLayerActive]);
+  const voiceSelfReconnecting = useMemo(
+    () =>
+      resolveVoiceSelfReconnecting({
+        voiceLayerActive,
+        voiceJoinFatalError,
+        callActiveRemoteIds,
+        peerStates,
+        peerDiagnostics,
+      }),
+    [
+      callActiveRemoteIds,
+      peerDiagnostics,
+      peerStates,
+      voiceJoinFatalError,
+      voiceLayerActive,
+    ]
+  );
 
   useEffect(() => {
     if (!voiceLayerActive || remoteMemberIds.length === 0) return;
@@ -3644,20 +3682,32 @@ export default function CallClient() {
         logNavigationIntent("return_home", "CallClient.home_button");
         router.push(withDev(resolveShellDashboardPath()));
       }}
-      exitDisabled={callExitBusy}
+      // Exit must stay tappable during reconnect / fetch failures.
+      exitDisabled={false}
+      hasCallActiveRemotes={callActiveRemoteIds.length > 0}
       onExit={() => {
         // Call leave only — keep class membership. Prefer home so the
         // sunset room chrome cannot look like "exit did nothing", and so
         // random-match autoCallOnce cannot bounce the user back into /call.
+        // Debounce only — never permanently disable the button.
         if (callExitBusyRef.current) return;
         callExitBusyRef.current = true;
-        setCallExitBusy(true);
+        window.setTimeout(() => {
+          callExitBusyRef.current = false;
+        }, 2500);
 
         const homeHref = withDev(
           `${resolveShellDashboardPath()}#${HOME_MY_CLASS_SECTION_ID}`
         );
         logNavigationIntent("left_call_return_home", "CallClient.exit_button");
         logRouteChange(getCurrentPath(), homeHref, "left_call_return_home");
+
+        // Stop reconnect UI / repair loops before tearing down media.
+        setShowCallStuckReconnect(false);
+        setVoiceJoinFatalError(false);
+        setPeerStates({});
+        setPeerDiagnostics({});
+        setRemoteAudioHealth({});
 
         try {
           markSelfLeftCall();

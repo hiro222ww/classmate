@@ -4635,13 +4635,34 @@ button.cm-room-session-status:focus-visible {
 }
 
 .cm-room-session-status--reconnect {
-  background: rgba(255, 247, 237, 0.92);
-  color: #9a3412;
-  border-color: transparent;
+  /* Quiet status — not a warning card. Soft ink on glass. */
+  background: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.92);
+  border-color: rgba(255, 255, 255, 0.2);
+  font-weight: 700;
+  padding: 3px 8px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
 }
 
 .cm-room-session-status--reconnect .cm-room-session-status-dot {
-  background: #f59e0b;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.cm-room-session-status-spinner {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: cm-room-status-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes cm-room-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .cm-room-session-status--error {
