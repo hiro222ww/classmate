@@ -19,16 +19,18 @@ function mergeProfileFields(
   byDevice: MemberProfileFields | null | undefined,
   byUser: MemberProfileFields | null | undefined
 ): MemberProfileFields {
-  const pick = (deviceValue?: string | null, userValue?: string | null) => {
-    const device = String(deviceValue ?? "").trim();
-    if (device) return device;
+  // Prefer auth/user profile fields, then fill from device row. Matches
+  // /api/profile self GET so account chrome and member strips stay aligned.
+  const pick = (userValue?: string | null, deviceValue?: string | null) => {
     const user = String(userValue ?? "").trim();
-    return user || null;
+    if (user) return user;
+    const device = String(deviceValue ?? "").trim();
+    return device || null;
   };
 
   return {
-    display_name: pick(byDevice?.display_name, byUser?.display_name),
-    photo_path: pick(byDevice?.photo_path, byUser?.photo_path),
+    display_name: pick(byUser?.display_name, byDevice?.display_name),
+    photo_path: pick(byUser?.photo_path, byDevice?.photo_path),
   };
 }
 
@@ -70,20 +72,17 @@ export async function loadProfileMapForMembers(
       if (deviceId) {
         byDeviceId.set(deviceId, row);
       }
-
-      const userId = normalizeId(row.user_id);
-      if (userId && isValidUuid(userId) && !byUserId.has(userId)) {
-        byUserId.set(userId, row);
-      }
+      // Do not seed byUserId from device rows — a device row with empty
+      // photo_path would skip the dedicated user_id lookup and hide the
+      // Google-linked profile photo.
     }
   }
 
-  const missingUserIds = userIds.filter((userId) => !byUserId.has(userId));
-  if (missingUserIds.length > 0) {
+  if (userIds.length > 0) {
     const { data, error } = await sb
       .from("user_profiles")
       .select("device_id,user_id,display_name,photo_path")
-      .in("user_id", missingUserIds);
+      .in("user_id", userIds);
 
     if (error) {
       return { ok: false, error: error.message };
@@ -91,7 +90,12 @@ export async function loadProfileMapForMembers(
 
     for (const row of data ?? []) {
       const userId = normalizeId(row.user_id);
-      if (userId && isValidUuid(userId)) {
+      if (!userId || !isValidUuid(userId)) continue;
+      const existing = byUserId.get(userId);
+      const incomingPhoto = String(row.photo_path ?? "").trim();
+      const existingPhoto = String(existing?.photo_path ?? "").trim();
+      // Prefer the user-linked row that actually has a photo.
+      if (!existing || (!existingPhoto && incomingPhoto)) {
         byUserId.set(userId, row);
       }
     }

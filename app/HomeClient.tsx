@@ -550,6 +550,7 @@ export default function HomeClient() {
   const handledPushOpenClassIdRef = useRef<string | null>(null);
   const leavingClassIdsRef = useRef<Set<string>>(new Set());
   const fetchJoinedClassesGenRef = useRef(0);
+  const profileFetchGenRef = useRef(0);
   const leftSucceededClassIdsRef = useRef<Set<string>>(new Set());
   const homeMountStartMsRef = useRef<number | null>(null);
   const homeEnrichStartedRef = useRef(false);
@@ -850,7 +851,10 @@ export default function HomeClient() {
   );
 
   const refreshSelfProfile = useCallback(async (id: string) => {
+    const gen = ++profileFetchGenRef.current;
     const result = await fetchSelfProfile(id);
+    if (gen !== profileFetchGenRef.current) return;
+
     if (result.ok) {
       setProfile(result.profile);
       setProfileChecked(true);
@@ -867,7 +871,8 @@ export default function HomeClient() {
       return;
     }
 
-    setProfile(null);
+    // Keep last-good profile on transient failure so the avatar does not
+    // flash back to the default while a concurrent/auth-raced fetch loses.
     setProfileChecked(true);
     logProfileExists(id, false);
   }, []);
@@ -1006,7 +1011,8 @@ export default function HomeClient() {
       try {
         setLoading(true);
         setError("");
-        setProfile(null);
+        // Do not clear profile here — a remount/searchParams refresh must not
+        // drop a known-good photo to the default while the next fetch is in flight.
         setClasses([]);
         setMembersByClass({});
         setMembersLoadingByClass({});
