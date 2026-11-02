@@ -6,6 +6,7 @@ describe("resolveCallHeroConnectionState", () => {
     expect(resolveCallHeroConnectionState({})).toEqual({
       statusLabel: "通話中",
       statusTone: "incall",
+      statusActionable: false,
     });
   });
 
@@ -15,6 +16,7 @@ describe("resolveCallHeroConnectionState", () => {
     ).toEqual({
       statusLabel: "募集中",
       statusTone: "waiting",
+      statusActionable: false,
     });
   });
 
@@ -26,8 +28,9 @@ describe("resolveCallHeroConnectionState", () => {
         membersLocked: false,
       })
     ).toEqual({
-      statusLabel: "接続エラー",
+      statusLabel: "接続できません",
       statusTone: "error",
+      statusActionable: true,
     });
     expect(
       resolveCallHeroConnectionState({
@@ -37,6 +40,7 @@ describe("resolveCallHeroConnectionState", () => {
     ).toEqual({
       statusLabel: "再接続中",
       statusTone: "reconnect",
+      statusActionable: true,
     });
   });
 });

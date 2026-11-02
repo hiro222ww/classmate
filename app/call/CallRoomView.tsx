@@ -218,7 +218,7 @@ export default function CallRoomView({
   const inAppShell = isAppShellContext();
   const [surfaceTab, setSurfaceTab] = useState<SurfaceTab>("board");
 
-  // Brief reconnect blips stay silent; only prolonged issues surface a toast.
+  // Brief reconnect blips stay silent; only prolonged issues flip the hero chip.
   const [showProlongedReconnectNotice, setShowProlongedReconnectNotice] =
     useState(false);
   useEffect(() => {
@@ -237,6 +237,10 @@ export default function CallRoomView({
     showProlongedReconnectNotice,
     membersLocked,
   });
+  const onHeroStatusClick =
+    heroConnection.statusActionable && onVoiceReconnect
+      ? onVoiceReconnect
+      : undefined;
 
   const countLabel =
     membersSyncRevision > 0
@@ -347,6 +351,7 @@ export default function CallRoomView({
           countLabel={countLabel}
           statusLabel={heroConnection.statusLabel}
           statusTone={heroConnection.statusTone}
+          onStatusClick={onHeroStatusClick}
           toolbarLeft={
             onHome ? (
               <button
@@ -462,30 +467,6 @@ export default function CallRoomView({
                   もう一度試す
                 </button>
               ) : null}
-            </div>
-          ) : null}
-
-          {voiceJoinFatalError ? (
-            <div className="cm-call-notice cm-call-notice--error" role="alert">
-              <div className="cm-call-notice-title">
-                音声接続に失敗しました
-              </div>
-              <div className="cm-call-notice-body">
-                音声が使えない可能性があります。再試行してください。
-              </div>
-              {onVoiceReconnect ? (
-                <button
-                  type="button"
-                  className="cm-call-notice-btn cm-call-notice-btn--primary"
-                  onClick={onVoiceReconnect}
-                >
-                  音声を再接続
-                </button>
-              ) : null}
-            </div>
-          ) : showProlongedReconnectNotice ? (
-            <div className="cm-call-notice" role="status">
-              接続が不安定です。再接続しています…
             </div>
           ) : null}
 

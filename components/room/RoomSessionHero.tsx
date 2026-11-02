@@ -17,6 +17,8 @@ type Props = {
   countLabel?: string;
   statusLabel?: string;
   statusTone?: RoomSessionStatusTone;
+  /** When set, the status chip becomes a button (e.g. reconnect retry). */
+  onStatusClick?: () => void;
   /** Primary CTA (通話開始 etc.) — blue gradient only here */
   primaryAction?: ReactNode;
   avatarStrip?: ReactNode;
@@ -37,6 +39,7 @@ export function RoomSessionHero({
   countLabel,
   statusLabel,
   statusTone = "waiting",
+  onStatusClick,
   primaryAction,
   avatarStrip,
   toolbarLeft,
@@ -45,6 +48,13 @@ export function RoomSessionHero({
   backgroundSrc = "/brand/classmate-home-hero.jpg",
 }: Props) {
   const metaParts = [categoryLabel, countLabel].filter(Boolean);
+  const statusClassName = [
+    "cm-room-session-status",
+    `cm-room-session-status--${statusTone}`,
+    onStatusClick ? "cm-room-session-status--action" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <header
@@ -84,15 +94,22 @@ export function RoomSessionHero({
                   </p>
                 ) : null}
                 {statusLabel ? (
-                  <span
-                    className={[
-                      "cm-room-session-status",
-                      `cm-room-session-status--${statusTone}`,
-                    ].join(" ")}
-                  >
-                    <span className="cm-room-session-status-dot" aria-hidden />
-                    {statusLabel}
-                  </span>
+                  onStatusClick ? (
+                    <button
+                      type="button"
+                      className={statusClassName}
+                      onClick={onStatusClick}
+                      aria-label={`${statusLabel}（タップで再接続）`}
+                    >
+                      <span className="cm-room-session-status-dot" aria-hidden />
+                      {statusLabel}
+                    </button>
+                  ) : (
+                    <span className={statusClassName}>
+                      <span className="cm-room-session-status-dot" aria-hidden />
+                      {statusLabel}
+                    </span>
+                  )
                 ) : null}
               </div>
             )}

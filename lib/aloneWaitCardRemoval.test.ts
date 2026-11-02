@@ -24,3 +24,27 @@ describe("alone-wait confirm card removal", () => {
     expect(source).not.toContain("待機を続ける");
   });
 });
+
+describe("call connection banner removal", () => {
+  it("does not render large reconnect/fatal cards in CallRoomView", () => {
+    const source = readFileSync(
+      join(process.cwd(), "app/call/CallRoomView.tsx"),
+      "utf8"
+    );
+    expect(source).not.toContain("接続が不安定です。再接続しています");
+    expect(source).not.toContain("音声接続に失敗しました");
+    expect(source).not.toContain("音声が使えない可能性があります");
+    expect(source).not.toMatch(/>\s*音声を再接続\s*</);
+    expect(source).toContain("onStatusClick={onHeroStatusClick}");
+    expect(source).toContain("resolveCallHeroConnectionState");
+  });
+
+  it("exposes tap-to-retry on the hero status chip", () => {
+    const source = readFileSync(
+      join(process.cwd(), "components/room/RoomSessionHero.tsx"),
+      "utf8"
+    );
+    expect(source).toContain("onStatusClick");
+    expect(source).toContain("タップで再接続");
+  });
+});
