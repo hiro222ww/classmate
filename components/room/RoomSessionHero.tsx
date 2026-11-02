@@ -101,12 +101,32 @@ export function RoomSessionHero({
                       onClick={onStatusClick}
                       aria-label={`${statusLabel}（タップで再接続）`}
                     >
-                      <span className="cm-room-session-status-dot" aria-hidden />
+                      {statusTone === "reconnect" ? (
+                        <span
+                          className="cm-room-session-status-spinner"
+                          aria-hidden
+                        />
+                      ) : (
+                        <span
+                          className="cm-room-session-status-dot"
+                          aria-hidden
+                        />
+                      )}
                       {statusLabel}
                     </button>
                   ) : (
                     <span className={statusClassName}>
-                      <span className="cm-room-session-status-dot" aria-hidden />
+                      {statusTone === "reconnect" ? (
+                        <span
+                          className="cm-room-session-status-spinner"
+                          aria-hidden
+                        />
+                      ) : (
+                        <span
+                          className="cm-room-session-status-dot"
+                          aria-hidden
+                        />
+                      )}
                       {statusLabel}
                     </span>
                   )

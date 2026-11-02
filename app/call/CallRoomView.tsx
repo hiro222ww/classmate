@@ -119,6 +119,8 @@ export type CallRoomViewProps = {
   onRetryMic?: () => void;
   voiceJoinFatalError?: boolean;
   voiceSelfReconnecting?: boolean;
+  /** True when at least one non-self member is on the call mesh. */
+  hasCallActiveRemotes?: boolean;
   onVoiceReconnect?: () => void;
   muteDisabled?: boolean;
   userMuted: boolean;
@@ -211,6 +213,7 @@ export default function CallRoomView({
   onRetryMic,
   voiceJoinFatalError = false,
   voiceSelfReconnecting = false,
+  hasCallActiveRemotes = false,
   onVoiceReconnect,
   muteDisabled = false,
   userMuted,
@@ -222,10 +225,15 @@ export default function CallRoomView({
   const [surfaceTab, setSurfaceTab] = useState<SurfaceTab>("board");
 
   // Brief reconnect blips stay silent; only prolonged issues flip the hero chip.
+  // Solo (no call-active remotes) never arms reconnect UI.
   const [showProlongedReconnectNotice, setShowProlongedReconnectNotice] =
     useState(false);
   useEffect(() => {
-    if (!voiceSelfReconnecting || voiceJoinFatalError) {
+    if (
+      !voiceSelfReconnecting ||
+      voiceJoinFatalError ||
+      !hasCallActiveRemotes
+    ) {
       setShowProlongedReconnectNotice(false);
       return;
     }
@@ -233,12 +241,14 @@ export default function CallRoomView({
       setShowProlongedReconnectNotice(true);
     }, CALL_RECONNECT_NOTICE_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [voiceSelfReconnecting, voiceJoinFatalError]);
+  }, [voiceSelfReconnecting, voiceJoinFatalError, hasCallActiveRemotes]);
 
   const heroConnection = resolveCallHeroConnectionState({
     voiceJoinFatalError,
     showProlongedReconnectNotice,
     membersLocked,
+    inCallCount: filled,
+    hasCallActiveRemotes,
   });
   const onHeroStatusClick =
     heroConnection.statusActionable && onVoiceReconnect
@@ -247,7 +257,7 @@ export default function CallRoomView({
 
   const countLabel =
     membersSyncRevision > 0
-      ? `${filled}/${capacity}人`
+      ? `${Math.max(filled, 0)}/${capacity}人`
       : `--/${capacity}人`;
 
   const avatarMembers = useMemo((): RoomAvatarStripMember[] => {
