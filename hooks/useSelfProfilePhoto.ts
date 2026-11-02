@@ -43,8 +43,10 @@ export function useSelfProfilePhoto(deviceId?: string | null) {
 
     const path = String(result.profile?.photo_path ?? "").trim() || null;
     const name = String(result.profile?.display_name ?? "").trim() || null;
-    setPhotoPath(path);
-    setDisplayName(name);
+    // Successful empty photo must not wipe a known-good path (stale/partial
+    // profile rows). Clear only on deviceKey change in the effect below.
+    setPhotoPath((prev) => path || prev || null);
+    setDisplayName((prev) => name || prev || null);
     setLoaded(true);
   }, [deviceKey]);
 

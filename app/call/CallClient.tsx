@@ -57,6 +57,7 @@ import MemberProfileModal from "@/components/MemberProfileModal";
 import {
   formatMemberDisplayName,
   logMemberDisplayNamesFromApi,
+  resolveDisplayName,
 } from "@/lib/resolveDisplayName";
 import {
   compactMemberDeviceIds,
@@ -197,6 +198,12 @@ import {
   navigateCallExit,
   shouldExitCallToWaitingRoom,
 } from "@/lib/callExitNavigate";
+import {
+  applyIncomingMembersWithProfileRetention,
+  logMemberProfileMerge,
+  mergeMemberProfileFields,
+  summarizeProfileMergeForLog,
+} from "@/lib/memberProfileMerge";
 import { isSelfVisibleOnCallStrip } from "@/lib/callConnectionNotice";
 import { resolveVoiceSelfReconnecting } from "@/lib/callVoiceReconnectUi";
 import {
@@ -362,8 +369,17 @@ function mergeSeededCallMembers(prev: Member[], seeded: Member[]): Member[] {
   for (const member of prev) {
     const id = String(member.device_id ?? "").trim();
     if (!id) continue;
-    const existing = byId.get(id);
-    byId.set(id, existing ? { ...existing, ...member, lastSpokeAt: member.lastSpokeAt } : member);
+    const seededMember = byId.get(id);
+    if (!seededMember) {
+      byId.set(id, member);
+      continue;
+    }
+    // Snapshot/seeded profile fields must beat placeholder prev (参加者 / null photo).
+    const merged = mergeMemberProfileFields(member, seededMember);
+    byId.set(id, {
+      ...merged,
+      lastSpokeAt: member.lastSpokeAt ?? seededMember.lastSpokeAt,
+    });
   }
   return Array.from(byId.values());
 }
@@ -461,7 +477,39 @@ export default function CallClient() {
   const [selectedMicId, setSelectedMicId] = useState("");
   const setSelectedMicIdRef = useRef<(deviceId: string) => void>(() => {});
   const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
-  const { photoPath: selfProfilePhotoPath } = useSelfProfilePhoto(deviceId);
+  const {
+    photoPath: selfProfilePhotoPath,
+    displayName: selfProfileDisplayName,
+  } = useSelfProfilePhoto(deviceId);
+
+  // Keep self roster photo aligned with /api/profile SoT so strip + peers
+  // snapshot do not flicker back to default after a sparse status poll.
+  useEffect(() => {
+    const did = String(deviceId ?? "").trim();
+    const path = String(selfProfilePhotoPath ?? "").trim();
+    const name = String(selfProfileDisplayName ?? "").trim();
+    if (!did || (!path && !name)) return;
+    setMembers((prev) => {
+      let changed = false;
+      const next = prev.map((member) => {
+        if (String(member.device_id ?? "").trim() !== did) return member;
+        const merged = mergeMemberProfileFields(member, {
+          ...member,
+          photo_path: path || member.photo_path,
+          display_name: name || member.display_name,
+        });
+        if (
+          merged.photo_path === member.photo_path &&
+          merged.display_name === member.display_name
+        ) {
+          return member;
+        }
+        changed = true;
+        return merged;
+      });
+      return changed ? next : prev;
+    });
+  }, [deviceId, selfProfilePhotoPath, selfProfileDisplayName]);
   const {
     enabled: notificationsEnabled,
     busy: notificationsBusy,
@@ -1530,8 +1578,25 @@ export default function CallClient() {
             return prev;
           }
 
-          const nextDisplay = mergedMembers.map((m) => {
-            const existing = prev.find((x) => x.device_id === m.device_id);
+          const retained = applyIncomingMembersWithProfileRetention(
+            prev,
+            mergedMembers
+          );
+          const nextDisplay = retained.map((m) => {
+            const existing = prev.find(
+              (x) =>
+                String(x.device_id ?? "").trim() ===
+                String(m.device_id ?? "").trim()
+            );
+            if (existing) {
+              logMemberProfileMerge({
+                event: "status_apply",
+                context: "call",
+                deviceTail: String(m.device_id ?? "").slice(-4),
+                source: reason,
+                ...summarizeProfileMergeForLog(existing, m),
+              });
+            }
             return {
               ...m,
               lastSpokeAt: existing?.lastSpokeAt,
@@ -3588,7 +3653,12 @@ export default function CallClient() {
     (m) => String(m.device_id ?? "").trim() === String(deviceId ?? "").trim()
   );
   const accountDisplayName =
-    formatMemberDisplayName(selfMember ?? {}) || accountLabel || "ゲスト";
+    resolveDisplayName({
+      profileDisplayName: selfProfileDisplayName,
+      sessionMemberDisplayName: selfMember?.display_name,
+    }).displayName ||
+    accountLabel ||
+    "ゲスト";
   // Classmate profile photo_path is SoT. useSelfProfilePhoto keeps last-good
   // during refresh; session member photo fills only when self path is empty.
   const accountPhotoPath =

@@ -266,18 +266,30 @@ export default function CallRoomView({
       const isMe = did === String(deviceId ?? "").trim();
       const speaking =
         !!m.lastSpokeAt && nowMs > 0 && nowMs - m.lastSpokeAt < 1500;
+      const memberName = formatMemberDisplayName(m);
+      const selfName = String(accountDisplayName ?? "").trim();
+      const label =
+        isMe && selfName && selfName !== "ゲスト" ? selfName : memberName;
+      // Self chrome SoT (accountPhotoPath) fills strip when member poll lacks photo.
+      const photoPath = isMe
+        ? accountPhotoPath || m.photo_path || null
+        : m.photo_path;
       return {
-        id: did || formatMemberDisplayName(m),
-        label: isMe
-          ? `${formatMemberDisplayName(m)}`
-          : formatMemberDisplayName(m),
-        photoPath: m.photo_path,
-        avatarUrl: m.avatar_url ?? null,
+        id: did || label,
+        label,
+        photoPath,
+        avatarUrl: isMe ? null : m.avatar_url ?? null,
         isMe,
         badge: speaking ? "発話中" : null,
       };
     });
-  }, [visibleMembers, deviceId, nowMs]);
+  }, [
+    visibleMembers,
+    deviceId,
+    nowMs,
+    accountDisplayName,
+    accountPhotoPath,
+  ]);
 
   const micOn = !userMuted && muteButtonLabel !== "聞き専";
   const micListen = muteButtonLabel === "聞き専";

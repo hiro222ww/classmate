@@ -72,6 +72,11 @@ import {
   pickLatestSessionMemberByDevice,
   resolveDisplayName,
 } from "@/lib/resolveDisplayName";
+import {
+  applyIncomingMembersWithProfileRetention,
+  logMemberProfileMerge,
+  summarizeProfileMergeForLog,
+} from "@/lib/memberProfileMerge";
 import SessionMessages from "@/components/SessionMessages";
 import MemberProfileModal from "@/components/MemberProfileModal";
 import InviteJoinProgress, {
@@ -1837,7 +1842,9 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
           setDisplayName(safeName);
           writeStoredDisplayName(deviceId, safeName);
           const nextPhoto = String(data?.profile?.photo_path ?? "").trim();
-          setPhotoPath(nextPhoto || null);
+          // Keep last-good photo when profile payload omits photo_path
+          // (device vs user row race). Clear only on deviceId change.
+          setPhotoPath((prev) => nextPhoto || prev || null);
         }
       } catch {
         if (!cancelled) {
@@ -1858,6 +1865,24 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     // displayName must NOT be a dep — setting it re-fired this effect and
     // raced a second profile fetch that could clear/overwrite photoPath.
   }, [deviceId]);
+
+  // Push self photo into the roster once /api/profile resolves so the strip
+  // and room→call snapshot share the same path (status poll may lag).
+  useEffect(() => {
+    const did = String(deviceId ?? "").trim();
+    const path = String(photoPath ?? "").trim();
+    if (!did || !path) return;
+    setMembers((prev) => {
+      let changed = false;
+      const next = prev.map((member) => {
+        if (String(member.device_id ?? "").trim() !== did) return member;
+        if (String(member.photo_path ?? "").trim() === path) return member;
+        changed = true;
+        return { ...member, photo_path: path };
+      });
+      return changed ? next : prev;
+    });
+  }, [deviceId, photoPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2276,6 +2301,7 @@ if (!res.ok || !json?.ok) {
 
         let redirectRemoved = false;
         let displayMemberCount = incomingMembers.length;
+        let snapshotMembers = incomingMembers;
 
         const inviteGraceActive = isInviteJoinGraceActive(
           inviteJoinGraceUntilRef.current
@@ -2291,7 +2317,6 @@ if (!res.ok || !json?.ok) {
               memberLastInListAt: memberLastInListAtRef.current,
             }
           );
-
           const decision = evaluateMemberListApply({
             fetchOk: true,
             reason: "fetchStatus",
@@ -2378,27 +2403,52 @@ if (!res.ok || !json?.ok) {
             return prev;
           }
 
+          const retainedMembers = applyIncomingMembersWithProfileRetention(
+            prev,
+            mergedMembers
+          );
+          for (const member of retainedMembers) {
+            const did = String(member.device_id ?? "").trim();
+            if (!did) continue;
+            const existing = prev.find(
+              (row) => String(row.device_id ?? "").trim() === did
+            );
+            if (!existing) continue;
+            logMemberProfileMerge({
+              event: "status_apply",
+              context: "room",
+              deviceTail: did.slice(-4),
+              source: fetchReason,
+              ...summarizeProfileMergeForLog(existing, member),
+            });
+          }
+
           logMemberSource({
             context: "room",
             sessionId,
             sessionMembers: incomingMembers.length,
             presenceActive: presenceCounts.presenceActive,
             presenceStale: presenceCounts.presenceStale,
-            displayMembers: mergedMembers.length,
-            displayMemberIds: mergedMembers.map((m) => String(m.device_id ?? "").trim()),
+            displayMembers: retainedMembers.length,
+            displayMemberIds: retainedMembers.map((m) =>
+              String(m.device_id ?? "").trim()
+            ),
           });
-          displayMemberCount = mergedMembers.length;
+          displayMemberCount = retainedMembers.length;
 
           const prevNorm = JSON.stringify(normalizeMemberCompare(prev));
-          const nextNorm = JSON.stringify(normalizeMemberCompare(mergedMembers));
+          const nextNorm = JSON.stringify(
+            normalizeMemberCompare(retainedMembers)
+          );
           if (prevNorm === nextNorm) {
             roomLog(
               `[room-perf] fetchStatus apply skipped=same_members reason=${fetchReason}`
             );
             return prev;
           }
-          logMemberDisplayNamesFromApi("room:session/status", mergedMembers);
-          return mergedMembers;
+          logMemberDisplayNamesFromApi("room:session/status", retainedMembers);
+          snapshotMembers = retainedMembers;
+          return retainedMembers;
         });
 
         if (redirectRemoved) {
@@ -2413,7 +2463,7 @@ if (!res.ok || !json?.ok) {
         }
 
         lastSuccessfulFetchOpGenRef.current = roomOpGenRef.current;
-        writeSessionMembersSnapshot(sessionId, classId, incomingMembers);
+        writeSessionMembersSnapshot(sessionId, classId, snapshotMembers);
 
         if (incomingMembers.length >= MATCH_CALL_ENTRY_MIN_MEMBERS) {
           membersCount2StreakRef.current += 1;
@@ -3063,12 +3113,27 @@ const name = rawName === "You" ? "参加者" : rawName;
         (m) => String(m.device_id ?? "").trim() === String(deviceId).trim()
       );
 
-      if (exists) return prev;
+      if (exists) {
+        return prev.map((m) => {
+          if (String(m.device_id ?? "").trim() !== String(deviceId).trim()) {
+            return m;
+          }
+          return {
+            ...m,
+            display_name: name || m.display_name,
+            photo_path:
+              String(photoPath ?? "").trim() ||
+              String(m.photo_path ?? "").trim() ||
+              null,
+          };
+        });
+      }
 
       return [
         {
           device_id: deviceId,
           display_name: name,
+          photo_path: String(photoPath ?? "").trim() || null,
           joined_at: new Date().toISOString(),
         },
         ...prev,
@@ -4492,14 +4557,16 @@ const name = rawName === "You" ? "参加者" : rawName;
       return {
         id: did || label,
         label,
-        // Prefer Classmate photo_path; let resolveAvatarPhotoSrc build the URL.
-        // Do not synthesize a second avatarUrl — broken encodings used to win.
-        photoPath: m.photo_path ?? null,
-        avatarUrl: m.avatar_url ?? null,
+        // Self: local /api/profile photoPath is SoT when status poll lacks photo.
+        // Others: member photo_path from session status enrichment.
+        photoPath: isMe
+          ? photoPath || m.photo_path || null
+          : m.photo_path ?? null,
+        avatarUrl: isMe ? null : m.avatar_url ?? null,
         isMe,
       };
     });
-  }, [visibleMembers, deviceId, displayName]);
+  }, [visibleMembers, deviceId, displayName, photoPath]);
 
   const roomInviteUrl = useMemo(
     () =>
