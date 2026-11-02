@@ -4437,7 +4437,7 @@ const name = rawName === "You" ? "参加者" : rawName;
   const roomStatusTone =
     status === "active" || status === "in_call" ? "incall" : "waiting";
   const roomStatusLabel =
-    roomStatusTone === "incall" ? "通話中" : "待機中";
+    roomStatusTone === "incall" ? "通話中" : "募集中";
   const topicForCategory = String(topicTitle || "").trim();
   const roomCategoryLabel =
     topicForCategory &&

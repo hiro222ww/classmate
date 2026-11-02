@@ -66,6 +66,10 @@ import { buildProfileEditPath } from "@/lib/profileNavigation";
 import { CmAvatar } from "@/components/ui/CmAvatar";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
+import {
+  shouldShowAccountUnreadDot,
+  sumClassUnreadCounts,
+} from "@/lib/accountUnreadBadge";
 import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
@@ -455,6 +459,8 @@ export default function HomeClient() {
     null
   );
   const [classes, setClasses] = useState<MineClass[]>([]);
+  /** True after a successful non-lite /api/class/mine (unread_count is real). */
+  const [unreadCountsReliable, setUnreadCountsReliable] = useState(false);
   const [recruitmentSessionTtlMinutes, setRecruitmentSessionTtlMinutes] =
     useState<number | null>(5);
   const [recruitmentSessionTtlUnlimited, setRecruitmentSessionTtlUnlimited] =
@@ -598,6 +604,10 @@ export default function HomeClient() {
             reason,
             error: classesJson?.error,
           });
+          if (!lite) {
+            // Full fetch failed — do not keep a speculative unread badge.
+            setUnreadCountsReliable(false);
+          }
           if (opts?.throwOnError) {
             throw new Error(classesJson?.error || "class_mine_failed");
           }
@@ -797,6 +807,11 @@ export default function HomeClient() {
 
           return applyClasses;
         });
+
+        // lite responses zero out unread_count — only trust full mine payloads.
+        if (!lite) {
+          setUnreadCountsReliable(true);
+        }
 
         const expectedClassId = String(opts?.expectedClassId ?? "").trim();
         if (
@@ -2671,6 +2686,11 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     .map(toJoinedClassRow)
     .filter((row) => Boolean(row.classId));
 
+  const showAccountUnreadDot = shouldShowAccountUnreadDot({
+    unreadCountsReliable,
+    unreadTotal: sumClassUnreadCounts(classes),
+  });
+
   return (
     <div
       className={homeStateClass}
@@ -2688,15 +2708,21 @@ console.log("[home] resolved ids", { classId, sessionId, json });
             variant="onHero"
             displayName={welcomeName || "ゲスト"}
             photoPath={profile?.photo_path ?? null}
-            notificationsEnabled={notificationsEnabled}
-            notificationsBusy={notificationsBusy}
-            onToggleNotifications={toggleNotifications}
-            hideWebPush={isAppShellContext()}
+            hideWebPush
             trailing={
               <button
                 type="button"
-                className="cm-app-header-menu-avatar"
-                aria-label="メニューを開く"
+                className={[
+                  "cm-app-header-menu-avatar",
+                  showAccountUnreadDot ? "cm-account-avatar--unread" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                aria-label={
+                  showAccountUnreadDot
+                    ? "メニューを開く（未読あり）"
+                    : "メニューを開く"
+                }
                 aria-expanded={menuOpen}
                 onClick={() => setMenuOpen(true)}
               >
@@ -2705,6 +2731,9 @@ console.log("[home] resolved ids", { classId, sessionId, json });
                   sizePx={32}
                   photoPath={profile?.photo_path ?? null}
                 />
+                {showAccountUnreadDot ? (
+                  <span className="cm-account-unread-dot" aria-hidden />
+                ) : null}
               </button>
             }
           />

@@ -6,40 +6,17 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { sanitizeReturnTo } from "@/lib/authAccount";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthLoadingBanner } from "@/components/AuthLoadingUI";
-import { isAppShellPath } from "@/lib/appShell";
-import { isAppShellContext } from "@/lib/appShellContext";
-import { isImmersiveShellPath } from "@/lib/immersiveShellPaths";
+import { shouldHideAccountNav } from "@/lib/accountNavVisibility";
 import {
   buildShellAwareLoginUrl,
   buildShellAwareSettingsUrl,
 } from "@/lib/appShellNavigation";
 import { withDev } from "@/lib/withDev";
 
-const HIDDEN_PREFIXES = [
-  "/admin",
-  "/login",
-  "/auth/callback",
-  "/privacy",
-  "/terms",
-  "/guidelines",
-  "/about",
-  "/legal",
-];
-const DASHBOARD_HEADER_PATHS = new Set(["/", "/class/select", "/class/mine"]);
-
-function shouldHideNav(pathname: string) {
-  if (isAppShellPath(pathname)) return true;
-  if (isAppShellContext() && isImmersiveShellPath(pathname)) return true;
-  if (HIDDEN_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-    return true;
-  }
-  return DASHBOARD_HEADER_PATHS.has(pathname);
-}
-
 export default function AppAccountNav() {
   const pathname = usePathname() ?? "/";
   const searchParams = useSearchParams();
-  const hidden = shouldHideNav(pathname);
+  const hidden = shouldHideAccountNav(pathname);
   const { status, loggedIn, accountLabel, slow, error } = useAuth();
 
   const returnTo = useMemo(() => {

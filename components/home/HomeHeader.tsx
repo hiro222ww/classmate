@@ -15,7 +15,8 @@ type HomeHeaderProps = Omit<CmAppHeaderProps, "tagline" | "hideWebPush"> & {
  * Home header — card (other pages) or transparent overlay on the photo hero.
  */
 export function HomeHeader({
-  hideWebPush = false,
+  // Bell lives in the profile menu — never duplicate it in the hero header.
+  hideWebPush = true,
   variant = "card",
   ...rest
 }: HomeHeaderProps) {

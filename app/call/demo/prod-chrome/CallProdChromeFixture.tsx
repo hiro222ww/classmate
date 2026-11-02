@@ -211,8 +211,9 @@ export default function CallProdChromeFixture() {
       onOpenClassMenu={() => undefined}
       onInviteFriends={() => undefined}
       onExit={() => undefined}
-      showWaitingForOthers={scene === "prep" || scene === "solo"}
+      showWaitingForOthers={false}
       classVoteSlot={classVoteSlot}
+      membersLocked={scene !== "solo" && scene !== "prep"}
       visibleMembers={visibleMembers}
       deviceId="prod-self"
       nowMs={nowMs}

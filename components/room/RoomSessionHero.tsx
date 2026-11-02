@@ -2,7 +2,12 @@
 
 import type { ReactNode } from "react";
 
-export type RoomSessionStatusTone = "waiting" | "incall" | "neutral";
+export type RoomSessionStatusTone =
+  | "waiting"
+  | "incall"
+  | "neutral"
+  | "reconnect"
+  | "error";
 
 type Props = {
   title: string;
