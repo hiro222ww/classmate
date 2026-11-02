@@ -5108,6 +5108,16 @@ body.cm-has-mobile-bottom-nav {
 
 .cm-call-root--hero-v2 .cm-call-hero-stack > .cm-call-inline-banners {
   margin-top: -4px;
+  position: relative;
+  z-index: 4;
+}
+
+/* When connection/action notices are visible, keep them above the dock. */
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-call-inline-banners:has(*)
+  + .cm-call-dock {
+  margin-top: 10px;
 }
 
 .cm-call-dock {
@@ -5479,6 +5489,35 @@ body.cm-has-mobile-bottom-nav {
   display: grid;
   gap: 4px;
   padding: 4px 0 8px;
+}
+
+.cm-room-settings-mic {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(248, 250, 252, 0.95);
+}
+
+.cm-room-settings-mic-label {
+  font-size: 12px;
+  font-weight: 800;
+  color: #475569;
+}
+
+.cm-room-settings-mic-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(209, 213, 219, 0.95);
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: #17233d;
 }
 
 .cm-room-settings-row {

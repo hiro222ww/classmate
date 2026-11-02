@@ -437,6 +437,11 @@ export default function CallClient() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [classMenuOpen, setClassMenuOpen] = useState(false);
   const [classLeaveBusy, setClassLeaveBusy] = useState(false);
+  const [micDeviceOptions, setMicDeviceOptions] = useState<
+    Array<{ deviceId: string; label: string }>
+  >([]);
+  const [selectedMicId, setSelectedMicId] = useState("");
+  const setSelectedMicIdRef = useRef<(deviceId: string) => void>(() => {});
   const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
   const {
     enabled: notificationsEnabled,
@@ -3429,6 +3434,11 @@ export default function CallClient() {
       onMicReadyChange={handleMicReadyChange}
       onMicPermissionDeniedChange={handleMicPermissionDeniedChange}
       onMicRetryReady={handleMicRetryReady}
+      onMicDeviceOptionsChange={(options) => {
+        setMicDeviceOptions(options.audioInputs);
+        setSelectedMicId(options.selectedMicId);
+        setSelectedMicIdRef.current = options.setSelectedMicId;
+      }}
       onMicLevelChange={handleMicLevelChange}
       onRemoteSpeakingChange={handleRemoteSpeakingChange}
       onRemotePlaybackHealthChange={handleRemotePlaybackHealthChange}
@@ -3837,6 +3847,12 @@ export default function CallClient() {
         void leaveClassAndGoHome();
       }}
       leaveBusy={classLeaveBusy}
+      micDevices={micDeviceOptions}
+      selectedMicId={selectedMicId}
+      onSelectMicId={(deviceId) => {
+        setSelectedMicId(deviceId);
+        setSelectedMicIdRef.current(deviceId);
+      }}
     />
     </>
   );
