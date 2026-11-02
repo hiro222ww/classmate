@@ -1,5 +1,3 @@
-import { supabase } from "@/lib/supabaseClient";
-import { DEFAULT_AVATAR_SRC } from "@/lib/defaultAvatar";
 import { DISPLAY_NAME_FALLBACK } from "@/lib/resolveDisplayName";
 import {
   formatGenderLabel,
@@ -7,6 +5,7 @@ import {
   normalizeProfileAge,
   resolveProfileDisplayAge,
 } from "@/lib/profileClient";
+import { resolveMemberAvatarUrlOrDefault } from "@/lib/avatarUrl";
 
 export { formatGenderLabel };
 
@@ -50,30 +49,7 @@ export function isValidMemberProfileTarget(
 }
 
 export function getMemberAvatarUrl(photoPath?: string | null) {
-  let normalized = String(photoPath ?? "").trim();
-
-  if (!normalized) return DEFAULT_AVATAR_SRC;
-
-  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
-    return normalized;
-  }
-
-  if (normalized.startsWith("profile-photos/")) {
-    normalized = normalized.replace(/^profile-photos\//, "");
-  }
-
-  if (normalized.startsWith("avatars/")) {
-    normalized = normalized.replace(/^avatars\//, "");
-  }
-
-  const { data } = supabase.storage
-    .from("profile-photos")
-    .getPublicUrl(normalized);
-
-  const publicUrl = data?.publicUrl?.trim();
-  if (!publicUrl) return DEFAULT_AVATAR_SRC;
-
-  return `${publicUrl}?v=${encodeURIComponent(normalized)}`;
+  return resolveMemberAvatarUrlOrDefault(photoPath);
 }
 
 export async function fetchMemberProfile(

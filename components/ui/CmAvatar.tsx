@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { isDefaultAvatarSrc } from "@/lib/defaultAvatar";
-import { getMemberAvatarUrl } from "@/lib/memberProfileView";
+import { resolveAvatarPhotoSrc } from "@/lib/avatarUrl";
 import { DefaultAvatarMark } from "@/components/ui/DefaultAvatarMark";
 
 type CmAvatarProps = {
@@ -13,20 +12,6 @@ type CmAvatarProps = {
   isMe?: boolean;
   className?: string;
 };
-
-function resolvePhotoSrc(
-  avatarUrl: string | null | undefined,
-  photoPath: string | null | undefined
-): string | null {
-  const direct = String(avatarUrl ?? "").trim();
-  if (direct) {
-    return isDefaultAvatarSrc(direct) ? null : direct;
-  }
-  const path = String(photoPath ?? "").trim();
-  if (!path) return null;
-  const resolved = getMemberAvatarUrl(path);
-  return isDefaultAvatarSrc(resolved) ? null : resolved;
-}
 
 export function CmAvatar({
   label,
@@ -45,7 +30,10 @@ export function CmAvatar({
   }, [avatarUrl, photoPath]);
 
   const photoSrc = useMemo(
-    () => (failed ? null : resolvePhotoSrc(avatarUrl, photoPath)),
+    () =>
+      failed
+        ? null
+        : resolveAvatarPhotoSrc({ photoPath, avatarUrl }),
     [avatarUrl, failed, photoPath]
   );
   const showPhoto = Boolean(photoSrc) && loaded;

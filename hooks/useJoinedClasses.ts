@@ -8,6 +8,9 @@ import type { CurrentClassSnapshot } from "@/lib/currentClassTypes";
 export type JoinedClassRow = {
   classId: string;
   name: string;
+  /** Member-edited title when present; UI prefers this over `name`. */
+  displayName?: string | null;
+  coverPath?: string | null;
   topicKey: string | null;
   worldKey: string | null;
   topicTitle: string | null;
@@ -34,6 +37,8 @@ function mapApiRow(row: Record<string, unknown>): JoinedClassRow | null {
   return {
     classId,
     name: String(row.name ?? "").trim() || "所属クラス",
+    displayName: String(row.display_name ?? "").trim() || null,
+    coverPath: String(row.cover_path ?? "").trim() || null,
     topicKey: String(row.topic_key ?? "").trim() || null,
     worldKey: String(row.world_key ?? "").trim() || null,
     topicTitle: String(row.topic_title ?? "").trim() || null,

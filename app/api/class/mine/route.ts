@@ -22,8 +22,15 @@ import { fetchActiveMeetingPlansForClasses } from "@/lib/meetingPlan";
 import { fetchActiveCallRequestsForClasses } from "@/lib/callRequest";
 import { fetchUnreadCountsForClasses } from "@/lib/classMessageReads";
 import { logHomePerf } from "@/lib/homePerf";
+import { isClassPresentationEditSupported } from "@/lib/classEditSupport";
 
 export const dynamic = "force-dynamic";
+
+const CLASS_MINE_SELECT_BASE =
+  "id, name, description, world_key, topic_key, min_age, is_sensitive, is_user_created, created_at, match_deadline_at";
+
+const CLASS_MINE_SELECT_WITH_PRESENTATION =
+  `${CLASS_MINE_SELECT_BASE}, display_name, cover_path`;
 
 function tailId(id: string | null | undefined) {
   const value = String(id ?? "").trim();
@@ -184,23 +191,51 @@ export async function GET(req: Request) {
     }
 
     const classesStartMs = Date.now();
-    const { data: classRows, error: classesErr } = await supabaseAdmin
-      .from("classes")
-      .select(
-        `
-        id,
-        name,
-        description,
-        world_key,
-        topic_key,
-        min_age,
-        is_sensitive,
-        is_user_created,
-        created_at,
-        match_deadline_at
-      `
-      )
-      .in("id", classIds);
+    const presentationSupported =
+      await isClassPresentationEditSupported(supabaseAdmin);
+    type MineClassDbRow = {
+      id?: string;
+      name?: string;
+      display_name?: string | null;
+      cover_path?: string | null;
+      description?: string;
+      world_key?: string | null;
+      topic_key?: string | null;
+      min_age?: number;
+      is_sensitive?: boolean;
+      is_user_created?: boolean;
+      created_at?: string | null;
+      match_deadline_at?: string | null;
+    };
+    let classRows: MineClassDbRow[] | null = null;
+    let classesErr: { message?: string } | null = null;
+    {
+      const first = await supabaseAdmin
+        .from("classes")
+        .select(
+          presentationSupported
+            ? CLASS_MINE_SELECT_WITH_PRESENTATION
+            : CLASS_MINE_SELECT_BASE
+        )
+        .in("id", classIds);
+      classRows = (first.data as MineClassDbRow[] | null) ?? null;
+      classesErr = first.error;
+      // If columns vanished mid-flight, fall back once without presentation.
+      if (
+        classesErr &&
+        presentationSupported &&
+        /display_name|cover_path|column|does not exist/i.test(
+          String(classesErr.message ?? "")
+        )
+      ) {
+        const second = await supabaseAdmin
+          .from("classes")
+          .select(CLASS_MINE_SELECT_BASE)
+          .in("id", classIds);
+        classRows = (second.data as MineClassDbRow[] | null) ?? null;
+        classesErr = second.error;
+      }
+    }
     classesMs += Date.now() - classesStartMs;
 
     if (classesErr) {
@@ -215,7 +250,7 @@ export async function GET(req: Request) {
     }
 
     const classMap = new Map(
-      (classRows ?? []).map((c: { id: string }) => [String(c.id).trim(), c])
+      (classRows ?? []).map((c) => [String(c.id ?? "").trim(), c])
     );
 
     for (const row of billableMembershipRows) {
@@ -229,7 +264,7 @@ export async function GET(req: Request) {
     const topicKeys = Array.from(
       new Set(
         (classRows ?? [])
-          .map((c: { topic_key?: string | null }) => String(c.topic_key ?? "").trim())
+          .map((c) => String(c.topic_key ?? "").trim())
           .filter(Boolean)
       )
     );
@@ -265,6 +300,8 @@ export async function GET(req: Request) {
           | {
               id?: string;
               name?: string;
+              display_name?: string | null;
+              cover_path?: string | null;
               description?: string;
               world_key?: string | null;
               topic_key?: string | null;
@@ -286,6 +323,8 @@ export async function GET(req: Request) {
           join_ok: Boolean(c?.id),
           id: c?.id ?? classId,
           name: c?.name ?? "(class not found)",
+          display_name: String(c?.display_name ?? "").trim() || null,
+          cover_path: String(c?.cover_path ?? "").trim() || null,
           description: c?.description ?? "",
           world_key: c?.world_key ?? null,
           topic_key: c?.topic_key ?? null,
@@ -430,6 +469,8 @@ export async function GET(req: Request) {
         | {
             id?: string;
             name?: string;
+            display_name?: string | null;
+            cover_path?: string | null;
             description?: string;
             world_key?: string | null;
             topic_key?: string | null;
@@ -459,6 +500,8 @@ export async function GET(req: Request) {
         join_ok: Boolean(c?.id),
         id: c?.id ?? classId,
         name: c?.name ?? "(class not found)",
+        display_name: String(c?.display_name ?? "").trim() || null,
+        cover_path: String(c?.cover_path ?? "").trim() || null,
         description: c?.description ?? "",
         world_key: c?.world_key ?? null,
         topic_key: c?.topic_key ?? null,

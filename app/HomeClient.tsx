@@ -152,6 +152,8 @@ type MineClass = {
   join_ok?: boolean;
   id: string;
   name: string;
+  display_name?: string | null;
+  cover_path?: string | null;
   description: string;
   world_key: string | null;
   topic_key: string | null;
@@ -174,10 +176,15 @@ type MineClass = {
   unread_count?: number;
 };
 
-function toJoinedClassRow(c: MineClass): JoinedClassRow {
+function toJoinedClassRow(c: MineClass & {
+  display_name?: string | null;
+  cover_path?: string | null;
+}): JoinedClassRow {
   return {
     classId: String(c.id ?? c.class_id ?? "").trim(),
     name: String(c.name ?? "").trim() || "所属クラス",
+    displayName: String(c.display_name ?? "").trim() || null,
+    coverPath: String(c.cover_path ?? "").trim() || null,
     topicKey: c.topic_key ?? null,
     worldKey: c.world_key ?? null,
     topicTitle: c.topic_title ?? null,
@@ -872,6 +879,13 @@ export default function HomeClient() {
     const {
       data: { subscription },
     } = supabaseAuthClient.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        // Drop prior account photo immediately so it cannot linger after logout.
+        setProfile(null);
+        void refreshSelfProfile(id);
+        void fetchJoinedClasses("auth_sync", { deviceId: id });
+        return;
+      }
       if (
         event === "SIGNED_IN" ||
         event === "TOKEN_REFRESHED" ||

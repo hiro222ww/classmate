@@ -1421,6 +1421,7 @@ export default function SelectClient() {
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
         displayName={profile?.display_name || "ゲスト"}
+        photoPath={profile?.photo_path ?? null}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
