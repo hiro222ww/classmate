@@ -33,58 +33,59 @@ export type CallChromeScene =
 export default function CallProdChromeFixture() {
   const searchParams = useSearchParams();
   const scene = (searchParams.get("scene") as CallChromeScene) || "multi";
+  const membersParam = Number(searchParams.get("members") ?? "");
   const [userMuted, setUserMuted] = useState(false);
-  const nowMs = Date.now();
+  const [nowMs] = useState(() => Date.now());
 
-  const capacity = scene === "solo" ? 5 : 5;
-  const memberCount =
-    scene === "solo"
-      ? 1
-      : scene === "empty_seats" || scene === "prep" || scene === "mic_denied"
-        ? 1
-        : scene === "multi" ||
-            scene === "connecting" ||
-            scene === "reconnecting" ||
-            scene === "listen_only" ||
-            scene === "mic_preparing" ||
-            scene === "connection_error" ||
-            scene === "stuck" ||
-            scene === "toast"
-          ? 3
-          : 3;
+  const capacity = Math.max(
+    5,
+    Number.isFinite(membersParam) && membersParam > 0
+      ? Math.floor(membersParam)
+      : 5
+  );
+  const memberCount = (() => {
+    if (Number.isFinite(membersParam) && membersParam > 0) {
+      return Math.min(12, Math.floor(membersParam));
+    }
+    if (scene === "solo") return 1;
+    if (scene === "empty_seats" || scene === "prep" || scene === "mic_denied") {
+      return 1;
+    }
+    return 3;
+  })();
 
   const visibleMembers: CallRoomViewMember[] = useMemo(() => {
-    const base: CallRoomViewMember[] = [
-      {
-        device_id: "prod-self",
-        display_name: "自分",
-        photo_path: null,
-        avatar_url: DEFAULT_AVATAR_SRC,
-        is_in_call: true,
-        screen: "call",
-        lastSpokeAt:
-          scene === "multi" || scene === "toast" ? nowMs - 400 : undefined,
-      },
-      {
-        device_id: "prod-a",
-        display_name: "ユーザーA",
-        photo_path: null,
-        avatar_url: "/demo/user-a.svg",
-        is_in_call: true,
-        screen: "call",
-        lastSpokeAt:
-          scene === "multi" || scene === "toast" ? nowMs - 200 : undefined,
-      },
-      {
-        device_id: "prod-b",
-        display_name: "ユーザーB",
-        photo_path: null,
-        avatar_url: "/demo/user-b.svg",
-        is_in_call: scene !== "empty_seats",
-        screen: scene === "empty_seats" ? "room" : "call",
-      },
+    const names = [
+      "自分",
+      "ユーザーA",
+      "ユーザーB",
+      "ユーザーC",
+      "ユーザーD",
+      "ユーザーE",
+      "ユーザーF",
+      "ユーザーG",
+      "ユーザーH",
     ];
-    return base.slice(0, memberCount);
+    return Array.from({ length: memberCount }, (_, index) => {
+      const deviceId = index === 0 ? "prod-self" : `prod-${index}`;
+      const isSelf = index === 0;
+      return {
+        device_id: deviceId,
+        display_name: names[index] ?? `ユーザー${index}`,
+        photo_path: null,
+        avatar_url: isSelf
+          ? DEFAULT_AVATAR_SRC
+          : index % 2 === 1
+            ? "/demo/user-a.svg"
+            : "/demo/user-b.svg",
+        is_in_call: scene === "empty_seats" ? isSelf : true,
+        screen: scene === "empty_seats" && !isSelf ? "room" : "call",
+        lastSpokeAt:
+          (scene === "multi" || scene === "toast") && index <= 1
+            ? nowMs - 200 * (index + 1)
+            : undefined,
+      };
+    });
   }, [memberCount, nowMs, scene]);
 
   const getMemberStatus = (
@@ -200,6 +201,8 @@ export default function CallProdChromeFixture() {
         ) : null
       }
       presenceToasts={presenceToasts}
+      classId="prod-chrome-class"
+      sessionId="prod-chrome-session"
       filled={visibleMembers.length}
       capacity={capacity}
       membersSyncRevision={1}

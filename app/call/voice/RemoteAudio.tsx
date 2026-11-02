@@ -13,10 +13,6 @@ import {
   subscribeRemoteAudioUnlock,
 } from "@/lib/remoteAudioUnlock";
 import {
-  getCallSpeakerOn,
-  subscribeCallSpeaker,
-} from "@/lib/callSpeaker";
-import {
   logRemoteAudioPipeline,
   logVoicePeerAutoRecover,
 } from "./voiceDiagnostics";
@@ -685,17 +681,18 @@ export default function RemoteAudio({
   >(async () => {});
 
   const applyAudioOutputConfig = useCallback((el: HTMLAudioElement) => {
-    // Keep element unmuted for autoplay / unlock; speaker dock controls volume only.
-    const speakerOn = getCallSpeakerOn();
+    // Keep element unmuted for autoplay / unlock. The former dock "speaker"
+    // control only toggled volume and did not switch output devices; it was
+    // removed so remote playback always stays audible here.
     el.muted = false;
     el.defaultMuted = false;
-    el.volume = speakerOn ? 1 : 0;
+    el.volume = 1;
     el.autoplay = true;
     el.setAttribute("autoplay", "true");
     el.setAttribute("playsinline", "true");
     el.setAttribute("webkit-playsinline", "true");
 
-    const signature = `${el.muted}|${el.volume}|${el.autoplay}|speaker=${speakerOn ? 1 : 0}`;
+    const signature = `${el.muted}|${el.volume}|${el.autoplay}`;
     const now = Date.now();
     const prev = audioOutputConfigLogRef.current;
     const shouldLog =
@@ -706,18 +703,10 @@ export default function RemoteAudio({
     if (shouldLog) {
       audioOutputConfigLogRef.current = { at: now, signature };
       debugConsoleLog(
-        `[remote-audio] audio-output-config remote=${compactRemoteId(remoteId)} instance=${instanceId} muted=false volume=${speakerOn ? 1 : 0} autoplay=true playsInline=true ${formatVoiceModeSuffix()}`
+        `[remote-audio] audio-output-config remote=${compactRemoteId(remoteId)} instance=${instanceId} muted=false volume=1 autoplay=true playsInline=true ${formatVoiceModeSuffix()}`
       );
     }
   }, [instanceId, remoteId]);
-
-  useEffect(() => {
-    return subscribeCallSpeaker(() => {
-      const el = ref.current;
-      if (!el) return;
-      applyAudioOutputConfig(el);
-    });
-  }, [applyAudioOutputConfig]);
 
   const clearPlaybackChecks = useCallback(() => {
     for (const timer of playbackCheckTimersRef.current) {

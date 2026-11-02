@@ -125,12 +125,17 @@ await page.screenshot({
 
 const hero = await page.locator(".cm-room-session-hero").count();
 const strip = await page.locator(".cm-room-avatar-strip").count();
-const invite = await page.locator(".cm-room-avatar-chip--invite").count();
+const invite = await page.locator(".cm-room-avatar-invite").count();
+const emptySeats = await page.locator(".cm-room-avatar-chip--empty, .cm-room-avatar-chip-name:text-is('空席')").count();
 const oldInviteCard = await page.locator(".cm-room-invite").count();
 const startBtn = await page.locator(".cm-room-start-btn").count();
 
-const summary = { hero, strip, invite, oldInviteCard, startBtn };
+const summary = { hero, strip, invite, emptySeats, oldInviteCard, startBtn };
 fs.writeFileSync(`${OUT}/room_hero_verify.json`, JSON.stringify(summary, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 await browser.close();
-process.exit(hero > 0 && strip > 0 && invite > 0 && oldInviteCard === 0 ? 0 : 1);
+process.exit(
+  hero > 0 && strip > 0 && invite > 0 && emptySeats === 0 && oldInviteCard === 0
+    ? 0
+    : 1
+);

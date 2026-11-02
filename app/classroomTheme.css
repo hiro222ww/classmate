@@ -4680,17 +4680,54 @@ body.cm-has-mobile-bottom-nav {
   align-self: end;
 }
 
-.cm-room-avatar-strip {
+/* Real members only — empty seat placeholders removed. Invite is separate. */
+.cm-room-avatar-strip-wrap {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 4px;
+  align-items: flex-end;
+  justify-content: center;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: hidden;
+  box-sizing: border-box;
+  padding: 2px 64px 2px 8px;
+}
+
+.cm-room-avatar-strip {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
   padding: 2px 0;
   box-sizing: border-box;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cm-room-avatar-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.cm-room-avatar-strip--lg {
+  gap: 14px;
+}
+
+.cm-room-avatar-strip--md {
+  gap: 12px;
+}
+
+.cm-room-avatar-strip--sm {
+  gap: 8px;
+}
+
+.cm-room-avatar-strip--xs {
+  gap: 6px;
 }
 
 .cm-room-avatar-chip {
@@ -4702,12 +4739,21 @@ body.cm-has-mobile-bottom-nav {
   display: grid;
   justify-items: center;
   gap: 4px;
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: 0;
-  max-width: none;
+  max-width: 88px;
   color: #fff;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+.cm-room-avatar-strip--lg .cm-room-avatar-chip {
+  max-width: 96px;
+}
+
+.cm-room-avatar-strip--sm .cm-room-avatar-chip,
+.cm-room-avatar-strip--xs .cm-room-avatar-chip {
+  max-width: 72px;
 }
 
 .cm-room-avatar-chip:disabled {
@@ -4715,9 +4761,9 @@ body.cm-has-mobile-bottom-nav {
 }
 
 .cm-room-avatar-chip-face {
-  width: min(52px, 13vw);
-  height: min(52px, 13vw);
-  max-width: 100%;
+  width: var(--cm-avatar-px, 48px);
+  height: var(--cm-avatar-px, 48px);
+  max-width: var(--cm-avatar-px, 48px);
   aspect-ratio: 1;
   border-radius: 999px;
   overflow: hidden;
@@ -4726,40 +4772,34 @@ body.cm-has-mobile-bottom-nav {
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
   border: 2px solid rgba(255, 255, 255, 0.92);
   background: #dbeafe;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .cm-room-avatar-chip-face > * {
   width: 100% !important;
   height: 100% !important;
   max-width: 100%;
+  border-radius: 999px;
+  box-sizing: border-box;
 }
 
 .cm-room-avatar-chip--me .cm-room-avatar-chip-face {
   border-color: #86efac;
 }
 
-.cm-room-avatar-chip-face--empty {
-  background: rgba(255, 255, 255, 0.22);
-  border-style: dashed;
-  border-color: rgba(255, 255, 255, 0.55);
-  box-shadow: none;
-}
-
-.cm-room-avatar-chip-face--invite {
-  background: rgba(255, 255, 255, 0.92);
-  color: #17233d;
-  font-size: 22px;
-  font-weight: 700;
+.cm-room-avatar-chip-face--overflow {
+  background: rgba(23, 35, 61, 0.78);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
   line-height: 1;
-  border-color: #fff;
-}
-
-.cm-room-avatar-chip--invite:disabled .cm-room-avatar-chip-face--invite {
-  opacity: 0.55;
+  border-color: rgba(255, 255, 255, 0.92);
+  box-sizing: border-box;
 }
 
 .cm-room-avatar-chip-name {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1.2;
   text-align: center;
@@ -4772,9 +4812,12 @@ body.cm-has-mobile-bottom-nav {
   text-shadow: 0 1px 8px rgba(255, 255, 255, 0.85);
 }
 
-.cm-room-avatar-chip--empty .cm-room-avatar-chip-name {
-  opacity: 0.75;
-  font-weight: 700;
+.cm-room-avatar-strip--lg .cm-room-avatar-chip-name {
+  font-size: 12px;
+}
+
+.cm-room-avatar-strip--xs .cm-room-avatar-chip-name {
+  font-size: 10px;
 }
 
 .cm-room-avatar-chip-badge {
@@ -4789,6 +4832,127 @@ body.cm-has-mobile-bottom-nav {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Invite stays pinned to the hero bottom-right, independent of seat count. */
+.cm-room-avatar-invite {
+  appearance: none;
+  border: none;
+  background: transparent;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  min-width: 52px;
+  color: #17233d;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cm-room-avatar-invite:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cm-room-avatar-invite:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
+.cm-room-avatar-invite-face {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.96);
+  color: #17233d;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  border: 2px solid #fff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
+}
+
+.cm-room-avatar-invite-label {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #17233d;
+  text-shadow: 0 1px 8px rgba(255, 255, 255, 0.85);
+}
+
+.cm-room-avatar-overflow-panel {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  min-width: min(220px, 70vw);
+  max-width: min(280px, 86vw);
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+  color: #17233d;
+}
+
+.cm-room-avatar-overflow-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.cm-room-avatar-overflow-row {
+  appearance: none;
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cm-room-avatar-overflow-row:hover:not(:disabled),
+.cm-room-avatar-overflow-row:focus-visible {
+  background: #f1f5f9;
+}
+
+.cm-room-avatar-overflow-row:disabled {
+  cursor: default;
+}
+
+.cm-room-avatar-overflow-close {
+  appearance: none;
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  color: #334155;
+  cursor: pointer;
 }
 
 .cm-room-board-wrap--compact {
@@ -4879,9 +5043,15 @@ body.cm-has-mobile-bottom-nav {
     font-size: 18px;
   }
 
-  .cm-room-avatar-chip-face {
-    width: min(44px, 11.5vw);
-    height: min(44px, 11.5vw);
+  .cm-room-avatar-strip-wrap {
+    padding-right: 56px;
+    padding-left: 4px;
+  }
+
+  .cm-room-avatar-invite-face {
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
   }
 
   .cm-room-session-hero-toolbar-right .cm-room-session-hero-iconbtn {
@@ -4942,10 +5112,10 @@ body.cm-has-mobile-bottom-nav {
 
 .cm-call-dock {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   width: calc(100% - 28px);
-  max-width: 360px;
+  max-width: 320px;
   margin: -52px auto 0;
   padding: 8px 6px 10px;
   border-radius: 0;
@@ -5004,11 +5174,6 @@ body.cm-has-mobile-bottom-nav {
 .cm-call-dock-item--listen .cm-call-dock-icon {
   background: #f3f4f6;
   color: #6b7280;
-}
-
-.cm-call-dock-item--speaker-off .cm-call-dock-icon {
-  background: #f3f4f6;
-  color: #9ca3af;
 }
 
 .cm-call-dock-item--exit .cm-call-dock-icon {
@@ -5654,8 +5819,11 @@ body.cm-has-mobile-bottom-nav {
     height: 40px;
   }
 
-  .cm-room-avatar-chip-face {
-    width: min(48px, 12.5vw);
-    height: min(48px, 12.5vw);
+  .cm-room-avatar-strip--lg {
+    gap: 10px;
+  }
+
+  .cm-room-avatar-strip-wrap {
+    padding-right: 54px;
   }
 }

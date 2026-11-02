@@ -15,11 +15,6 @@ import {
   resolveCallHeroConnectionState,
 } from "@/lib/callConnectionNotice";
 import type { CallPresenceToast } from "@/lib/callPresenceToasts";
-import {
-  getCallSpeakerOn,
-  setCallSpeakerOn,
-  subscribeCallSpeaker,
-} from "@/lib/callSpeaker";
 import { formatMemberDisplayName } from "@/lib/resolveDisplayName";
 import { normalizeMemberDeviceId } from "@/lib/memberProfileView";
 import {
@@ -141,14 +136,6 @@ function DockMicIcon({ muted }: { muted: boolean }) {
   );
 }
 
-function DockSpeakerIcon({ on }: { on: boolean }) {
-  return (
-    <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
-      {on ? "🔊" : "🔈"}
-    </span>
-  );
-}
-
 function DockShareIcon() {
   return (
     <span aria-hidden style={{ fontSize: 18, lineHeight: 1 }}>
@@ -230,9 +217,6 @@ export default function CallRoomView({
 }: CallRoomViewProps) {
   const inAppShell = isAppShellContext();
   const [surfaceTab, setSurfaceTab] = useState<SurfaceTab>("board");
-  const [speakerOn, setSpeakerOnState] = useState(() => getCallSpeakerOn());
-
-  useEffect(() => subscribeCallSpeaker(() => setSpeakerOnState(getCallSpeakerOn())), []);
 
   // Brief reconnect blips stay silent; only prolonged issues surface a toast.
   const [showProlongedReconnectNotice, setShowProlongedReconnectNotice] =
@@ -540,26 +524,6 @@ export default function CallRoomView({
               <DockMicIcon muted={!micOn} />
             </span>
             <span className="cm-call-dock-label">{micLabel}</span>
-          </button>
-
-          <button
-            type="button"
-            className={[
-              "cm-call-dock-item",
-              speakerOn ? "" : "cm-call-dock-item--speaker-off",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={() => setCallSpeakerOn(!speakerOn)}
-            aria-label={speakerOn ? "スピーカー オン" : "スピーカー オフ"}
-            aria-pressed={speakerOn}
-          >
-            <span className="cm-call-dock-icon">
-              <DockSpeakerIcon on={speakerOn} />
-            </span>
-            <span className="cm-call-dock-label">
-              {speakerOn ? "スピーカー" : "消音"}
-            </span>
           </button>
 
           <button

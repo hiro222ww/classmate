@@ -107,7 +107,7 @@ async function probeBoardChrome(page) {
       ".cm-board-tool-chip--fullscreen"
     );
     const recruitInvite = document.querySelector(".cm-call-recruitment-invite");
-    const heroInvite = document.querySelector(".cm-room-avatar-chip--invite");
+    const heroInvite = document.querySelector(".cm-room-avatar-invite");
     const swatchRect = swatches?.getBoundingClientRect();
     const toolbarRect = toolbar?.getBoundingClientRect();
     return {
@@ -264,7 +264,8 @@ for (const width of WIDTHS) {
   const roomMarks = {
     hero: await roomPage.locator(".cm-room-session-hero").count(),
     strip: await roomPage.locator(".cm-room-avatar-strip").count(),
-    invite: await roomPage.locator(".cm-room-avatar-chip--invite").count(),
+    invite: await roomPage.locator(".cm-room-avatar-invite").count(),
+    emptySeats: await roomPage.locator(".cm-room-avatar-chip--empty").count(),
     board: await roomPage.locator(".cm-room-chalkboard").count(),
     startBtn: await roomPage.locator(".cm-room-start-btn").count(),
   };
@@ -303,7 +304,8 @@ for (const width of WIDTHS) {
     oldSeats: await callPage.locator(".cm-call-seat").count(),
     oldFloating: await callPage.locator(".cm-call-floating-dock").count(),
     recruitInvite: await callPage.locator(".cm-call-recruitment-invite").count(),
-    heroInvite: await callPage.locator(".cm-room-avatar-chip--invite").count(),
+    heroInvite: await callPage.locator(".cm-room-avatar-invite").count(),
+    emptySeats: await callPage.locator(".cm-room-avatar-chip--empty").count(),
     fullscreenBtn: await callPage
       .locator(".cm-board-tool-chip--fullscreen")
       .count(),
