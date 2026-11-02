@@ -119,10 +119,10 @@ export function RoomAvatarStrip({
         {layout.showOverflow ? (
           <button
             type="button"
-            role="listitem"
             className="cm-room-avatar-chip cm-room-avatar-chip--overflow"
             aria-label={`他${layout.overflowCount}人を表示`}
             aria-haspopup="dialog"
+            aria-expanded={overflowOpen}
             onClick={() => {
               if (onOverflowClick) {
                 onOverflowClick();
