@@ -3556,7 +3556,7 @@
 /* iPad+: expand to home content width; copy left / actions right */
 @media (min-width: 768px) {
   .cm-random-talk {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 42%);
     align-items: center;
     column-gap: 16px;
     row-gap: 10px;
@@ -3575,17 +3575,20 @@
   .cm-random-talk-actions {
     grid-column: 2;
     grid-row: 1;
-    display: flex;
-    align-items: center;
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
     gap: 10px;
-    width: auto;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   .cm-random-talk-actions .cm-entry-button {
-    flex: 0 0 auto;
-    min-width: 112px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     min-height: 48px !important;
-    padding: 12px 16px !important;
+    padding: 12px 14px !important;
     font-size: 14px !important;
   }
 
@@ -3606,14 +3609,14 @@
 /* Desktop: slightly roomier touch targets, still content-width aligned */
 @media (min-width: 1024px) {
   .cm-random-talk {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 38%);
     padding: 16px 18px;
     column-gap: 20px;
   }
 
   .cm-random-talk-actions .cm-entry-button {
-    min-width: 128px;
-    min-height: 52px;
-    padding: 12px 20px !important;
+    min-height: 52px !important;
+    padding: 12px 18px !important;
     font-size: 15px !important;
   }
 
