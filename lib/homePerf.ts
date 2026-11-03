@@ -45,3 +45,21 @@ export function logHomeOpenClassPerf(parts: {
       `routeMs=${parts.routeMs} path=${parts.path}`
   );
 }
+
+/** Client-side home members load timings (no PII). */
+export function logHomeMembersPerf(parts: {
+  gen: number;
+  classCount: number;
+  membersFirstPaintMs: number | null;
+  statusPresenceMs: number | null;
+  totalMs: number;
+  path?: string;
+}) {
+  console.log(
+    `[home-perf] members gen=${parts.gen} classes=${parts.classCount} ` +
+      `membersFirstPaintMs=${parts.membersFirstPaintMs ?? "-"} ` +
+      `statusPresenceMs=${parts.statusPresenceMs ?? "-"} ` +
+      `totalMs=${parts.totalMs}` +
+      (parts.path ? ` path=${parts.path}` : "")
+  );
+}

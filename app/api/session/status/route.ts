@@ -325,6 +325,9 @@ export async function GET(req: Request) {
       searchParams.get("deviceId") ??
       ""
     ).trim();
+    // lite: skip join-state audit N+1 (safe for home roster overlays).
+    // fast: skip presence enrichment and set is_in_call=true for room ready path.
+    // Home must use lite without fast so call badges stay presence-accurate.
     const lite =
       searchParams.get("lite") === "1" ||
       searchParams.get("lite") === "true";

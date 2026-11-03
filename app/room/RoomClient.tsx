@@ -3149,7 +3149,7 @@ const name = rawName === "You" ? "参加者" : rawName;
     clearInviteRoomError("apply_join_success");
 
     const snapshot = readSessionMembersSnapshot(sessionId, classId);
-    if (snapshot && snapshot.members.length >= 2) {
+    if (snapshot && snapshot.members.length >= 1) {
       setMembers((prev) => {
         const incoming = snapshot.members.map((member) =>
           applyRoomLocalLeftOverride(member as MemberRow, sessionId)
