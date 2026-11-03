@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveAvatarPhotoSrc } from "@/lib/avatarUrl";
 
 const AVATAR_LOAD_RETRY_LIMIT = 1;
@@ -12,6 +12,8 @@ const AVATAR_LOAD_RETRY_MS = 700;
  * - Retry once on transient load errors (e.g. brief 404 after upload).
  * - Only permanently fall back to the default mark after retries are exhausted.
  * - Changing photoPath/avatarUrl resets failure state.
+ * - iOS Safari may skip `onLoad` for HTTP-cached images; `imgRef` + complete
+ *   check marks those as loaded so opacity is not stuck at 0.
  */
 export function useAvatarPhotoSrc(params: {
   photoPath?: string | null;
@@ -24,6 +26,7 @@ export function useAvatarPhotoSrc(params: {
   const [retryNonce, setRetryNonce] = useState(0);
   const retryTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
+  const imgNodeRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
     setFailed(false);
@@ -58,6 +61,27 @@ export function useAvatarPhotoSrc(params: {
     return `${baseSrc}${sep}r=${retryNonce}`;
   }, [baseSrc, failed, retryNonce]);
 
+  const markLoadedIfComplete = useCallback((node: HTMLImageElement | null) => {
+    if (!node) return;
+    // Cached images on iOS Safari often skip the load event.
+    if (node.complete && node.naturalWidth > 0) {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!photoSrc) return;
+    markLoadedIfComplete(imgNodeRef.current);
+  }, [photoSrc, markLoadedIfComplete]);
+
+  const imgRef = useCallback(
+    (node: HTMLImageElement | null) => {
+      imgNodeRef.current = node;
+      markLoadedIfComplete(node);
+    },
+    [markLoadedIfComplete]
+  );
+
   const showPhoto = Boolean(photoSrc) && loaded;
 
   const onLoad = () => {
@@ -82,5 +106,5 @@ export function useAvatarPhotoSrc(params: {
     setFailed(true);
   };
 
-  return { photoSrc, showPhoto, onLoad, onError, failed, retryCount };
+  return { photoSrc, showPhoto, onLoad, onError, failed, retryCount, imgRef };
 }

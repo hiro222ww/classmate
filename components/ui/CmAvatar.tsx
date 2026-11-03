@@ -20,7 +20,7 @@ export function CmAvatar({
   isMe = false,
   className,
 }: CmAvatarProps) {
-  const { photoSrc, showPhoto, onLoad, onError } = useAvatarPhotoSrc({
+  const { photoSrc, showPhoto, onLoad, onError, imgRef } = useAvatarPhotoSrc({
     photoPath,
     avatarUrl,
   });
@@ -52,6 +52,7 @@ export function CmAvatar({
       />
       {photoSrc ? (
         <img
+          ref={imgRef}
           src={photoSrc}
           alt=""
           width={sizePx}

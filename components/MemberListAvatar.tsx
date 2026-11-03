@@ -21,10 +21,11 @@ export default function MemberListAvatar({
   isMe = false,
   eager = false,
 }: MemberListAvatarProps) {
-  const { photoSrc, showPhoto, onLoad, onError, failed } = useAvatarPhotoSrc({
-    photoPath,
-    avatarUrl,
-  });
+  const { photoSrc, showPhoto, onLoad, onError, failed, imgRef } =
+    useAvatarPhotoSrc({
+      photoPath,
+      avatarUrl,
+    });
 
   return (
     <div
@@ -46,6 +47,7 @@ export default function MemberListAvatar({
       <DefaultAvatarMark title={label ? `${label}のアバター` : undefined} />
       {photoSrc ? (
         <img
+          ref={imgRef}
           src={photoSrc}
           alt={label}
           width={sizePx}

@@ -50,6 +50,7 @@ import { RoomAccountAvatarButton } from "@/components/room/RoomAccountAvatarButt
 import { resolveClassTitle } from "@/lib/classPresentation";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import { useDashboardAccountStatus } from "@/hooks/useDashboardAccountStatus";
+import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
 import { useWebPushNotifications } from "@/hooks/useWebPushNotifications";
 import {
   buildShellAwareLoginUrl,
@@ -824,8 +825,11 @@ export default function RoomClient() {
     return stored;
   });
   const [photoPath, setPhotoPath] = useState<string | null>(null);
-  const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);
-  const {
+  // Align with CallClient: shared self-photo SoT (last-good + auth headers).
+  const { photoPath: selfProfilePhotoPath } = useSelfProfilePhoto(deviceId);
+  const accountPhotoPath =
+    selfProfilePhotoPath || String(photoPath ?? "").trim() || null;
+  const { loggedIn, accountLabel } = useDashboardAccountStatus(deviceId);  const {
     enabled: notificationsEnabled,
     busy: notificationsBusy,
     toggle: toggleNotifications,
@@ -1866,11 +1870,11 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
     // raced a second profile fetch that could clear/overwrite photoPath.
   }, [deviceId]);
 
-  // Push self photo into the roster once /api/profile resolves so the strip
+  // Push self photo into the roster once profile SoT resolves so the strip
   // and room→call snapshot share the same path (status poll may lag).
   useEffect(() => {
     const did = String(deviceId ?? "").trim();
-    const path = String(photoPath ?? "").trim();
+    const path = String(accountPhotoPath ?? "").trim();
     if (!did || !path) return;
     setMembers((prev) => {
       let changed = false;
@@ -1882,7 +1886,7 @@ function clearSoftConnectionError(kind?: "status" | "messages") {
       });
       return changed ? next : prev;
     });
-  }, [deviceId, photoPath]);
+  }, [deviceId, accountPhotoPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3122,7 +3126,7 @@ const name = rawName === "You" ? "参加者" : rawName;
             ...m,
             display_name: name || m.display_name,
             photo_path:
-              String(photoPath ?? "").trim() ||
+              String(accountPhotoPath ?? "").trim() ||
               String(m.photo_path ?? "").trim() ||
               null,
           };
@@ -3133,7 +3137,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         {
           device_id: deviceId,
           display_name: name,
-          photo_path: String(photoPath ?? "").trim() || null,
+          photo_path: String(accountPhotoPath ?? "").trim() || null,
           joined_at: new Date().toISOString(),
         },
         ...prev,
@@ -4557,16 +4561,16 @@ const name = rawName === "You" ? "参加者" : rawName;
       return {
         id: did || label,
         label,
-        // Self: local /api/profile photoPath is SoT when status poll lacks photo.
-        // Others: member photo_path from session status enrichment.
+        // Self: useSelfProfilePhoto SoT (same as /call) when status poll lacks photo.
+        // Others: member photo_path / avatar_url from session status enrichment.
         photoPath: isMe
-          ? photoPath || m.photo_path || null
+          ? accountPhotoPath || m.photo_path || null
           : m.photo_path ?? null,
         avatarUrl: isMe ? null : m.avatar_url ?? null,
         isMe,
       };
     });
-  }, [visibleMembers, deviceId, displayName, photoPath]);
+  }, [visibleMembers, deviceId, displayName, accountPhotoPath]);
 
   const roomInviteUrl = useMemo(
     () =>
@@ -4662,7 +4666,7 @@ const name = rawName === "You" ? "参加者" : rawName;
               </button>
               <RoomAccountAvatarButton
                 displayName={displayName || "ゲスト"}
-                photoPath={photoPath}
+                photoPath={accountPhotoPath}
                 open={accountMenuOpen}
                 onOpen={() => setAccountMenuOpen(true)}
               />
@@ -4891,7 +4895,7 @@ const name = rawName === "You" ? "参加者" : rawName;
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
         displayName={displayName || "ゲスト"}
-        photoPath={photoPath}
+        photoPath={accountPhotoPath}
       />
 
       <RoomClassMenuSheet

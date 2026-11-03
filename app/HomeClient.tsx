@@ -74,6 +74,8 @@ import type { MeetingPlanPublic } from "@/lib/meetingPlanClient";
 import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
+import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
+import { mergeHomeMemberWithSessionStatus } from "@/lib/homeMemberPhotoMerge";
 import { hasCreateClassEntitlement } from "@/lib/classCreateGuards";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { supabase } from "@/lib/supabaseClient";
@@ -198,6 +200,7 @@ type ClassMember = {
   display_name: string;
   display_name_source?: string | null;
   photo_path?: string | null;
+  avatar_url?: string | null;
   joined_at?: string | null;
   is_in_call?: boolean;
   screen?: string | null;
@@ -461,6 +464,9 @@ export default function HomeClient() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileChecked, setProfileChecked] = useState(false);
+  // Same self-photo SoT as /call (useSelfProfilePhoto). Home header previously
+  // relied only on refreshSelfProfile state, which could lag or miss photo_path.
+  const { photoPath: selfProfilePhotoPath } = useSelfProfilePhoto(deviceId);
   /** null = still loading; avoid flashing ＋作成 before entitlements resolve */
   const [canCreateClasses, setCanCreateClasses] = useState<boolean | null>(
     null
@@ -856,7 +862,18 @@ export default function HomeClient() {
     if (gen !== profileFetchGenRef.current) return;
 
     if (result.ok) {
-      setProfile(result.profile);
+      setProfile((prev) => {
+        const next = result.profile as Profile | null;
+        if (!next || typeof next !== "object") return next;
+        const nextPhoto = String(next.photo_path ?? "").trim();
+        const prevPhoto = String(prev?.photo_path ?? "").trim();
+        // Do not let a successful payload with empty photo_path wipe a
+        // known-good home avatar (device/user row race).
+        if (!nextPhoto && prevPhoto) {
+          return { ...next, photo_path: prevPhoto };
+        }
+        return next;
+      });
       setProfileChecked(true);
       logProfileExists(
         id,
@@ -1292,17 +1309,7 @@ if (sessionId) {
         const statusMember = statusByDevice.get(did);
         merged.push(
           statusMember
-            ? {
-                ...member,
-                is_in_call: statusMember.is_in_call === true,
-                screen: statusMember.screen ?? member.screen ?? null,
-                last_seen_at:
-                  statusMember.last_seen_at ?? member.last_seen_at ?? null,
-                presence_session_id:
-                  statusMember.presence_session_id ??
-                  member.presence_session_id ??
-                  null,
-              }
+            ? mergeHomeMemberWithSessionStatus(member, statusMember)
             : member
         );
       }
@@ -2001,6 +2008,10 @@ return () => {
     return arr;
   }, [classes]);
 
+  const accountPhotoPath =
+    selfProfilePhotoPath ||
+    String(profile?.photo_path ?? "").trim() ||
+    null;
   const profileName = String(profile?.display_name ?? "").trim();
   const authLoading = authStatus === "loading";
   const welcomeName =
@@ -2727,7 +2738,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
           <HomeHeader
             variant="onHero"
             displayName={welcomeName || "ゲスト"}
-            photoPath={profile?.photo_path ?? null}
+            photoPath={accountPhotoPath}
             hideWebPush
             trailing={
               <button
@@ -2749,7 +2760,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
                 <CmAvatar
                   label={welcomeName || "ゲスト"}
                   sizePx={32}
-                  photoPath={profile?.photo_path ?? null}
+                  photoPath={accountPhotoPath}
                 />
                 {showAccountUnreadDot ? (
                   <span className="cm-account-unread-dot" aria-hidden />
@@ -2782,7 +2793,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
         legalHref={withDev("/terms")}
         discoverHref={withDev("/class/select")}
         displayName={welcomeName || "ゲスト"}
-        photoPath={profile?.photo_path ?? null}
+        photoPath={accountPhotoPath}
       />
 
       {iosInstallGuideOpen && dismissIosInstallGuide ? (
