@@ -25,6 +25,7 @@ import {
   logRoomEntryClient,
   logSessionJoinClient,
 } from "@/lib/entryFlowLog";
+import { logRoomFirstMembersPaint } from "@/lib/homePerf";
 import { resolveMatchJoinUserMessage } from "@/lib/matchJoinUserMessage";
 import { pushRecentClass } from "@/lib/recentClasses";
 import { markJoinedClassesStale } from "@/lib/joinedClassesRefresh";
@@ -4040,6 +4041,12 @@ const name = rawName === "You" ? "参加者" : rawName;
     const snapshot = readSessionMembersSnapshot(sessionId, classId);
     if (!snapshot || snapshot.members.length === 0) return;
 
+    const snapshotAgeMs = Math.max(0, Date.now() - Number(snapshot.updatedAt ?? 0));
+    const paintMs =
+      roomLifecycleStartRef.current != null
+        ? Date.now() - roomLifecycleStartRef.current
+        : 0;
+
     setMembers((prev) => {
       const incoming = snapshot.members.map((member) =>
         applyRoomLocalLeftOverride(member as MemberRow, sessionId)
@@ -4054,6 +4061,12 @@ const name = rawName === "You" ? "参加者" : rawName;
         `[room-members] seed-from-snapshot count=${merged.length} ` +
           `session=${sessionId.slice(-6)} reason=room_mount`
       );
+      logRoomFirstMembersPaint({
+        ms: paintMs,
+        path: "home_snapshot",
+        memberCount: merged.length,
+        snapshotAgeMs,
+      });
       return merged;
     });
     setMemberCount((prev) => Math.max(prev, snapshot.members.length));

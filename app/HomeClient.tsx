@@ -79,7 +79,11 @@ import {
   deviceIdsFromMembers,
   mergeHomeRosterWithStatusMembers,
 } from "@/lib/homeMembersMerge";
-import { writeSessionMembersSnapshot } from "@/lib/sessionMembersSnapshot";
+import {
+  clearSessionMembersSnapshot,
+  writeSessionMembersSnapshot,
+} from "@/lib/sessionMembersSnapshot";
+import { planHomeMembersRequests } from "@/lib/homeLoadMetrics";
 import { hasCreateClassEntitlement } from "@/lib/classCreateGuards";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { supabase } from "@/lib/supabaseClient";
@@ -1395,9 +1399,18 @@ async function loadMembersAndPresence() {
               : `/api/class/members?classId=${encodeURIComponent(classId)}`;
             const membersRes = await fetch(membersUrl, { cache: "no-store" });
             const membersJson = await readJsonSafe(membersRes);
-            members = Array.isArray(membersJson?.members)
-              ? membersJson.members
-              : [];
+            if (!membersRes.ok || membersJson?.ok === false) {
+              membersFetchFailed = true;
+              console.warn(
+                "[home] members load failed",
+                classId,
+                membersJson?.error || membersRes.status
+              );
+            } else {
+              members = Array.isArray(membersJson?.members)
+                ? membersJson.members
+                : [];
+            }
           } catch (e) {
             membersFetchFailed = true;
             console.warn("[home] members load failed", classId, e);
@@ -1530,12 +1543,23 @@ async function loadMembersAndPresence() {
     );
 
     if (!isStale()) {
+      const sessionIdByClass = new Map(
+        classIds.map((classId) => {
+          const row = classes.find((c) => c.id === classId);
+          return [classId, String(row?.session_id ?? "").trim() || null] as const;
+        })
+      );
+      const requestPlan = planHomeMembersRequests({
+        classIds,
+        sessionIdByClass,
+      });
       logHomeMembersPerf({
         gen: loadGen,
         classCount: classIds.length,
         membersFirstPaintMs,
         statusPresenceMs: statusPresenceDoneMs,
         totalMs: Date.now() - loadStartMs,
+        requestCount: requestPlan.totalRequests,
         path: "early_members_parallel_status",
       });
     }
@@ -2673,6 +2697,14 @@ console.log("[home] resolved ids", { classId, sessionId, json });
   }
 
   function removeClassFromHomeState(classId: string) {
+    const sessionId = String(
+      classes.find((c) => String(c.id ?? "").trim() === classId)?.session_id ??
+        readHomeClassSessionHint(classId) ??
+        ""
+    ).trim();
+    if (sessionId) {
+      clearSessionMembersSnapshot(sessionId, classId);
+    }
     markClassLeftLocally(classId);
     clearHomeClassSessionHint(classId);
     setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
@@ -2691,6 +2723,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     prevPresenceRef.current = { ...prevPresenceRef.current };
     delete prevPresenceRef.current[classId];
     delete prevMemberStatusRef.current[classId];
+    delete sessionMemberIdsByClassRef.current[classId];
+    delete prevMemberInternalRef.current[classId];
     membersInitialLoadedRef.current.delete(classId);
     setMembersLoadingByClass((prev) => {
       const next = { ...prev };
