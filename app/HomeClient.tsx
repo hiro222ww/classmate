@@ -75,7 +75,15 @@ import type { CallRequestPublic } from "@/lib/callRequest";
 import { hasLocalLeftCall } from "@/lib/localCallExit";
 import { buildDeviceAuthHeaders, fetchSelfProfile } from "@/lib/fetchCurrentClass";
 import { useSelfProfilePhoto } from "@/hooks/useSelfProfilePhoto";
-import { mergeHomeMemberWithSessionStatus } from "@/lib/homeMemberPhotoMerge";
+import {
+  deviceIdsFromMembers,
+  mergeHomeRosterWithStatusMembers,
+} from "@/lib/homeMembersMerge";
+import {
+  clearSessionMembersSnapshot,
+  writeSessionMembersSnapshot,
+} from "@/lib/sessionMembersSnapshot";
+import { planHomeMembersRequests } from "@/lib/homeLoadMetrics";
 import { hasCreateClassEntitlement } from "@/lib/classCreateGuards";
 import { supabaseAuthClient } from "@/lib/authClient";
 import { supabase } from "@/lib/supabaseClient";
@@ -124,6 +132,7 @@ import {
 import {
   logHomeFirstPaint,
   logHomeJoinedClasses,
+  logHomeMembersPerf,
   logHomeOpenClassPerf,
   logHomePerf,
 } from "@/lib/homePerf";
@@ -423,6 +432,26 @@ export default function HomeClient() {
 
   const dev = (searchParams.get("dev") ?? "").trim();
 
+  function seedRoomMembersFromHome(
+    classId: string,
+    sessionId: string,
+    overrideMembers?: ClassMember[]
+  ) {
+    const sid = String(sessionId ?? "").trim();
+    const cid = String(classId ?? "").trim();
+    if (!sid || !cid) return;
+    const members =
+      overrideMembers && overrideMembers.length > 0
+        ? overrideMembers
+        : membersByClass[cid] ?? [];
+    if (members.length === 0) return;
+    writeSessionMembersSnapshot(sid, cid, members);
+    console.log(
+      `[home-perf] seed-room-snapshot class=${cid.slice(-6)} ` +
+        `session=${sid.slice(-6)} members=${members.length}`
+    );
+  }
+
   function buildRoomUrl(
     classId: string,
     sessionId: string,
@@ -560,6 +589,10 @@ export default function HomeClient() {
   const leftSucceededClassIdsRef = useRef<Set<string>>(new Set());
   const homeMountStartMsRef = useRef<number | null>(null);
   const homeEnrichStartedRef = useRef(false);
+  /** True while mount lite mine is waiting for full enrich (skip members until then). */
+  const homeEnrichPendingRef = useRef(false);
+  const membersLoadGenRef = useRef(0);
+  const [membersLoadGate, setMembersLoadGate] = useState(0);
 
   const [mounted, setMounted] = useState(false);
   const [inAppToasts, setInAppToasts] = useState<InAppToastItem[]>([]);
@@ -634,6 +667,10 @@ export default function HomeClient() {
             `[home-fetch] ignored reason=stale_after_leave gen=${fetchGen} currentGen=${currentGen}`
           );
           return;
+        }
+
+        if (reason === "enrich" || (reason === "mount" && !lite)) {
+          homeEnrichPendingRef.current = false;
         }
 
         const rawClasses = Array.isArray(classesJson.classes)
@@ -1067,12 +1104,14 @@ export default function HomeClient() {
         const profilePromise = refreshSelfProfile(id);
 
         if (fetchReason === "mount") {
+          homeEnrichPendingRef.current = true;
           await fetchJoinedClasses("mount", {
             deviceId: id,
             throwOnError: true,
             lite: true,
           });
         } else {
+          homeEnrichPendingRef.current = false;
           await fetchJoinedClasses(fetchReason, {
             deviceId: id,
             throwOnError: true,
@@ -1092,7 +1131,13 @@ export default function HomeClient() {
           if (!homeEnrichStartedRef.current && fetchReason === "mount") {
             homeEnrichStartedRef.current = true;
             window.setTimeout(() => {
-              void fetchJoinedClasses("enrich", { deviceId: id });
+              void fetchJoinedClasses("enrich", { deviceId: id }).finally(
+                () => {
+                  if (!homeEnrichPendingRef.current) return;
+                  homeEnrichPendingRef.current = false;
+                  setMembersLoadGate((n) => n + 1);
+                }
+              );
             }, 0);
           }
         }
@@ -1217,6 +1262,10 @@ export default function HomeClient() {
   
   useEffect(() => {
     if (!classes.length) return;
+    if (homeEnrichPendingRef.current) {
+      console.log("[home-perf] members defer reason=enrich_pending");
+      return;
+    }
 
     let cancelled = false;
     const membersDeferMs = 150;
@@ -1225,10 +1274,17 @@ async function loadMembersAndPresence() {
   if (typeof document !== "undefined" && document.visibilityState !== "visible") {
     return;
   }
+  if (homeEnrichPendingRef.current) {
+    return;
+  }
 
   const classIds = classes.map((c) => c.id).filter(Boolean);
   const viewerId = String(deviceId ?? "").trim();
   let shouldRefreshJoinedClasses = false;
+  const loadGen = ++membersLoadGenRef.current;
+  const loadStartMs = Date.now();
+  let membersFirstPaintMs: number | null = null;
+  let statusPresenceDoneMs: number | null = null;
 
   const pendingInitialLoadIds = classIds.filter(
     (classId) => !membersInitialLoadedRef.current.has(classId)
@@ -1243,190 +1299,276 @@ async function loadMembersAndPresence() {
     });
   }
 
-  try {
-    
-    const results = await Promise.all(
-  classIds.map(async (classId) => {
+  const isStale = () =>
+    cancelled || loadGen !== membersLoadGenRef.current;
+
+  function paintMembersEarly(classId: string, members: ClassMember[], sessionId: string) {
+    if (isStale()) return;
+    if (membersFirstPaintMs == null) {
+      membersFirstPaintMs = Date.now() - loadStartMs;
+    }
+    setMembersByClass((prev) => ({ ...prev, [classId]: members }));
+    prevMembersRef.current = {
+      ...prevMembersRef.current,
+      [classId]: members,
+    };
+    membersInitialLoadedRef.current.add(classId);
+    setMembersLoadingByClass((prev) => ({ ...prev, [classId]: false }));
+    if (sessionId) {
+      sessionMemberIdsByClassRef.current[classId] =
+        deviceIdsFromMembers(members);
+    }
+  }
+
+  async function fetchPresenceRows(
+    classId: string,
+    sessionId: string,
+    sessionMemberIds: Set<string>
+  ): Promise<PresenceRow[]> {
     try {
-      let members: ClassMember[] = [];
-      let presence: PresenceRow[] = [];
-      let fetchFailed = false;
-      let membersFetchFailed = false;
-      let presenceFetchFailed = false;
-      let sessionStatusFetchFailed = false;
+      const presenceRes = await fetch(
+        `/api/class/presence?classId=${encodeURIComponent(classId)}`,
+        { cache: "no-store" }
+      );
+      const presenceJson = await readJsonSafe(presenceRes);
+      const presenceItems = Array.isArray(presenceJson?.items)
+        ? presenceJson.items
+        : Array.isArray(presenceJson?.presence)
+          ? presenceJson.presence
+          : [];
 
-const classRow = classes.find((c) => c.id === classId);
-const sessionId = String(classRow?.session_id ?? "").trim();
-
-// membersは必ず取得（session_id があれば session_members 優先）
-try {
-  const membersUrl = sessionId
-    ? `/api/class/members?classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(sessionId)}`
-    : `/api/class/members?classId=${encodeURIComponent(classId)}`;
-  const membersRes = await fetch(membersUrl, { cache: "no-store" });
-  const membersJson = await readJsonSafe(membersRes);
-  members = Array.isArray(membersJson?.members)
-    ? membersJson.members
-    : [];
-} catch (e) {
-  membersFetchFailed = true;
-  console.warn("[home] members load failed", classId, e);
-}
-
-let sessionMemberIds = new Set<string>();
-
-if (sessionId) {
-  try {
-    const statusQs = new URLSearchParams({
-      sessionId,
-      classId,
-    });
-    const statusRes = await fetch(
-      `/api/session/status?${statusQs.toString()}`,
-      { cache: "no-store" }
-    );
-    const statusJson = await readJsonSafe(statusRes);
-
-    if (statusJson?.ok && Array.isArray(statusJson.members)) {
-      const statusMembers = statusJson.members as ClassMember[];
-      const statusByDevice = new Map<string, ClassMember>();
-      sessionMemberIds = new Set<string>();
-
-      for (const row of statusMembers) {
-        const did = String(row.device_id ?? "").trim();
+      const presenceMap: Record<string, PresenceRow> = {};
+      let ignoredNonMember = 0;
+      let ignoredStale = 0;
+      const mappedRows: PresenceRow[] = [];
+      for (const raw of presenceItems) {
+        const mapped = mapPresenceApiRow(
+          raw as Record<string, unknown>,
+          sessionId
+        );
+        if (!mapped) continue;
+        const did = String(mapped.device_id ?? "").trim();
         if (!did) continue;
-        statusByDevice.set(did, row);
-        sessionMemberIds.add(did);
+        if (sessionMemberIds.size > 0 && !sessionMemberIds.has(did)) {
+          ignoredNonMember += 1;
+          continue;
+        }
+        mappedRows.push(mapped as PresenceRow);
       }
-
-      const merged: ClassMember[] = [];
-      const seen = new Set<string>();
-
-      for (const member of members) {
-        const did = String(member.device_id ?? "").trim();
+      for (const mapped of pickLatestPresenceByDeviceId(mappedRows)) {
+        const did = String(mapped.device_id ?? "").trim();
         if (!did) continue;
-        seen.add(did);
-        const statusMember = statusByDevice.get(did);
-        merged.push(
-          statusMember
-            ? mergeHomeMemberWithSessionStatus(member, statusMember)
-            : member
+        const seen = mapped.last_seen_at;
+        const t = seen ? new Date(seen).getTime() : NaN;
+        const fresh =
+          Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_HOME;
+        if (!fresh) {
+          ignoredStale += 1;
+          continue;
+        }
+        presenceMap[did] = mapped;
+      }
+      if (ignoredNonMember > 0 || ignoredStale > 0) {
+        console.log(
+          `[home] presence filtered class=${classId.slice(-6)} ` +
+            `ignoredNonMember=${ignoredNonMember} ignoredStale=${ignoredStale} ` +
+            `kept=${Object.keys(presenceMap).length}`
         );
       }
-
-      for (const row of statusMembers) {
-        const did = String(row.device_id ?? "").trim();
-        if (!did || seen.has(did)) continue;
-        merged.push(row);
-      }
-
-      members = merged;
-    } else {
-      sessionStatusFetchFailed = true;
-      console.warn("[home] session/status load failed", classId, statusJson?.error);
-    }
-  } catch (e) {
-    sessionStatusFetchFailed = true;
-    console.warn("[home] session/status load failed", classId, e);
-  }
-}
-
-if (
-  viewerId &&
-  sessionMemberIds.has(viewerId) &&
-  isLocallyHiddenClass(classId) &&
-  !isClassLeftLocally(classId)
-) {
-  console.log(
-    `[home] clear-local-hidden reason=session_members_exists class=${classId.slice(-6)}`
-  );
-  clearLocallyHiddenClass(classId);
-  shouldRefreshJoinedClasses = true;
-}
-
-// presenceは失敗してもOK
-try {
-  const presenceRes = await fetch(
-    `/api/class/presence?classId=${encodeURIComponent(classId)}`,
-    { cache: "no-store" }
-  );
-  const presenceJson = await readJsonSafe(presenceRes);
-  const presenceItems = Array.isArray(presenceJson?.items)
-    ? presenceJson.items
-    : Array.isArray(presenceJson?.presence)
-      ? presenceJson.presence
-      : [];
-
-  const presenceMap: Record<string, PresenceRow> = {};
-  let ignoredNonMember = 0;
-  let ignoredStale = 0;
-  const mappedRows: PresenceRow[] = [];
-  for (const raw of presenceItems) {
-    const mapped = mapPresenceApiRow(raw as Record<string, unknown>, sessionId);
-    if (!mapped) continue;
-    const did = String(mapped.device_id ?? "").trim();
-    if (!did) continue;
-    if (sessionMemberIds.size > 0 && !sessionMemberIds.has(did)) {
-      ignoredNonMember += 1;
-      continue;
-    }
-    mappedRows.push(mapped as PresenceRow);
-  }
-  for (const mapped of pickLatestPresenceByDeviceId(mappedRows)) {
-    const did = String(mapped.device_id ?? "").trim();
-    if (!did) continue;
-    const seen = mapped.last_seen_at;
-    const t = seen ? new Date(seen).getTime() : NaN;
-    const fresh =
-      Number.isFinite(t) && Date.now() - t <= PRESENCE_FRESH_MS_HOME;
-    if (!fresh) {
-      ignoredStale += 1;
-      continue;
-    }
-    presenceMap[did] = mapped;
-  }
-  if (ignoredNonMember > 0 || ignoredStale > 0) {
-    console.log(
-      `[home] presence filtered class=${classId.slice(-6)} ` +
-        `ignoredNonMember=${ignoredNonMember} ignoredStale=${ignoredStale} ` +
-        `kept=${Object.keys(presenceMap).length}`
-    );
-  }
-  presence = Object.values(presenceMap);
-} catch (e) {
-  presenceFetchFailed = true;
-  console.warn("[home] presence load failed", classId, e);
-}
-
-fetchFailed =
-  membersFetchFailed || presenceFetchFailed || sessionStatusFetchFailed;
-
-return {
-  classId,
-  members,
-  presence,
-  fetchFailed,
-  sessionMemberIds,
-};
+      return Object.values(presenceMap);
     } catch (e) {
-      console.warn("[home] partial members/presence load failed", classId, e);
-
-      return {
-        classId,
-        members: null,
-        presence: null,
-        fetchFailed: true,
-        sessionMemberIds: new Set<string>(),
-      };
+      console.warn("[home] presence load failed", classId, e);
+      return [];
     }
-  })
-);
+  }
 
-        if (shouldRefreshJoinedClasses && !cancelled) {
+  try {
+    const results = await Promise.all(
+      classIds.map(async (classId) => {
+        try {
+          let members: ClassMember[] = [];
+          let presence: PresenceRow[] = [];
+          let membersFetchFailed = false;
+
+          const classRow = classes.find((c) => c.id === classId);
+          const sessionId = String(classRow?.session_id ?? "").trim();
+
+          try {
+            const membersUrl = sessionId
+              ? `/api/class/members?classId=${encodeURIComponent(classId)}&sessionId=${encodeURIComponent(sessionId)}`
+              : `/api/class/members?classId=${encodeURIComponent(classId)}`;
+            const membersRes = await fetch(membersUrl, { cache: "no-store" });
+            const membersJson = await readJsonSafe(membersRes);
+            if (!membersRes.ok || membersJson?.ok === false) {
+              membersFetchFailed = true;
+              console.warn(
+                "[home] members load failed",
+                classId,
+                membersJson?.error || membersRes.status
+              );
+            } else {
+              members = Array.isArray(membersJson?.members)
+                ? membersJson.members
+                : [];
+            }
+          } catch (e) {
+            membersFetchFailed = true;
+            console.warn("[home] members load failed", classId, e);
+          }
+
+          if (membersFetchFailed) {
+            return {
+              classId,
+              members: null,
+              presence: null,
+              fetchFailed: true,
+              sessionMemberIds: new Set<string>(),
+            };
+          }
+
+          // Paint roster as soon as members return; call/presence follow.
+          paintMembersEarly(classId, members, sessionId);
+
+          let sessionMemberIds = sessionId
+            ? deviceIdsFromMembers(members)
+            : new Set<string>();
+
+          if (sessionId) {
+            // lite=1 skips audit N+1; do NOT use fast=1 (hardcodes is_in_call).
+            const statusPromise = (async () => {
+              try {
+                const statusQs = new URLSearchParams({
+                  sessionId,
+                  classId,
+                  lite: "1",
+                });
+                const statusRes = await fetch(
+                  `/api/session/status?${statusQs.toString()}`,
+                  { cache: "no-store" }
+                );
+                const statusJson = await readJsonSafe(statusRes);
+                if (statusJson?.ok && Array.isArray(statusJson.members)) {
+                  return statusJson.members as ClassMember[];
+                }
+                console.warn(
+                  "[home] session/status load failed",
+                  classId,
+                  statusJson?.error
+                );
+                return null;
+              } catch (e) {
+                console.warn("[home] session/status load failed", classId, e);
+                return null;
+              }
+            })();
+
+            const presencePromise = fetchPresenceRows(
+              classId,
+              sessionId,
+              sessionMemberIds
+            );
+
+            const [statusMembers, presenceRows] = await Promise.all([
+              statusPromise,
+              presencePromise,
+            ]);
+            presence = presenceRows;
+
+            if (statusMembers) {
+              const merged = mergeHomeRosterWithStatusMembers(
+                members,
+                statusMembers
+              );
+              members = merged.members;
+              sessionMemberIds = merged.sessionMemberIds;
+            }
+          } else {
+            presence = await fetchPresenceRows(
+              classId,
+              sessionId,
+              sessionMemberIds
+            );
+          }
+
+          if (statusPresenceDoneMs == null) {
+            statusPresenceDoneMs = Date.now() - loadStartMs;
+          }
+
+          if (
+            viewerId &&
+            sessionMemberIds.has(viewerId) &&
+            isLocallyHiddenClass(classId) &&
+            !isClassLeftLocally(classId)
+          ) {
+            console.log(
+              `[home] clear-local-hidden reason=session_members_exists class=${classId.slice(-6)}`
+            );
+            clearLocallyHiddenClass(classId);
+            shouldRefreshJoinedClasses = true;
+          }
+
+          if (isStale()) {
+            return {
+              classId,
+              members: null,
+              presence: null,
+              fetchFailed: true,
+              sessionMemberIds: new Set<string>(),
+            };
+          }
+
+          return {
+            classId,
+            members,
+            presence,
+            fetchFailed: false,
+            sessionMemberIds,
+          };
+        } catch (e) {
+          console.warn(
+            "[home] partial members/presence load failed",
+            classId,
+            e
+          );
+
+          return {
+            classId,
+            members: null,
+            presence: null,
+            fetchFailed: true,
+            sessionMemberIds: new Set<string>(),
+          };
+        }
+      })
+    );
+
+    if (!isStale()) {
+      const sessionIdByClass = new Map(
+        classIds.map((classId) => {
+          const row = classes.find((c) => c.id === classId);
+          return [classId, String(row?.session_id ?? "").trim() || null] as const;
+        })
+      );
+      const requestPlan = planHomeMembersRequests({
+        classIds,
+        sessionIdByClass,
+      });
+      logHomeMembersPerf({
+        gen: loadGen,
+        classCount: classIds.length,
+        membersFirstPaintMs,
+        statusPresenceMs: statusPresenceDoneMs,
+        totalMs: Date.now() - loadStartMs,
+        requestCount: requestPlan.totalRequests,
+        path: "early_members_parallel_status",
+      });
+    }
+
+        if (shouldRefreshJoinedClasses && !isStale()) {
           void fetchJoinedClasses("session_members_exists", { deviceId });
         }
 
-        if (cancelled) return;
+        if (isStale()) return;
 
         const nextMembersByClass: Record<string, ClassMember[]> = {};
         const nextPresenceByClass: Record<string, Record<string, PresenceRow>> = {};
@@ -1444,7 +1586,7 @@ return {
             row.sessionMemberIds ?? new Set<string>();
           sessionMemberIdsByClassRef.current[row.classId] = sessionMemberIds;
 
-          if (row.fetchFailed || row.members == null || row.presence == null) {
+          if (row.fetchFailed || row.members == null) {
             nextMembersByClass[row.classId] =
               prevMembersRef.current[row.classId] ??
               membersByClass[row.classId] ??
@@ -1458,6 +1600,8 @@ return {
             continue;
           }
 
+          const rowPresence = Array.isArray(row.presence) ? row.presence : [];
+
           nextMembersByClass[row.classId] = row.members;
           logMemberDisplayNamesFromApi(
             `home:${row.classId.slice(0, 8)}`,
@@ -1465,7 +1609,7 @@ return {
           );
 
           const presenceMap: Record<string, PresenceRow> = {};
-          for (const p of row.presence) {
+          for (const p of rowPresence) {
             const key = String(p.device_id ?? "").trim();
             if (!key) continue;
             presenceMap[key] = p;
@@ -1730,7 +1874,7 @@ return () => {
     if (channel) void supabase.removeChannel(channel);
   }
 };
-  }, [classes, deviceId, fetchJoinedClasses, notificationsEnabled]);
+  }, [classes, deviceId, fetchJoinedClasses, membersLoadGate, notificationsEnabled]);
 
   useEffect(() => {
     if (!classes.length || !deviceId) return;
@@ -2141,6 +2285,15 @@ return () => {
 
       clearClassLeftLocally(classId);
       storeHomeClassSessionHint(classId, hintSessionId, sessionStatus);
+      {
+        const homeMembers = membersByClass[classId] ?? [];
+        const seedMembers =
+          homeMembers.length > 0
+            ? mergeHomeRosterWithStatusMembers(homeMembers, members as ClassMember[])
+                .members
+            : (members as ClassMember[]);
+        seedRoomMembersFromHome(classId, hintSessionId, seedMembers);
+      }
       console.log(
         `[home openClass] reuse-hint-session-direct session=${hintSessionId.slice(-6)} ` +
           `class=${classId.slice(-6)} members=${members.length} hintSessionMs=${hintSessionMs}`
@@ -2376,6 +2529,7 @@ console.log("[home] resolved ids", { classId, sessionId, json });
 
       clearClassLeftLocally(classId);
       storeHomeClassSessionHint(classId, sessionId, resolvedStatus);
+      seedRoomMembersFromHome(classId, sessionId);
       matchJoinMs = Date.now() - matchJoinStartMs;
       const routeStartMs = Date.now();
       router.push(buildRoomUrl(classId, sessionId, { openJoinedClass: true }));
@@ -2543,6 +2697,14 @@ console.log("[home] resolved ids", { classId, sessionId, json });
   }
 
   function removeClassFromHomeState(classId: string) {
+    const sessionId = String(
+      classes.find((c) => String(c.id ?? "").trim() === classId)?.session_id ??
+        readHomeClassSessionHint(classId) ??
+        ""
+    ).trim();
+    if (sessionId) {
+      clearSessionMembersSnapshot(sessionId, classId);
+    }
     markClassLeftLocally(classId);
     clearHomeClassSessionHint(classId);
     setClasses((prev) => prev.filter((c) => String(c.id ?? "").trim() !== classId));
@@ -2561,6 +2723,8 @@ console.log("[home] resolved ids", { classId, sessionId, json });
     prevPresenceRef.current = { ...prevPresenceRef.current };
     delete prevPresenceRef.current[classId];
     delete prevMemberStatusRef.current[classId];
+    delete sessionMemberIdsByClassRef.current[classId];
+    delete prevMemberInternalRef.current[classId];
     membersInitialLoadedRef.current.delete(classId);
     setMembersLoadingByClass((prev) => {
       const next = { ...prev };

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  clearSessionMembersSnapshot,
   readSessionMembersSnapshot,
   writeSessionMembersSnapshot,
 } from "./sessionMembersSnapshot";
@@ -60,5 +61,22 @@ describe("sessionMembersSnapshot", () => {
     expect(
       readSessionMembersSnapshot("other-session", classId)
     ).toBeNull();
+  });
+
+  it("clears only the targeted class/session snapshot", () => {
+    const otherClass = "33333333-3333-3333-3333-333333333333";
+    writeSessionMembersSnapshot(sessionId, classId, [
+      { device_id: "device-a", display_name: "A" },
+    ]);
+    writeSessionMembersSnapshot(sessionId, otherClass, [
+      { device_id: "device-b", display_name: "B" },
+    ]);
+
+    clearSessionMembersSnapshot(sessionId, classId);
+
+    expect(readSessionMembersSnapshot(sessionId, classId)).toBeNull();
+    expect(readSessionMembersSnapshot(sessionId, otherClass)?.members).toHaveLength(
+      1
+    );
   });
 });

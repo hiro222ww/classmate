@@ -23,8 +23,12 @@ import { fetchActiveCallRequestsForClasses } from "@/lib/callRequest";
 import { fetchUnreadCountsForClasses } from "@/lib/classMessageReads";
 import { logHomePerf } from "@/lib/homePerf";
 import { isClassPresentationEditSupported } from "@/lib/classEditSupport";
+import { mapPool } from "@/lib/mapPool";
 
 export const dynamic = "force-dynamic";
+
+/** Cap parallel session lookups to avoid bursting Supabase connections. */
+const MINE_SESSION_LIST_CONCURRENCY = 4;
 
 const CLASS_MINE_SELECT_BASE =
   "id, name, description, world_key, topic_key, min_age, is_sensitive, is_user_created, created_at, match_deadline_at";
@@ -365,8 +369,11 @@ export async function GET(req: Request) {
       });
     }
 
-    const recruitmentSessionTtlMinutes = await getRecruitmentSessionTtlMinutes();
-    const recruitmentSessionTtlSetting = await getRecruitmentSessionTtlSetting();
+    const [recruitmentSessionTtlMinutes, recruitmentSessionTtlSetting] =
+      await Promise.all([
+        getRecruitmentSessionTtlMinutes(),
+        getRecruitmentSessionTtlSetting(),
+      ]);
 
     await expireStaleRecruitmentSessions(supabaseAdmin, {
       classIds,
@@ -388,16 +395,24 @@ export async function GET(req: Request) {
     let sessionRowCount = 0;
     const sessionsStartMs = Date.now();
 
-    for (const classId of classIds) {
+    const sessionListRows = await mapPool(
+      classIds,
+      MINE_SESSION_LIST_CONCURRENCY,
+      async (classId) => {
+        const classSessions = await listClassSessionsWithMembers(
+          supabaseAdmin,
+          classId,
+          normalizedDeviceId
+        );
+        return { classId, classSessions };
+      }
+    );
+
+    for (const { classId, classSessions } of sessionListRows) {
       const classRow = classMap.get(classId) as
         | { match_deadline_at?: string | null }
         | undefined;
 
-      const classSessions = await listClassSessionsWithMembers(
-        supabaseAdmin,
-        classId,
-        normalizedDeviceId
-      );
       sessionRowCount += classSessions.length;
 
       const canonical = pickCanonicalOpenJoinedSession({
@@ -454,14 +469,17 @@ export async function GET(req: Request) {
     sessionsMs = Date.now() - sessionsStartMs;
 
     const enrichStartMs = Date.now();
-    const meetingPlanMap =
-      (await fetchActiveMeetingPlansForClasses(classIds)) ?? new Map();
-    const callRequestMap =
-      (await fetchActiveCallRequestsForClasses(classIds, normalizedDeviceId)) ??
-      new Map();
-    const unreadCountMap =
-      (await fetchUnreadCountsForClasses(normalizedDeviceId, classIds)) ??
-      new Map();
+    const [meetingPlanMap, callRequestMap, unreadCountMap] = await Promise.all([
+      fetchActiveMeetingPlansForClasses(classIds).then(
+        (value) => value ?? new Map()
+      ),
+      fetchActiveCallRequestsForClasses(classIds, normalizedDeviceId).then(
+        (value) => value ?? new Map()
+      ),
+      fetchUnreadCountsForClasses(normalizedDeviceId, classIds).then(
+        (value) => value ?? new Map()
+      ),
+    ]);
     enrichMs = Date.now() - enrichStartMs;
 
     const classes = classIds.map((classId) => {
