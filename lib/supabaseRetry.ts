@@ -2,8 +2,16 @@ import { isRetryableNetworkError } from "@/lib/retryableFetch";
 
 const DEFAULT_BACKOFF_MS = [250, 700, 1400] as const;
 
+/** Client-side connectivity issues (device offline, etc.). */
 export const PROFILE_SAVE_NETWORK_USER_MESSAGE =
   "通信に失敗しました。回線状況を確認して、もう一度お試しください。";
+
+/**
+ * Server could not reach the database / Supabase backend.
+ * Prefer this over blaming the user's device network.
+ */
+export const PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE =
+  "ただいま登録サーバーに接続できません。しばらくしてからもう一度お試しください。";
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
@@ -11,37 +19,52 @@ function sleep(ms: number) {
   });
 }
 
+function readErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    return String((error as { message?: unknown }).message ?? "");
+  }
+  return "";
+}
+
 export function isRetryableSupabaseFailure(error: unknown): boolean {
   if (isRetryableNetworkError(error)) return true;
-  if (typeof error === "string") return isRetryableNetworkError(error);
-  if (error && typeof error === "object") {
-    const message = String((error as { message?: unknown }).message ?? "");
-    if (message && isRetryableNetworkError(message)) return true;
-  }
+  const message = readErrorMessage(error);
+  if (message && isRetryableNetworkError(message)) return true;
   return false;
 }
 
-export function toUserFacingProfileSaveError(error: unknown): string {
-  if (isRetryableSupabaseFailure(error)) {
-    return PROFILE_SAVE_NETWORK_USER_MESSAGE;
+export function toUserFacingProfileSaveError(
+  error: unknown,
+  opts?: { source?: "client" | "server" }
+): string {
+  const message = readErrorMessage(error).trim();
+  const lower = message.toLowerCase();
+  const looksLikeBackendUnreachable =
+    /fetch failed|und_err_|econnreset|enotfound|eai_again|connect timeout|getaddrinfo/i.test(
+      lower
+    );
+
+  if (opts?.source === "server" || looksLikeBackendUnreachable) {
+    if (isRetryableSupabaseFailure(error) || looksLikeBackendUnreachable) {
+      return PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE;
+    }
   }
 
-  const message =
-    typeof error === "string"
-      ? error
-      : error && typeof error === "object"
-        ? String((error as { message?: unknown }).message ?? "")
-        : "";
+  if (isRetryableSupabaseFailure(error)) {
+    return opts?.source === "client"
+      ? PROFILE_SAVE_NETWORK_USER_MESSAGE
+      : PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE;
+  }
 
-  const trimmed = message.trim();
-  if (!trimmed) return "保存に失敗しました。時間をおいて再試行してください。";
+  if (!message) return "保存に失敗しました。時間をおいて再試行してください。";
 
   // Never surface undici / low-level fetch internals to end users.
-  if (/fetch failed|failed to fetch|load failed|und_err_|econnreset|enotfound/i.test(trimmed)) {
-    return PROFILE_SAVE_NETWORK_USER_MESSAGE;
+  if (/fetch failed|failed to fetch|load failed|und_err_|econnreset|enotfound/i.test(message)) {
+    return PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE;
   }
 
-  return trimmed;
+  return message;
 }
 
 export type WithSupabaseRetryOptions = {

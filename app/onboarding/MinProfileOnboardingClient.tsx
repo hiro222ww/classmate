@@ -14,6 +14,7 @@ import { withDev } from "@/lib/withDev";
 import { isRetryableNetworkError } from "@/lib/retryableFetch";
 import {
   PROFILE_SAVE_NETWORK_USER_MESSAGE,
+  PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE,
   toUserFacingProfileSaveError,
 } from "@/lib/supabaseRetry";
 
@@ -73,19 +74,28 @@ async function postMinimumProfileWithRetry(
         continue;
       }
 
-      throw new Error(toUserFacingProfileSaveError(message));
+      if (res.status >= 500 || res.status === 503) {
+        throw new Error(
+          toUserFacingProfileSaveError(message, { source: "server" })
+        );
+      }
+
+      throw new Error(toUserFacingProfileSaveError(message, { source: "client" }));
     } catch (error) {
       lastError = error;
       const alreadyUserFacing =
         error instanceof Error &&
-        error.message === PROFILE_SAVE_NETWORK_USER_MESSAGE;
+        (error.message === PROFILE_SAVE_NETWORK_USER_MESSAGE ||
+          error.message === PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE);
       const retryable = isRetryableNetworkError(error);
       if (retryable && attempt < maxAttempts - 1) {
         await sleep(backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? 800);
         continue;
       }
       if (alreadyUserFacing) throw error;
-      throw new Error(toUserFacingProfileSaveError(error));
+      throw new Error(
+        toUserFacingProfileSaveError(error, { source: "client" })
+      );
     }
   }
 
