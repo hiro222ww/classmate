@@ -110,7 +110,9 @@ DB: marketing_campaigns / marketing_posts / marketing_ai_runs
 | `MARKETING_DAILY_RUN_LIMIT` | 任意 | 既定 `20` |
 | `MARKETING_CRON_ENABLED` | 任意 | `1` のみ有効 |
 | `MARKETING_CRON_SECRET` | Cron有効時必須 | Bearer 照合 |
-| Phase 2 予定 | — | `BUFFER_ACCESS_TOKEN` 等 |
+| `BUFFER_ACCESS_TOKEN` または `BUFFER_API_KEY` | Phase2任意 | Buffer GraphQL Bearer |
+| `BUFFER_CHANNEL_ID` | Phase2任意 | 投稿先チャネルID |
+| `MARKETING_BUFFER_PUBLISH_ENABLED` | Phase2任意 | `1` のときのみ実送信 |
 
 APIキーは DB に保存しない。
 
@@ -146,11 +148,13 @@ APIキーは DB に保存しない。
 加えて `MARKETING_CRON_ENABLED=1` と `MARKETING_CRON_SECRET`、Authorization: Bearer を設定。  
 Vercel Cron が Authorization を付けられない場合は、Vercel の保護ヘッダ + アプリ側で `CRON_SECRET` パターンに合わせて改修する。
 
-### Phase 2 SNS（推奨: Buffer）
-1. Buffer アカウント + 投稿先チャネル接続
-2. Access Token を環境変数へ
-3. `lib/marketing/adapters` に Buffer アダプタ実装
-4. 承認済み + 予約のみ送信、二重送信防止（`external_post_id` / status published）
+### Buffer（Phase 2・許可後のみ）
+1. https://developers.buffer.com で API Key を発行
+2. `account { organizations { id } }` → `channels(input:{organizationId})` で X チャネル ID を取得
+3. ホストに `BUFFER_ACCESS_TOKEN` / `BUFFER_CHANNEL_ID` を登録（このエージェントでは登録しない）
+4. 送信を許可するときだけ `MARKETING_BUFFER_PUBLISH_ENABLED=1`
+5. `/admin/marketing` で承認 → 予約日時 →「Bufferへ予約」
+6. `external_status=scheduled` は予約成功、`sent` は実公開。`external_post_id` があると再送しない
 
 ---
 
@@ -192,26 +196,25 @@ DB結合・OpenAI実呼び出し・本番 Cron は未実施（キー/本番DBな
 
 ---
 
-## Phase 2–4 設計メモ
+## Phase 2/3 実装（追加）
 
-### Phase 2 SNS比較（要約）
+### プライバシー（実装方針）
+- 保存するのは **UTMキャンペーンパラメータのみ**（個人情報ではない）
+- 新規 Cookie / IP / 指紋は追加しない。既存 `device_id` と sessionStorage（タブ内 first-touch）のみ
+- 本番公開前にプライバシーポリシーへ追記推奨:
+  - 取得情報: 「広告・キャンペーン経由の流入パラメータ（UTM等）」
+  - 利用目的: 「マーケティング効果測定・改善」
 
-| 手段 | 向き | 注意 |
-|---|---|---|
-| **Buffer** | 初期最適 | 1接続で複数SNS、予約容易 |
-| X API | 直接制御 | 有料・レート・審査 |
-| Instagram Graph | ビジネス必須 | 画像/Reels中心、テキスト単体弱い |
-| TikTok Content Posting | 審査厳しい | 動画前提 |
+### 実装内容
+- Buffer GraphQL アダプタ（`MARKETING_BUFFER_PUBLISH_ENABLED=1` までネットワーク送信しない）
+- `POST /api/admin/marketing/publish`（二重送信防止・予約/公開の区別・リトライ可能エラー）
+- `page_visits` に UTM 列追加（マイグレーション未適用時は既存 insert にフォールバック）
+- ファネルイベント meta に UTM を自動付与
+- `GET /api/admin/marketing/metrics` + `/admin/marketing` ダッシュボード
+- 通話成立は専用イベント未定義のため **未計測**（`call_started` のみ実測）
 
-アダプタ interface: `lib/marketing/adapters/types.ts`  
-二重送信防止: `status=published` または `external_post_id` 済みはスキップ。公開成功と予約登録成功を区別（`scheduledOnly`）。
+### 追加マイグレーション
+`supabase/migrations/20261116140000_marketing_phase23.sql`
 
-### Phase 3 計測
-- 投稿ごとの `tracking_url` は Phase 1 で付与済み
-- `page_visits` / `product_funnel_events` に UTM を関連付け（新規個人識別子は保存しない）
-- 計測できない指標は「未計測」（推定値で埋めない）
-
-### Phase 4
-- `marketing_ai_runs.run_kind = weekly_report`
-- データ少ないときは仮説として提示
-- 管理画面にレポート表示
+### Phase 4（未着手）
+- 週次AIレポート / 次週企画の自動生成

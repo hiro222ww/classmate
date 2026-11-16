@@ -1,11 +1,24 @@
-import { describe, expect, it } from "vitest";
-import { getPublishAdapter, isExternalPublishConnected } from "@/lib/marketing/adapters";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  getMarketingPublishStatus,
+  getPublishAdapter,
+  isExternalPublishConnected,
+} from "@/lib/marketing/adapters";
 
-describe("publish adapters (Phase 1)", () => {
-  it("falls back to manual adapter", async () => {
+const keys = [
+  "BUFFER_ACCESS_TOKEN",
+  "BUFFER_CHANNEL_ID",
+  "MARKETING_BUFFER_PUBLISH_ENABLED",
+] as const;
+
+afterEach(() => {
+  for (const k of keys) delete process.env[k];
+});
+
+describe("publish adapters", () => {
+  it("falls back to manual when Buffer is absent", async () => {
     const adapter = getPublishAdapter("x");
     expect(adapter.channel).toBe("manual");
-    expect(adapter.isConfigured()).toBe(true);
     const result = await adapter.publish({
       postId: "test",
       bodyText: "hello",
@@ -14,9 +27,22 @@ describe("publish adapters (Phase 1)", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBe("manual_only");
+    expect(isExternalPublishConnected()).toBe(false);
   });
 
-  it("reports external publish as disconnected by default", () => {
-    expect(isExternalPublishConnected()).toBe(false);
+  it("uses Buffer adapter but refuses network when gate is off", async () => {
+    process.env.BUFFER_ACCESS_TOKEN = "tok";
+    process.env.BUFFER_CHANNEL_ID = "ch_1";
+    const adapter = getPublishAdapter("x");
+    expect(adapter.channel).toBe("buffer");
+    const result = await adapter.publish({
+      postId: "test",
+      bodyText: "hello",
+      trackingUrl: "https://classmate-room.com/?utm_source=x",
+      scheduledAt: null,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe("buffer_publish_disabled");
+    expect(getMarketingPublishStatus().activeAdapter).toBe("manual");
   });
 });

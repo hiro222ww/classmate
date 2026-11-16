@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { verifySupabaseAccessToken } from "@/lib/requestIdentity";
 import { isValidDeviceUuid } from "@/lib/deviceIdValidation";
 import { isFunnelEventName } from "@/lib/funnelEvents";
+import { sanitizeUtmValue } from "@/lib/marketing/utmParse";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -49,7 +50,21 @@ export async function POST(req: Request) {
 
     let meta: Record<string, unknown> = {};
     if (body?.meta && typeof body.meta === "object" && !Array.isArray(body.meta)) {
-      meta = body.meta as Record<string, unknown>;
+      meta = { ...(body.meta as Record<string, unknown>) };
+    }
+
+    // Keep only sanitized UTM campaign params (drop unsafe client values).
+    for (const key of [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_content",
+    ] as const) {
+      if (key in meta) {
+        const cleaned = sanitizeUtmValue(meta[key]);
+        if (cleaned) meta[key] = cleaned;
+        else delete meta[key];
+      }
     }
 
     const { error } = await supabaseAdmin.from("product_funnel_events").insert({
