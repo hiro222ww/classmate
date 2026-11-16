@@ -24,10 +24,23 @@ import {
 type StatusFilter = "all" | MarketingPostStatus;
 
 type BufferStatus = {
+  tokenPresent?: boolean;
   credentialsPresent: boolean;
   publishEnabled: boolean;
   connected: boolean;
+  channelIdConfigured?: boolean;
   note: string;
+};
+
+type BufferChannelRow = {
+  id: string;
+  name: string;
+  service: string;
+  displayName: string | null;
+  descriptor: string | null;
+  externalLink: string | null;
+  isDisconnected: boolean | null;
+  isLocked: boolean | null;
 };
 
 function fmt(iso: string | null) {
@@ -59,6 +72,10 @@ export default function AdminMarketingPage() {
   const [activeAdapter, setActiveAdapter] = useState<"buffer" | "manual">(
     "manual"
   );
+  const [bufferChannels, setBufferChannels] = useState<BufferChannelRow[]>([]);
+  const [bufferMatchId, setBufferMatchId] = useState<string | null>(null);
+  const [bufferProbeMsg, setBufferProbeMsg] = useState("");
+  const [bufferProbing, setBufferProbing] = useState(false);
   const [metrics, setMetrics] = useState<MarketingDashboardMetrics | null>(null);
   const [metricsMsg, setMetricsMsg] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -126,6 +143,41 @@ export default function AdminMarketingPage() {
     }
     setMetrics(json.metrics as MarketingDashboardMetrics);
   }, []);
+
+  async function probeBuffer() {
+    setBufferProbing(true);
+    setBufferProbeMsg("");
+    try {
+      const res = await fetch(
+        "/api/admin/marketing/buffer?probe=1&match=classmate0401",
+        { cache: "no-store", credentials: "same-origin" }
+      );
+      const json = await res.json().catch(() => null);
+      if (res.status === 401) {
+        setBufferProbeMsg("未ログインまたは認証切れです。");
+        return;
+      }
+      if (json?.buffer) setBuffer(json.buffer as BufferStatus);
+      setBufferChannels((json?.channels ?? []) as BufferChannelRow[]);
+      const suggested = json?.match?.suggestedChannelId
+        ? String(json.match.suggestedChannelId)
+        : null;
+      setBufferMatchId(suggested);
+      if (!json?.ok) {
+        setBufferProbeMsg(
+          String(json?.detail || json?.error || "Buffer接続確認に失敗しました")
+        );
+        return;
+      }
+      setBufferProbeMsg(
+        suggested
+          ? `接続OK。classmate0401 候補チャンネルID: ${suggested}（キーは表示しません）`
+          : `接続OK。チャンネル ${Number(json?.channels?.length ?? 0)} 件。classmate0401 の自動一致なし — 一覧から確認してください`
+      );
+    } finally {
+      setBufferProbing(false);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -323,9 +375,99 @@ export default function AdminMarketingPage() {
               {activeAdapter ? ` / adapter=${activeAdapter}` : ""}
             </div>
             <div>
+              送信ゲート:{" "}
+              {buffer?.publishEnabled
+                ? "有効（投稿可能）"
+                : "無効（MARKETING_BUFFER_PUBLISH_ENABLED≠1）"}
+            </div>
+            <div>
               Cron: {cronEnabled ? "有効" : "無効（MARKETING_CRON_ENABLED≠1）"}
             </div>
           </div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={adminBtnGhost}
+              disabled={busy || bufferProbing}
+              onClick={() => void probeBuffer()}
+            >
+              Buffer接続確認（チャンネル一覧・投稿なし）
+            </button>
+          </div>
+          {bufferProbeMsg ? (
+            <p style={{ margin: "10px 0 0", color: "#0f766e", fontSize: 13 }}>
+              {bufferProbeMsg}
+            </p>
+          ) : null}
+          {bufferMatchId ? (
+            <p style={{ margin: "8px 0 0", fontSize: 13 }}>
+              推奨 <code>BUFFER_CHANNEL_ID</code>:{" "}
+              <button
+                type="button"
+                style={{
+                  ...adminBtnGhost,
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  fontFamily: "monospace",
+                }}
+                onClick={() => void copyText(bufferMatchId)}
+              >
+                {bufferMatchId}
+              </button>
+            </p>
+          ) : null}
+          {bufferChannels.length > 0 ? (
+            <div style={{ marginTop: 12, fontSize: 12, overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#64748b" }}>
+                    <th style={{ padding: "4px 0" }}>service</th>
+                    <th>name</th>
+                    <th>id</th>
+                    <th>状態</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bufferChannels.map((ch) => (
+                    <tr
+                      key={ch.id}
+                      style={{
+                        background:
+                          bufferMatchId === ch.id ? "#ecfdf5" : undefined,
+                      }}
+                    >
+                      <td style={{ padding: "4px 0" }}>{ch.service}</td>
+                      <td>
+                        {ch.name}
+                        {ch.displayName ? ` (${ch.displayName})` : ""}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          style={{
+                            ...adminBtnGhost,
+                            padding: "2px 6px",
+                            fontSize: 11,
+                            fontFamily: "monospace",
+                          }}
+                          onClick={() => void copyText(ch.id)}
+                        >
+                          {ch.id}
+                        </button>
+                      </td>
+                      <td>
+                        {ch.isDisconnected
+                          ? "切断"
+                          : ch.isLocked
+                            ? "ロック"
+                            : "OK"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
           {msg ? (
             <p style={{ margin: "10px 0 0", color: "#0f766e", fontSize: 13 }}>
               {msg}

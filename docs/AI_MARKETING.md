@@ -148,13 +148,36 @@ APIキーは DB に保存しない。
 加えて `MARKETING_CRON_ENABLED=1` と `MARKETING_CRON_SECRET`、Authorization: Bearer を設定。  
 Vercel Cron が Authorization を付けられない場合は、Vercel の保護ヘッダ + アプリ側で `CRON_SECRET` パターンに合わせて改修する。
 
-### Buffer（Phase 2・許可後のみ）
-1. https://developers.buffer.com で API Key を発行
-2. `account { organizations { id } }` → `channels(input:{organizationId})` で X チャネル ID を取得
-3. ホストに `BUFFER_ACCESS_TOKEN` / `BUFFER_CHANNEL_ID` を登録（このエージェントでは登録しない）
-4. 送信を許可するときだけ `MARKETING_BUFFER_PUBLISH_ENABLED=1`
-5. `/admin/marketing` で承認 → 予約日時 →「Bufferへ予約」
-6. `external_status=scheduled` は予約成功、`sent` は実公開。`external_post_id` があると再送しない
+### Buffer 接続手順（ローカル）
+
+設定場所:
+- **ローカル開発**: リポジトリ直下の `.env.local`（`.gitignore` で除外済み。コミットしない）
+- **本番（許可後）**: Vercel → Project → Settings → Environment Variables
+- コード参照: `lib/marketing/bufferConfig.ts`（`BUFFER_ACCESS_TOKEN` / `BUFFER_CHANNEL_ID` / `MARKETING_BUFFER_PUBLISH_ENABLED`）
+
+記述例: `docs/env.marketing.buffer.example` を `.env.local` にコピーして値を埋める。
+
+```bash
+# .env.local
+BUFFER_ACCESS_TOKEN=your_buffer_api_key
+BUFFER_CHANNEL_ID=             # 接続確認後に classmate0401 の id を入れる
+MARKETING_BUFFER_PUBLISH_ENABLED=0
+```
+
+接続確認（投稿なし）:
+1. `.env.local` に `BUFFER_ACCESS_TOKEN` を入れ、`npm run dev` を再起動
+2. 管理ログイン後 `/admin/marketing` →「Buffer接続確認」
+3. または `node scripts/probe-buffer-connection.mjs`（トークンは表示しない）
+4. `classmate0401` の `BUFFER_CHANNEL_ID` を `.env.local` に追記して再起動
+5. **`MARKETING_BUFFER_PUBLISH_ENABLED=0` のまま**（実予約・投稿はまだしない）
+
+API:
+- `GET /api/admin/marketing/buffer` — 設定状態のみ
+- `GET /api/admin/marketing/buffer?probe=1&match=classmate0401` — GraphQLでチャンネル一覧（要管理者Cookie）
+
+予約投稿との互換:
+- 既存 `bufferPublishAdapter` は Buffer GraphQL `createPost`（`customScheduled` / `addToQueue`）を使用
+- 送信は `MARKETING_BUFFER_PUBLISH_ENABLED=1` のときのみ。ゲートOFF時は `buffer_publish_disabled` を返しネットワーク投稿しない
 
 ---
 

@@ -1,5 +1,5 @@
+import { bufferGraphql } from "@/lib/marketing/bufferClient";
 import {
-  getBufferAccessToken,
   getBufferChannelId,
   isBufferCredentialsPresent,
   isBufferPublishEnabled,
@@ -9,8 +9,6 @@ import type {
   PublishAdapterInput,
   PublishAdapterResult,
 } from "@/lib/marketing/adapters/types";
-
-const BUFFER_API = "https://api.buffer.com";
 
 const CREATE_SCHEDULED_MUTATION = `
 mutation CreateScheduledPost($text: String!, $channelId: String!, $dueAt: DateTime!) {
@@ -71,80 +69,8 @@ function composeBufferText(input: PublishAdapterInput): string {
   const url = String(input.trackingUrl ?? "").trim();
   if (!url) return body;
   if (body.includes(url)) return body;
-  // Keep under ~280 for X; body is already ~140 from generation.
   const joined = `${body}\n${url}`;
   return joined.length <= 280 ? joined : body;
-}
-
-async function bufferGraphql(params: {
-  query: string;
-  variables: Record<string, unknown>;
-}): Promise<
-  | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: string; detail?: string; retryable?: boolean }
-> {
-  const token = getBufferAccessToken();
-  if (!token) {
-    return { ok: false, error: "buffer_token_missing", retryable: false };
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-
-  try {
-    const res = await fetch(BUFFER_API, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        query: params.query,
-        variables: params.variables,
-      }),
-    });
-
-    const json = (await res.json().catch(() => null)) as Record<
-      string,
-      unknown
-    > | null;
-
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: "buffer_http_error",
-        detail: `HTTP ${res.status}`,
-        retryable: res.status >= 500 || res.status === 429,
-      };
-    }
-
-    if (Array.isArray(json?.errors) && (json.errors as unknown[]).length > 0) {
-      const first = (json.errors as Array<{ message?: string }>)[0];
-      return {
-        ok: false,
-        error: "buffer_graphql_error",
-        detail: first?.message || "graphql_error",
-        retryable: true,
-      };
-    }
-
-    if (!json?.data || typeof json.data !== "object") {
-      return { ok: false, error: "buffer_empty_data", retryable: true };
-    }
-
-    return { ok: true, data: json.data as Record<string, unknown> };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : "buffer_fetch_failed";
-    return {
-      ok: false,
-      error: message.includes("abort") ? "buffer_timeout" : "buffer_fetch_failed",
-      detail: message,
-      retryable: true,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 function parseCreatePostResult(
