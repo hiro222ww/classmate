@@ -21,7 +21,7 @@ const HARD_PROMO_RE =
 const CLASSMATE_RE = /classmate|クラスメイト/i;
 
 const FACT_UNSAFE_RE =
-  /(利用者\d|登録者\d|\d+万人|\d+人が|口コミで|みんな使って|実績多数)/;
+  /(利用者\d|登録者\d|\d+万人|\d+人が|口コミで|みんな使って|実績多数|3人集ま|自動開始|出会い目的|連絡先交換|オフ会)/;
 
 export const QUALITY_PASS_THRESHOLD = 62;
 
