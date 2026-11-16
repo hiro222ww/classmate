@@ -6,6 +6,11 @@ export const dynamic = "force-dynamic";
 
 const cards = [
   {
+    title: "AIマーケティング",
+    desc: "X投稿案の生成・編集・承認。自動公開なし（Phase 1）",
+    href: "/admin/marketing",
+  },
+  {
     title: "初回登録プレビュー",
     desc: "広告撮影用。最小プロフィール→ホーム二択をDB変更なしで確認",
     href: "/admin/onboarding-preview",
