@@ -8,25 +8,29 @@ import {
   buildDailyGenerateSystemPrompt,
   buildDailyGenerateUserPrompt,
 } from "@/lib/marketing/prompts";
+import { preferredTypesForDay } from "@/lib/marketing/quality";
 import {
   isMarketingPostType,
   type GeneratedPostDraft,
+  type MarketingPostType,
 } from "@/lib/marketing/types";
 import { truncateForX } from "@/lib/marketing/utm";
 
-export type OpenAiGenerateResult = {
-  ok: true;
-  posts: GeneratedPostDraft[];
-  modelName: string;
-  promptTokens: number;
-  completionTokens: number;
-  estimatedCostUsd: number;
-  rawText: string;
-} | {
-  ok: false;
-  error: string;
-  detail?: string;
-};
+export type OpenAiGenerateResult =
+  | {
+      ok: true;
+      posts: GeneratedPostDraft[];
+      modelName: string;
+      promptTokens: number;
+      completionTokens: number;
+      estimatedCostUsd: number;
+      rawText: string;
+    }
+  | {
+      ok: false;
+      error: string;
+      detail?: string;
+    };
 
 function parsePostsPayload(raw: unknown): GeneratedPostDraft[] | null {
   if (!raw || typeof raw !== "object") return null;
@@ -34,27 +38,34 @@ function parsePostsPayload(raw: unknown): GeneratedPostDraft[] | null {
   if (!Array.isArray(posts) || posts.length < 3) return null;
 
   const out: GeneratedPostDraft[] = [];
+  const seen = new Set<string>();
   for (const item of posts.slice(0, 3)) {
     if (!item || typeof item !== "object") return null;
     const row = item as Record<string, unknown>;
     if (!isMarketingPostType(row.post_type)) return null;
+    if (seen.has(row.post_type)) return null;
+    seen.add(row.post_type);
     const body = truncateForX(String(row.body_text ?? ""));
     if (!body) return null;
     out.push({
       post_type: row.post_type,
       body_text: body,
-      purpose: String(row.purpose ?? "").trim() || "認知・共感",
+      purpose: String(row.purpose ?? "").trim() || "認知",
       target_audience:
-        String(row.target_audience ?? "").trim() || "18歳以上の話し相手を探している人",
-      cta: String(row.cta ?? "").trim() || "気になったらClassmateをのぞいてみて",
+        String(row.target_audience ?? "").trim() ||
+        "18歳以上の話し相手を探している人",
+      expected_action:
+        String(row.expected_action ?? "").trim() || "投稿に反応する",
+      cta: String(row.cta ?? "").trim(),
     });
   }
   return out.length === 3 ? out : null;
 }
 
-export async function generatePostsWithOpenAi(params: {
+async function callOpenAi(params: {
   recentBodies: string[];
   jstDate: string;
+  preferredTypes?: MarketingPostType[];
 }): Promise<OpenAiGenerateResult> {
   const apiKey = getMarketingOpenAiApiKey();
   if (!apiKey) {
@@ -83,6 +94,7 @@ export async function generatePostsWithOpenAi(params: {
             content: buildDailyGenerateUserPrompt({
               recentBodies: params.recentBodies,
               jstDate: params.jstDate,
+              preferredTypes: params.preferredTypes,
             }),
           },
         ],
@@ -123,7 +135,11 @@ export async function generatePostsWithOpenAi(params: {
     try {
       parsed = JSON.parse(content);
     } catch {
-      return { ok: false, error: "openai_invalid_json", detail: content.slice(0, 200) };
+      return {
+        ok: false,
+        error: "openai_invalid_json",
+        detail: content.slice(0, 200),
+      };
     }
 
     const posts = parsePostsPayload(parsed);
@@ -158,31 +174,73 @@ export async function generatePostsWithOpenAi(params: {
   }
 }
 
+export async function generatePostsWithOpenAi(params: {
+  recentBodies: string[];
+  jstDate: string;
+  /** When true and first batch fails quality, retry once (counts toward budget in caller). */
+  allowOneRetry?: boolean;
+}): Promise<OpenAiGenerateResult & { retried?: boolean }> {
+  const preferred = preferredTypesForDay(params.jstDate);
+  const first = await callOpenAi({
+    recentBodies: params.recentBodies,
+    jstDate: params.jstDate,
+    preferredTypes: preferred,
+  });
+  if (!first.ok || !params.allowOneRetry) return first;
+
+  // Quality-aware single retry is applied in generatePosts.ts to respect budget.
+  return first;
+}
+
 /** Deterministic offline drafts so admin UI / CI work without an API key. */
 export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[] {
-  return [
-    {
+  const preferred = preferredTypesForDay(jstDate);
+  const library: Record<MarketingPostType, GeneratedPostDraft> = {
+    empathy: {
       post_type: "empathy",
       body_text:
         "大人になると、新しい友だちを作る機会って意外と減る。誰かと気軽に話したいのに、電話する相手が思いつかない——そんな夜、ありませんか。",
       purpose: "共感・認知",
       target_audience: "新しいつながりが欲しい18歳以上",
-      cta: "同じ感覚の人は、Classmateをのぞいてみて",
+      expected_action: "いいね・共感リプ",
+      cta: "",
     },
-    {
-      post_type: "invite",
+    question: {
+      post_type: "question",
       body_text:
-        "テキストのやり取りは続くのに、声で話す機会は少ない。同年代と少人数で通話できる場があるなら、一度だけ覗いてみてもいいかも。",
-      purpose: "参加促進",
-      target_audience: "雑談したいがきっかけがない人",
-      cta: "気が向いたらClassmateへ",
+        "ひとりの夜、どっち？ A) 誰かと話したいけど相手がいない B) 話したい気持ちがわかない",
+      purpose: "交流のきっかけ",
+      target_audience: "夜にTLを見る同年代",
+      expected_action: "A/Bでリプライ",
+      cta: "",
     },
-    {
+    intro: {
       post_type: "intro",
-      body_text: `Classmateは、同年代と気軽に通話できる音声コミュニティです（${jstDate}）。テーマ別の少人数クラスで、友だちづくりのきっかけを作れます。`,
+      body_text: `Classmateは、同年代と気軽に通話できる音声コミュニティです。テーマ別の少人数クラスで友だちづくりのきっかけを作れます（${jstDate}）。`,
       purpose: "サービス紹介",
       target_audience: "音声コミュニティを探している人",
+      expected_action: "プロフィールやリンクを開く",
       cta: "詳しくはプロフィールのリンクから",
     },
-  ];
+    invite: {
+      post_type: "invite",
+      body_text:
+        "テキストのやり取りは続くのに、声で話す機会は少ない。同年代と少人数なら、一度だけ覗いてみてもいいかも。無理に長く居なくて大丈夫。",
+      purpose: "通話体験の促進",
+      target_audience: "雑談したいがきっかけがない人",
+      expected_action: "サイトを開く・通話を試す",
+      cta: "気が向いたらClassmateへ",
+    },
+    story: {
+      post_type: "story",
+      body_text:
+        "声で話す場が少ないのが気になって、同年代向けの通話コミュニティを個人で作っています。Classmate。まだ初期ですが、少しずつ整えています。",
+      purpose: "開発背景の共有",
+      target_audience: "個人開発や新サービスに関心がある人",
+      expected_action: "フォロー",
+      cta: "",
+    },
+  };
+
+  return preferred.map((t) => library[t]);
 }

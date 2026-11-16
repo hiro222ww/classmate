@@ -216,7 +216,40 @@ export default function AdminMarketingPage() {
       setMsg(
         json.usedFallback
           ? "テンプレート下書きを3件作成しました（OPENAI_API_KEY 未設定またはAPI失敗時のフォールバック）"
-          : "AI投稿案を3件生成しました（すべて draft・未公開）"
+          : `AI投稿案を3件生成しました（draft）${json.qualityRetried ? "・品質再生成あり" : ""}`
+      );
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function seedCalendar() {
+    if (
+      !window.confirm(
+        "2週間分の投稿カレンダーを下書きとして投入します（未公開）。続行しますか？"
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/marketing/calendar", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setMsg(
+          String(json?.detail || json?.error || "カレンダー投入に失敗しました")
+        );
+        return;
+      }
+      setMsg(
+        `14日カレンダーを ${json.count} 件投入しました（start=${json.startYmd}・すべて draft）`
       );
       await load();
     } finally {
@@ -348,6 +381,14 @@ export default function AdminMarketingPage() {
               }}
             >
               再読み込み
+            </button>
+            <button
+              type="button"
+              style={adminBtnGhost}
+              disabled={busy}
+              onClick={() => void seedCalendar()}
+            >
+              14日カレンダー投入
             </button>
             <button
               type="button"
@@ -691,8 +732,8 @@ export default function AdminMarketingPage() {
                   }}
                 >
                   <div style={{ fontSize: 12, color: "#64748b" }}>
-                    {MARKETING_POST_TYPE_LABELS[p.post_type]} · {p.channel} ·{" "}
-                    {MARKETING_STATUS_LABELS[p.status]}
+                    {MARKETING_POST_TYPE_LABELS[p.post_type] ?? p.post_type} ·{" "}
+                    {p.channel} · {MARKETING_STATUS_LABELS[p.status]}
                     {p.external_status ? ` · ext:${p.external_status}` : ""}
                     {p.generation_source === "template_fallback"
                       ? " · template"
@@ -740,7 +781,14 @@ export default function AdminMarketingPage() {
                 >
                   <div>目的: {p.purpose || "—"}</div>
                   <div>対象: {p.target_audience || "—"}</div>
+                  <div>期待行動: {p.expected_action || "—"}</div>
                   <div>CTA: {p.cta || "—"}</div>
+                  {typeof p.quality_score === "number" ? (
+                    <div>
+                      品質スコア: {p.quality_score}
+                      {p.quality_notes ? `（${p.quality_notes}）` : ""}
+                    </div>
+                  ) : null}
                   <div>
                     UTM:{" "}
                     {p.tracking_url ? (

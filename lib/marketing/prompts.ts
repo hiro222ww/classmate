@@ -1,35 +1,50 @@
 import type { MarketingPostType } from "@/lib/marketing/types";
 
+/**
+ * Facts only — grounded in product copy (seo/about/home) and implemented features.
+ * Do not invent usage metrics or unreleased capabilities.
+ */
 export const CLASSMATE_MARKETING_CONTEXT = `
-Classmate（クラスメイト）は、同年代と気軽に通話できる音声コミュニティです。
-対象は18歳以上。テーマ別の少人数クラスで友だちづくりができます。
-宣伝口調を抑え、押し売りや誇大表現を避けてください。
-禁止: 実在しない体験談、架空の利用者実績、未実装機能の紹介、年齢詐称の示唆、他SNSへの誘導。
+Classmate（クラスメイト）は、同年代と気軽に通話できる音声コミュニティです（classmate-room.com）。
+対象は18歳以上（高校生以下は利用不可）。テーマ別の少人数クラス（最大5人程度）で友だちづくりができます。
+実装されている体験の例:
+- ホームの「マイクラス」で参加中クラスを見る
+- 「ランダム通話」から気軽に通話へ入る導線がある
+- クラス内で友達を招待するリンクを共有できる
+- 初回は最小プロフィール登録から始める
+禁止: 実在しない体験談、架空の利用者数・口コミ、未実装機能、年齢詐称の示唆、押し売り、誇大な「すぐ友達ができる」断定。
+トーン: 自然な話し言葉。広告っぽい羅列や「今すぐ登録！」連発は避ける。
 `.trim();
 
 export const POST_TYPE_BRIEF: Record<MarketingPostType, string> = {
   empathy:
-    "共感型: 大人の友だちづくりの寂しさ・話し相手がいない感覚に寄り添う。Classmate名は自然に1回まで。",
-  invite:
-    "参加促進型: 気軽に声で雑談してみよう、と優しいCTA。強制感のない誘い方。",
+    "共感型: つながりや雑談の寂しさに寄り添う。Classmate名は0〜1回。CTAは任意。",
+  question:
+    "質問型: 返信や交流を生む軽い問いかけ。答えやすい二択・体験質問。宣伝は控えめ。",
   intro:
-    "サービス紹介型: Classmateが何の場かを短く説明。機能羅列や料金の断定はしない。",
+    "サービス紹介型: Classmateが何の場かを短く事実ベースで。機能の羅列や料金断定はしない。",
+  invite:
+    "参加促進型: 通話体験へのやさしい誘い。通話相手が少ない初期でも「覗く」「短時間」などハードルを下げる。",
+  story:
+    "開発ストーリー型: 個人開発の背景・意図・進捗を一人称で。実績数値や架空エピソードは禁止。",
 };
 
 export function buildDailyGenerateSystemPrompt(): string {
   return [
-    "あなたはClassmateのSNS（X）投稿コピーライターです。",
+    "あなたはClassmateのX（旧Twitter）投稿コピーライターです。",
     CLASSMATE_MARKETING_CONTEXT,
     "毎回ちょうど3件の投稿案を日本語で生成してください。",
-    "各投稿は原則140文字以内。ハッシュタグは最大1個まで（なくてもよい）。",
-    "3件は post_type が empathy / invite / intro を1件ずつ含むこと。",
-    "purpose（投稿目的）, target_audience（想定読者）, cta（行動喚起）も各投稿に付けること。",
+    "各投稿は原則140文字以内。ハッシュタグは最大1個（なくてもよい）。URLは本文に含めない（別フィールドで管理）。",
+    "3件の post_type は互いに異なること。候補: empathy / question / intro / invite / story。",
+    "各投稿に purpose（目的）, target_audience（想定読者）, expected_action（期待する行動）, cta（行動喚起。不要なら空文字可）を付ける。",
+    "AIっぽい定型（「〜してみませんか？」「素敵な」「いかがでしょうか」の連発）を避け、口語に寄せる。",
   ].join("\n");
 }
 
 export function buildDailyGenerateUserPrompt(params: {
   recentBodies: string[];
   jstDate: string;
+  preferredTypes?: MarketingPostType[];
 }): string {
   const avoid =
     params.recentBodies.length > 0
@@ -38,13 +53,20 @@ export function buildDailyGenerateUserPrompt(params: {
           .join("\n- ")}`
       : "まだ投稿履歴は少ないので、初見でも伝わるトーンで。";
 
+  const typeHint =
+    params.preferredTypes && params.preferredTypes.length > 0
+      ? `できれば次のタイプを優先: ${params.preferredTypes.join(", ")}`
+      : "タイプの偏りを避け、共感・質問・紹介・参加・開発ストーリーをローテーション。";
+
   return [
     `今日の日付（JST）: ${params.jstDate}`,
-    "方向性の例（そのまま使わず、言い換える）:",
+    typeHint,
+    "方向性の例（そのまま使わず言い換える）:",
     "- 大人になると新しい友達を作る機会が減る",
     "- 誰かと話したいが電話する相手はいない",
-    "- 同じ趣味の人と気軽に雑談したい",
     "- SNSでつながっていても声で話す機会は少ない",
+    "- 少人数なら話しやすいかも、という期待",
+    "- 個人で音声コミュニティを作っている理由",
     avoid,
     "JSONスキーマに厳密に従って3件を返してください。",
   ].join("\n");
@@ -62,15 +84,23 @@ export const GENERATED_POSTS_JSON_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["post_type", "body_text", "purpose", "target_audience", "cta"],
+        required: [
+          "post_type",
+          "body_text",
+          "purpose",
+          "target_audience",
+          "expected_action",
+          "cta",
+        ],
         properties: {
           post_type: {
             type: "string",
-            enum: ["empathy", "invite", "intro"],
+            enum: ["empathy", "question", "intro", "invite", "story"],
           },
           body_text: { type: "string" },
           purpose: { type: "string" },
           target_audience: { type: "string" },
+          expected_action: { type: "string" },
           cta: { type: "string" },
         },
       },
