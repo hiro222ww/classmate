@@ -881,7 +881,7 @@ export default function AdminMarketingPage() {
                         }}
                         onClick={() => void openReport(r.id)}
                       >
-                        {formatTs(r.created_at)} · {r.status}
+                        {fmt(r.created_at)} · {r.status}
                         {r.model_name ? ` · ${r.model_name}` : ""}
                       </button>
                     </li>

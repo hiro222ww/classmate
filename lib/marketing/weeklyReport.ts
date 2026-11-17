@@ -252,7 +252,11 @@ export async function runWeeklyMarketingAnalysis(params: {
   const s7 = await buildPeriodAnalysisSnapshot(7);
   const s28 = await buildPeriodAnalysisSnapshot(28);
   if (!s7.ok || !s28.ok) {
-    const detail = !s7.ok ? s7.detail : s28.detail;
+    const detail = !s7.ok
+      ? s7.detail
+      : !s28.ok
+        ? s28.detail
+        : undefined;
     await supabaseAdmin
       .from("marketing_ai_runs")
       .update({
