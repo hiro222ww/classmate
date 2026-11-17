@@ -66,6 +66,7 @@ async function callOpenAi(params: {
   recentBodies: string[];
   jstDate: string;
   preferredTypes?: MarketingPostType[];
+  strategyAddon?: string | null;
 }): Promise<OpenAiGenerateResult> {
   const apiKey = getMarketingOpenAiApiKey();
   if (!apiKey) {
@@ -88,7 +89,12 @@ async function callOpenAi(params: {
         model: modelName,
         temperature: 0.85,
         messages: [
-          { role: "system", content: buildDailyGenerateSystemPrompt() },
+          {
+            role: "system",
+            content: buildDailyGenerateSystemPrompt({
+              strategyAddon: params.strategyAddon,
+            }),
+          },
           {
             role: "user",
             content: buildDailyGenerateUserPrompt({
@@ -177,14 +183,20 @@ async function callOpenAi(params: {
 export async function generatePostsWithOpenAi(params: {
   recentBodies: string[];
   jstDate: string;
+  strategyAddon?: string | null;
+  preferredTypes?: MarketingPostType[];
   /** When true and first batch fails quality, retry once (counts toward budget in caller). */
   allowOneRetry?: boolean;
 }): Promise<OpenAiGenerateResult & { retried?: boolean }> {
-  const preferred = preferredTypesForDay(params.jstDate);
+  const preferred =
+    params.preferredTypes && params.preferredTypes.length > 0
+      ? params.preferredTypes.slice(0, 3)
+      : preferredTypesForDay(params.jstDate);
   const first = await callOpenAi({
     recentBodies: params.recentBodies,
     jstDate: params.jstDate,
     preferredTypes: preferred,
+    strategyAddon: params.strategyAddon,
   });
   if (!first.ok || !params.allowOneRetry) return first;
 

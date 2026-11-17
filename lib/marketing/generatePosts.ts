@@ -15,6 +15,7 @@ import {
   DEFAULT_SIMILARITY_THRESHOLD,
   maxSimilarityAgainst,
 } from "@/lib/marketing/similarity";
+import { getActiveStrategy } from "@/lib/marketing/strategy";
 import type { GeneratedPostDraft, MarketingPostRow } from "@/lib/marketing/types";
 import { buildMarketingTrackingUrl, truncateForX } from "@/lib/marketing/utm";
 
@@ -119,7 +120,16 @@ export async function generateMarketingPosts(params: {
   }
 
   const runId = runRow.id as string;
-  let ai = await generatePostsWithOpenAi({ recentBodies, jstDate });
+  const activeStrategy = await getActiveStrategy().catch(() => null);
+  const strategyAddon = activeStrategy?.prompt_addon ?? null;
+  const preferredFromStrategy = activeStrategy?.guidance?.preferredTypes;
+
+  let ai = await generatePostsWithOpenAi({
+    recentBodies,
+    jstDate,
+    strategyAddon,
+    preferredTypes: preferredFromStrategy,
+  });
   let qualityRetried = false;
 
   let drafts: GeneratedPostDraft[] | null = ai.ok ? ai.posts : null;
@@ -138,6 +148,8 @@ export async function generateMarketingPosts(params: {
       const retry = await generatePostsWithOpenAi({
         recentBodies: [...recentBodies, ...drafts.map((d) => d.body_text)],
         jstDate,
+        strategyAddon,
+        preferredTypes: preferredFromStrategy,
       });
       if (retry.ok) {
         qualityRetried = true;
@@ -293,6 +305,8 @@ export async function generateMarketingPosts(params: {
         qualityRetried,
         trigger: params.trigger,
         openaiError: ai.ok ? null : ai.error,
+        strategyVersionId: activeStrategy?.id ?? null,
+        strategyVersion: activeStrategy?.version ?? null,
       },
     })
     .eq("id", runId);
