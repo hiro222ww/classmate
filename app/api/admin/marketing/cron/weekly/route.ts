@@ -1,17 +1,22 @@
 import { NextResponse } from "next/server";
 import {
   getMarketingCronSecret,
+  getMarketingWeeklyCronScheduleHint,
   isMarketingWeeklyCronEnabled,
+  MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST,
 } from "@/lib/marketing/config";
+import { getAdminNotifyChannelCapability } from "@/lib/marketing/adminNotify";
 import { runWeeklyMarketingAnalysis } from "@/lib/marketing/weeklyReport";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Weekly analysis cron hook.
+ * Weekly analysis cron hook (intended: Sunday 20:00 JST).
  * Disabled unless MARKETING_WEEKLY_CRON_ENABLED=1.
- * Creates report + draft strategy; does NOT activate strategy or publish SNS.
+ * Creates report + proposals, auto-activates SNS generation strategy (not SNS publish),
+ * and may email operators when MARKETING_ADMIN_NOTIFY_ENABLED=1.
+ * UI/image changes are never auto-applied.
  */
 export async function POST(req: Request) {
   if (!isMarketingWeeklyCronEnabled()) {
@@ -44,16 +49,20 @@ export async function POST(req: Request) {
 
   const result = await runWeeklyMarketingAnalysis({
     trigger: "weekly_cron",
-    activateStrategy: false,
+    // SNS投稿方針のみ自動反映（公開・UI変更はしない）
+    activateStrategy: true,
   });
   return NextResponse.json(result, { status: result.ok ? 200 : 500 });
 }
 
 export async function GET() {
+  const notify = getAdminNotifyChannelCapability();
   return NextResponse.json({
     ok: true,
     enabled: isMarketingWeeklyCronEnabled(),
     hasSecret: Boolean(getMarketingCronSecret()),
-    scheduleHint: "Weekly Monday 01:00 UTC (~10:00 JST) when enabled",
+    scheduleHint: getMarketingWeeklyCronScheduleHint(),
+    vercelCronExpr: MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST,
+    notifyCapability: notify,
   });
 }

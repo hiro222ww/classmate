@@ -278,3 +278,24 @@ DB結合・OpenAI実呼び出し・本番 Cron は未実施（キー/本番DBな
 4. 問題なければ本番マイグレーション（別途明示承認）
 5. 週次Cronを有効化するなら `MARKETING_WEEKLY_CRON_ENABLED=1` + secret（別途明示承認）
 6. Buffer公開・日次Cronは従来どおり別ゲート
+
+### Phase 4.1（改善提案・運営者通知・実装済 / 有効化は承認後）
+
+目的: 週次分析から UI/UX・登録・通話導線の改善提案を作り、運営者へ通知。提案の採用/保留/却下は管理画面。
+
+#### 調査結果（通知方式）
+- 既存 Web Push は `class_memberships` の device 向けのみ。管理者 Cookie ユーザーを狙えない。
+- そのため運営者通知は **メール（Resend）** を採用。`MARKETING_ADMIN_NOTIFY_ENABLED=1` + `MARKETING_ADMIN_NOTIFY_EMAIL` + `RESEND_API_KEY` / `EMAIL_FROM` が必要。
+- 同一 fingerprint の再送は `marketing_admin_notification_log` で抑止。高優先提案は `urgent_proposal` として週次ダイジェストと別に通知可。
+
+#### マイグレーション
+`supabase/migrations/20261117180000_marketing_improvement_proposals.sql`
+- `marketing_improvement_proposals`（pending/accepted/held/rejected、open fingerprint 一意）
+- `marketing_admin_notification_log`（送信・重複スキップ・無効の監査）
+
+#### 挙動
+- 週次Cron想定時刻: **日曜 20:00 JST**（UTC 11:00、`0 11 * * 0`）。有効化は `MARKETING_WEEKLY_CRON_ENABLED=1` が必要（既定OFF）
+- Cron実行時: SNS**投稿方針**は自動適用可。SNS公開・UI/画像変更はしない
+- 手動「週次分析」: 方針は draft のまま（`activateStrategy: false`）
+- `/admin/marketing` で提案の採用・保留・却下
+- 通知・Cron・有料API・本番DB適用はいずれも事前承認が必要

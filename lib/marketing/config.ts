@@ -53,6 +53,41 @@ export function getMarketingWeeklyRunLimit(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 5;
 }
 
+/**
+ * Operator email alerts for improvement proposals.
+ * Default OFF — requires MARKETING_ADMIN_NOTIFY_ENABLED=1 after approval.
+ */
+export function isMarketingAdminNotifyEnabled(): boolean {
+  return String(process.env.MARKETING_ADMIN_NOTIFY_ENABLED ?? "").trim() === "1";
+}
+
+export function getMarketingAdminNotifyEmail(): string {
+  return (
+    process.env.MARKETING_ADMIN_NOTIFY_EMAIL?.trim() ||
+    process.env.ADMIN_NOTIFY_EMAIL?.trim() ||
+    ""
+  );
+}
+
+/** Public app origin for admin deep links in notifications. */
+export function getMarketingAppOrigin(): string {
+  const raw =
+    process.env.NEXT_PUBLIC_APP_ORIGIN?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    "https://classmate-zeta-one.vercel.app";
+  return raw.replace(/\/$/, "");
+}
+
+/**
+ * Vercel cron expression for Sunday 20:00 JST (= Sunday 11:00 UTC).
+ * Documented for operators; enabling still requires MARKETING_WEEKLY_CRON_ENABLED=1.
+ */
+export const MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST = "0 11 * * 0";
+
+export function getMarketingWeeklyCronScheduleHint(): string {
+  return "Sunday 20:00 JST (UTC 11:00; cron `0 11 * * 0`) when MARKETING_WEEKLY_CRON_ENABLED=1";
+}
+
 /** Rough USD estimate for gpt-4o-mini-class pricing (override via env if needed). */
 export function estimateOpenAiCostUsd(params: {
   promptTokens: number;
