@@ -46,6 +46,11 @@ const cards = [
     href: "/admin/reports",
   },
   {
+    title: "ユーザーフィードバック",
+    desc: "意見・不具合の分類・クラスタ・採用/保留/対応済み",
+    href: "/admin/feedback",
+  },
+  {
     title: "世界観 / テーマ",
     desc: "世界観・テーマの公開状態・価格・表示順",
     href: "/admin/topics",

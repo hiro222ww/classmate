@@ -297,8 +297,13 @@ export default function AppSettingsClient() {
                 label="特定商取引法に基づく表記"
               />
               <AppShellListLink
+                href={withDev("/feedback")}
+                label="意見・不具合を送る"
+                detail="アプリ内フィードバック"
+              />
+              <AppShellListLink
                 href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("Classmate iOS お問い合わせ")}`}
-                label="お問い合わせ"
+                label="お問い合わせ（メール）"
                 detail={SUPPORT_EMAIL}
                 external
               />
