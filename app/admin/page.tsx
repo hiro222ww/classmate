@@ -11,6 +11,11 @@ const cards = [
     href: "/admin/marketing",
   },
   {
+    title: "AI運営憲章",
+    desc: "理念・禁止事項・SNS/UI方針。生成・分析が参照（自動適用なし）",
+    href: "/admin/marketing/charter",
+  },
+  {
     title: "初回登録プレビュー",
     desc: "広告撮影用。最小プロフィール→ホーム二択をDB変更なしで確認",
     href: "/admin/onboarding-preview",

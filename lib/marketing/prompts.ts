@@ -34,6 +34,7 @@ export const POST_TYPE_BRIEF: Record<MarketingPostType, string> = {
 
 export function buildDailyGenerateSystemPrompt(params?: {
   strategyAddon?: string | null;
+  charterAddon?: string | null;
 }): string {
   const lines = [
     "あなたはClassmateのX（旧Twitter）投稿コピーライターです。",
@@ -43,7 +44,10 @@ export function buildDailyGenerateSystemPrompt(params?: {
     "3件の post_type は互いに異なること。候補: empathy / question / intro / invite / story。",
     "各投稿に purpose（目的）, target_audience（想定読者）, expected_action（期待する行動）, cta（行動喚起。不要なら空文字可）を付ける。",
     "AIっぽい定型（「〜してみませんか？」「素敵な」「いかがでしょうか」の連発）を避け、口語に寄せる。",
+    "運営憲章（承認済み方針）に矛盾する文面は作らない。矛盾しそうなら表現を弱めるか避ける。",
   ];
+  const charter = String(params?.charterAddon ?? "").trim();
+  if (charter) lines.push(charter);
   const addon = String(params?.strategyAddon ?? "").trim();
   if (addon) lines.push(addon);
   return lines.join("\n");

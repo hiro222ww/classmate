@@ -18,6 +18,11 @@ import {
 import { getActiveStrategy } from "@/lib/marketing/strategy";
 import type { GeneratedPostDraft, MarketingPostRow } from "@/lib/marketing/types";
 import { buildMarketingTrackingUrl, truncateForX } from "@/lib/marketing/utm";
+import {
+  buildCharterPromptAddon,
+  checkTextAgainstCharter,
+  listActivePolicies,
+} from "@/lib/marketing/operatingCharter";
 
 function jstDateString(d = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -123,11 +128,15 @@ export async function generateMarketingPosts(params: {
   const activeStrategy = await getActiveStrategy().catch(() => null);
   const strategyAddon = activeStrategy?.prompt_addon ?? null;
   const preferredFromStrategy = activeStrategy?.guidance?.preferredTypes;
+  const charterPolicies = await listActivePolicies();
+  const charterAddon = buildCharterPromptAddon(charterPolicies);
+  const charterPolicyIds = charterPolicies.map((p) => p.id);
 
   let ai = await generatePostsWithOpenAi({
     recentBodies,
     jstDate,
     strategyAddon,
+    charterAddon: charterAddon || null,
     preferredTypes: preferredFromStrategy,
   });
   let qualityRetried = false;
@@ -149,6 +158,7 @@ export async function generateMarketingPosts(params: {
         recentBodies: [...recentBodies, ...drafts.map((d) => d.body_text)],
         jstDate,
         strategyAddon,
+        charterAddon: charterAddon || null,
         preferredTypes: preferredFromStrategy,
       });
       if (retry.ok) {
@@ -208,6 +218,14 @@ export async function generateMarketingPosts(params: {
       campaign: "ai_marketing",
       content: utmContent,
     });
+    const compliance = checkTextAgainstCharter({
+      text: `${body}\n${draft.purpose}\n${draft.cta}`,
+      policies: charterPolicies,
+    });
+    const complianceNote =
+      compliance.status === "needs_review"
+        ? `charter_needs_review:${compliance.conflicts.map((c) => c.title).join(",")}`
+        : "charter_ok";
 
     inserts.push({
       channel: "x",
@@ -228,12 +246,15 @@ export async function generateMarketingPosts(params: {
         [
           scored.pass ? `pass>=${QUALITY_PASS_THRESHOLD}` : `low<${QUALITY_PASS_THRESHOLD}`,
           ...scored.notes,
+          complianceNote,
         ].join("; ") || null,
       model_name: modelName,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       estimated_cost_usd: estimatedCostUsd,
       ai_run_id: runId,
+      charter_policy_ids: charterPolicyIds,
+      charter_compliance: compliance.status,
       updated_at: new Date().toISOString(),
     });
 
@@ -245,10 +266,10 @@ export async function generateMarketingPosts(params: {
     .insert(inserts)
     .select("*");
 
-  // Before quality migration, columns may be missing — retry without new fields.
+  // Before quality/charter migration, columns may be missing — retry without new fields.
   if (
     insertError &&
-    /expected_action|quality_score|quality_notes|question|story|column .* does not exist|check constraint/i.test(
+    /expected_action|quality_score|quality_notes|charter_policy_ids|charter_compliance|question|story|column .* does not exist|check constraint/i.test(
       insertError.message
     )
   ) {
@@ -257,6 +278,8 @@ export async function generateMarketingPosts(params: {
         expected_action: _e,
         quality_score: _q,
         quality_notes: _n,
+        charter_policy_ids: _c,
+        charter_compliance: _cc,
         ...rest
       } = row;
       // Fall back post types unknown to old CHECK.
@@ -307,6 +330,8 @@ export async function generateMarketingPosts(params: {
         openaiError: ai.ok ? null : ai.error,
         strategyVersionId: activeStrategy?.id ?? null,
         strategyVersion: activeStrategy?.version ?? null,
+        charterPolicyCount: charterPolicies.length,
+        charterPolicyIds,
       },
     })
     .eq("id", runId);

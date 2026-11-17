@@ -26,6 +26,12 @@ import {
   buildFeedbackWeeklySnapshot,
   feedbackSnapshotToMarkdown,
 } from "@/lib/feedback/weeklySnapshot";
+import {
+  alignProposalsWithCharter,
+  buildCharterPromptAddon,
+  charterSnapshotForReport,
+  listActivePolicies,
+} from "@/lib/marketing/operatingCharter";
 
 export type WeeklyReportResult = {
   ok: boolean;
@@ -147,6 +153,7 @@ async function callOpenAiWeeklyReport(payload: unknown): Promise<
               "あなたはClassmateのSNS集客アナリストです。",
               "渡されるのは匿名集計のみです。個人情報は含まれません。",
               "未計測指標を推測で埋めないこと。サンプルが少ない場合は断定しない。",
+              "operatingCharter がある場合は承認済み運営方針。優先順位に従い、理念・禁止に反する改善は提案しても自動適用しない（要確認）。",
               "JSONで返してください: { analysis_markdown, strategy, uncertainty_notes }",
               "strategy は preferredTypes, themeHints, catchcopyHints, ctaHints, empathyToPromoRatio, preferredHoursJst, avoidTopics, notes を持つ。",
               "userFeedback がある場合は匿名集計のみ。個人の原文や端末IDは含まれない。安全フラグ付きは人間レビュー前提で扱う。",
@@ -287,6 +294,9 @@ export async function runWeeklyMarketingAnalysis(params: {
   const uiSuggestions = buildCodeReviewUiSuggestions();
   const feedbackSnap = await buildFeedbackWeeklySnapshot(7);
   const feedbackMd = feedbackSnapshotToMarkdown(feedbackSnap);
+  const charterPolicies = await listActivePolicies();
+  const charterAddon = buildCharterPromptAddon(charterPolicies);
+  const charterSnapshot = charterSnapshotForReport(charterPolicies);
 
   let usedFallbackAnalysis = false;
   let markdown = "";
@@ -303,6 +313,9 @@ export async function runWeeklyMarketingAnalysis(params: {
     uiSuggestions,
     // Anonymized aggregates only — no body_raw / device ids
     userFeedback: feedbackSnap,
+    operatingCharter: charterAddon
+      ? { addon: charterAddon, snapshot: charterSnapshot }
+      : { snapshot: charterSnapshot },
   });
   if (ai.ok) {
     markdown = `${ai.markdown}\n\n${feedbackMd}`;
@@ -322,26 +335,43 @@ export async function runWeeklyMarketingAnalysis(params: {
     modelName = "heuristic_fallback";
   }
 
-  const { data: report, error: reportErr } = await supabaseAdmin
+  let reportInsert = {
+    report_kind: params.trigger === "manual" ? "manual" : "weekly",
+    status: "ready",
+    period_start: start.toISOString(),
+    period_end: end.toISOString(),
+    metrics_snapshot: { d7, d28 },
+    analysis_markdown: markdown,
+    ui_suggestions: uiSuggestions,
+    strategy_suggestions: strategy,
+    uncertainty_notes: uncertainty,
+    model_name: modelName,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    estimated_cost_usd: estimatedCostUsd,
+    ai_run_id: runId,
+    charter_snapshot: charterSnapshot,
+  };
+
+  let { data: report, error: reportErr } = await supabaseAdmin
     .from("marketing_reports")
-    .insert({
-      report_kind: params.trigger === "manual" ? "manual" : "weekly",
-      status: "ready",
-      period_start: start.toISOString(),
-      period_end: end.toISOString(),
-      metrics_snapshot: { d7, d28 },
-      analysis_markdown: markdown,
-      ui_suggestions: uiSuggestions,
-      strategy_suggestions: strategy,
-      uncertainty_notes: uncertainty,
-      model_name: modelName,
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      estimated_cost_usd: estimatedCostUsd,
-      ai_run_id: runId,
-    })
+    .insert(reportInsert)
     .select("id")
     .single();
+
+  if (
+    reportErr &&
+    /charter_snapshot|column .* does not exist/i.test(reportErr.message)
+  ) {
+    const { charter_snapshot: _cs, ...legacy } = reportInsert;
+    const retry = await supabaseAdmin
+      .from("marketing_reports")
+      .insert(legacy)
+      .select("id")
+      .single();
+    report = retry.data;
+    reportErr = retry.error;
+  }
 
   if (reportErr || !report?.id) {
     await supabaseAdmin
@@ -376,7 +406,7 @@ export async function runWeeklyMarketingAnalysis(params: {
   let notifyUrgentStatus: string | null | undefined;
 
   try {
-    const drafts = buildProposalDraftsFromAnalysis({
+    let drafts = buildProposalDraftsFromAnalysis({
       uiSuggestions,
       d7: s7.snapshot,
     });
@@ -422,6 +452,7 @@ export async function runWeeklyMarketingAnalysis(params: {
         },
       });
     }
+    drafts = alignProposalsWithCharter({ drafts, policies: charterPolicies });
     const upserted = await upsertProposalDrafts({
       reportId: report.id,
       drafts,
@@ -470,6 +501,7 @@ export async function runWeeklyMarketingAnalysis(params: {
         proposalsSkippedDup,
         notifyDigestStatus: notifyDigestStatus ?? null,
         notifyUrgentStatus: notifyUrgentStatus ?? null,
+        charterPolicyCount: charterPolicies.length,
       },
     })
     .eq("id", runId);

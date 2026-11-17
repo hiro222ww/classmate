@@ -67,6 +67,7 @@ async function callOpenAi(params: {
   jstDate: string;
   preferredTypes?: MarketingPostType[];
   strategyAddon?: string | null;
+  charterAddon?: string | null;
 }): Promise<OpenAiGenerateResult> {
   const apiKey = getMarketingOpenAiApiKey();
   if (!apiKey) {
@@ -93,6 +94,7 @@ async function callOpenAi(params: {
             role: "system",
             content: buildDailyGenerateSystemPrompt({
               strategyAddon: params.strategyAddon,
+              charterAddon: params.charterAddon,
             }),
           },
           {
@@ -184,6 +186,7 @@ export async function generatePostsWithOpenAi(params: {
   recentBodies: string[];
   jstDate: string;
   strategyAddon?: string | null;
+  charterAddon?: string | null;
   preferredTypes?: MarketingPostType[];
   /** When true and first batch fails quality, retry once (counts toward budget in caller). */
   allowOneRetry?: boolean;
@@ -197,6 +200,7 @@ export async function generatePostsWithOpenAi(params: {
     jstDate: params.jstDate,
     preferredTypes: preferred,
     strategyAddon: params.strategyAddon,
+    charterAddon: params.charterAddon,
   });
   if (!first.ok || !params.allowOneRetry) return first;
 
