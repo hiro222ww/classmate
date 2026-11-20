@@ -1,7 +1,13 @@
 export const MARKETING_CHANNELS = ["x", "instagram", "tiktok", "manual"] as const;
 export type MarketingChannel = (typeof MARKETING_CHANNELS)[number];
 
-export const MARKETING_POST_TYPES = ["empathy", "invite", "intro"] as const;
+export const MARKETING_POST_TYPES = [
+  "empathy",
+  "question",
+  "intro",
+  "invite",
+  "story",
+] as const;
 export type MarketingPostType = (typeof MARKETING_POST_TYPES)[number];
 
 export const MARKETING_POST_STATUSES = [
@@ -16,8 +22,10 @@ export type MarketingPostStatus = (typeof MARKETING_POST_STATUSES)[number];
 
 export const MARKETING_POST_TYPE_LABELS: Record<MarketingPostType, string> = {
   empathy: "共感型",
-  invite: "参加促進型",
+  question: "質問型",
   intro: "サービス紹介型",
+  invite: "参加促進型",
+  story: "開発ストーリー型",
 };
 
 export const MARKETING_STATUS_LABELS: Record<MarketingPostStatus, string> = {
@@ -34,6 +42,7 @@ export type GeneratedPostDraft = {
   body_text: string;
   purpose: string;
   target_audience: string;
+  expected_action: string;
   cta: string;
 };
 
@@ -46,6 +55,7 @@ export type MarketingPostRow = {
   body_text: string;
   purpose: string | null;
   target_audience: string | null;
+  expected_action?: string | null;
   cta: string | null;
   utm_campaign: string | null;
   utm_content: string | null;
@@ -61,6 +71,8 @@ export type MarketingPostRow = {
   publish_error: string | null;
   generation_source: "openai" | "template_fallback" | "manual";
   similarity_score: number | null;
+  quality_score?: number | null;
+  quality_notes?: string | null;
   model_name: string | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;

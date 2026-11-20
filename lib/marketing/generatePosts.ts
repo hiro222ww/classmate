@@ -8,10 +8,14 @@ import {
   generatePostsWithOpenAi,
 } from "@/lib/marketing/openaiGenerate";
 import {
+  QUALITY_PASS_THRESHOLD,
+  scoreMarketingDraft,
+} from "@/lib/marketing/quality";
+import {
   DEFAULT_SIMILARITY_THRESHOLD,
   maxSimilarityAgainst,
 } from "@/lib/marketing/similarity";
-import type { MarketingPostRow } from "@/lib/marketing/types";
+import type { GeneratedPostDraft, MarketingPostRow } from "@/lib/marketing/types";
 import { buildMarketingTrackingUrl, truncateForX } from "@/lib/marketing/utm";
 
 function jstDateString(d = new Date()): string {
@@ -25,7 +29,6 @@ function jstDateString(d = new Date()): string {
 
 function jstDayBoundsIso(d = new Date()): { startIso: string; endIso: string } {
   const day = jstDateString(d);
-  // JST midnight ↔ next midnight as absolute instants
   const start = new Date(`${day}T00:00:00+09:00`);
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { startIso: start.toISOString(), endIso: end.toISOString() };
@@ -38,6 +41,7 @@ export type GenerateMarketingPostsResult = {
   runId?: string;
   posts?: MarketingPostRow[];
   usedFallback?: boolean;
+  qualityRetried?: boolean;
 };
 
 export async function generateMarketingPosts(params: {
@@ -47,6 +51,7 @@ export async function generateMarketingPosts(params: {
   const allowFallback = params.allowTemplateFallback !== false;
   const jstDate = jstDateString();
   const { startIso, endIso } = jstDayBoundsIso();
+  const budget = getMarketingDailyBudgetUsd();
 
   const { count: runCount, error: runCountError } = await supabaseAdmin
     .from("marketing_ai_runs")
@@ -77,7 +82,7 @@ export async function generateMarketingPosts(params: {
     (sum, row) => sum + (Number(row.estimated_cost_usd) || 0),
     0
   );
-  if (spent >= getMarketingDailyBudgetUsd()) {
+  if (spent >= budget) {
     return { ok: false, error: "daily_budget_reached" };
   }
 
@@ -114,15 +119,38 @@ export async function generateMarketingPosts(params: {
   }
 
   const runId = runRow.id as string;
-  const ai = await generatePostsWithOpenAi({ recentBodies, jstDate });
+  let ai = await generatePostsWithOpenAi({ recentBodies, jstDate });
+  let qualityRetried = false;
 
-  let drafts = ai.ok ? ai.posts : null;
+  let drafts: GeneratedPostDraft[] | null = ai.ok ? ai.posts : null;
   let usedFallback = false;
   let modelName: string | null = ai.ok ? ai.modelName : null;
   let promptTokens: number | null = ai.ok ? ai.promptTokens : null;
   let completionTokens: number | null = ai.ok ? ai.completionTokens : null;
   let estimatedCostUsd: number | null = ai.ok ? ai.estimatedCostUsd : null;
   let generationSource: "openai" | "template_fallback" = "openai";
+
+  if (drafts && ai.ok) {
+    const scores = drafts.map((d) => scoreMarketingDraft(d, recentBodies));
+    const weak = scores.some((s) => !s.pass);
+    const remainingBudget = budget - spent - (estimatedCostUsd ?? 0);
+    if (weak && remainingBudget > 0.01) {
+      const retry = await generatePostsWithOpenAi({
+        recentBodies: [...recentBodies, ...drafts.map((d) => d.body_text)],
+        jstDate,
+      });
+      if (retry.ok) {
+        qualityRetried = true;
+        drafts = retry.posts;
+        promptTokens = (promptTokens ?? 0) + retry.promptTokens;
+        completionTokens = (completionTokens ?? 0) + retry.completionTokens;
+        estimatedCostUsd =
+          (estimatedCostUsd ?? 0) + retry.estimatedCostUsd;
+        modelName = retry.modelName;
+        ai = retry;
+      }
+    }
+  }
 
   if (!drafts) {
     if (!allowFallback) {
@@ -161,6 +189,7 @@ export async function generateMarketingPosts(params: {
       attempts += 1;
     }
 
+    const scored = scoreMarketingDraft({ ...draft, body_text: body }, recentBodies);
     const utmContent = `post_${jstDate.replace(/-/g, "")}_${idx + 1}`;
     const trackingUrl = buildMarketingTrackingUrl({
       channel: "x",
@@ -175,12 +204,19 @@ export async function generateMarketingPosts(params: {
       body_text: body,
       purpose: draft.purpose,
       target_audience: draft.target_audience,
-      cta: draft.cta,
+      expected_action: draft.expected_action,
+      cta: draft.cta || null,
       utm_campaign: "ai_marketing",
       utm_content: utmContent,
       tracking_url: trackingUrl,
       generation_source: generationSource,
       similarity_score: Math.round(similarity * 1000) / 1000,
+      quality_score: scored.total,
+      quality_notes:
+        [
+          scored.pass ? `pass>=${QUALITY_PASS_THRESHOLD}` : `low<${QUALITY_PASS_THRESHOLD}`,
+          ...scored.notes,
+        ].join("; ") || null,
       model_name: modelName,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
@@ -192,10 +228,38 @@ export async function generateMarketingPosts(params: {
     recentBodies.unshift(body);
   }
 
-  const { data: created, error: insertError } = await supabaseAdmin
+  let { data: created, error: insertError } = await supabaseAdmin
     .from("marketing_posts")
     .insert(inserts)
     .select("*");
+
+  // Before quality migration, columns may be missing — retry without new fields.
+  if (
+    insertError &&
+    /expected_action|quality_score|quality_notes|question|story|column .* does not exist|check constraint/i.test(
+      insertError.message
+    )
+  ) {
+    const legacy = inserts.map((row) => {
+      const {
+        expected_action: _e,
+        quality_score: _q,
+        quality_notes: _n,
+        ...rest
+      } = row;
+      // Fall back post types unknown to old CHECK.
+      const post_type =
+        rest.post_type === "question" || rest.post_type === "story"
+          ? rest.post_type === "question"
+            ? "empathy"
+            : "intro"
+          : rest.post_type;
+      return { ...rest, post_type };
+    });
+    const retry = await supabaseAdmin.from("marketing_posts").insert(legacy).select("*");
+    created = retry.data;
+    insertError = retry.error;
+  }
 
   if (insertError) {
     await supabaseAdmin
@@ -226,6 +290,7 @@ export async function generateMarketingPosts(params: {
       meta: {
         jstDate,
         usedFallback,
+        qualityRetried,
         trigger: params.trigger,
         openaiError: ai.ok ? null : ai.error,
       },
@@ -237,5 +302,6 @@ export async function generateMarketingPosts(params: {
     runId,
     posts: (created ?? []) as MarketingPostRow[],
     usedFallback,
+    qualityRetried,
   };
 }
