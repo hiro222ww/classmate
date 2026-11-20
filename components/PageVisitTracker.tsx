@@ -10,6 +10,10 @@ import {
   normalizePageVisitPath,
   shouldTrackPagePath,
 } from "@/lib/pageVisit";
+import {
+  captureUtmFromLocation,
+  hasAnyUtm,
+} from "@/lib/marketing/utmParse";
 
 const STORAGE_PREFIX = "cm_page_visit:";
 
@@ -52,6 +56,16 @@ async function recordVisit(pathname: string) {
   const referrer =
     typeof document !== "undefined" ? String(document.referrer || "") : "";
 
+  const utm = captureUtmFromLocation();
+  const utmPayload = hasAnyUtm(utm)
+    ? {
+        utm_source: utm.utm_source || undefined,
+        utm_medium: utm.utm_medium || undefined,
+        utm_campaign: utm.utm_campaign || undefined,
+        utm_content: utm.utm_content || undefined,
+      }
+    : {};
+
   await fetch("/api/page-visit", {
     method: "POST",
     headers,
@@ -59,6 +73,7 @@ async function recordVisit(pathname: string) {
       path,
       deviceId: deviceId || undefined,
       referrer: referrer || undefined,
+      ...utmPayload,
     }),
     keepalive: true,
     cache: "no-store",

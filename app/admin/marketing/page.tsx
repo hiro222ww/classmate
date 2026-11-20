@@ -13,6 +13,7 @@ import {
   adminPageMain,
   adminTextarea,
 } from "@/app/admin/adminUi";
+import type { MarketingDashboardMetrics } from "@/lib/marketing/metrics";
 import {
   MARKETING_POST_TYPE_LABELS,
   MARKETING_STATUS_LABELS,
@@ -22,12 +23,61 @@ import {
 
 type StatusFilter = "all" | MarketingPostStatus;
 
+type BufferStatus = {
+  tokenPresent?: boolean;
+  credentialsPresent: boolean;
+  publishEnabled: boolean;
+  connected: boolean;
+  channelIdConfigured?: boolean;
+  note: string;
+};
+
+type BufferChannelRow = {
+  id: string;
+  name: string;
+  service: string;
+  displayName: string | null;
+  descriptor: string | null;
+  externalLink: string | null;
+  isDisconnected: boolean | null;
+  isLocked: boolean | null;
+};
+
+function fmt(iso: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d);
+}
+
+function pct(rate: number | null) {
+  if (rate == null) return "—";
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
 export default function AdminMarketingPage() {
   const [posts, setPosts] = useState<MarketingPostRow[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [openaiConfigured, setOpenaiConfigured] = useState<boolean | null>(null);
+  const [cronEnabled, setCronEnabled] = useState(false);
+  const [buffer, setBuffer] = useState<BufferStatus | null>(null);
+  const [activeAdapter, setActiveAdapter] = useState<"buffer" | "manual">(
+    "manual"
+  );
+  const [bufferChannels, setBufferChannels] = useState<BufferChannelRow[]>([]);
+  const [bufferMatchId, setBufferMatchId] = useState<string | null>(null);
+  const [bufferProbeMsg, setBufferProbeMsg] = useState("");
+  const [bufferProbing, setBufferProbing] = useState(false);
+  const [metrics, setMetrics] = useState<MarketingDashboardMetrics | null>(null);
+  const [metricsMsg, setMetricsMsg] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [scheduleId, setScheduleId] = useState<string | null>(null);
@@ -68,13 +118,72 @@ export default function AdminMarketingPage() {
     const json = await res.json().catch(() => null);
     if (res.ok && json?.ok) {
       setOpenaiConfigured(Boolean(json.openaiConfigured));
+      setCronEnabled(Boolean(json.cronEnabled));
+      if (json.buffer) setBuffer(json.buffer as BufferStatus);
+      if (json.activeAdapter === "buffer" || json.activeAdapter === "manual") {
+        setActiveAdapter(json.activeAdapter);
+      }
     }
   }, []);
+
+  const loadMetrics = useCallback(async () => {
+    setMetricsMsg("");
+    const res = await fetch("/api/admin/marketing/metrics?days=14", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.ok) {
+      setMetrics(null);
+      setMetricsMsg(
+        String(json?.detail || json?.error || "集計の読み込みに失敗") +
+          (json?.migrationHint ? ` / ${json.migrationHint}` : "")
+      );
+      return;
+    }
+    setMetrics(json.metrics as MarketingDashboardMetrics);
+  }, []);
+
+  async function probeBuffer() {
+    setBufferProbing(true);
+    setBufferProbeMsg("");
+    try {
+      const res = await fetch(
+        "/api/admin/marketing/buffer?probe=1&match=classmate0401",
+        { cache: "no-store", credentials: "same-origin" }
+      );
+      const json = await res.json().catch(() => null);
+      if (res.status === 401) {
+        setBufferProbeMsg("未ログインまたは認証切れです。");
+        return;
+      }
+      if (json?.buffer) setBuffer(json.buffer as BufferStatus);
+      setBufferChannels((json?.channels ?? []) as BufferChannelRow[]);
+      const suggested = json?.match?.suggestedChannelId
+        ? String(json.match.suggestedChannelId)
+        : null;
+      setBufferMatchId(suggested);
+      if (!json?.ok) {
+        setBufferProbeMsg(
+          String(json?.detail || json?.error || "Buffer接続確認に失敗しました")
+        );
+        return;
+      }
+      setBufferProbeMsg(
+        suggested
+          ? `接続OK。classmate0401 候補チャンネルID: ${suggested}（キーは表示しません）`
+          : `接続OK。チャンネル ${Number(json?.channels?.length ?? 0)} 件。classmate0401 の自動一致なし — 一覧から確認してください`
+      );
+    } finally {
+      setBufferProbing(false);
+    }
+  }
 
   useEffect(() => {
     void load();
     void loadMeta();
-  }, [load, loadMeta]);
+    void loadMetrics();
+  }, [load, loadMeta, loadMetrics]);
 
   const counts = useMemo(() => {
     const base: Record<string, number> = { all: posts.length };
@@ -143,6 +252,36 @@ export default function AdminMarketingPage() {
     }
   }
 
+  async function publishToBuffer(id: string) {
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/marketing/publish", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setMsg(
+          String(json?.detail || json?.error || "Buffer送信に失敗しました") +
+            (json?.retryable ? "（再試行できます）" : "")
+        );
+        await load();
+        return;
+      }
+      setMsg(
+        json.scheduledOnly
+          ? "Bufferへ予約登録しました（まだSNS上は未公開）"
+          : "Buffer経由で公開済みとして記録しました"
+      );
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removePost(id: string) {
     if (!window.confirm("この投稿案を削除しますか？")) return;
     setBusy(true);
@@ -167,23 +306,10 @@ export default function AdminMarketingPage() {
   async function copyText(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setMsg("投稿文をコピーしました（手動でXに貼り付けてください）");
+      setMsg("コピーしました");
     } catch {
       setMsg("コピーに失敗しました。本文を選択してコピーしてください。");
     }
-  }
-
-  function fmt(iso: string | null) {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "—";
-    return new Intl.DateTimeFormat("ja-JP", {
-      timeZone: "Asia/Tokyo",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(d);
   }
 
   return (
@@ -207,7 +333,7 @@ export default function AdminMarketingPage() {
               AIマーケティング
             </h1>
             <p style={{ margin: "6px 0 0", color: "#667085", fontSize: 13 }}>
-              Phase 1: 投稿案の生成・編集・承認。自動公開はしません。
+              Phase 2/3: Buffer予約連携・UTM集計。無承認の自動公開はしません。
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -215,7 +341,11 @@ export default function AdminMarketingPage() {
               type="button"
               style={adminBtnGhost}
               disabled={busy}
-              onClick={() => void load()}
+              onClick={() => {
+                void load();
+                void loadMeta();
+                void loadMetrics();
+              }}
             >
               再読み込み
             </button>
@@ -231,26 +361,275 @@ export default function AdminMarketingPage() {
         </header>
 
         <section style={{ ...adminCard, marginBottom: 14 }}>
-          <div style={{ fontSize: 13, color: "#334155", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 13, color: "#334155", lineHeight: 1.7 }}>
             <div>
               OpenAI:{" "}
               {openaiConfigured == null
                 ? "確認中…"
                 : openaiConfigured
                   ? "設定済み"
-                  : "未設定（テンプレート下書きで動作）"}
+                  : "未設定（テンプレート下書き）"}
             </div>
             <div>
-              毎朝9:00 JST の自動生成は{" "}
-              <code>MARKETING_CRON_ENABLED=1</code>{" "}
-              の許可後のみ有効。現状は手動生成を推奨。
+              Buffer: {buffer?.note ?? "確認中…"}
+              {activeAdapter ? ` / adapter=${activeAdapter}` : ""}
+            </div>
+            <div>
+              送信ゲート:{" "}
+              {buffer?.publishEnabled
+                ? "有効（投稿可能）"
+                : "無効（MARKETING_BUFFER_PUBLISH_ENABLED≠1）"}
+            </div>
+            <div>
+              Cron: {cronEnabled ? "有効" : "無効（MARKETING_CRON_ENABLED≠1）"}
             </div>
           </div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={adminBtnGhost}
+              disabled={busy || bufferProbing}
+              onClick={() => void probeBuffer()}
+            >
+              Buffer接続確認（チャンネル一覧・投稿なし）
+            </button>
+          </div>
+          {bufferProbeMsg ? (
+            <p style={{ margin: "10px 0 0", color: "#0f766e", fontSize: 13 }}>
+              {bufferProbeMsg}
+            </p>
+          ) : null}
+          {bufferMatchId ? (
+            <p style={{ margin: "8px 0 0", fontSize: 13 }}>
+              推奨 <code>BUFFER_CHANNEL_ID</code>:{" "}
+              <button
+                type="button"
+                style={{
+                  ...adminBtnGhost,
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  fontFamily: "monospace",
+                }}
+                onClick={() => void copyText(bufferMatchId)}
+              >
+                {bufferMatchId}
+              </button>
+            </p>
+          ) : null}
+          {bufferChannels.length > 0 ? (
+            <div style={{ marginTop: 12, fontSize: 12, overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#64748b" }}>
+                    <th style={{ padding: "4px 0" }}>service</th>
+                    <th>name</th>
+                    <th>id</th>
+                    <th>状態</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bufferChannels.map((ch) => (
+                    <tr
+                      key={ch.id}
+                      style={{
+                        background:
+                          bufferMatchId === ch.id ? "#ecfdf5" : undefined,
+                      }}
+                    >
+                      <td style={{ padding: "4px 0" }}>{ch.service}</td>
+                      <td>
+                        {ch.name}
+                        {ch.displayName ? ` (${ch.displayName})` : ""}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          style={{
+                            ...adminBtnGhost,
+                            padding: "2px 6px",
+                            fontSize: 11,
+                            fontFamily: "monospace",
+                          }}
+                          onClick={() => void copyText(ch.id)}
+                        >
+                          {ch.id}
+                        </button>
+                      </td>
+                      <td>
+                        {ch.isDisconnected
+                          ? "切断"
+                          : ch.isLocked
+                            ? "ロック"
+                            : "OK"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
           {msg ? (
             <p style={{ margin: "10px 0 0", color: "#0f766e", fontSize: 13 }}>
               {msg}
             </p>
           ) : null}
+        </section>
+
+        <section style={{ ...adminCard, marginBottom: 14 }}>
+          <h2 style={{ margin: "0 0 10px", fontSize: 16, fontWeight: 900 }}>
+            集客ダッシュボード（直近14日・JST）
+          </h2>
+          {metricsMsg ? (
+            <p style={{ color: "#b91c1c", fontSize: 13 }}>{metricsMsg}</p>
+          ) : null}
+          {!metrics ? (
+            <p style={{ color: "#64748b", fontSize: 13 }}>集計読み込み中…</p>
+          ) : (
+            <div style={{ display: "grid", gap: 14, fontSize: 13 }}>
+              {metrics.notes.length > 0 ? (
+                <ul style={{ margin: 0, paddingLeft: 18, color: "#64748b" }}>
+                  {metrics.notes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              ) : null}
+
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  SNS別の訪問者数
+                </div>
+                {metrics.visitsBySource.length === 0 ? (
+                  <div style={{ color: "#94a3b8" }}>データなし</div>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: "#64748b" }}>
+                        <th style={{ padding: "4px 0" }}>source</th>
+                        <th>visits</th>
+                        <th>unique devices</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metrics.visitsBySource.map((row) => (
+                        <tr key={row.source}>
+                          <td style={{ padding: "4px 0" }}>{row.source}</td>
+                          <td>{row.visits}</td>
+                          <td>{row.uniqueDevices}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  SNS経由の新規登録 / 転換率
+                </div>
+                {metrics.visitToRegisterRateBySource.length === 0 ? (
+                  <div style={{ color: "#94a3b8" }}>データなし</div>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: "#64748b" }}>
+                        <th style={{ padding: "4px 0" }}>source</th>
+                        <th>visits</th>
+                        <th>登録</th>
+                        <th>転換率</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metrics.visitToRegisterRateBySource.map((row) => (
+                        <tr key={row.source}>
+                          <td style={{ padding: "4px 0" }}>{row.source}</td>
+                          <td>{row.visits}</td>
+                          <td>{row.registrations}</td>
+                          <td>{pct(row.rate)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  SNS経由の通話開始
+                </div>
+                {metrics.callStartedBySource.length === 0 ? (
+                  <div style={{ color: "#94a3b8" }}>データなし</div>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {metrics.callStartedBySource.map((row) => (
+                      <li key={row.source}>
+                        {row.source}: {row.count}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div style={{ marginTop: 6, color: "#64748b" }}>
+                  通話成立:{" "}
+                  {metrics.callEstablished.measured
+                    ? metrics.callEstablished.value
+                    : `未計測（${metrics.callEstablished.reason}）`}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  日別の流入推移（UTM付き）
+                </div>
+                {metrics.dailyVisits.length === 0 ? (
+                  <div style={{ color: "#94a3b8" }}>データなし</div>
+                ) : (
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {metrics.dailyVisits.map((row) => (
+                      <li key={row.day}>
+                        {row.day}: {row.visits}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  投稿別の集客効果
+                </div>
+                {metrics.postPerformance.length === 0 ? (
+                  <div style={{ color: "#94a3b8" }}>データなし</div>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ textAlign: "left", color: "#64748b" }}>
+                        <th style={{ padding: "4px 0" }}>utm_content</th>
+                        <th>visits</th>
+                        <th>登録</th>
+                        <th>通話開始</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metrics.postPerformance.slice(0, 20).map((row) => (
+                        <tr key={row.utmContent}>
+                          <td style={{ padding: "4px 0" }}>
+                            <div>{row.utmContent}</div>
+                            {row.bodyPreview ? (
+                              <div style={{ color: "#94a3b8", fontSize: 12 }}>
+                                {row.bodyPreview}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td>{row.visits}</td>
+                          <td>{row.registrations}</td>
+                          <td>{row.callStarted}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
         </section>
 
         <div
@@ -314,6 +693,7 @@ export default function AdminMarketingPage() {
                   <div style={{ fontSize: 12, color: "#64748b" }}>
                     {MARKETING_POST_TYPE_LABELS[p.post_type]} · {p.channel} ·{" "}
                     {MARKETING_STATUS_LABELS[p.status]}
+                    {p.external_status ? ` · ext:${p.external_status}` : ""}
                     {p.generation_source === "template_fallback"
                       ? " · template"
                       : ""}
@@ -321,6 +701,9 @@ export default function AdminMarketingPage() {
                   <div style={{ fontSize: 12, color: "#94a3b8" }}>
                     生成 {fmt(p.created_at)}
                     {p.scheduled_at ? ` · 予約 ${fmt(p.scheduled_at)}` : ""}
+                    {p.external_post_id
+                      ? ` · extId ${p.external_post_id.slice(0, 8)}…`
+                      : ""}
                   </div>
                 </div>
 
@@ -446,7 +829,7 @@ export default function AdminMarketingPage() {
                         void patchPost(
                           p.id,
                           { status: "approved" },
-                          "承認しました（まだ自動投稿しません）"
+                          "承認しました"
                         )
                       }
                     >
@@ -492,7 +875,7 @@ export default function AdminMarketingPage() {
                             void patchPost(
                               p.id,
                               { status: "scheduled", scheduled_at: iso },
-                              "予約を保存しました（外部投稿は未接続）"
+                              "予約日時を保存しました"
                             );
                           }}
                         >
@@ -511,6 +894,25 @@ export default function AdminMarketingPage() {
                         予約日時
                       </button>
                     )
+                  ) : null}
+
+                  {(p.status === "approved" ||
+                    p.status === "scheduled" ||
+                    p.status === "failed") &&
+                  !p.external_post_id ? (
+                    <button
+                      type="button"
+                      style={adminBtn}
+                      disabled={busy}
+                      onClick={() => void publishToBuffer(p.id)}
+                      title={
+                        buffer?.connected
+                          ? "Bufferへ予約/送信"
+                          : "未接続時はエラーになり手動コピーを案内します"
+                      }
+                    >
+                      Bufferへ予約
+                    </button>
                   ) : null}
 
                   {p.status === "approved" || p.status === "scheduled" ? (

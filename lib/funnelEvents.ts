@@ -1,3 +1,9 @@
+import {
+  captureUtmFromLocation,
+  hasAnyUtm,
+  type UtmParams,
+} from "@/lib/marketing/utmParse";
+
 /** Known product funnel event names for random-call launch. */
 export const FUNNEL_EVENT_NAMES = [
   "min_profile_saved",
@@ -37,10 +43,25 @@ export async function trackFunnelEvent(
   const deviceId = String(params.deviceId ?? "").trim() || undefined;
   const sessionId = String(params.sessionId ?? "").trim() || undefined;
   const classId = String(params.classId ?? "").trim() || undefined;
-  const meta =
+  const baseMeta =
     params.meta && typeof params.meta === "object" && !Array.isArray(params.meta)
-      ? params.meta
-      : undefined;
+      ? { ...params.meta }
+      : {};
+
+  // Attach first-touch UTM for marketing attribution (campaign params only).
+  try {
+    const utm: UtmParams = captureUtmFromLocation();
+    if (hasAnyUtm(utm)) {
+      if (utm.utm_source) baseMeta.utm_source = utm.utm_source;
+      if (utm.utm_medium) baseMeta.utm_medium = utm.utm_medium;
+      if (utm.utm_campaign) baseMeta.utm_campaign = utm.utm_campaign;
+      if (utm.utm_content) baseMeta.utm_content = utm.utm_content;
+    }
+  } catch {
+    // ignore storage failures
+  }
+
+  const meta = Object.keys(baseMeta).length > 0 ? baseMeta : undefined;
 
   try {
     await fetch("/api/funnel-event", {

@@ -12,6 +12,7 @@ import {
   shouldTrackPagePath,
   truncatePageVisitText,
 } from "@/lib/pageVisit";
+import { sanitizeUtmValue } from "@/lib/marketing/utmParse";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,6 +43,13 @@ export async function POST(req: Request) {
       body.referrer ?? body.referer,
       PAGE_VISIT_REFERRER_MAX_LEN
     );
+
+    const utm_source = sanitizeUtmValue(body.utm_source ?? body.utmSource);
+    const utm_medium = sanitizeUtmValue(body.utm_medium ?? body.utmMedium);
+    const utm_campaign = sanitizeUtmValue(
+      body.utm_campaign ?? body.utmCampaign
+    );
+    const utm_content = sanitizeUtmValue(body.utm_content ?? body.utmContent);
 
     let userId: string | null = null;
     const authHeader = req.headers.get("authorization") ?? "";
@@ -91,13 +99,32 @@ export async function POST(req: Request) {
       }
     }
 
-    const { error: insertError } = await supabaseAdmin.from("page_visits").insert({
+    const baseRow = {
       user_id: userId,
       device_id: deviceId,
       path,
       referrer,
       user_agent: ua,
-    });
+    };
+
+    let insertError = (
+      await supabaseAdmin.from("page_visits").insert({
+        ...baseRow,
+        utm_source,
+        utm_medium,
+        utm_campaign,
+        utm_content,
+      })
+    ).error;
+
+    // Before Phase 2/3 migration, UTM columns may not exist — fall back.
+    if (
+      insertError &&
+      /utm_|column .* does not exist/i.test(insertError.message)
+    ) {
+      insertError = (await supabaseAdmin.from("page_visits").insert(baseRow))
+        .error;
+    }
 
     if (insertError) {
       console.warn("[page-visit] insert failed", insertError.message);

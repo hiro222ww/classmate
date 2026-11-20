@@ -6,10 +6,12 @@
 export type PublishAdapterResult =
   | {
       ok: true;
-      /** External post id when actually published */
+      /** External post id when actually published or queued */
       externalPostId?: string;
       /** True when the network accepted a schedule (not yet live) */
       scheduledOnly?: boolean;
+      /** Buffer dueAt (ISO UTC) when scheduled */
+      dueAt?: string | null;
       raw?: unknown;
     }
   | {

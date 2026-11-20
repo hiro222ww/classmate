@@ -55,6 +55,9 @@ export type MarketingPostRow = {
   rejected_at: string | null;
   rejection_reason: string | null;
   external_post_id: string | null;
+  external_status?: "scheduled" | "sent" | "error" | null;
+  external_due_at?: string | null;
+  publish_attempts?: number | null;
   publish_error: string | null;
   generation_source: "openai" | "template_fallback" | "manual";
   similarity_score: number | null;

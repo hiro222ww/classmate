@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 const cards = [
   {
     title: "AIマーケティング",
-    desc: "X投稿案の生成・編集・承認。自動公開なし（Phase 1）",
+    desc: "投稿生成・Buffer予約・UTM集客ダッシュボード（自動公開なし）",
     href: "/admin/marketing",
   },
   {

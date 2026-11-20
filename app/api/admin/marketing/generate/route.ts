@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminAuth";
+import { getMarketingPublishStatus } from "@/lib/marketing/adapters";
 import { getMarketingOpenAiApiKey } from "@/lib/marketing/config";
+import { isMarketingCronEnabled } from "@/lib/marketing/config";
 import { generateMarketingPosts } from "@/lib/marketing/generatePosts";
 
 export const dynamic = "force-dynamic";
@@ -40,9 +42,14 @@ export async function GET(req: Request) {
   const denied = requireAdmin(req);
   if (denied) return denied;
 
+  const publish = getMarketingPublishStatus();
+
   return NextResponse.json({
     ok: true,
     openaiConfigured: Boolean(getMarketingOpenAiApiKey()),
+    cronEnabled: isMarketingCronEnabled(),
+    buffer: publish.buffer,
+    activeAdapter: publish.activeAdapter,
     note: "POST to generate 3 X draft posts. Without OPENAI_API_KEY, template fallback is used.",
   });
 }
