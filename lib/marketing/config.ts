@@ -32,8 +32,25 @@ export function isMarketingCronEnabled(): boolean {
   return String(process.env.MARKETING_CRON_ENABLED ?? "").trim() === "1";
 }
 
+/** Weekly analysis cron — separate gate; default off. */
+export function isMarketingWeeklyCronEnabled(): boolean {
+  return String(process.env.MARKETING_WEEKLY_CRON_ENABLED ?? "").trim() === "1";
+}
+
 export function getMarketingCronSecret(): string {
   return process.env.MARKETING_CRON_SECRET?.trim() || "";
+}
+
+/** Soft weekly budget for analysis reports (default $2). */
+export function getMarketingWeeklyBudgetUsd(): number {
+  const raw = Number(process.env.MARKETING_WEEKLY_BUDGET_USD ?? "2");
+  return Number.isFinite(raw) && raw > 0 ? raw : 2;
+}
+
+/** Max weekly_report runs per rolling 7 days (default 5). */
+export function getMarketingWeeklyRunLimit(): number {
+  const raw = Number(process.env.MARKETING_WEEKLY_RUN_LIMIT ?? "5");
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 5;
 }
 
 /** Rough USD estimate for gpt-4o-mini-class pricing (override via env if needed). */

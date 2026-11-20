@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   getBufferConnectionStatus,
   isBufferPublishEnabled,
@@ -11,6 +11,10 @@ const keys = [
   "BUFFER_CHANNEL_ID",
   "MARKETING_BUFFER_PUBLISH_ENABLED",
 ] as const;
+
+beforeEach(() => {
+  for (const k of keys) delete process.env[k];
+});
 
 afterEach(() => {
   for (const k of keys) delete process.env[k];

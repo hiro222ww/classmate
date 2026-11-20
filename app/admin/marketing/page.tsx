@@ -68,6 +68,10 @@ export default function AdminMarketingPage() {
   const [msg, setMsg] = useState("");
   const [openaiConfigured, setOpenaiConfigured] = useState<boolean | null>(null);
   const [cronEnabled, setCronEnabled] = useState(false);
+  const [weeklyCronEnabled, setWeeklyCronEnabled] = useState(false);
+  const [activeStrategyLabel, setActiveStrategyLabel] = useState<string | null>(
+    null
+  );
   const [buffer, setBuffer] = useState<BufferStatus | null>(null);
   const [activeAdapter, setActiveAdapter] = useState<"buffer" | "manual">(
     "manual"
@@ -78,6 +82,26 @@ export default function AdminMarketingPage() {
   const [bufferProbing, setBufferProbing] = useState(false);
   const [metrics, setMetrics] = useState<MarketingDashboardMetrics | null>(null);
   const [metricsMsg, setMetricsMsg] = useState("");
+  const [reports, setReports] = useState<
+    Array<{
+      id: string;
+      report_kind: string;
+      status: string;
+      created_at: string;
+      model_name: string | null;
+    }>
+  >([]);
+  const [selectedReport, setSelectedReport] = useState<{
+    id: string;
+    analysis_markdown: string | null;
+    ui_suggestions: unknown;
+    strategy_suggestions: unknown;
+    uncertainty_notes: string[] | null;
+  } | null>(null);
+  const [strategies, setStrategies] = useState<
+    Array<{ id: string; version: number; label: string; status: string }>
+  >([]);
+  const [phase4Msg, setPhase4Msg] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
   const [scheduleId, setScheduleId] = useState<string | null>(null);
@@ -119,9 +143,46 @@ export default function AdminMarketingPage() {
     if (res.ok && json?.ok) {
       setOpenaiConfigured(Boolean(json.openaiConfigured));
       setCronEnabled(Boolean(json.cronEnabled));
+      setWeeklyCronEnabled(Boolean(json.weeklyCronEnabled));
+      setActiveStrategyLabel(
+        json.activeStrategy
+          ? `v${json.activeStrategy.version}: ${json.activeStrategy.label}`
+          : null
+      );
       if (json.buffer) setBuffer(json.buffer as BufferStatus);
       if (json.activeAdapter === "buffer" || json.activeAdapter === "manual") {
         setActiveAdapter(json.activeAdapter);
+      }
+    }
+  }, []);
+
+  const loadPhase4 = useCallback(async () => {
+    setPhase4Msg("");
+    const [rRes, sRes] = await Promise.all([
+      fetch("/api/admin/marketing/reports", {
+        cache: "no-store",
+        credentials: "same-origin",
+      }),
+      fetch("/api/admin/marketing/strategies", {
+        cache: "no-store",
+        credentials: "same-origin",
+      }),
+    ]);
+    const rJson = await rRes.json().catch(() => null);
+    const sJson = await sRes.json().catch(() => null);
+    if (rRes.ok && rJson?.ok) {
+      setReports(rJson.reports ?? []);
+    } else {
+      setReports([]);
+      setPhase4Msg(
+        String(rJson?.detail || rJson?.error || "レポート読込失敗") +
+          (rJson?.migrationHint ? ` / ${rJson.migrationHint}` : "")
+      );
+    }
+    if (sRes.ok && sJson?.ok) {
+      setStrategies(sJson.versions ?? []);
+      if (sJson.active) {
+        setActiveStrategyLabel(`v${sJson.active.version}: ${sJson.active.label}`);
       }
     }
   }, []);
@@ -183,7 +244,73 @@ export default function AdminMarketingPage() {
     void load();
     void loadMeta();
     void loadMetrics();
-  }, [load, loadMeta, loadMetrics]);
+    void loadPhase4();
+  }, [load, loadMeta, loadMetrics, loadPhase4]);
+
+  async function runWeeklyAnalysis() {
+    setBusy(true);
+    setPhase4Msg("");
+    try {
+      const res = await fetch("/api/admin/marketing/reports", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ activateStrategy: false }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setPhase4Msg(String(json?.detail || json?.error || "分析に失敗しました"));
+        return;
+      }
+      setPhase4Msg(
+        `週次分析完了（report=${String(json.reportId).slice(0, 8)}…）` +
+          (json.usedFallbackAnalysis ? "・ヒューリスティック" : "") +
+          "。方針は draft（自動適用なし）"
+      );
+      await loadPhase4();
+      await loadMeta();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openReport(id: string) {
+    const res = await fetch(`/api/admin/marketing/reports?id=${encodeURIComponent(id)}`, {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.ok || !json.report) {
+      setPhase4Msg(String(json?.detail || json?.error || "レポート詳細の読込失敗"));
+      return;
+    }
+    setSelectedReport(json.report);
+  }
+
+  async function setStrategyActive(id: string | null) {
+    setBusy(true);
+    setPhase4Msg("");
+    try {
+      const res = await fetch("/api/admin/marketing/strategies", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          id ? { action: "activate", id } : { action: "deactivate" }
+        ),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setPhase4Msg(String(json?.detail || json?.error || "方針の更新に失敗"));
+        return;
+      }
+      setPhase4Msg(id ? "改善方針を適用しました（投稿生成のみ）" : "改善方針を無効化しました");
+      await loadPhase4();
+      await loadMeta();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const counts = useMemo(() => {
     const base: Record<string, number> = { all: posts.length };
@@ -366,7 +493,7 @@ export default function AdminMarketingPage() {
               AIマーケティング
             </h1>
             <p style={{ margin: "6px 0 0", color: "#667085", fontSize: 13 }}>
-              Phase 2/3: Buffer予約連携・UTM集計。無承認の自動公開はしません。
+              Phase 4: 週次分析・改善方針フィードバック。SNS自動公開・UI自動変更はしません。
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -422,7 +549,17 @@ export default function AdminMarketingPage() {
                 : "無効（MARKETING_BUFFER_PUBLISH_ENABLED≠1）"}
             </div>
             <div>
-              Cron: {cronEnabled ? "有効" : "無効（MARKETING_CRON_ENABLED≠1）"}
+              Cron（日次生成）:{" "}
+              {cronEnabled ? "有効" : "無効（MARKETING_CRON_ENABLED≠1）"}
+            </div>
+            <div>
+              Cron（週次分析）:{" "}
+              {weeklyCronEnabled
+                ? "有効"
+                : "無効（MARKETING_WEEKLY_CRON_ENABLED≠1）"}
+            </div>
+            <div>
+              適用中の改善方針: {activeStrategyLabel ?? "なし（デフォルト生成）"}
             </div>
           </div>
           <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -671,6 +808,246 @@ export default function AdminMarketingPage() {
               </div>
             </div>
           )}
+        </section>
+
+        <section
+          style={{
+            ...adminCard,
+            marginBottom: 16,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+              marginBottom: 8,
+            }}
+          >
+            <strong>Phase 4: 週次分析・改善方針</strong>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                style={adminBtn}
+                disabled={busy}
+                onClick={() => void runWeeklyAnalysis()}
+              >
+                手動で週次分析
+              </button>
+              <button
+                type="button"
+                style={adminBtnGhost}
+                disabled={busy}
+                onClick={() => void loadPhase4()}
+              >
+                再読込
+              </button>
+            </div>
+          </div>
+          <p style={{ margin: "0 0 8px", color: "#667085" }}>
+            分析は投稿生成プロンプトへの反映のみ。SNS公開・UI変更は自動では行いません。週次Cronは既定OFF。
+          </p>
+          {phase4Msg ? (
+            <p style={{ color: phase4Msg.includes("失敗") ? "#b91c1c" : "#166534" }}>
+              {phase4Msg}
+            </p>
+          ) : null}
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: 16,
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>週次レポート履歴</div>
+              {reports.length === 0 ? (
+                <div style={{ color: "#94a3b8" }}>まだありません</div>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {reports.slice(0, 8).map((r) => (
+                    <li key={r.id} style={{ marginBottom: 4 }}>
+                      <button
+                        type="button"
+                        style={{
+                          ...adminBtnGhost,
+                          padding: "2px 8px",
+                          fontSize: 12,
+                        }}
+                        onClick={() => void openReport(r.id)}
+                      >
+                        {fmt(r.created_at)} · {r.status}
+                        {r.model_name ? ` · ${r.model_name}` : ""}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                改善方針（適用は投稿生成のみ）
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                次回投稿への反映:{" "}
+                {activeStrategyLabel ? (
+                  <span style={{ color: "#166534" }}>{activeStrategyLabel}</span>
+                ) : (
+                  <span style={{ color: "#94a3b8" }}>未適用（デフォルト）</span>
+                )}
+              </div>
+              <button
+                type="button"
+                style={{ ...adminBtnGhost, marginBottom: 8 }}
+                disabled={busy || !activeStrategyLabel}
+                onClick={() => void setStrategyActive(null)}
+              >
+                適用中の方針を無効化
+              </button>
+              {strategies.length === 0 ? (
+                <div style={{ color: "#94a3b8" }}>履歴なし</div>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {strategies.slice(0, 12).map((s) => (
+                    <li key={s.id} style={{ marginBottom: 6 }}>
+                      v{s.version}: {s.label}{" "}
+                      <span style={{ color: "#64748b" }}>({s.status})</span>{" "}
+                      {s.status !== "active" ? (
+                        <button
+                          type="button"
+                          style={{
+                            ...adminBtnGhost,
+                            padding: "2px 8px",
+                            fontSize: 12,
+                          }}
+                          disabled={busy}
+                          onClick={() => void setStrategyActive(s.id)}
+                        >
+                          適用
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {selectedReport ? (
+            <div
+              style={{
+                marginTop: 16,
+                paddingTop: 12,
+                borderTop: "1px solid #e2e8f0",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <strong>レポート詳細</strong>
+                <button
+                  type="button"
+                  style={adminBtnGhost}
+                  onClick={() => setSelectedReport(null)}
+                >
+                  閉じる
+                </button>
+              </div>
+              {selectedReport.uncertainty_notes?.length ? (
+                <div style={{ marginBottom: 8, color: "#92400e" }}>
+                  不確実性: {selectedReport.uncertainty_notes.join(" / ")}
+                </div>
+              ) : null}
+              <pre
+                style={{
+                  whiteSpace: "pre-wrap",
+                  fontSize: 12,
+                  background: "#f8fafc",
+                  padding: 12,
+                  borderRadius: 8,
+                  maxHeight: 360,
+                  overflow: "auto",
+                }}
+              >
+                {selectedReport.analysis_markdown || "（本文なし）"}
+              </pre>
+              {Array.isArray(selectedReport.ui_suggestions) &&
+              selectedReport.ui_suggestions.length > 0 ? (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                    UI・UX / ヒーロー画像の改善案
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {(
+                      selectedReport.ui_suggestions as Array<{
+                        area?: string;
+                        title?: string;
+                        reason?: string;
+                        evidence?: string;
+                        evidenceKind?: string;
+                        priority?: string;
+                        validationKpi?: string;
+                        imagePrompt?: string | null;
+                        compositionNotes?: string | null;
+                      }>
+                    ).map((u, i) => (
+                      <li key={i} style={{ marginBottom: 10 }}>
+                        <div style={{ fontWeight: 700 }}>
+                          [{u.priority ?? "?"}] {u.area}: {u.title}
+                        </div>
+                        <div style={{ color: "#475569" }}>{u.reason}</div>
+                        <div style={{ color: "#64748b", fontSize: 12 }}>
+                          根拠種別: {u.evidenceKind}
+                          {u.evidence ? ` — ${u.evidence}` : ""} / KPI:{" "}
+                          {u.validationKpi}
+                        </div>
+                        {u.imagePrompt ? (
+                          <div style={{ marginTop: 4, fontSize: 12 }}>
+                            画像プロンプト: {u.imagePrompt}
+                          </div>
+                        ) : null}
+                        {u.compositionNotes ? (
+                          <div style={{ fontSize: 12, color: "#64748b" }}>
+                            構図: {u.compositionNotes}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {selectedReport.strategy_suggestions ? (
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                    AIによる投稿改善提案（JSON）
+                  </summary>
+                  <pre
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      fontSize: 11,
+                      background: "#f8fafc",
+                      padding: 12,
+                      borderRadius: 8,
+                      marginTop: 8,
+                    }}
+                  >
+                    {JSON.stringify(selectedReport.strategy_suggestions, null, 2)}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <div

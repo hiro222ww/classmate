@@ -93,9 +93,8 @@ DB: marketing_campaigns / marketing_posts / marketing_ai_runs
 | 外部SNS自動投稿 | 課金・審査・トークン接続が必要 → Phase 2 |
 | Buffer / X / IG / TikTok 実接続 | 無断契約禁止 |
 | 本番 Cron 有効化 | 運営許可待ち |
-| 週次AIレポート | Phase 4 |
-| 投稿別流入・登録率ダッシュボード | Phase 3（既存 visits/funnel 拡張） |
-| `marketing_post_metrics` / `marketing_reports` テーブル | Phase 3–4 で追加 |
+| 投稿別流入・登録率ダッシュボード | Phase 3 実装済 |
+| 週次AIレポート / 改善方針フィードバック | Phase 4 実装済（Cron・適用は既定OFF） |
 
 ---
 
@@ -108,8 +107,11 @@ DB: marketing_campaigns / marketing_posts / marketing_ai_runs
 | `OPENAI_MARKETING_MODEL` | 任意 | 既定 `gpt-4o-mini` |
 | `MARKETING_DAILY_BUDGET_USD` | 任意 | 既定 `1` |
 | `MARKETING_DAILY_RUN_LIMIT` | 任意 | 既定 `20` |
-| `MARKETING_CRON_ENABLED` | 任意 | `1` のみ有効 |
-| `MARKETING_CRON_SECRET` | Cron有効時必須 | Bearer 照合 |
+| `MARKETING_CRON_ENABLED` | 任意 | `1` のみ有効（日次投稿生成） |
+| `MARKETING_WEEKLY_CRON_ENABLED` | 任意 | `1` のみ有効（週次分析）。**既定OFF** |
+| `MARKETING_WEEKLY_BUDGET_USD` | 任意 | 週次分析の概算上限（既定 `2`） |
+| `MARKETING_WEEKLY_RUN_LIMIT` | 任意 | 直近7日の weekly_report 回数上限（既定 `5`） |
+| `MARKETING_CRON_SECRET` | Cron有効時必須 | Bearer 照合（日次・週次共通） |
 | `BUFFER_ACCESS_TOKEN` または `BUFFER_API_KEY` | Phase2任意 | Buffer GraphQL Bearer |
 | `BUFFER_CHANNEL_ID` | Phase2任意 | 投稿先チャネルID |
 | `MARKETING_BUFFER_PUBLISH_ENABLED` | Phase2任意 | `1` のときのみ実送信 |
@@ -139,13 +141,18 @@ APIキーは DB に保存しない。
     {
       "path": "/api/admin/marketing/cron",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/admin/marketing/cron/weekly",
+      "schedule": "0 1 * * 1"
     }
   ]
 }
 ```
 
-※ Vercel Cron は UTC。JST 09:00 = UTC 00:00。  
-加えて `MARKETING_CRON_ENABLED=1` と `MARKETING_CRON_SECRET`、Authorization: Bearer を設定。  
+※ Vercel Cron は UTC。日次 JST 09:00 ≈ UTC 00:00。週次月曜 01:00 UTC ≈ JST 10:00。  
+加えて `MARKETING_CRON_ENABLED=1` / `MARKETING_WEEKLY_CRON_ENABLED=1`（それぞれ明示）と `MARKETING_CRON_SECRET`、Authorization: Bearer を設定。  
+**リポジトリには有効な vercel.json cron を入れていない（既定OFF）。**  
 Vercel Cron が Authorization を付けられない場合は、Vercel の保護ヘッダ + アプリ側で `CRON_SECRET` パターンに合わせて改修する。
 
 ### Buffer 接続手順（ローカル）
@@ -202,6 +209,7 @@ API:
 - `lib/marketing/openaiGenerate.test.ts`
 - `lib/marketing/config.test.ts`
 - `lib/marketing/adapters/index.test.ts`
+- `lib/marketing/strategy.test.ts` / `uiSuggestions.test.ts` / `analysisMetrics.test.ts` / `prompts.strategy.test.ts`
 
 DB結合・OpenAI実呼び出し・本番 Cron は未実施（キー/本番DBなし）。
 
@@ -239,5 +247,34 @@ DB結合・OpenAI実呼び出し・本番 Cron は未実施（キー/本番DBな
 ### 追加マイグレーション
 `supabase/migrations/20261116140000_marketing_phase23.sql`
 
-### Phase 4（未着手）
-- 週次AIレポート / 次週企画の自動生成
+### Phase 4（実装済・運用は承認後）
+
+目的: 実績集計 → 週次レポート → 改善方針バージョン → 次回の投稿生成プロンプトへ反映（公開は承認制のまま）。
+
+#### マイグレーション
+`supabase/migrations/20261117120000_marketing_phase4_reports.sql`
+- `marketing_reports`（週次/手動レポート履歴）
+- `marketing_strategy_versions`（改善方針バージョン。同時 active は1件）
+
+#### API
+- `GET/POST /api/admin/marketing/reports` — 履歴・詳細 / 手動分析
+- `GET/POST /api/admin/marketing/strategies` — 一覧・適用・無効化
+- `POST /api/admin/marketing/cron/weekly` — 週次Cron（`MARKETING_WEEKLY_CRON_ENABLED=1` + secret）
+
+#### 挙動
+- 直近7日・28日の UTM訪問/登録/通話開始・投稿タイプ別・時間帯別を集計（Xいいね等は未配線のため未使用）
+- OpenAI失敗時はヒューリスティック分析にフォールバック。**投稿生成は従来どおり継続**
+- 分析で作る方針は既定 **draft**（自動適用しない）。管理画面で activate / deactivate / 過去版へロールバック
+- UI・ヒーロー改善案はレポートに含めるのみ（**画面の自動変更なし**）
+- Buffer自動公開・日次/週次Cronは既定OFF
+
+#### 管理画面 `/admin/marketing`
+- 週次レポート表示・UI改善案・改善方針の適用/無効化・履歴・手動分析・次回投稿への反映状況
+
+#### 運用開始手順（承認後）
+1. ステージングで Phase4 マイグレーション適用
+2. 管理画面で「手動で週次分析」→レポート確認
+3. 改善方針を適用して投稿案生成 → 文面のみ変化することを確認（SNS未公開）
+4. 問題なければ本番マイグレーション（別途明示承認）
+5. 週次Cronを有効化するなら `MARKETING_WEEKLY_CRON_ENABLED=1` + secret（別途明示承認）
+6. Buffer公開・日次Cronは従来どおり別ゲート
