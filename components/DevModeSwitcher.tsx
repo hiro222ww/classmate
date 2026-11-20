@@ -32,8 +32,8 @@ export function DevModeSwitcher() {
   if (!isDevFeatureEnabled()) return null;
   if (!mounted) return null;
 
-  function handleUnlock() {
-    const ok = unlockAdmin(password);
+  async function handleUnlock() {
+    const ok = await unlockAdmin(password);
 
     if (!ok) {
       setError("パスワード違う");
@@ -126,7 +126,7 @@ export function DevModeSwitcher() {
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                handleUnlock();
+                void handleUnlock();
               }
             }}
             style={{
@@ -138,7 +138,7 @@ export function DevModeSwitcher() {
             }}
           />
           <button
-            onClick={handleUnlock}
+            onClick={() => void handleUnlock()}
             style={{
               padding: "8px 10px",
               borderRadius: 8,
