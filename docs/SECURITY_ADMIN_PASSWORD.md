@@ -2,6 +2,7 @@
 
 ## 仕組み
 - **本番の管理者認証**: サーバー側 `ADMIN_PASSWORD` のみ。`POST /api/admin/login` が HMAC Cookie `classmate_admin`（httpOnly）を発行。
+- **ログイン防御**: パスワードは timing-safe 比較。同一IPあたり 15 分で最大 20 試行（プロセス内カウンタ）。
 - **管理API / `/admin/*`**: Next.js 16 `proxy.ts` と各 route の `requireAdmin` が Cookie を検証。
 - **DEV UI**（`NEXT_PUBLIC_DEV_MODE=true` 時のみ表示）: 解除も `/api/admin/login` を呼び、クライアントにパスワードを埋め込まない。
 
