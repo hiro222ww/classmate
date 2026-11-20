@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ADMIN_COOKIE_NAME,
+  ADMIN_LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+  consumeLoginAttempt,
   createAdminToken,
   getAdminTokenFromRequest,
   isAdminRequest,
   requireAdmin,
+  resetLoginRateLimitForTests,
+  safeEqualString,
   verifyAdminToken,
 } from "./adminAuth";
 
@@ -13,6 +17,7 @@ const ORIGINAL_PASSWORD = process.env.ADMIN_PASSWORD;
 describe("adminAuth request checks", () => {
   beforeEach(() => {
     process.env.ADMIN_PASSWORD = "test-admin-secret";
+    resetLoginRateLimitForTests();
   });
 
   afterEach(() => {
@@ -21,6 +26,23 @@ describe("adminAuth request checks", () => {
     } else {
       process.env.ADMIN_PASSWORD = ORIGINAL_PASSWORD;
     }
+    resetLoginRateLimitForTests();
+  });
+
+  it("compares passwords in constant-time fashion", () => {
+    expect(safeEqualString("abc", "abc")).toBe(true);
+    expect(safeEqualString("abc", "abd")).toBe(false);
+    expect(safeEqualString("abc", "ab")).toBe(false);
+  });
+
+  it("rate-limits repeated login attempts per key", () => {
+    for (let i = 0; i < ADMIN_LOGIN_RATE_LIMIT_MAX_ATTEMPTS; i += 1) {
+      expect(consumeLoginAttempt("10.0.0.1").allowed).toBe(true);
+    }
+    const blocked = consumeLoginAttempt("10.0.0.1");
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterSeconds).toBeGreaterThan(0);
+    expect(consumeLoginAttempt("10.0.0.2").allowed).toBe(true);
   });
 
   it("verifies tokens created with ADMIN_PASSWORD", () => {

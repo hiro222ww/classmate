@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import {
   ADMIN_COOKIE_NAME,
   ADMIN_MAX_AGE_SECONDS,
+  consumeLoginAttempt,
   createAdminToken,
+  getLoginRateLimitKey,
+  safeEqualString,
 } from "@/lib/adminAuth";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +13,17 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
+    const rate = consumeLoginAttempt(getLoginRateLimitKey(req));
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { ok: false, error: "Too many attempts" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rate.retryAfterSeconds) },
+        }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
 
     const password = String(body?.password ?? "").trim();
@@ -22,7 +36,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (password !== expected) {
+    if (!safeEqualString(password, expected)) {
       return NextResponse.json(
         { ok: false, error: "Unauthorized" },
         { status: 401 }

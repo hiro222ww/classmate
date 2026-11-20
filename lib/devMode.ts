@@ -17,24 +17,38 @@ export function isDevFeatureEnabled(): boolean {
 
 /**
  * 管理者ロック（dev切り替えUI用）
+ * ※ API/管理画面の権限は httpOnly Cookie（classmate_admin）側。
+ *   localStorage は DEV UI 表示専用で、requireAdmin を満たさない。
  */
 export function isAdminUnlocked(): boolean {
   if (!isBrowser()) return false;
   return localStorage.getItem("classmate_admin_unlocked") === "1";
 }
 
-export function unlockAdmin(password: string): boolean {
+/**
+ * DEV UI 解除。パスワード照合はサーバーの /api/admin/login のみ。
+ * NEXT_PUBLIC_* に管理者パスワードを埋め込まない。
+ */
+export async function unlockAdmin(password: string): Promise<boolean> {
   if (!isBrowser()) return false;
 
-  const correct = process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? "";
-  if (!correct) return false;
+  const trimmed = String(password ?? "").trim();
+  if (!trimmed) return false;
 
-  if (password === correct) {
+  try {
+    const res = await fetch("/api/admin/login", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: trimmed }),
+    });
+    const json = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+    if (!res.ok || !json?.ok) return false;
     localStorage.setItem("classmate_admin_unlocked", "1");
     return true;
+  } catch {
+    return false;
   }
-
-  return false;
 }
 
 export function lockAdmin() {
