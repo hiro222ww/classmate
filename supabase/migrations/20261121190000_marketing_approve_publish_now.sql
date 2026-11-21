@@ -50,12 +50,12 @@ COMMENT ON COLUMN public.marketing_posts.publish_outcome IS
 COMMENT ON COLUMN public.marketing_posts.external_status IS
   'Buffer/SNS lifecycle: scheduled | buffer_accepted | sent | error | unknown.';
 
--- Runtime toggle (no Vercel redeploy). Default ON so admin button can publish
--- when Buffer credentials exist. Cron never calls approve-and-publish-now.
+-- Runtime toggle (no Vercel redeploy). Default OFF until operator enables
+-- in admin UI. Cron never calls approve-and-publish-now.
 INSERT INTO public.app_settings (key, value, updated_at)
 VALUES (
   'marketing_immediate_publish_enabled',
-  'true'::jsonb,
+  'false'::jsonb,
   now()
 )
 ON CONFLICT (key) DO NOTHING;

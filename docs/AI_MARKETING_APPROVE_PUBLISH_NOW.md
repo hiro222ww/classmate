@@ -13,7 +13,7 @@ Buffer GraphQL `createPost` の **`mode: shareNow`**（予約キューではな�
 | 層 | 内容 |
 |---|---|
 | 必須 | 管理者ログイン + 明示クリック（1投稿） |
-| DB | `app_settings.marketing_immediate_publish_enabled`（管理画面でON/OFF） |
+| DB | `app_settings.marketing_immediate_publish_enabled`（**初期OFF**・管理画面でON/OFF） |
 | 緊急停止 | `MARKETING_BUFFER_PUBLISH_FORCE_OFF=1`（env） |
 | 旧「Bufferへ予約」 | 従来どおり `MARKETING_BUFFER_PUBLISH_ENABLED=1` が必要 |
 

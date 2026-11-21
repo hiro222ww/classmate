@@ -10,7 +10,7 @@ export const MARKETING_IMMEDIATE_PUBLISH_SETTING_KEY =
 
 /**
  * Runtime gate for approve-and-publish-now (DB-backed, no redeploy).
- * Default true when the setting row is missing.
+ * Default OFF when the setting row is missing (operator must enable explicitly).
  */
 export async function isImmediatePublishEnabled(): Promise<boolean> {
   if (isMarketingBufferPublishForceOff()) return false;
@@ -27,7 +27,7 @@ export async function isImmediatePublishEnabled(): Promise<boolean> {
     return false;
   }
 
-  return parseBillingFlag(data?.value, true);
+  return parseBillingFlag(data?.value, false);
 }
 
 export async function setImmediatePublishEnabled(
