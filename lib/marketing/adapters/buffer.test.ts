@@ -52,5 +52,7 @@ describe("bufferPublishAdapter", () => {
       expect(result.dueAt).toBe("2026-11-20T01:00:00.000Z");
     }
     expect(fetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1].body));
+    expect(body.query).toContain("$channelId: ChannelId!");
   });
 });
