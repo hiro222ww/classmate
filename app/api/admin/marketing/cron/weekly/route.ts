@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { safeEqualString } from "@/lib/adminAuth";
 import {
   getMarketingCronSecret,
   getMarketingWeeklyCronScheduleHint,
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
     header.replace(/^Bearer\s+/i, "").trim() ||
     new URL(req.url).searchParams.get("secret") ||
     "";
-  if (provided !== secret) {
+  if (!safeEqualString(provided, secret)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 

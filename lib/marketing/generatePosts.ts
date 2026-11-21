@@ -48,6 +48,8 @@ export type GenerateMarketingPostsResult = {
   posts?: MarketingPostRow[];
   usedFallback?: boolean;
   qualityRetried?: boolean;
+  /** Cron re-entry: a successful daily_generate already finished today (JST). */
+  skipped?: boolean;
 };
 
 export async function generateMarketingPosts(params: {
@@ -58,6 +60,31 @@ export async function generateMarketingPosts(params: {
   const jstDate = jstDateString();
   const { startIso, endIso } = jstDayBoundsIso();
   const budget = getMarketingDailyBudgetUsd();
+
+  // Dedup scheduled cron: at most one successful daily_generate per JST day.
+  if (params.trigger === "daily_generate") {
+    const { count: dailyDone, error: dailyDoneError } = await supabaseAdmin
+      .from("marketing_ai_runs")
+      .select("id", { count: "exact", head: true })
+      .eq("run_kind", "daily_generate")
+      .eq("status", "succeeded")
+      .gte("started_at", startIso)
+      .lt("started_at", endIso);
+    if (dailyDoneError) {
+      return {
+        ok: false,
+        error: "daily_dedup_check_failed",
+        detail: dailyDoneError.message,
+      };
+    }
+    if ((dailyDone ?? 0) > 0) {
+      return {
+        ok: true,
+        skipped: true,
+        detail: "daily_generate_already_succeeded_today",
+      };
+    }
+  }
 
   const { count: runCount, error: runCountError } = await supabaseAdmin
     .from("marketing_ai_runs")

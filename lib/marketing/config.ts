@@ -37,8 +37,17 @@ export function isMarketingWeeklyCronEnabled(): boolean {
   return String(process.env.MARKETING_WEEKLY_CRON_ENABLED ?? "").trim() === "1";
 }
 
+/**
+ * Shared secret for daily/weekly marketing cron.
+ * Prefers MARKETING_CRON_SECRET; falls back to Vercel `CRON_SECRET`
+ * (auto-sent as Authorization: Bearer on scheduled invocations).
+ */
 export function getMarketingCronSecret(): string {
-  return process.env.MARKETING_CRON_SECRET?.trim() || "";
+  return (
+    process.env.MARKETING_CRON_SECRET?.trim() ||
+    process.env.CRON_SECRET?.trim() ||
+    ""
+  );
 }
 
 /** Soft weekly budget for analysis reports (default $2). */

@@ -133,29 +133,14 @@ APIキーは DB に保存しない。
 3. 本番適用は別途承認
 
 ### Vercel Cron（許可後）
-`vercel.json` 例（**まだリポジトリに有効設定は入れていない**）。時刻はコード定数を正とする:
-- 日次: JST 09:00 ≈ UTC 00:00 → `0 0 * * *`
-- 週次: **日曜 20:00 JST** = UTC 11:00 → `0 11 * * 0`（`MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST`）
+リポジトリ直下の `vercel.json` に Cron を定義（実実行は env ゲートが `1` のときのみ）:
+- 日次: JST 09:00 ≈ UTC 00:00 → `0 0 * * *` → `/api/admin/marketing/cron`
+- 週次: **日曜 20:00 JST** = UTC 11:00 → `0 11 * * 0`（`MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST`）→ `/api/admin/marketing/cron/weekly`
 
-```json
-{
-  "crons": [
-    {
-      "path": "/api/admin/marketing/cron",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/admin/marketing/cron/weekly",
-      "schedule": "0 11 * * 0"
-    }
-  ]
-}
-```
-
-※ Vercel Cron は UTC。日次 JST 09:00 ≈ UTC 00:00。週次 **日曜 20:00 JST** = UTC 11:00（`0 11 * * 0`）。  
-加えて `MARKETING_CRON_ENABLED=1` / `MARKETING_WEEKLY_CRON_ENABLED=1`（それぞれ明示）と `MARKETING_CRON_SECRET`、Authorization: Bearer を設定。  
-**リポジトリには有効な vercel.json cron を入れていない（既定OFF）。**  
-Vercel Cron が Authorization を付けられない場合は、Vercel の保護ヘッダ + アプリ側で `CRON_SECRET` パターンに合わせて改修する。
+※ Vercel Cron は UTC。  
+必須 env: `MARKETING_CRON_ENABLED=1` / `MARKETING_WEEKLY_CRON_ENABLED=1`（それぞれ明示）と `MARKETING_CRON_SECRET`（または Vercel `CRON_SECRET`）。  
+Vercel は `CRON_SECRET` を設定すると `Authorization: Bearer <CRON_SECRET>` を付与する。アプリは両方を受理する。  
+`proxy.ts` は一致する Bearer（または `?secret=`）があるときだけ管理 Cookie なしで Cron 経路を通す。ルート側で再度ゲート+秘密を検証する。
 
 ### Buffer 接続手順（ローカル）
 

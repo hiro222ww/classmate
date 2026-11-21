@@ -55,9 +55,30 @@ export async function proxy(req: NextRequest) {
   const isLoginApi = pathname === "/api/admin/login";
   const isLogoutApi = pathname === "/api/admin/logout";
   const isSessionApi = pathname === "/api/admin/session";
+  const isMarketingCronApi =
+    pathname === "/api/admin/marketing/cron" ||
+    pathname === "/api/admin/marketing/cron/weekly";
 
   if (isLoginPage || isLoginApi || isLogoutApi || isSessionApi) {
     return NextResponse.next();
+  }
+
+  // Vercel Cron (and manual Bearer tests) must reach route handlers without
+  // an admin cookie. Route still enforces MARKETING_CRON_* gates + secret.
+  if (isMarketingCronApi) {
+    const cronSecret = (
+      process.env.MARKETING_CRON_SECRET ||
+      process.env.CRON_SECRET ||
+      ""
+    ).trim();
+    const auth = req.headers.get("authorization") || "";
+    const provided =
+      auth.replace(/^Bearer\s+/i, "").trim() ||
+      req.nextUrl.searchParams.get("secret") ||
+      "";
+    if (cronSecret && provided && provided === cronSecret) {
+      return NextResponse.next();
+    }
   }
 
   if (!isAdminPage && !isAdminApi && !isCallDemoPage) {
