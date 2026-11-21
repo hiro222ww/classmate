@@ -4,9 +4,12 @@ import {
   getMarketingDailyBudgetUsd,
   getMarketingDailyRunLimit,
   getMarketingWeeklyBudgetUsd,
+  getMarketingWeeklyCronScheduleHint,
   getMarketingWeeklyRunLimit,
+  isMarketingAdminNotifyEnabled,
   isMarketingCronEnabled,
   isMarketingWeeklyCronEnabled,
+  MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST,
 } from "@/lib/marketing/config";
 
 const keys = [
@@ -16,6 +19,8 @@ const keys = [
   "MARKETING_WEEKLY_CRON_ENABLED",
   "MARKETING_WEEKLY_BUDGET_USD",
   "MARKETING_WEEKLY_RUN_LIMIT",
+  "MARKETING_ADMIN_NOTIFY_ENABLED",
+  "MARKETING_ADMIN_NOTIFY_EMAIL",
 ] as const;
 
 beforeEach(() => {
@@ -66,5 +71,18 @@ describe("marketing config", () => {
       completionTokens: 1_000_000,
     });
     expect(cost).toBeCloseTo(0.75, 5);
+  });
+
+  it("keeps admin notify disabled unless explicitly 1", () => {
+    expect(isMarketingAdminNotifyEnabled()).toBe(false);
+    process.env.MARKETING_ADMIN_NOTIFY_ENABLED = "true";
+    expect(isMarketingAdminNotifyEnabled()).toBe(false);
+    process.env.MARKETING_ADMIN_NOTIFY_ENABLED = "1";
+    expect(isMarketingAdminNotifyEnabled()).toBe(true);
+  });
+
+  it("documents Sunday 20:00 JST weekly cron", () => {
+    expect(MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST).toBe("0 11 * * 0");
+    expect(getMarketingWeeklyCronScheduleHint()).toContain("Sunday 20:00 JST");
   });
 });

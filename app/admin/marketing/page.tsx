@@ -101,6 +101,21 @@ export default function AdminMarketingPage() {
   const [strategies, setStrategies] = useState<
     Array<{ id: string; version: number; label: string; status: string }>
   >([]);
+  const [proposals, setProposals] = useState<
+    Array<{
+      id: string;
+      category: string;
+      area: string;
+      title: string;
+      summary: string;
+      priority: string;
+      status: string;
+      created_at: string;
+      validation_kpi: string | null;
+    }>
+  >([]);
+  const [notifyEnabled, setNotifyEnabled] = useState(false);
+  const [notifyHint, setNotifyHint] = useState("");
   const [phase4Msg, setPhase4Msg] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState("");
@@ -158,7 +173,7 @@ export default function AdminMarketingPage() {
 
   const loadPhase4 = useCallback(async () => {
     setPhase4Msg("");
-    const [rRes, sRes] = await Promise.all([
+    const [rRes, sRes, pRes] = await Promise.all([
       fetch("/api/admin/marketing/reports", {
         cache: "no-store",
         credentials: "same-origin",
@@ -167,9 +182,14 @@ export default function AdminMarketingPage() {
         cache: "no-store",
         credentials: "same-origin",
       }),
+      fetch("/api/admin/marketing/proposals?status=open", {
+        cache: "no-store",
+        credentials: "same-origin",
+      }),
     ]);
     const rJson = await rRes.json().catch(() => null);
     const sJson = await sRes.json().catch(() => null);
+    const pJson = await pRes.json().catch(() => null);
     if (rRes.ok && rJson?.ok) {
       setReports(rJson.reports ?? []);
     } else {
@@ -183,6 +203,25 @@ export default function AdminMarketingPage() {
       setStrategies(sJson.versions ?? []);
       if (sJson.active) {
         setActiveStrategyLabel(`v${sJson.active.version}: ${sJson.active.label}`);
+      }
+    }
+    if (pRes.ok && pJson?.ok) {
+      setProposals(pJson.proposals ?? []);
+      setNotifyEnabled(Boolean(pJson.notifyEnabled));
+      setNotifyHint(
+        String(pJson.notifyCapability?.reason || pJson.weeklyScheduleHint || "")
+      );
+    } else {
+      setProposals([]);
+      if (pJson?.error) {
+        setPhase4Msg((prev) =>
+          prev ||
+          String(pJson?.detail || pJson?.error || "提案読込失敗") +
+            (String(pJson?.error || "").includes("relation") ||
+            String(pJson?.detail || "").includes("does not exist")
+              ? " / マイグレーション 20261117180000 未適用の可能性"
+              : "")
+        );
       }
     }
   }, []);
@@ -265,10 +304,45 @@ export default function AdminMarketingPage() {
       setPhase4Msg(
         `週次分析完了（report=${String(json.reportId).slice(0, 8)}…）` +
           (json.usedFallbackAnalysis ? "・ヒューリスティック" : "") +
-          "。方針は draft（自動適用なし）"
+          `。提案 ${Number(json.proposalsCreated ?? 0)} 件` +
+          (json.proposalsSkippedDup
+            ? `（重複スキップ ${json.proposalsSkippedDup}）`
+            : "") +
+          "。手動実行のため方針は draft（Cron時のみ方針自動適用）"
       );
       await loadPhase4();
       await loadMeta();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reviewProposal(
+    id: string,
+    action: "accept" | "hold" | "reject"
+  ) {
+    setBusy(true);
+    setPhase4Msg("");
+    try {
+      const res = await fetch("/api/admin/marketing/proposals", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, action }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setPhase4Msg(String(json?.detail || json?.error || "提案の更新に失敗"));
+        return;
+      }
+      setPhase4Msg(
+        action === "accept"
+          ? "提案を採用しました（UI/画像の本番反映は別途手動）"
+          : action === "hold"
+            ? "提案を保留しました"
+            : "提案を却下しました"
+      );
+      await loadPhase4();
     } finally {
       setBusy(false);
     }
@@ -849,13 +923,71 @@ export default function AdminMarketingPage() {
             </div>
           </div>
           <p style={{ margin: "0 0 8px", color: "#667085" }}>
-            分析は投稿生成プロンプトへの反映のみ。SNS公開・UI変更は自動では行いません。週次Cronは既定OFF。
+            週次Cron（日曜20:00 JST・既定OFF）で分析・提案・運営者通知。SNS投稿方針はCron時に自動適用可。SNS公開・UI/画像変更は承認必須。
+          </p>
+          <p style={{ margin: "0 0 8px", color: "#667085", fontSize: 12 }}>
+            通知: {notifyEnabled ? "有効" : "無効（MARKETING_ADMIN_NOTIFY_ENABLED）"}
+            {notifyHint ? ` — ${notifyHint}` : ""}
           </p>
           {phase4Msg ? (
             <p style={{ color: phase4Msg.includes("失敗") ? "#b91c1c" : "#166534" }}>
               {phase4Msg}
             </p>
           ) : null}
+
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>
+              改善提案（採用 / 保留 / 却下）
+            </div>
+            {proposals.length === 0 ? (
+              <div style={{ color: "#94a3b8" }}>未処理の提案はありません</div>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {proposals.map((p) => (
+                  <li key={p.id} style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700 }}>
+                      [{p.priority}] {p.area}: {p.title}{" "}
+                      <span style={{ color: "#64748b", fontWeight: 500 }}>
+                        ({p.status})
+                      </span>
+                    </div>
+                    <div style={{ color: "#475569" }}>{p.summary}</div>
+                    {p.validation_kpi ? (
+                      <div style={{ color: "#64748b", fontSize: 12 }}>
+                        KPI: {p.validation_kpi} · {fmt(p.created_at)}
+                      </div>
+                    ) : null}
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        style={{ ...adminBtnGhost, padding: "2px 8px", fontSize: 12 }}
+                        disabled={busy}
+                        onClick={() => void reviewProposal(p.id, "accept")}
+                      >
+                        採用
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...adminBtnGhost, padding: "2px 8px", fontSize: 12 }}
+                        disabled={busy}
+                        onClick={() => void reviewProposal(p.id, "hold")}
+                      >
+                        保留
+                      </button>
+                      <button
+                        type="button"
+                        style={{ ...adminBtnGhost, padding: "2px 8px", fontSize: 12 }}
+                        disabled={busy}
+                        onClick={() => void reviewProposal(p.id, "reject")}
+                      >
+                        却下
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <div
             style={{

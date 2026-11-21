@@ -17,6 +17,11 @@ import {
   createStrategyVersion,
   type StrategyGuidance,
 } from "@/lib/marketing/strategy";
+import {
+  buildProposalDraftsFromAnalysis,
+  upsertProposalDrafts,
+} from "@/lib/marketing/proposals";
+import { notifyWeeklyProposalBatches } from "@/lib/marketing/adminNotify";
 
 export type WeeklyReportResult = {
   ok: boolean;
@@ -25,6 +30,10 @@ export type WeeklyReportResult = {
   reportId?: string;
   strategyId?: string;
   usedFallbackAnalysis?: boolean;
+  proposalsCreated?: number;
+  proposalsSkippedDup?: number;
+  notifyDigestStatus?: string;
+  notifyUrgentStatus?: string | null;
 };
 
 function jstWeekBounds(): { start: Date; end: Date } {
@@ -334,16 +343,57 @@ export async function runWeeklyMarketingAnalysis(params: {
   }
 
   let strategyId: string | undefined;
-  // Create a draft strategy from suggestions; activate only if requested.
+  // SNS投稿方針: cron では自動適用可（公開はしない）。手動は既定 draft。
+  const shouldActivate =
+    params.activateStrategy === true ||
+    (params.trigger === "weekly_cron" && params.activateStrategy !== false);
   const created = await createStrategyVersion({
     label: `週次改善 v from report ${report.id.slice(0, 8)}`,
     guidance: strategy,
     promptAddon: buildPromptAddonFromGuidance(strategy),
     sourceReportId: report.id,
     notes: usedFallbackAnalysis ? "heuristic/fallback analysis" : "ai analysis",
-    activate: params.activateStrategy === true,
+    activate: shouldActivate,
   });
   if (created.ok) strategyId = created.strategy.id;
+
+  let proposalsCreated = 0;
+  let proposalsSkippedDup = 0;
+  let notifyDigestStatus: string | undefined;
+  let notifyUrgentStatus: string | null | undefined;
+
+  try {
+    const drafts = buildProposalDraftsFromAnalysis({
+      uiSuggestions,
+      d7: s7.snapshot,
+    });
+    const upserted = await upsertProposalDrafts({
+      reportId: report.id,
+      drafts,
+    });
+    proposalsCreated = upserted.created.length;
+    proposalsSkippedDup = upserted.skippedDuplicates;
+
+    if (upserted.created.length > 0) {
+      const notified = await notifyWeeklyProposalBatches({
+        proposals: upserted.created,
+        reportId: report.id,
+      });
+      notifyDigestStatus = notified.digest.status;
+      notifyUrgentStatus = notified.urgent?.status ?? null;
+    }
+  } catch (e) {
+    // Proposals/notify must not fail the whole weekly analysis.
+    const message = e instanceof Error ? e.message : "proposals_failed";
+    uncertainty = [...uncertainty, `提案/通知処理スキップ: ${message}`];
+    await supabaseAdmin
+      .from("marketing_reports")
+      .update({
+        uncertainty_notes: uncertainty,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", report.id);
+  }
 
   await supabaseAdmin
     .from("marketing_ai_runs")
@@ -360,6 +410,11 @@ export async function runWeeklyMarketingAnalysis(params: {
         strategyId: strategyId ?? null,
         usedFallbackAnalysis,
         weeklyCronEnabled: isMarketingWeeklyCronEnabled(),
+        strategyActivated: shouldActivate,
+        proposalsCreated,
+        proposalsSkippedDup,
+        notifyDigestStatus: notifyDigestStatus ?? null,
+        notifyUrgentStatus: notifyUrgentStatus ?? null,
       },
     })
     .eq("id", runId);
@@ -369,5 +424,9 @@ export async function runWeeklyMarketingAnalysis(params: {
     reportId: report.id,
     strategyId,
     usedFallbackAnalysis,
+    proposalsCreated,
+    proposalsSkippedDup,
+    notifyDigestStatus,
+    notifyUrgentStatus,
   };
 }
