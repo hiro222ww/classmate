@@ -157,14 +157,17 @@ node scripts/probe-buffer-connection.mjs
 ### 夕方オペダイジェスト（追加）
 
 毎日 **19:00 JST** に「これまでのUTM結果」＋「今夜こう出しましょう（draft候補）」を送る。  
-**自動承認・自動SNS公開はしない。**
+各候補に `/admin/marketing?post=<id>` のレビュー用リンクを付ける。  
+**自動承認・自動SNS公開はしない。** 承認と Buffer 公開は別操作。
 
 | 項目 | 内容 |
 |---|---|
-| Cron | `POST /api/admin/marketing/cron/digest`（`0 10 * * *`） |
+| Cron | `POST /api/admin/marketing/cron/digest`（`0 10 * * *` = 19:00 JST） |
 | ゲート | `MARKETING_OPS_DIGEST_ENABLED=1` |
 | メール | `MARKETING_ADMIN_NOTIFY_ENABLED=1` + Resend + 宛先メール |
 | Discord | `MARKETING_DISCORD_WEBHOOK_URL`（incoming webhook） |
+| スマホ | リンク → 管理ログイン → 対象投稿を承認/却下（公開は別ボタン） |
+| 将来の Discord 内ボタン | `docs/AI_MARKETING_DISCORD_APPROVE.md` |
 | 例ファイル | `docs/env.marketing.notify.example` |
 
 有効化手順（承認後）:

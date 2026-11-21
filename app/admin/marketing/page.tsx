@@ -3,6 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   adminBtn,
@@ -62,6 +63,8 @@ function pct(rate: number | null) {
 }
 
 export default function AdminMarketingPage() {
+  const searchParams = useSearchParams();
+  const focusPostId = String(searchParams.get("post") ?? "").trim();
   const [posts, setPosts] = useState<MarketingPostRow[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [busy, setBusy] = useState(false);
@@ -398,6 +401,26 @@ export default function AdminMarketingPage() {
     () => (filter === "all" ? posts : posts.filter((p) => p.status === filter)),
     [filter, posts]
   );
+
+  const focusedPost = useMemo(
+    () => (focusPostId ? posts.find((p) => p.id === focusPostId) ?? null : null),
+    [focusPostId, posts]
+  );
+
+  // Deep link from Discord/email: keep the target post visible in the list.
+  useEffect(() => {
+    if (!focusedPost) return;
+    if (filter !== "all" && filter !== focusedPost.status) {
+      setFilter("all");
+    }
+  }, [focusedPost, filter]);
+
+  useEffect(() => {
+    if (!focusPostId || busy) return;
+    const el = document.getElementById(`marketing-post-${focusPostId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focusPostId, visiblePosts, busy, focusedPost]);
 
   async function generate() {
     setBusy(true);
@@ -1185,6 +1208,108 @@ export default function AdminMarketingPage() {
           ) : null}
         </section>
 
+        {focusPostId ? (
+          <section
+            style={{
+              ...adminCard,
+              marginBottom: 14,
+              border: "2px solid #0f766e",
+              background: "#f0fdfa",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#115e59" }}>
+              Discord / 通知からのレビュー対象
+            </div>
+            {focusedPost ? (
+              <>
+                <p
+                  style={{
+                    margin: "8px 0 0",
+                    whiteSpace: "pre-wrap",
+                    fontSize: 15,
+                    lineHeight: 1.5,
+                    fontWeight: 700,
+                  }}
+                >
+                  {focusedPost.body_text}
+                </p>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>
+                  {MARKETING_POST_TYPE_LABELS[focusedPost.post_type] ??
+                    focusedPost.post_type}{" "}
+                  · {MARKETING_STATUS_LABELS[focusedPost.status]}
+                  {typeof focusedPost.quality_score === "number"
+                    ? ` · 品質 ${focusedPost.quality_score}`
+                    : ""}
+                </div>
+                <p style={{ margin: "10px 0 0", fontSize: 12, color: "#b45309" }}>
+                  承認しても SNS には自動投稿されません。公開は下の「Bufferへ予約」など別操作です。
+                </p>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  {focusedPost.status === "draft" ||
+                  focusedPost.status === "rejected" ? (
+                    <button
+                      type="button"
+                      style={adminBtn}
+                      disabled={busy}
+                      onClick={() =>
+                        void patchPost(
+                          focusedPost.id,
+                          { status: "approved" },
+                          "承認しました（SNS未公開）"
+                        )
+                      }
+                    >
+                      承認（公開しない）
+                    </button>
+                  ) : null}
+                  {focusedPost.status !== "rejected" &&
+                  focusedPost.status !== "published" ? (
+                    <button
+                      type="button"
+                      style={adminBtnGhost}
+                      disabled={busy}
+                      onClick={() =>
+                        void patchPost(
+                          focusedPost.id,
+                          {
+                            status: "rejected",
+                            rejection_reason: "admin_rejected",
+                          },
+                          "却下しました"
+                        )
+                      }
+                    >
+                      却下
+                    </button>
+                  ) : null}
+                  <a
+                    href={`#marketing-post-${focusedPost.id}`}
+                    style={{
+                      ...adminBtnGhost,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      textDecoration: "none",
+                    }}
+                  >
+                    詳細へスクロール
+                  </a>
+                </div>
+              </>
+            ) : (
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#b91c1c" }}>
+                指定の投稿（{focusPostId.slice(0, 8)}…）が見つかりません。削除済みか、別環境のIDの可能性があります。
+              </p>
+            )}
+          </section>
+        ) : null}
+
         <div
           style={{
             display: "flex",
@@ -1233,7 +1358,20 @@ export default function AdminMarketingPage() {
             </div>
           ) : (
             visiblePosts.map((p) => (
-              <article key={p.id} style={adminCard}>
+              <article
+                key={p.id}
+                id={`marketing-post-${p.id}`}
+                style={{
+                  ...adminCard,
+                  ...(p.id === focusPostId
+                    ? {
+                        border: "2px solid #0f766e",
+                        boxShadow: "0 0 0 3px rgba(15,118,110,0.15)",
+                      }
+                    : null),
+                  scrollMarginTop: 16,
+                }}
+              >
                 <div
                   style={{
                     display: "flex",
@@ -1389,11 +1527,11 @@ export default function AdminMarketingPage() {
                         void patchPost(
                           p.id,
                           { status: "approved" },
-                          "承認しました"
+                          "承認しました（SNS未公開）"
                         )
                       }
                     >
-                      承認
+                      承認（公開しない）
                     </button>
                   ) : null}
 

@@ -115,7 +115,11 @@ export async function proxy(req: NextRequest) {
 
   const url = req.nextUrl.clone();
   url.pathname = "/admin/login";
-  url.searchParams.set("next", pathname);
+  // Preserve query (e.g. /admin/marketing?post=<id>) so mobile login returns
+  // to the focused draft review, not a bare marketing list.
+  const nextTarget = `${pathname}${req.nextUrl.search || ""}`;
+  url.search = "";
+  url.searchParams.set("next", nextTarget);
 
   return NextResponse.redirect(url);
 }

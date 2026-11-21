@@ -138,7 +138,7 @@ SNS運用開始前の詳細チェックリスト・試験投稿手順・通知�
 ### Vercel Cron（許可後）
 リポジトリ直下の `vercel.json` に Cron を定義（実実行は env ゲートが `1` のときのみ）:
 - 日次: JST 09:00 ≈ UTC 00:00 → `0 0 * * *` → `/api/admin/marketing/cron`
-- 夕方ダイジェスト: **19:00 JST** = UTC 10:00 → `0 10 * * *` → `/api/admin/marketing/cron/digest`（`MARKETING_OPS_DIGEST_ENABLED=1`）
+- 夕方ダイジェスト: **19:00 JST** = UTC 10:00 → `0 10 * * *` → `/api/admin/marketing/cron/digest`（`MARKETING_OPS_DIGEST_ENABLED=1`）。候補ごとに `/admin/marketing?post=<id>` リンク。承認≠SNS公開。Discord内ボタン案は `docs/AI_MARKETING_DISCORD_APPROVE.md`
 - 週次: **日曜 20:00 JST** = UTC 11:00 → `0 11 * * 0`（`MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST`）→ `/api/admin/marketing/cron/weekly`
 
 ※ Vercel Cron は UTC。  
