@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   adminBtn,
   adminBtnGhost,
@@ -63,6 +63,22 @@ function pct(rate: number | null) {
 }
 
 export default function AdminMarketingPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={adminPageMain}>
+          <div style={adminPageInner}>
+            <p style={{ color: "#64748b", fontSize: 13 }}>読み込み中…</p>
+          </div>
+        </main>
+      }
+    >
+      <AdminMarketingPageInner />
+    </Suspense>
+  );
+}
+
+function AdminMarketingPageInner() {
   const searchParams = useSearchParams();
   const focusPostId = String(searchParams.get("post") ?? "").trim();
   const [posts, setPosts] = useState<MarketingPostRow[]>([]);
