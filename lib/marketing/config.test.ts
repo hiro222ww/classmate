@@ -7,9 +7,12 @@ import {
   getMarketingWeeklyBudgetUsd,
   getMarketingWeeklyCronScheduleHint,
   getMarketingWeeklyRunLimit,
+  getMarketingOpsDigestScheduleHint,
   isMarketingAdminNotifyEnabled,
   isMarketingCronEnabled,
+  isMarketingOpsDigestEnabled,
   isMarketingWeeklyCronEnabled,
+  MARKETING_OPS_DIGEST_CRON_EXPR_1900_JST,
   MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST,
 } from "@/lib/marketing/config";
 
@@ -22,6 +25,8 @@ const keys = [
   "MARKETING_WEEKLY_RUN_LIMIT",
   "MARKETING_ADMIN_NOTIFY_ENABLED",
   "MARKETING_ADMIN_NOTIFY_EMAIL",
+  "MARKETING_OPS_DIGEST_ENABLED",
+  "MARKETING_DISCORD_WEBHOOK_URL",
   "MARKETING_CRON_SECRET",
   "CRON_SECRET",
 ] as const;
@@ -87,6 +92,14 @@ describe("marketing config", () => {
   it("documents Sunday 20:00 JST weekly cron", () => {
     expect(MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST).toBe("0 11 * * 0");
     expect(getMarketingWeeklyCronScheduleHint()).toContain("Sunday 20:00 JST");
+  });
+
+  it("keeps ops digest disabled unless explicitly 1", () => {
+    expect(isMarketingOpsDigestEnabled()).toBe(false);
+    process.env.MARKETING_OPS_DIGEST_ENABLED = "1";
+    expect(isMarketingOpsDigestEnabled()).toBe(true);
+    expect(MARKETING_OPS_DIGEST_CRON_EXPR_1900_JST).toBe("0 10 * * *");
+    expect(getMarketingOpsDigestScheduleHint()).toContain("19:00 JST");
   });
 
   it("prefers MARKETING_CRON_SECRET then CRON_SECRET", () => {

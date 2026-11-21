@@ -147,26 +147,33 @@ node scripts/probe-buffer-connection.mjs
 
 ## 6. 通知設計の確認
 
-現状実装（`lib/marketing/adminNotify.ts`）:
+### 週次提案（既存）
 
 | 種別 | 条件 | 既定 |
 |---|---|---|
 | `weekly_digest` | 週次で作成された提案一覧 | `MARKETING_ADMIN_NOTIFY_ENABLED≠1` なら送らない |
 | `urgent_proposal` | `priority=high` のみ別メール | 同上 |
-| チャネル | トランザクションメール（Resend等） | Web Push は管理者向け未対応 |
-| 重複 | fingerprint + kind で sent を抑止 | |
-| Cron失敗通知 | **未実装** | 管理画面の run ログを見る |
 
-推奨（開始時）:
-1. 当面は通知OFFのまま（現状）
-2. 有効化するなら:
-   - `MARKETING_ADMIN_NOTIFY_ENABLED=1`
-   - `MARKETING_ADMIN_NOTIFY_EMAIL`（または `ADMIN_NOTIFY_EMAIL`）
-   - `RESEND_API_KEY` / `EMAIL_FROM` が本番で使えること
-3. 運用方針: **high 提案（urgent）を主、digest はノイズなら後で絞る**
-4. 重大障害は当面 `/admin/marketing` の `marketing_ai_runs`（failed）を日次確認
+### 夕方オペダイジェスト（追加）
 
-未実装のため「Cron失敗の即時メール」は今フェーズでは期待しない。
+毎日 **19:00 JST** に「これまでのUTM結果」＋「今夜こう出しましょう（draft候補）」を送る。  
+**自動承認・自動SNS公開はしない。**
+
+| 項目 | 内容 |
+|---|---|
+| Cron | `POST /api/admin/marketing/cron/digest`（`0 10 * * *`） |
+| ゲート | `MARKETING_OPS_DIGEST_ENABLED=1` |
+| メール | `MARKETING_ADMIN_NOTIFY_ENABLED=1` + Resend + 宛先メール |
+| Discord | `MARKETING_DISCORD_WEBHOOK_URL`（incoming webhook） |
+| 例ファイル | `docs/env.marketing.notify.example` |
+
+有効化手順（承認後）:
+1. DBマイグレーション `20261121120000_marketing_ops_digest_notify.sql` を本番適用
+2. Discord webhook を発行して Vercel に登録（および/または Resend メール）
+3. `MARKETING_OPS_DIGEST_ENABLED=1`（メールも使うなら notify ゲートも `1`）
+4. Redeploy → 手動で digest Cron を1回叩いて疎通確認
+
+Cron失敗の即時メールは未実装（管理画面の `marketing_ai_runs` を確認）。
 
 ---
 

@@ -57,7 +57,8 @@ export async function proxy(req: NextRequest) {
   const isSessionApi = pathname === "/api/admin/session";
   const isMarketingCronApi =
     pathname === "/api/admin/marketing/cron" ||
-    pathname === "/api/admin/marketing/cron/weekly";
+    pathname === "/api/admin/marketing/cron/weekly" ||
+    pathname === "/api/admin/marketing/cron/digest";
 
   if (isLoginPage || isLoginApi || isLogoutApi || isSessionApi) {
     return NextResponse.next();

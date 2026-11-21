@@ -128,7 +128,7 @@ APIキーは DB に保存しない。
 3. `/admin/marketing` で「投稿案を生成」→ OpenAI 経路を確認
 
 SNS運用開始前の詳細チェックリスト・試験投稿手順・通知設計:
-→ `docs/AI_MARKETING_SNS_OPS_PREP.md` / `docs/env.marketing.openai.example`
+→ `docs/AI_MARKETING_SNS_OPS_PREP.md` / `docs/env.marketing.openai.example` / `docs/env.marketing.notify.example`
 
 ### マイグレーション
 1. ステージングで `20261116120000_marketing_ai_posts.sql` 適用
@@ -138,6 +138,7 @@ SNS運用開始前の詳細チェックリスト・試験投稿手順・通知�
 ### Vercel Cron（許可後）
 リポジトリ直下の `vercel.json` に Cron を定義（実実行は env ゲートが `1` のときのみ）:
 - 日次: JST 09:00 ≈ UTC 00:00 → `0 0 * * *` → `/api/admin/marketing/cron`
+- 夕方ダイジェスト: **19:00 JST** = UTC 10:00 → `0 10 * * *` → `/api/admin/marketing/cron/digest`（`MARKETING_OPS_DIGEST_ENABLED=1`）
 - 週次: **日曜 20:00 JST** = UTC 11:00 → `0 11 * * 0`（`MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST`）→ `/api/admin/marketing/cron/weekly`
 
 ※ Vercel Cron は UTC。  

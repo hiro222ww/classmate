@@ -78,6 +78,30 @@ export function getMarketingAdminNotifyEmail(): string {
   );
 }
 
+/**
+ * Evening ops digest: results so far + suggested drafts for tonight.
+ * Default OFF — set MARKETING_OPS_DIGEST_ENABLED=1 after channels are configured.
+ */
+export function isMarketingOpsDigestEnabled(): boolean {
+  return String(process.env.MARKETING_OPS_DIGEST_ENABLED ?? "").trim() === "1";
+}
+
+/** Discord incoming webhook URL (server-only). Empty = Discord channel off. */
+export function getMarketingDiscordWebhookUrl(): string {
+  return (
+    process.env.MARKETING_DISCORD_WEBHOOK_URL?.trim() ||
+    process.env.DISCORD_MARKETING_WEBHOOK_URL?.trim() ||
+    ""
+  );
+}
+
+/** 19:00 JST = 10:00 UTC */
+export const MARKETING_OPS_DIGEST_CRON_EXPR_1900_JST = "0 10 * * *";
+
+export function getMarketingOpsDigestScheduleHint(): string {
+  return "Daily 19:00 JST (UTC 10:00; cron `0 10 * * *`) when MARKETING_OPS_DIGEST_ENABLED=1";
+}
+
 /** Public app origin for admin deep links in notifications. */
 export function getMarketingAppOrigin(): string {
   const raw =
