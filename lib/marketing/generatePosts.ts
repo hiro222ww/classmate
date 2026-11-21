@@ -218,7 +218,7 @@ export async function generateMarketingPosts(params: {
         runId,
       };
     }
-    drafts = buildTemplateFallbackPosts(jstDate);
+    drafts = buildTemplateFallbackPosts(jstDate, recentBodies);
     usedFallback = true;
     generationSource = "template_fallback";
     modelName = "template_fallback";
@@ -228,15 +228,23 @@ export async function generateMarketingPosts(params: {
   }
 
   const inserts = [];
+  const bodiesInBatch: string[] = [];
   for (const [idx, draft] of drafts.entries()) {
     let body = truncateForX(draft.body_text);
-    let similarity = maxSimilarityAgainst(body, recentBodies);
-    let attempts = 0;
-    while (similarity >= DEFAULT_SIMILARITY_THRESHOLD && attempts < 3) {
-      body = truncateForX(`${body} （別角度）`);
-      similarity = maxSimilarityAgainst(body, recentBodies);
-      attempts += 1;
+    let similarity = maxSimilarityAgainst(body, [
+      ...recentBodies,
+      ...bodiesInBatch,
+    ]);
+    // Avoid the old "（別角度）" spam: one light date cue is enough for near-dup fallback.
+    if (similarity >= DEFAULT_SIMILARITY_THRESHOLD) {
+      const cue = jstDate.slice(5); // MM-DD
+      body = truncateForX(`${body}（${cue}）`);
+      similarity = maxSimilarityAgainst(body, [
+        ...recentBodies,
+        ...bodiesInBatch,
+      ]);
     }
+    bodiesInBatch.push(body);
 
     const scored = scoreMarketingDraft({ ...draft, body_text: body }, recentBodies);
     const utmContent = `post_${jstDate.replace(/-/g, "")}_${idx + 1}`;

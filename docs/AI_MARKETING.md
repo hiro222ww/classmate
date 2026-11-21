@@ -124,8 +124,11 @@ APIキーは DB に保存しない。
 
 ### OpenAI
 1. OpenAI でキー発行
-2. Vercel / ホストに `OPENAI_API_KEY` を登録（このエージェントでは登録しない）
+2. Vercel / ホストに `OPENAI_API_KEY` または `OPENAI_MARKETING_API_KEY` を登録（このエージェントでは登録しない）
 3. `/admin/marketing` で「投稿案を生成」→ OpenAI 経路を確認
+
+SNS運用開始前の詳細チェックリスト・試験投稿手順・通知設計:
+→ `docs/AI_MARKETING_SNS_OPS_PREP.md` / `docs/env.marketing.openai.example`
 
 ### マイグレーション
 1. ステージングで `20261116120000_marketing_ai_posts.sql` 適用

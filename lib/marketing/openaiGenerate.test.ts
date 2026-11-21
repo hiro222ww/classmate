@@ -13,6 +13,17 @@ describe("buildTemplateFallbackPosts", () => {
       expect(p.body_text.length).toBeLessThanOrEqual(140);
       expect(p.purpose).toBeTruthy();
       expect(p.expected_action).toBeTruthy();
+      expect(p.body_text.includes("（別角度）")).toBe(false);
     }
+  });
+
+  it("prefers a less-similar variant when recent bodies match a template", () => {
+    const recent = [
+      "ひとりの夜、どっち？ A) 誰かと話したいけど相手がいない B) 話したい気持ちがわかない",
+    ];
+    const posts = buildTemplateFallbackPosts("2026-11-21", recent);
+    const question = posts.find((p) => p.post_type === "question");
+    expect(question).toBeTruthy();
+    expect(question!.body_text).not.toContain("話したい気持ちがわかない");
   });
 });
