@@ -12,6 +12,10 @@ export type PublishAdapterResult =
       scheduledOnly?: boolean;
       /** Buffer dueAt (ISO UTC) when scheduled */
       dueAt?: string | null;
+      /** Destination service URL when Buffer returns externalLink (X status etc.) */
+      externalPermalink?: string | null;
+      /** Buffer post status string (scheduled/sent/error/…) */
+      bufferStatus?: string | null;
       raw?: unknown;
     }
   | {
@@ -21,11 +25,15 @@ export type PublishAdapterResult =
       detail?: string;
     };
 
+export type PublishAdapterIntent = "now" | "queue" | "schedule";
+
 export type PublishAdapterInput = {
   postId: string;
   bodyText: string;
   trackingUrl: string | null;
   scheduledAt: string | null;
+  /** Default queue/schedule for legacy path; "now" uses Buffer shareNow. */
+  intent?: PublishAdapterIntent;
 };
 
 export interface MarketingPublishAdapter {

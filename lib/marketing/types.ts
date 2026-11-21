@@ -65,10 +65,25 @@ export type MarketingPostRow = {
   rejected_at: string | null;
   rejection_reason: string | null;
   external_post_id: string | null;
-  external_status?: "scheduled" | "sent" | "error" | null;
+  external_status?:
+    | "scheduled"
+    | "sent"
+    | "error"
+    | "buffer_accepted"
+    | "unknown"
+    | null;
   external_due_at?: string | null;
+  external_permalink?: string | null;
   publish_attempts?: number | null;
+  publish_claimed_at?: string | null;
+  publish_outcome?:
+    | "x_published"
+    | "buffer_accepted"
+    | "failed"
+    | "unknown"
+    | null;
   publish_error: string | null;
+  charter_compliance?: string | null;
   generation_source: "openai" | "template_fallback" | "manual";
   similarity_score: number | null;
   quality_score?: number | null;

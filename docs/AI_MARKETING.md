@@ -298,3 +298,5 @@ DB結合・OpenAI実呼び出し・本番 Cron は未実施（キー/本番DBな
 - マイグレーション `20261117210000_ai_operating_charter.sql`（Phase 1〜4 本番反映とは分離）
 - 投稿生成・週次分析・改善提案が承認済み方針を参照し、矛盾は要確認
 - 管理: `/admin/marketing/charter`
+
+- 承認して今すぐ投稿: Buffer `mode: shareNow`。詳細は `docs/AI_MARKETING_APPROVE_PUBLISH_NOW.md`

@@ -25,6 +25,9 @@ mutation CreateScheduledPost($text: String!, $channelId: ChannelId!, $dueAt: Dat
         text
         dueAt
         status
+        externalLink
+        sharedNow
+        sentAt
       }
     }
     ... on MutationError {
@@ -48,6 +51,36 @@ mutation CreateQueuedPost($text: String!, $channelId: ChannelId!) {
         text
         dueAt
         status
+        externalLink
+        sharedNow
+        sentAt
+      }
+    }
+    ... on MutationError {
+      message
+    }
+  }
+}
+`;
+
+/** Immediate publish to the destination network (X etc.). */
+const CREATE_SHARE_NOW_MUTATION = `
+mutation CreateShareNowPost($text: String!, $channelId: ChannelId!) {
+  createPost(input: {
+    text: $text
+    channelId: $channelId
+    schedulingType: automatic
+    mode: shareNow
+  }) {
+    ... on PostActionSuccess {
+      post {
+        id
+        text
+        dueAt
+        status
+        externalLink
+        sharedNow
+        sentAt
       }
     }
     ... on MutationError {
@@ -62,6 +95,9 @@ type BufferPostPayload = {
   text?: string;
   dueAt?: string;
   status?: string;
+  externalLink?: string | null;
+  sharedNow?: boolean;
+  sentAt?: string | null;
 };
 
 function composeBufferText(input: PublishAdapterInput): string {
@@ -100,13 +136,20 @@ function parseCreatePostResult(
   }
 
   const status = String(post.status ?? "").toLowerCase();
-  const sent = status === "sent" || status === "published";
+  const sent =
+    status === "sent" ||
+    status === "published" ||
+    Boolean(post.sentAt) ||
+    Boolean(post.sharedNow && status !== "error");
+  const permalink = String(post.externalLink ?? "").trim() || null;
 
   return {
     ok: true,
     externalPostId: String(post.id),
     scheduledOnly: !sent,
     dueAt: post.dueAt ? String(post.dueAt) : null,
+    externalPermalink: permalink,
+    bufferStatus: status || null,
     raw: post,
   };
 }
@@ -128,7 +171,11 @@ export const bufferPublishAdapter: MarketingPublishAdapter = {
       };
     }
 
-    if (!isBufferPublishEnabled()) {
+    const intent = input.intent ?? (input.scheduledAt ? "schedule" : "queue");
+
+    // Immediate path is gated separately (DB runtime flag + admin action).
+    // Queue/schedule still require MARKETING_BUFFER_PUBLISH_ENABLED=1.
+    if (intent !== "now" && !isBufferPublishEnabled()) {
       return {
         ok: false,
         error: "buffer_publish_disabled",
@@ -142,6 +189,22 @@ export const bufferPublishAdapter: MarketingPublishAdapter = {
     const text = composeBufferText(input);
     if (!text) {
       return { ok: false, error: "empty_body", retryable: false };
+    }
+
+    if (intent === "now") {
+      const gql = await bufferGraphql({
+        query: CREATE_SHARE_NOW_MUTATION,
+        variables: { text, channelId },
+      });
+      if (!gql.ok) {
+        return {
+          ok: false,
+          error: gql.error,
+          detail: gql.detail,
+          retryable: gql.retryable,
+        };
+      }
+      return parseCreatePostResult(gql.data);
     }
 
     const dueAt = input.scheduledAt

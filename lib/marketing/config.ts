@@ -112,6 +112,27 @@ export function getMarketingAppOrigin(): string {
 }
 
 /**
+ * Deep link to a single marketing draft in the admin UI.
+ * Approve-and-publish-now remains a separate explicit click on that page.
+ */
+export function getMarketingPostReviewUrl(postId: string): string {
+  const id = String(postId ?? "").trim();
+  const origin = getMarketingAppOrigin();
+  if (!id) return `${origin}/admin/marketing`;
+  return `${origin}/admin/marketing?post=${encodeURIComponent(id)}`;
+}
+
+/**
+ * Hard kill switch (env). When set to 1, even admin "approve and post now"
+ * cannot call Buffer. Prefer app_settings toggle for day-to-day control.
+ */
+export function isMarketingBufferPublishForceOff(): boolean {
+  return (
+    String(process.env.MARKETING_BUFFER_PUBLISH_FORCE_OFF ?? "").trim() === "1"
+  );
+}
+
+/**
  * Vercel cron expression for Sunday 20:00 JST (= Sunday 11:00 UTC).
  * Documented for operators; enabling still requires MARKETING_WEEKLY_CRON_ENABLED=1.
  */
