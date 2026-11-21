@@ -9,6 +9,7 @@ import {
   buildDailyGenerateUserPrompt,
 } from "@/lib/marketing/prompts";
 import { preferredTypesForDay } from "@/lib/marketing/quality";
+import { maxSimilarityAgainst } from "@/lib/marketing/similarity";
 import {
   isMarketingPostType,
   type GeneratedPostDraft,
@@ -208,14 +209,44 @@ export async function generatePostsWithOpenAi(params: {
   return first;
 }
 
+type TemplateSeed = Omit<GeneratedPostDraft, "body_text"> & {
+  bodies: string[];
+};
+
+/** Rotate among a few fixed bodies so daily fallback is not identical copy. */
+function pickBodyVariant(
+  bodies: string[],
+  jstDate: string,
+  recentBodies: string[]
+): string {
+  if (bodies.length === 1) return bodies[0];
+  const dayNum = Number(String(jstDate).replace(/\D/g, "")) || 0;
+  const ordered = bodies
+    .map((body, idx) => ({
+      body,
+      // Prefer lower similarity to recent posts; break ties by day rotation.
+      score:
+        maxSimilarityAgainst(body, recentBodies) * 1000 +
+        ((idx + dayNum) % bodies.length),
+    }))
+    .sort((a, b) => a.score - b.score);
+  return ordered[0]?.body ?? bodies[0];
+}
+
 /** Deterministic offline drafts so admin UI / CI work without an API key. */
-export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[] {
+export function buildTemplateFallbackPosts(
+  jstDate: string,
+  recentBodies: string[] = []
+): GeneratedPostDraft[] {
   const preferred = preferredTypesForDay(jstDate);
-  const library: Record<MarketingPostType, GeneratedPostDraft> = {
+  const library: Record<MarketingPostType, TemplateSeed> = {
     empathy: {
       post_type: "empathy",
-      body_text:
+      bodies: [
         "大人になると、新しい友だちを作る機会って意外と減る。誰かと気軽に話したいのに、電話する相手が思いつかない——そんな夜、ありませんか。",
+        "チャットは続くのに、声で話す相手がいない夜。同年代と少人数なら、もう少し気が楽かも。",
+        "「誰かに話したい」より先に、「話せる相手がいない」が来る年齢。それ、ひとりじゃないです。",
+      ],
       purpose: "共感・認知",
       target_audience: "新しいつながりが欲しい18歳以上",
       expected_action: "いいね・共感リプ",
@@ -223,8 +254,11 @@ export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[
     },
     question: {
       post_type: "question",
-      body_text:
+      bodies: [
         "ひとりの夜、どっち？ A) 誰かと話したいけど相手がいない B) 話したい気持ちがわかない",
+        "今の気分はどれ？ A) 声で雑談したい B) まずは短く聞きたいだけ C) まだ迷ってる",
+        "通話ってハードル高く感じる？ A) 高い B) 短時間なら平気 C) 相手次第",
+      ],
       purpose: "交流のきっかけ",
       target_audience: "夜にTLを見る同年代",
       expected_action: "A/Bでリプライ",
@@ -232,7 +266,11 @@ export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[
     },
     intro: {
       post_type: "intro",
-      body_text: `Classmateは、同年代と気軽に通話できる音声コミュニティです。テーマ別の少人数クラスで友だちづくりのきっかけを作れます（${jstDate}）。`,
+      bodies: [
+        `Classmateは、同年代と気軽に通話できる音声コミュニティです。テーマ別の少人数クラスで友だちづくりのきっかけを作れます（${jstDate}）。`,
+        `Classmateは同年代向けの通話コミュニティ。少人数のクラスで、まずは短い声の時間から始められます（${jstDate}）。`,
+        `テキストだけだと続かないつながりを、声で。Classmateは同年代・少人数の通話コミュニティです（${jstDate}）。`,
+      ],
       purpose: "サービス紹介",
       target_audience: "音声コミュニティを探している人",
       expected_action: "プロフィールやリンクを開く",
@@ -240,8 +278,11 @@ export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[
     },
     invite: {
       post_type: "invite",
-      body_text:
+      bodies: [
         "テキストのやり取りは続くのに、声で話す機会は少ない。同年代と少人数なら、一度だけ覗いてみてもいいかも。無理に長く居なくて大丈夫。",
+        "「通話は重い」と思いがちだけど、短くてOKな場なら試しやすい。同年代・少人数のClassmate、気が向いたらどうぞ。",
+        "友だち作りを急がなくていい。まずは一度、声で話す感覚だけ確かめてみる——くらいの入り口もあります。",
+      ],
       purpose: "通話体験の促進",
       target_audience: "雑談したいがきっかけがない人",
       expected_action: "サイトを開く・通話を試す",
@@ -249,8 +290,11 @@ export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[
     },
     story: {
       post_type: "story",
-      body_text:
+      bodies: [
         "声で話す場が少ないのが気になって、同年代向けの通話コミュニティを個人で作っています。Classmate。まだ初期ですが、少しずつ整えています。",
+        "出会い系ではなく、同年代と気軽に話す場が欲しくて Classmate を作っています。少人数・音声中心。初期なのでフィードバック歓迎です。",
+        "「通話コミュニティ」を個人開発で進めています。派手な集客より、安心して話せる空気を優先中。Classmate。",
+      ],
       purpose: "開発背景の共有",
       target_audience: "個人開発や新サービスに関心がある人",
       expected_action: "フォロー",
@@ -258,5 +302,15 @@ export function buildTemplateFallbackPosts(jstDate: string): GeneratedPostDraft[
     },
   };
 
-  return preferred.map((t) => library[t]);
+  return preferred.map((t) => {
+    const seed = library[t];
+    return {
+      post_type: seed.post_type,
+      body_text: pickBodyVariant(seed.bodies, jstDate, recentBodies),
+      purpose: seed.purpose,
+      target_audience: seed.target_audience,
+      expected_action: seed.expected_action,
+      cta: seed.cta,
+    };
+  });
 }
