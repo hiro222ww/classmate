@@ -43,6 +43,8 @@ export type ProposalDraft = {
   image_prompt?: string | null;
   composition_notes?: string | null;
   metrics_context?: Record<string, unknown>;
+  charter_alignment?: string | null;
+  charter_policy_ids?: string[];
 };
 
 export function fingerprintProposal(draft: Pick<ProposalDraft, "area" | "title" | "summary">): string {
@@ -192,14 +194,35 @@ export async function upsertProposalDrafts(params: {
       image_prompt: draft.image_prompt ?? null,
       composition_notes: draft.composition_notes ?? null,
       metrics_context: draft.metrics_context ?? {},
+      charter_alignment: draft.charter_alignment ?? null,
+      charter_policy_ids: draft.charter_policy_ids ?? [],
       updated_at: new Date().toISOString(),
     };
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from("marketing_improvement_proposals")
       .insert(row)
       .select("*")
       .maybeSingle();
+
+    // Charter columns may be missing before migration — retry without them.
+    if (
+      error &&
+      /charter_alignment|charter_policy_ids|column .* does not exist/i.test(error.message)
+    ) {
+      const {
+        charter_alignment: _a,
+        charter_policy_ids: _p,
+        ...legacy
+      } = row;
+      const retry = await supabaseAdmin
+        .from("marketing_improvement_proposals")
+        .insert(legacy)
+        .select("*")
+        .maybeSingle();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       // Unique open-fingerprint conflict → treat as duplicate skip

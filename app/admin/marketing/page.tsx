@@ -569,6 +569,9 @@ export default function AdminMarketingPage() {
             <p style={{ margin: "6px 0 0", color: "#667085", fontSize: 13 }}>
               Phase 4: 週次分析・改善方針フィードバック。SNS自動公開・UI自動変更はしません。
             </p>
+            <p style={{ margin: "6px 0 0", fontSize: 13 }}>
+              <Link href="/admin/marketing/charter">AI運営憲章（理念・方針DB）</Link>
+            </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
