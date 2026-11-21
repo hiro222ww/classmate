@@ -11,7 +11,7 @@ import type {
 } from "@/lib/marketing/adapters/types";
 
 const CREATE_SCHEDULED_MUTATION = `
-mutation CreateScheduledPost($text: String!, $channelId: String!, $dueAt: DateTime!) {
+mutation CreateScheduledPost($text: String!, $channelId: ChannelId!, $dueAt: DateTime!) {
   createPost(input: {
     text: $text
     channelId: $channelId
@@ -35,7 +35,7 @@ mutation CreateScheduledPost($text: String!, $channelId: String!, $dueAt: DateTi
 `;
 
 const CREATE_QUEUE_MUTATION = `
-mutation CreateQueuedPost($text: String!, $channelId: String!) {
+mutation CreateQueuedPost($text: String!, $channelId: ChannelId!) {
   createPost(input: {
     text: $text
     channelId: $channelId
