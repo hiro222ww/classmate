@@ -4,6 +4,7 @@ import {
   getMarketingAdminNotifyEmail,
   getMarketingAppOrigin,
   getMarketingDiscordWebhookUrl,
+  getMarketingPostReviewUrl,
   isMarketingAdminNotifyEnabled,
   isMarketingOpsDigestEnabled,
 } from "@/lib/marketing/config";
@@ -152,17 +153,21 @@ function buildMessage(params: {
     lines.push("- 候補draftがありません。朝の生成または手動生成を確認してください。");
   } else {
     params.candidates.forEach((c, i) => {
+      const reviewUrl = getMarketingPostReviewUrl(c.id);
       lines.push(
         `${i + 1}. [${c.post_type}] ${c.body_text.replace(/\s+/g, " ").slice(0, 120)}`
       );
       lines.push(
-        `   id=${c.id.slice(0, 8)}… quality=${c.quality_score ?? "-"} charter=${c.charter_compliance ?? "-"}`
+        `   quality=${c.quality_score ?? "-"} charter=${c.charter_compliance ?? "-"}`
       );
+      lines.push(`   レビュー（承認/却下）: ${reviewUrl}`);
     });
   }
   lines.push("");
-  lines.push("※ 自動公開はしません。管理画面で1件だけ承認→予約/公開してください。");
-  lines.push(`管理画面: ${params.adminUrl}`);
+  lines.push(
+    "※ リンク先で承認しても SNS には出ません。公開は管理画面の「Bufferへ予約」等の別操作です。"
+  );
+  lines.push(`管理画面一覧: ${params.adminUrl}`);
   const text = lines.join("\n");
   return {
     subject: `【Classmate】今夜の投稿案 ${params.jstDate}`,

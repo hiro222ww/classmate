@@ -39,5 +39,7 @@ describe("sendMarketingOpsDigest", () => {
     expect(src).toMatch(
       /fingerprints = \[fingerprint, `\$\{fingerprint\}-discord`\]/
     );
+    expect(src).toMatch(/getMarketingPostReviewUrl/);
+    expect(src).toMatch(/承認しても SNS/);
   });
 });
