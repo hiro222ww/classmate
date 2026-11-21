@@ -133,7 +133,9 @@ APIキーは DB に保存しない。
 3. 本番適用は別途承認
 
 ### Vercel Cron（許可後）
-`vercel.json` 例（**まだリポジトリに有効設定は入れていない**）:
+`vercel.json` 例（**まだリポジトリに有効設定は入れていない**）。時刻はコード定数を正とする:
+- 日次: JST 09:00 ≈ UTC 00:00 → `0 0 * * *`
+- 週次: **日曜 20:00 JST** = UTC 11:00 → `0 11 * * 0`（`MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST`）
 
 ```json
 {
@@ -144,13 +146,13 @@ APIキーは DB に保存しない。
     },
     {
       "path": "/api/admin/marketing/cron/weekly",
-      "schedule": "0 1 * * 1"
+      "schedule": "0 11 * * 0"
     }
   ]
 }
 ```
 
-※ Vercel Cron は UTC。日次 JST 09:00 ≈ UTC 00:00。週次月曜 01:00 UTC ≈ JST 10:00。  
+※ Vercel Cron は UTC。日次 JST 09:00 ≈ UTC 00:00。週次 **日曜 20:00 JST** = UTC 11:00（`0 11 * * 0`）。  
 加えて `MARKETING_CRON_ENABLED=1` / `MARKETING_WEEKLY_CRON_ENABLED=1`（それぞれ明示）と `MARKETING_CRON_SECRET`、Authorization: Bearer を設定。  
 **リポジトリには有効な vercel.json cron を入れていない（既定OFF）。**  
 Vercel Cron が Authorization を付けられない場合は、Vercel の保護ヘッダ + アプリ側で `CRON_SECRET` パターンに合わせて改修する。
