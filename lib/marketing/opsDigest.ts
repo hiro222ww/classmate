@@ -77,10 +77,13 @@ function fingerprintFor(params: {
 }
 
 async function alreadySent(fingerprint: string): Promise<boolean> {
+  // Email logs use the base fingerprint; Discord uses `${fingerprint}-discord`.
+  // Dedup must treat either channel's successful send as already delivered.
+  const fingerprints = [fingerprint, `${fingerprint}-discord`];
   const { data } = await supabaseAdmin
     .from("marketing_admin_notification_log")
     .select("id")
-    .eq("fingerprint", fingerprint)
+    .in("fingerprint", fingerprints)
     .eq("kind", "ops_digest")
     .eq("status", "sent")
     .limit(1);
