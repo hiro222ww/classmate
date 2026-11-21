@@ -29,6 +29,8 @@ const keys = [
   "MARKETING_DISCORD_WEBHOOK_URL",
   "MARKETING_CRON_SECRET",
   "CRON_SECRET",
+  "NEXT_PUBLIC_APP_ORIGIN",
+  "NEXT_PUBLIC_APP_URL",
 ] as const;
 
 beforeEach(() => {
@@ -108,5 +110,13 @@ describe("marketing config", () => {
     expect(getMarketingCronSecret()).toBe("vercel-cron");
     process.env.MARKETING_CRON_SECRET = "marketing-cron";
     expect(getMarketingCronSecret()).toBe("marketing-cron");
+  });
+
+  it("builds per-post admin review deep links", async () => {
+    process.env.NEXT_PUBLIC_APP_ORIGIN = "https://example.test/";
+    const { getMarketingPostReviewUrl } = await import("@/lib/marketing/config");
+    expect(getMarketingPostReviewUrl("abc-123")).toBe(
+      "https://example.test/admin/marketing?post=abc-123"
+    );
   });
 });

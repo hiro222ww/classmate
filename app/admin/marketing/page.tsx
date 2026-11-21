@@ -3,7 +3,8 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   adminBtn,
   adminBtnGhost,
@@ -62,6 +63,24 @@ function pct(rate: number | null) {
 }
 
 export default function AdminMarketingPage() {
+  return (
+    <Suspense
+      fallback={
+        <main style={adminPageMain}>
+          <div style={adminPageInner}>
+            <p style={{ color: "#64748b", fontSize: 13 }}>読み込み中…</p>
+          </div>
+        </main>
+      }
+    >
+      <AdminMarketingPageInner />
+    </Suspense>
+  );
+}
+
+function AdminMarketingPageInner() {
+  const searchParams = useSearchParams();
+  const focusPostId = String(searchParams.get("post") ?? "").trim();
   const [posts, setPosts] = useState<MarketingPostRow[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [busy, setBusy] = useState(false);
@@ -121,6 +140,11 @@ export default function AdminMarketingPage() {
   const [editBody, setEditBody] = useState("");
   const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [scheduleLocal, setScheduleLocal] = useState("");
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [immediateEnabled, setImmediateEnabled] = useState<boolean | null>(
+    null
+  );
+  const [immediateForceOff, setImmediateForceOff] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -168,6 +192,15 @@ export default function AdminMarketingPage() {
       if (json.activeAdapter === "buffer" || json.activeAdapter === "manual") {
         setActiveAdapter(json.activeAdapter);
       }
+    }
+    const gateRes = await fetch("/api/admin/marketing/immediate-publish", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const gateJson = await gateRes.json().catch(() => null);
+    if (gateRes.ok && gateJson?.ok) {
+      setImmediateEnabled(Boolean(gateJson.enabled));
+      setImmediateForceOff(Boolean(gateJson.forceOff));
     }
   }, []);
 
@@ -399,6 +432,26 @@ export default function AdminMarketingPage() {
     [filter, posts]
   );
 
+  const focusedPost = useMemo(
+    () => (focusPostId ? posts.find((p) => p.id === focusPostId) ?? null : null),
+    [focusPostId, posts]
+  );
+
+  // Deep link from Discord/email: keep the target post visible in the list.
+  useEffect(() => {
+    if (!focusedPost) return;
+    if (filter !== "all" && filter !== focusedPost.status) {
+      setFilter("all");
+    }
+  }, [focusedPost, filter]);
+
+  useEffect(() => {
+    if (!focusPostId || busy) return;
+    const el = document.getElementById(`marketing-post-${focusPostId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focusPostId, visiblePosts, busy, focusedPost]);
+
   async function generate() {
     setBusy(true);
     setMsg("");
@@ -516,6 +569,85 @@ export default function AdminMarketingPage() {
     }
   }
 
+  async function approveAndPublishNow(id: string) {
+    if (publishingId) return;
+    const target = posts.find((p) => p.id === id);
+    const preview = String(target?.body_text ?? "").slice(0, 160);
+    const okConfirm = window.confirm(
+      `この投稿を X (@classmate0401) へ今すぐ公開しますか？\n\n` +
+        `${preview}${preview.length >= 160 ? "…" : ""}\n\n` +
+        `送信先: Buffer → X (@classmate0401)\n` +
+        `URL: ${target?.tracking_url || "（UTMなし）"}\n\n` +
+        `二重送信防止あり。結果不明のときは自動再送しません。`
+    );
+    if (!okConfirm) return;
+
+    setPublishingId(id);
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/marketing/publish-now", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setMsg(
+          String(
+            json?.detail ||
+              json?.error ||
+              "今すぐ投稿に失敗しました"
+          ) +
+            (json?.outcome === "unknown"
+              ? "（結果不明・自動再送なし。Buffer/Xを確認）"
+              : "")
+        );
+        await load();
+        return;
+      }
+      const outcome = String(json.outcome || "");
+      setMsg(
+        outcome === "x_published"
+          ? `Xへ公開しました${json.externalPermalink ? ` — ${json.externalPermalink}` : ""}`
+          : outcome === "buffer_accepted"
+            ? "Bufferは受付済み（X反映確認中）"
+            : "公開処理を受け付けました"
+      );
+      await load();
+    } finally {
+      setPublishingId(null);
+      setBusy(false);
+    }
+  }
+
+  async function toggleImmediatePublish(next: boolean) {
+    setBusy(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/marketing/immediate-publish", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setMsg(String(json?.detail || json?.error || "ゲート更新に失敗"));
+        return;
+      }
+      setImmediateEnabled(Boolean(json.enabled));
+      setMsg(
+        json.enabled
+          ? "即時投稿ゲートをONにしました（再デプロイ不要）"
+          : "即時投稿ゲートをOFFにしました"
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removePost(id: string) {
     if (!window.confirm("この投稿案を削除しますか？")) return;
     setBusy(true);
@@ -620,10 +752,20 @@ export default function AdminMarketingPage() {
               {activeAdapter ? ` / adapter=${activeAdapter}` : ""}
             </div>
             <div>
-              送信ゲート:{" "}
+              予約送信ゲート(env):{" "}
               {buffer?.publishEnabled
-                ? "有効（投稿可能）"
+                ? "有効（Bufferへ予約）"
                 : "無効（MARKETING_BUFFER_PUBLISH_ENABLED≠1）"}
+            </div>
+            <div>
+              即時投稿ゲート(DB・再デプロイ不要):{" "}
+              {immediateForceOff
+                ? "FORCE_OFF"
+                : immediateEnabled == null
+                  ? "確認中…"
+                  : immediateEnabled
+                    ? "ON（承認して今すぐ投稿が使える）"
+                    : "OFF"}
             </div>
             <div>
               Cron（日次生成）:{" "}
@@ -647,6 +789,17 @@ export default function AdminMarketingPage() {
               onClick={() => void probeBuffer()}
             >
               Buffer接続確認（チャンネル一覧・投稿なし）
+            </button>
+            <button
+              type="button"
+              style={adminBtnGhost}
+              disabled={busy || immediateForceOff || immediateEnabled == null}
+              onClick={() =>
+                void toggleImmediatePublish(!(immediateEnabled === true))
+              }
+            >
+              即時投稿ゲートを
+              {immediateEnabled ? "OFF" : "ON"}
             </button>
           </div>
           {bufferProbeMsg ? (
@@ -1185,6 +1338,142 @@ export default function AdminMarketingPage() {
           ) : null}
         </section>
 
+        {focusPostId ? (
+          <section
+            style={{
+              ...adminCard,
+              marginBottom: 14,
+              border: "2px solid #0f766e",
+              background: "#f0fdfa",
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#115e59" }}>
+              Discord / 通知からのレビュー対象
+            </div>
+            {focusedPost ? (
+              <>
+                <p
+                  style={{
+                    margin: "8px 0 0",
+                    whiteSpace: "pre-wrap",
+                    fontSize: 15,
+                    lineHeight: 1.5,
+                    fontWeight: 700,
+                  }}
+                >
+                  {focusedPost.body_text}
+                </p>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>
+                  {MARKETING_POST_TYPE_LABELS[focusedPost.post_type] ??
+                    focusedPost.post_type}{" "}
+                  · {MARKETING_STATUS_LABELS[focusedPost.status]}
+                  {typeof focusedPost.quality_score === "number"
+                    ? ` · 品質 ${focusedPost.quality_score}`
+                    : ""}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>
+                  送信先: Buffer → X (@classmate0401)
+                  <br />
+                  URL: {focusedPost.tracking_url || "（UTMなし）"}
+                  {focusedPost.external_permalink ? (
+                    <>
+                      <br />
+                      X投稿:{" "}
+                      <a
+                        href={focusedPost.external_permalink}
+                        style={{ color: "#0369a1" }}
+                      >
+                        {focusedPost.external_permalink}
+                      </a>
+                    </>
+                  ) : null}
+                </div>
+                <p style={{ margin: "10px 0 0", fontSize: 12, color: "#b45309" }}>
+                  「承認して今すぐ投稿」だけが公開トリガーです。AI/Cronは自動投稿しません。
+                </p>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  {!focusedPost.external_post_id &&
+                  focusedPost.status !== "published" ? (
+                    <button
+                      type="button"
+                      style={adminBtn}
+                      disabled={
+                        busy ||
+                        publishingId === focusedPost.id ||
+                        immediateEnabled === false
+                      }
+                      onClick={() => void approveAndPublishNow(focusedPost.id)}
+                    >
+                      {publishingId === focusedPost.id
+                        ? "投稿中…"
+                        : "承認して今すぐ投稿"}
+                    </button>
+                  ) : null}
+                  {focusedPost.status === "draft" ||
+                  focusedPost.status === "rejected" ? (
+                    <button
+                      type="button"
+                      style={adminBtnGhost}
+                      disabled={busy}
+                      onClick={() =>
+                        void patchPost(
+                          focusedPost.id,
+                          { status: "approved" },
+                          "承認しました（SNS未公開）"
+                        )
+                      }
+                    >
+                      承認のみ
+                    </button>
+                  ) : null}
+                  {focusedPost.status !== "rejected" &&
+                  focusedPost.status !== "published" ? (
+                    <button
+                      type="button"
+                      style={adminBtnGhost}
+                      disabled={busy}
+                      onClick={() =>
+                        void patchPost(
+                          focusedPost.id,
+                          {
+                            status: "rejected",
+                            rejection_reason: "admin_rejected",
+                          },
+                          "却下しました"
+                        )
+                      }
+                    >
+                      却下
+                    </button>
+                  ) : null}
+                  <a
+                    href={`#marketing-post-${focusedPost.id}`}
+                    style={{
+                      ...adminBtnGhost,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      textDecoration: "none",
+                    }}
+                  >
+                    詳細へスクロール
+                  </a>
+                </div>
+              </>
+            ) : (
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "#b91c1c" }}>
+                指定の投稿（{focusPostId.slice(0, 8)}…）が見つかりません。削除済みか、別環境のIDの可能性があります。
+              </p>
+            )}
+          </section>
+        ) : null}
+
         <div
           style={{
             display: "flex",
@@ -1233,7 +1522,20 @@ export default function AdminMarketingPage() {
             </div>
           ) : (
             visiblePosts.map((p) => (
-              <article key={p.id} style={adminCard}>
+              <article
+                key={p.id}
+                id={`marketing-post-${p.id}`}
+                style={{
+                  ...adminCard,
+                  ...(p.id === focusPostId
+                    ? {
+                        border: "2px solid #0f766e",
+                        boxShadow: "0 0 0 3px rgba(15,118,110,0.15)",
+                      }
+                    : null),
+                  scrollMarginTop: 16,
+                }}
+              >
                 <div
                   style={{
                     display: "flex",
@@ -1311,6 +1613,20 @@ export default function AdminMarketingPage() {
                       "—"
                     )}
                   </div>
+                  {p.external_permalink ? (
+                    <div>
+                      X投稿:{" "}
+                      <a
+                        href={p.external_permalink}
+                        style={{ color: "#0369a1" }}
+                      >
+                        {p.external_permalink}
+                      </a>
+                    </div>
+                  ) : null}
+                  {p.publish_outcome ? (
+                    <div>公開結果: {p.publish_outcome}</div>
+                  ) : null}
                   {p.publish_error ? (
                     <div style={{ color: "#b91c1c" }}>
                       エラー: {p.publish_error}
@@ -1380,20 +1696,41 @@ export default function AdminMarketingPage() {
                     </button>
                   )}
 
-                  {p.status === "draft" || p.status === "rejected" ? (
+                  {!p.external_post_id &&
+                  p.status !== "published" &&
+                  (p.status === "draft" ||
+                    p.status === "approved" ||
+                    p.status === "scheduled" ||
+                    p.status === "failed" ||
+                    p.status === "rejected") ? (
                     <button
                       type="button"
                       style={adminBtn}
+                      disabled={
+                        busy || publishingId === p.id || immediateEnabled === false
+                      }
+                      onClick={() => void approveAndPublishNow(p.id)}
+                    >
+                      {publishingId === p.id
+                        ? "投稿中…"
+                        : "承認して今すぐ投稿"}
+                    </button>
+                  ) : null}
+
+                  {p.status === "draft" || p.status === "rejected" ? (
+                    <button
+                      type="button"
+                      style={adminBtnGhost}
                       disabled={busy}
                       onClick={() =>
                         void patchPost(
                           p.id,
                           { status: "approved" },
-                          "承認しました"
+                          "承認しました（SNS未公開）"
                         )
                       }
                     >
-                      承認
+                      承認のみ
                     </button>
                   ) : null}
 
