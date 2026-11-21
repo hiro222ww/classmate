@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   estimateOpenAiCostUsd,
+  getMarketingCronSecret,
   getMarketingDailyBudgetUsd,
   getMarketingDailyRunLimit,
   getMarketingWeeklyBudgetUsd,
@@ -21,6 +22,8 @@ const keys = [
   "MARKETING_WEEKLY_RUN_LIMIT",
   "MARKETING_ADMIN_NOTIFY_ENABLED",
   "MARKETING_ADMIN_NOTIFY_EMAIL",
+  "MARKETING_CRON_SECRET",
+  "CRON_SECRET",
 ] as const;
 
 beforeEach(() => {
@@ -84,5 +87,13 @@ describe("marketing config", () => {
   it("documents Sunday 20:00 JST weekly cron", () => {
     expect(MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST).toBe("0 11 * * 0");
     expect(getMarketingWeeklyCronScheduleHint()).toContain("Sunday 20:00 JST");
+  });
+
+  it("prefers MARKETING_CRON_SECRET then CRON_SECRET", () => {
+    expect(getMarketingCronSecret()).toBe("");
+    process.env.CRON_SECRET = "vercel-cron";
+    expect(getMarketingCronSecret()).toBe("vercel-cron");
+    process.env.MARKETING_CRON_SECRET = "marketing-cron";
+    expect(getMarketingCronSecret()).toBe("marketing-cron");
   });
 });

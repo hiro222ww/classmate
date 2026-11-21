@@ -5,8 +5,8 @@
 ## 1. 週次Cronの意図（コード基準）
 
 - 正: `MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST = "0 11 * * 0"`（**日曜 20:00 JST** = UTC 11:00）
-- `docs/AI_MARKETING.md` の vercel.json 例をコードに合わせて修正済み（本ブランチ）
-- リポジトリに有効な `vercel.json` cron は**未追加**（意図的にOFF）
+- `docs/AI_MARKETING.md` の vercel.json 例をコードに合わせて修正済み
+- `vercel.json` に日次/週次 Cron 定義を追加済み。実実行は `MARKETING_CRON_ENABLED` / `MARKETING_WEEKLY_CRON_ENABLED` が `1` のときのみ
 
 ## 2. 本番DB検証（読み取りのみ）
 
