@@ -141,6 +141,11 @@ function AdminMarketingPageInner() {
   const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [scheduleLocal, setScheduleLocal] = useState("");
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [confirmPublishId, setConfirmPublishId] = useState<string | null>(null);
+  const [publishBanner, setPublishBanner] = useState<{
+    tone: "info" | "ok" | "err";
+    text: string;
+  } | null>(null);
   const [immediateEnabled, setImmediateEnabled] = useState<boolean | null>(
     null
   );
@@ -569,22 +574,73 @@ function AdminMarketingPageInner() {
     }
   }
 
-  async function approveAndPublishNow(id: string) {
-    if (publishingId) return;
+  function requestApproveAndPublishNow(id: string) {
+    if (publishingId) {
+      setPublishBanner({
+        tone: "info",
+        text: "別の投稿を送信中です。完了までお待ちください。",
+      });
+      return;
+    }
     const target = posts.find((p) => p.id === id);
-    const preview = String(target?.body_text ?? "").slice(0, 160);
-    const okConfirm = window.confirm(
-      `この投稿を X (@classmate0401) へ今すぐ公開しますか？\n\n` +
-        `${preview}${preview.length >= 160 ? "…" : ""}\n\n` +
-        `送信先: Buffer → X (@classmate0401)\n` +
-        `URL: ${target?.tracking_url || "（UTMなし）"}\n\n` +
-        `二重送信防止あり。結果不明のときは自動再送しません。`
-    );
-    if (!okConfirm) return;
+    if (!target) {
+      setPublishBanner({ tone: "err", text: "対象投稿が見つかりません。" });
+      return;
+    }
+    if (target.external_post_id || target.status === "published") {
+      setPublishBanner({
+        tone: "err",
+        text: "この投稿は既に公開/送信済みです。再送しません。",
+      });
+      return;
+    }
+    if (target.publish_outcome === "unknown") {
+      setPublishBanner({
+        tone: "err",
+        text: "前回が結果不明です。自動再送しません。Buffer/Xを確認してください。",
+      });
+      return;
+    }
+    if (immediateForceOff) {
+      setPublishBanner({
+        tone: "err",
+        text: "緊急停止（FORCE_OFF）中のため送信できません。",
+      });
+      return;
+    }
+    if (immediateEnabled !== true) {
+      setPublishBanner({
+        tone: "err",
+        text: "即時投稿ゲートがOFFです。ページ上部の「即時投稿ゲートをON」を押してから再実行してください。",
+      });
+      setMsg(
+        "即時投稿ゲートOFFのため送信できません。上部のゲート切替でONにしてください。"
+      );
+      return;
+    }
+    setConfirmPublishId(id);
+    setPublishBanner({
+      tone: "info",
+      text: "公開内容を確認し、「本当に今すぐ投稿する」を押してください。",
+    });
+  }
 
+  async function executeApproveAndPublishNow(id: string) {
+    if (publishingId) return;
+    if (immediateEnabled !== true) {
+      setPublishBanner({
+        tone: "err",
+        text: "即時投稿ゲートがOFFのため送信を中止しました。",
+      });
+      setConfirmPublishId(null);
+      return;
+    }
+
+    setConfirmPublishId(null);
     setPublishingId(id);
     setBusy(true);
     setMsg("");
+    setPublishBanner({ tone: "info", text: "送信中… Buffer shareNow を呼び出し中" });
     try {
       const res = await fetch("/api/admin/marketing/publish-now", {
         method: "POST",
@@ -594,28 +650,44 @@ function AdminMarketingPageInner() {
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
-        setMsg(
-          String(
-            json?.detail ||
-              json?.error ||
-              "今すぐ投稿に失敗しました"
-          ) +
-            (json?.outcome === "unknown"
-              ? "（結果不明・自動再送なし。Buffer/Xを確認）"
-              : "")
-        );
+        const code = String(json?.error || "");
+        const mapped =
+          code === "immediate_publish_disabled"
+            ? "即時投稿ゲートがOFFのため送信できません。"
+            : code === "already_sent" || code === "in_flight_or_sent"
+              ? "既に送信済みまたは送信中です。再送しません。"
+              : code === "result_unknown_no_auto_retry" ||
+                  code === "result_unknown"
+                ? "結果不明のため自動再送しません。Buffer/Xを確認してください。"
+                : code === "unauthorized" || res.status === 401
+                  ? "未ログインまたは認証切れです。再ログインしてください。"
+                  : null;
+        const errText =
+          (mapped ||
+            String(json?.detail || json?.error || "今すぐ投稿に失敗しました")) +
+          (json?.outcome === "unknown" && !mapped
+            ? "（結果不明・自動再送なし。Buffer/Xを確認）"
+            : "");
+        setMsg(errText);
+        setPublishBanner({ tone: "err", text: errText });
         await load();
         return;
       }
       const outcome = String(json.outcome || "");
-      setMsg(
+      const okText =
         outcome === "x_published"
-          ? `Xへ公開しました${json.externalPermalink ? ` — ${json.externalPermalink}` : ""}`
+          ? `成功: Xへ公開${json.externalPermalink ? ` — ${json.externalPermalink}` : ""}`
           : outcome === "buffer_accepted"
-            ? "Bufferは受付済み（X反映確認中）"
-            : "公開処理を受け付けました"
-      );
+            ? "成功: Buffer受付済み（X反映確認中）"
+            : "成功: 公開処理を受け付けました";
+      setMsg(okText);
+      setPublishBanner({ tone: "ok", text: okText });
       await load();
+    } catch (e: unknown) {
+      const errText =
+        e instanceof Error ? e.message : "通信エラー（結果不明の可能性・自動再送なし）";
+      setMsg(errText);
+      setPublishBanner({ tone: "err", text: errText });
     } finally {
       setPublishingId(null);
       setBusy(false);
@@ -877,8 +949,21 @@ function AdminMarketingPageInner() {
             </div>
           ) : null}
           {msg ? (
-            <p style={{ margin: "10px 0 0", color: "#0f766e", fontSize: 13 }}>
+            <p
+              style={{
+                margin: "10px 0 0",
+                color: msg.includes("失敗") || msg.includes("できません") || msg.includes("エラー")
+                  ? "#b91c1c"
+                  : "#0f766e",
+                fontSize: 13,
+              }}
+            >
               {msg}
+            </p>
+          ) : null}
+          {immediateEnabled === false && !immediateForceOff ? (
+            <p style={{ margin: "8px 0 0", color: "#b45309", fontSize: 13 }}>
+              即時投稿ゲートがOFFのため、「承認して今すぐ投稿」は送信しません。押すと理由を表示します。
             </p>
           ) : null}
         </section>
@@ -1403,18 +1488,74 @@ function AdminMarketingPageInner() {
                   focusedPost.status !== "published" ? (
                     <button
                       type="button"
-                      style={adminBtn}
-                      disabled={
-                        busy ||
-                        publishingId === focusedPost.id ||
-                        immediateEnabled === false
+                      style={{
+                        ...adminBtn,
+                        opacity:
+                          immediateEnabled !== true || publishingId
+                            ? 0.85
+                            : 1,
+                      }}
+                      disabled={publishingId === focusedPost.id}
+                      onClick={() =>
+                        requestApproveAndPublishNow(focusedPost.id)
                       }
-                      onClick={() => void approveAndPublishNow(focusedPost.id)}
                     >
                       {publishingId === focusedPost.id
                         ? "投稿中…"
-                        : "承認して今すぐ投稿"}
+                        : immediateEnabled === false
+                          ? "承認して今すぐ投稿（ゲートOFF）"
+                          : "承認して今すぐ投稿"}
                     </button>
+                  ) : null}
+                  {confirmPublishId === focusedPost.id ? (
+                    <div
+                      style={{
+                        width: "100%",
+                        marginTop: 8,
+                        padding: 12,
+                        borderRadius: 8,
+                        border: "1px solid #f59e0b",
+                        background: "#fffbeb",
+                        fontSize: 13,
+                      }}
+                    >
+                      <p style={{ margin: "0 0 8px", fontWeight: 700 }}>
+                        本当に今すぐ X (@classmate0401) へ投稿しますか？
+                      </p>
+                      <p
+                        style={{
+                          margin: "0 0 10px",
+                          whiteSpace: "pre-wrap",
+                          color: "#334155",
+                        }}
+                      >
+                        {String(focusedPost.body_text).slice(0, 200)}
+                        {focusedPost.body_text.length > 200 ? "…" : ""}
+                      </p>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={adminBtn}
+                          disabled={!!publishingId}
+                          onClick={() =>
+                            void executeApproveAndPublishNow(focusedPost.id)
+                          }
+                        >
+                          本当に今すぐ投稿する
+                        </button>
+                        <button
+                          type="button"
+                          style={adminBtnGhost}
+                          disabled={!!publishingId}
+                          onClick={() => {
+                            setConfirmPublishId(null);
+                            setPublishBanner(null);
+                          }}
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    </div>
                   ) : null}
                   {focusedPost.status === "draft" ||
                   focusedPost.status === "rejected" ? (
@@ -1705,16 +1846,58 @@ function AdminMarketingPageInner() {
                     p.status === "rejected") ? (
                     <button
                       type="button"
-                      style={adminBtn}
-                      disabled={
-                        busy || publishingId === p.id || immediateEnabled === false
-                      }
-                      onClick={() => void approveAndPublishNow(p.id)}
+                      style={{
+                        ...adminBtn,
+                        opacity:
+                          immediateEnabled !== true || publishingId ? 0.85 : 1,
+                      }}
+                      disabled={publishingId === p.id}
+                      onClick={() => requestApproveAndPublishNow(p.id)}
                     >
                       {publishingId === p.id
                         ? "投稿中…"
-                        : "承認して今すぐ投稿"}
+                        : immediateEnabled === false
+                          ? "承認して今すぐ投稿（ゲートOFF）"
+                          : "承認して今すぐ投稿"}
                     </button>
+                  ) : null}
+                  {confirmPublishId === p.id ? (
+                    <div
+                      style={{
+                        width: "100%",
+                        marginTop: 8,
+                        padding: 12,
+                        borderRadius: 8,
+                        border: "1px solid #f59e0b",
+                        background: "#fffbeb",
+                        fontSize: 13,
+                      }}
+                    >
+                      <p style={{ margin: "0 0 8px", fontWeight: 700 }}>
+                        本当に今すぐ投稿しますか？（二重送信防止あり）
+                      </p>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={adminBtn}
+                          disabled={!!publishingId}
+                          onClick={() => void executeApproveAndPublishNow(p.id)}
+                        >
+                          本当に今すぐ投稿する
+                        </button>
+                        <button
+                          type="button"
+                          style={adminBtnGhost}
+                          disabled={!!publishingId}
+                          onClick={() => {
+                            setConfirmPublishId(null);
+                            setPublishBanner(null);
+                          }}
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    </div>
                   ) : null}
 
                   {p.status === "draft" || p.status === "rejected" ? (
@@ -1843,6 +2026,73 @@ function AdminMarketingPageInner() {
           )}
         </div>
       </div>
+
+      {publishBanner ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            left: 12,
+            right: 12,
+            bottom: 12,
+            zIndex: 50,
+            maxWidth: 560,
+            margin: "0 auto",
+            padding: "12px 14px",
+            borderRadius: 10,
+            border:
+              publishBanner.tone === "err"
+                ? "1px solid #fecaca"
+                : publishBanner.tone === "ok"
+                  ? "1px solid #a7f3d0"
+                  : "1px solid #fde68a",
+            background:
+              publishBanner.tone === "err"
+                ? "#fef2f2"
+                : publishBanner.tone === "ok"
+                  ? "#ecfdf5"
+                  : "#fffbeb",
+            color:
+              publishBanner.tone === "err"
+                ? "#991b1b"
+                : publishBanner.tone === "ok"
+                  ? "#065f46"
+                  : "#92400e",
+            boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
+            fontSize: 14,
+            fontWeight: 600,
+            lineHeight: 1.5,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 10,
+              alignItems: "flex-start",
+            }}
+          >
+            <span style={{ flex: 1 }}>{publishBanner.text}</span>
+            <button
+              type="button"
+              aria-label="閉じる"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "inherit",
+                cursor: "pointer",
+                fontSize: 16,
+                lineHeight: 1,
+                padding: 0,
+              }}
+              onClick={() => setPublishBanner(null)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
