@@ -3,7 +3,7 @@ import {
   isRetryableSupabaseFailure,
   toUserFacingProfileSaveError,
   withSupabaseRetry,
-  PROFILE_SAVE_NETWORK_USER_MESSAGE,
+  PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE,
 } from "@/lib/supabaseRetry";
 
 describe("supabaseRetry", () => {
@@ -17,15 +17,18 @@ describe("supabaseRetry", () => {
     expect(isRetryableSupabaseFailure("TypeError: fetch failed")).toBe(true);
   });
 
-  it("maps low-level fetch errors to a user-facing message", () => {
+  it("maps low-level fetch errors to a server-unavailable message", () => {
     expect(toUserFacingProfileSaveError("TypeError: fetch failed")).toBe(
-      PROFILE_SAVE_NETWORK_USER_MESSAGE
+      PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE
     );
     expect(
-      toUserFacingProfileSaveError({
-        message: "fetch failed",
-      })
-    ).toBe(PROFILE_SAVE_NETWORK_USER_MESSAGE);
+      toUserFacingProfileSaveError(
+        {
+          message: "fetch failed",
+        },
+        { source: "server" }
+      )
+    ).toBe(PROFILE_SAVE_SERVER_UNAVAILABLE_MESSAGE);
   });
 
   it("keeps intentional validation-style messages", () => {

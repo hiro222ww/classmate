@@ -55,7 +55,7 @@ function profileSaveFailureResponse(errorCode: string, error: unknown) {
     {
       ok: false,
       error: errorCode,
-      message: toUserFacingProfileSaveError(error),
+      message: toUserFacingProfileSaveError(error, { source: "server" }),
     },
     {
       status: 503,
