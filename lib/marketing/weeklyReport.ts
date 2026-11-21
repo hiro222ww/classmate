@@ -22,6 +22,10 @@ import {
   upsertProposalDrafts,
 } from "@/lib/marketing/proposals";
 import { notifyWeeklyProposalBatches } from "@/lib/marketing/adminNotify";
+import {
+  buildFeedbackWeeklySnapshot,
+  feedbackSnapshotToMarkdown,
+} from "@/lib/feedback/weeklySnapshot";
 
 export type WeeklyReportResult = {
   ok: boolean;
@@ -145,6 +149,7 @@ async function callOpenAiWeeklyReport(payload: unknown): Promise<
               "未計測指標を推測で埋めないこと。サンプルが少ない場合は断定しない。",
               "JSONで返してください: { analysis_markdown, strategy, uncertainty_notes }",
               "strategy は preferredTypes, themeHints, catchcopyHints, ctaHints, empathyToPromoRatio, preferredHoursJst, avoidTopics, notes を持つ。",
+              "userFeedback がある場合は匿名集計のみ。個人の原文や端末IDは含まれない。安全フラグ付きは人間レビュー前提で扱う。",
             ].join("\n"),
           },
           {
@@ -280,6 +285,8 @@ export async function runWeeklyMarketingAnalysis(params: {
   const d7 = sanitizeSnapshotForAi(s7.snapshot);
   const d28 = sanitizeSnapshotForAi(s28.snapshot);
   const uiSuggestions = buildCodeReviewUiSuggestions();
+  const feedbackSnap = await buildFeedbackWeeklySnapshot(7);
+  const feedbackMd = feedbackSnapshotToMarkdown(feedbackSnap);
 
   let usedFallbackAnalysis = false;
   let markdown = "";
@@ -290,9 +297,15 @@ export async function runWeeklyMarketingAnalysis(params: {
   let completionTokens: number | null = 0;
   let estimatedCostUsd: number | null = 0;
 
-  const ai = await callOpenAiWeeklyReport({ d7, d28, uiSuggestions });
+  const ai = await callOpenAiWeeklyReport({
+    d7,
+    d28,
+    uiSuggestions,
+    // Anonymized aggregates only — no body_raw / device ids
+    userFeedback: feedbackSnap,
+  });
   if (ai.ok) {
-    markdown = ai.markdown;
+    markdown = `${ai.markdown}\n\n${feedbackMd}`;
     strategy = ai.strategy;
     uncertainty = ai.uncertainty;
     modelName = ai.modelName;
@@ -301,7 +314,7 @@ export async function runWeeklyMarketingAnalysis(params: {
     estimatedCostUsd = ai.estimatedCostUsd;
   } else {
     usedFallbackAnalysis = true;
-    markdown = heuristicAnalysisMarkdown({ d7, d28 });
+    markdown = `${heuristicAnalysisMarkdown({ d7, d28 })}\n\n${feedbackMd}`;
     uncertainty = [
       `AI分析失敗のためヒューリスティック: ${ai.error}`,
       d7.dataQuality === "insufficient" ? "サンプル不足" : "",
@@ -367,6 +380,48 @@ export async function runWeeklyMarketingAnalysis(params: {
       uiSuggestions,
       d7: s7.snapshot,
     });
+    for (const c of feedbackSnap.openClusters.slice(0, 8)) {
+      if (c.uniqueReporterCount < 1) continue;
+      drafts.push({
+        category: c.safetyFlag
+          ? "other"
+          : c.category === "ux"
+            ? "ui_ux"
+            : c.category === "request"
+              ? "copy"
+              : "funnel",
+        area: `user_feedback:${c.category}`,
+        title: c.title.slice(0, 100),
+        summary: `ユーザーフィードバック（ユニーク声 ${c.uniqueReporterCount} / ${c.reportCount}件、通話影響:${c.callImpact}${c.safetyFlag ? "、安全フラグ" : ""}）`,
+        detail_markdown: [
+          "### ユーザーフィードバック由来",
+          "",
+          c.title,
+          "",
+          `- ユニーク声: ${c.uniqueReporterCount}`,
+          `- 件数: ${c.reportCount}`,
+          `- 深刻度: ${c.severity}`,
+          c.safetyFlag
+            ? "- 安全関連: 人間レビュー必須（AI単独で却下しない）"
+            : null,
+          "",
+          "原文は管理画面のフィードバック一覧で確認（AI集計には載せていません）。",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        priority:
+          c.safetyFlag || c.severity === "critical" || c.severity === "high"
+            ? "high"
+            : "medium",
+        evidence_kind: "measured",
+        validation_kpi: "feedback unique voices / call_started",
+        metrics_context: {
+          source: "user_feedback_cluster",
+          callImpact: c.callImpact,
+          safetyFlag: c.safetyFlag,
+        },
+      });
+    }
     const upserted = await upsertProposalDrafts({
       reportId: report.id,
       drafts,
