@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const keys = [
@@ -22,5 +24,20 @@ describe("sendMarketingOpsDigest", () => {
     expect(result.ok).toBe(true);
     expect(result.email?.status).toBe("disabled");
     expect(result.discord?.status).toBe("disabled");
+  });
+
+  it("never pulls user feedback or PII tables into the digest payload", () => {
+    const src = readFileSync(
+      join(process.cwd(), "lib/marketing/opsDigest.ts"),
+      "utf8"
+    );
+    expect(src).not.toMatch(/user_feedback|feedback_messages|auth\.users/i);
+    expect(src).toMatch(/marketing_posts/);
+    expect(src).toMatch(/loadMarketingDashboardMetrics/);
+    // Discord-only sends must still dedupe via fingerprint-discord
+    expect(src).toMatch(/\$\{fingerprint\}-discord/);
+    expect(src).toMatch(
+      /fingerprints = \[fingerprint, `\$\{fingerprint\}-discord`\]/
+    );
   });
 });
