@@ -150,6 +150,51 @@ function AdminMarketingPageInner() {
     null
   );
   const [immediateForceOff, setImmediateForceOff] = useState(false);
+  const [replySuggestions, setReplySuggestions] = useState<
+    Array<{
+      id: string;
+      source_url: string;
+      source_author: string | null;
+      source_body: string | null;
+      selection_reason: string;
+      reply_drafts: Array<{
+        text: string;
+        naturalness_score: number;
+        promo_score: number;
+        notes?: string;
+      }>;
+      selected_draft_index: number | null;
+      status: string;
+      naturalness_score: number | null;
+      promo_score: number | null;
+      charter_compliance: string | null;
+      charter_notes: string | null;
+      utm_content: string | null;
+      metrics: {
+        source_views?: number | null;
+        profile_visits?: number | null;
+        site_visits?: number | null;
+      };
+    }>
+  >([]);
+  const [replyCompare, setReplyCompare] = useState<{
+    rangeDays: number;
+    organic: { posts: number; siteVisits: number };
+    replies: {
+      posted: number;
+      skipped: number;
+      ready: number;
+      sourceViewsSum: number | null;
+      profileVisitsSum: number | null;
+      siteVisitsSum: number | null;
+      notes: string[];
+    };
+  } | null>(null);
+  const [replyUrl, setReplyUrl] = useState("");
+  const [replyReason, setReplyReason] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const [replyMsg, setReplyMsg] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -282,6 +327,93 @@ function AdminMarketingPageInner() {
     setMetrics(json.metrics as MarketingDashboardMetrics);
   }, []);
 
+  const loadReplies = useCallback(async () => {
+    setReplyMsg("");
+    const res = await fetch(
+      "/api/admin/marketing/reply-suggestions?status=all&compareDays=7",
+      { cache: "no-store", credentials: "same-origin" }
+    );
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.ok) {
+      setReplySuggestions([]);
+      setReplyCompare(null);
+      setReplyMsg(
+        String(json?.detail || json?.error || "返信候補の読込に失敗") +
+          (json?.migrationHint ? ` / ${json.migrationHint}` : "")
+      );
+      return;
+    }
+    setReplySuggestions(json.suggestions ?? []);
+    setReplyCompare(json.comparison ?? null);
+  }, []);
+
+  async function createReplySuggestion() {
+    if (replyBusy) return;
+    setReplyBusy(true);
+    setReplyMsg("");
+    try {
+      const res = await fetch("/api/admin/marketing/reply-suggestions", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sourceUrl: replyUrl,
+          selectionReason: replyReason,
+          sourceBody: replyBody.trim() || undefined,
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (json?.error === "source_body_required") {
+        setReplyMsg(
+          "投稿本文を取得できませんでした。下の本文欄に貼って再登録してください。" +
+            (json?.detail ? `（${json.detail}）` : "")
+        );
+        await loadReplies();
+        return;
+      }
+      if (!res.ok || !json?.ok) {
+        setReplyMsg(
+          String(json?.detail || json?.error || "返信案の生成に失敗") +
+            (json?.migrationHint ? ` / ${json.migrationHint}` : "")
+        );
+        return;
+      }
+      setReplyMsg("返信案を生成しました（Xへは投稿していません）");
+      setReplyUrl("");
+      setReplyReason("");
+      setReplyBody("");
+      await loadReplies();
+    } finally {
+      setReplyBusy(false);
+    }
+  }
+
+  async function patchReply(
+    id: string,
+    body: Record<string, unknown>,
+    okMessage: string
+  ) {
+    setReplyBusy(true);
+    setReplyMsg("");
+    try {
+      const res = await fetch("/api/admin/marketing/reply-suggestions", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ...body }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        setReplyMsg(String(json?.detail || json?.error || "更新に失敗"));
+        return;
+      }
+      setReplyMsg(okMessage);
+      await loadReplies();
+    } finally {
+      setReplyBusy(false);
+    }
+  }
+
   async function probeBuffer() {
     setBufferProbing(true);
     setBufferProbeMsg("");
@@ -322,7 +454,8 @@ function AdminMarketingPageInner() {
     void loadMeta();
     void loadMetrics();
     void loadPhase4();
-  }, [load, loadMeta, loadMetrics, loadPhase4]);
+    void loadReplies();
+  }, [load, loadMeta, loadMetrics, loadPhase4, loadReplies]);
 
   async function runWeeklyAnalysis() {
     setBusy(true);
@@ -1123,6 +1256,332 @@ function AdminMarketingPageInner() {
               </div>
             </div>
           )}
+        </section>
+
+        <section
+          style={{
+            ...adminCard,
+            marginBottom: 16,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 8,
+              flexWrap: "wrap",
+              alignItems: "center",
+              marginBottom: 8,
+            }}
+          >
+            <strong>初期露出：返信候補（手動実行）</strong>
+            <button
+              type="button"
+              style={adminBtnGhost}
+              disabled={replyBusy}
+              onClick={() => void loadReplies()}
+            >
+              再読込
+            </button>
+          </div>
+          <p style={{ margin: "0 0 8px", color: "#667085" }}>
+            AIは返信案のみ作成。Xへの自動返信・DMはしません。運営者がコピーして手投稿してください。
+            夕方Discordダイジェストにも候補が出ます（既存ゲート設定は変更しません）。
+          </p>
+          <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+            <input
+              style={adminInput}
+              placeholder="X投稿URL（https://x.com/.../status/...）"
+              value={replyUrl}
+              onChange={(e) => setReplyUrl(e.target.value)}
+            />
+            <input
+              style={adminInput}
+              placeholder="選定理由（ターゲット適合・宣伝になりにくい理由）"
+              value={replyReason}
+              onChange={(e) => setReplyReason(e.target.value)}
+            />
+            <textarea
+              style={{ ...adminTextarea, minHeight: 72 }}
+              placeholder="本文が取得できないときだけ貼る（任意）"
+              value={replyBody}
+              onChange={(e) => setReplyBody(e.target.value)}
+            />
+            <button
+              type="button"
+              style={adminBtn}
+              disabled={replyBusy || !replyUrl.trim() || !replyReason.trim()}
+              onClick={() => void createReplySuggestion()}
+            >
+              返信案を生成（投稿しない）
+            </button>
+          </div>
+          {replyMsg ? (
+            <p style={{ margin: "0 0 10px", color: "#0f766e" }}>{replyMsg}</p>
+          ) : null}
+          {replyCompare ? (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: 10,
+                background: "#f8fafc",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                直近{replyCompare.rangeDays}日の比較（実測のみ）
+              </div>
+              <div>
+                通常公開投稿: {replyCompare.organic.posts} / サイト流入(非reply UTM):{" "}
+                {replyCompare.organic.siteVisits}
+              </div>
+              <div>
+                返信: posted {replyCompare.replies.posted} / skipped{" "}
+                {replyCompare.replies.skipped} / open {replyCompare.replies.ready}
+              </div>
+              <div>
+                返信先views合計:{" "}
+                {replyCompare.replies.sourceViewsSum == null
+                  ? "未計測"
+                  : replyCompare.replies.sourceViewsSum}
+                {" / "}
+                プロフィール訪問合計:{" "}
+                {replyCompare.replies.profileVisitsSum == null
+                  ? "未計測"
+                  : replyCompare.replies.profileVisitsSum}
+                {" / "}
+                サイト流入:{" "}
+                {replyCompare.replies.siteVisitsSum == null
+                  ? "未計測"
+                  : replyCompare.replies.siteVisitsSum}
+              </div>
+              {replyCompare.replies.notes.length > 0 ? (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {replyCompare.replies.notes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          <div style={{ display: "grid", gap: 12 }}>
+            {replySuggestions.length === 0 ? (
+              <p style={{ color: "#64748b", margin: 0 }}>返信候補はまだありません。</p>
+            ) : (
+              replySuggestions.slice(0, 20).map((s) => {
+                const idx = s.selected_draft_index ?? 0;
+                const draft = s.reply_drafts[idx] ?? s.reply_drafts[0];
+                return (
+                  <div
+                    key={s.id}
+                    style={{
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      padding: 10,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: "#64748b" }}>
+                      [{s.status}] @{s.source_author || "?"} · charter=
+                      {s.charter_compliance ?? "-"} · natural=
+                      {s.naturalness_score ?? "-"} · promo={s.promo_score ?? "-"}
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      <a href={s.source_url} style={{ color: "#0369a1" }}>
+                        {s.source_url}
+                      </a>
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      理由: {s.selection_reason || "—"}
+                    </div>
+                    {s.source_body ? (
+                      <p
+                        style={{
+                          margin: "6px 0",
+                          color: "#475569",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        元: {s.source_body.slice(0, 180)}
+                        {s.source_body.length > 180 ? "…" : ""}
+                      </p>
+                    ) : (
+                      <p style={{ margin: "6px 0", color: "#b45309" }}>
+                        本文未取得 — 上の本文欄に貼って再生成してください
+                      </p>
+                    )}
+                    {s.reply_drafts.map((d, i) => (
+                      <div
+                        key={`${s.id}-${i}`}
+                        style={{
+                          marginTop: 6,
+                          padding: 8,
+                          background: i === idx ? "#ecfdf5" : "#f8fafc",
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div style={{ fontSize: 12, color: "#64748b" }}>
+                          案{i + 1}
+                          {i === idx ? "（推奨）" : ""} · natural=
+                          {d.naturalness_score} · promo={d.promo_score}
+                        </div>
+                        <div style={{ whiteSpace: "pre-wrap" }}>{d.text}</div>
+                        <div
+                          style={{
+                            marginTop: 6,
+                            display: "flex",
+                            gap: 6,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            style={adminBtnGhost}
+                            onClick={() => {
+                              void navigator.clipboard
+                                .writeText(d.text)
+                                .then(() => setReplyMsg("返信案をコピーしました"))
+                                .catch(() =>
+                                  setReplyMsg("コピーに失敗しました")
+                                );
+                            }}
+                          >
+                            コピー
+                          </button>
+                          <button
+                            type="button"
+                            style={adminBtnGhost}
+                            disabled={replyBusy}
+                            onClick={() =>
+                              void patchReply(
+                                s.id,
+                                {
+                                  action: "select_draft",
+                                  selectedDraftIndex: i,
+                                },
+                                `案${i + 1}を選択`
+                              )
+                            }
+                          >
+                            この案を選択
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "flex",
+                        gap: 6,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        style={adminBtn}
+                        disabled={replyBusy || s.status === "posted"}
+                        onClick={() =>
+                          void patchReply(
+                            s.id,
+                            { action: "posted", selectedDraftIndex: idx },
+                            "投稿済みとして記録（X自動投稿なし）"
+                          )
+                        }
+                      >
+                        手動返信した（投稿済み）
+                      </button>
+                      <button
+                        type="button"
+                        style={adminBtnGhost}
+                        disabled={replyBusy || s.status === "skipped"}
+                        onClick={() =>
+                          void patchReply(
+                            s.id,
+                            { action: "skipped", skipReason: "operator_skip" },
+                            "見送りました"
+                          )
+                        }
+                      >
+                        見送り
+                      </button>
+                      {s.utm_content ? (
+                        <span style={{ fontSize: 11, color: "#64748b" }}>
+                          utm_content={s.utm_content}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "flex",
+                        gap: 6,
+                        flexWrap: "wrap",
+                        fontSize: 12,
+                      }}
+                    >
+                      <label>
+                        views
+                        <input
+                          style={{ ...adminInput, width: 72, marginLeft: 4 }}
+                          type="number"
+                          defaultValue={s.metrics.source_views ?? ""}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v === "") return;
+                            void patchReply(
+                              s.id,
+                              {
+                                metrics: {
+                                  source_views: Number(v),
+                                  profile_visits: s.metrics.profile_visits,
+                                },
+                              },
+                              "viewsを記録"
+                            );
+                          }}
+                        />
+                      </label>
+                      <label>
+                        プロフィール訪問
+                        <input
+                          style={{ ...adminInput, width: 72, marginLeft: 4 }}
+                          type="number"
+                          defaultValue={s.metrics.profile_visits ?? ""}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v === "") return;
+                            void patchReply(
+                              s.id,
+                              {
+                                metrics: {
+                                  profile_visits: Number(v),
+                                  source_views: s.metrics.source_views,
+                                },
+                              },
+                              "プロフィール訪問を記録"
+                            );
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {draft?.notes ? (
+                      <div style={{ marginTop: 4, fontSize: 11, color: "#64748b" }}>
+                        notes: {draft.notes}
+                      </div>
+                    ) : null}
+                    {s.charter_notes ? (
+                      <div style={{ marginTop: 4, fontSize: 11, color: "#b45309" }}>
+                        charter: {s.charter_notes}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </section>
 
         <section

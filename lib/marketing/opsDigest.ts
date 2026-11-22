@@ -17,6 +17,7 @@ import {
   isDiscordWebhookConfigured,
   sendDiscordWebhookMessage,
 } from "@/lib/marketing/discordWebhook";
+import { listReplySuggestions } from "@/lib/marketing/replySuggestions";
 
 export type OpsDigestChannelResult = {
   channel: "email" | "discord" | "none";
@@ -69,10 +70,12 @@ function preferredNightTypes(jstDate: string): string[] {
 function fingerprintFor(params: {
   jstDate: string;
   candidateIds: string[];
+  replyIds: string[];
 }): string {
   const ids = [...params.candidateIds].sort().join(",");
+  const replyIds = [...params.replyIds].sort().join(",");
   return createHash("sha256")
-    .update(`ops_digest|${params.jstDate}|${ids}`)
+    .update(`ops_digest|${params.jstDate}|${ids}|replies:${replyIds}`)
     .digest("hex")
     .slice(0, 40);
 }
@@ -133,6 +136,7 @@ function pickCandidates(
 function buildMessage(params: {
   jstDate: string;
   candidates: DraftCandidate[];
+  replyLines: string[];
   visits: number;
   registrations: number;
   callStarted: number;
@@ -164,8 +168,15 @@ function buildMessage(params: {
     });
   }
   lines.push("");
+  lines.push("■ 初期露出：返信候補（人が確認して手投稿）");
+  if (!params.replyLines.length) {
+    lines.push("- 返信候補なし。管理画面でX URLを登録してください。");
+  } else {
+    for (const line of params.replyLines) lines.push(line);
+  }
+  lines.push("");
   lines.push(
-    "※ AIは自動投稿しません。管理画面で内容確認のうえ「承認して今すぐ投稿」のみが公開トリガーです。"
+    "※ AIは自動投稿・自動返信しません。通常投稿は「承認して今すぐ投稿」、返信はXで手動です。"
   );
   lines.push(`管理画面一覧: ${params.adminUrl}`);
   const text = lines.join("\n");
@@ -206,7 +217,28 @@ export async function sendMarketingOpsDigest(): Promise<OpsDigestResult> {
   const preferred = preferredNightTypes(jstDate);
   const candidates = pickCandidates(drafts, preferred);
   const candidateIds = candidates.map((c) => c.id);
-  const fingerprint = fingerprintFor({ jstDate, candidateIds });
+
+  const replyListed = await listReplySuggestions({ status: "open", limit: 12 });
+  const replySuggestions = replyListed.ok ? replyListed.suggestions : [];
+  const digestReplies = replySuggestions
+    .filter((s) => s.status === "ready" || s.status === "needs_body")
+    .slice(0, 5);
+  const replyIds = digestReplies.map((s) => s.id);
+  const replyLines: string[] = digestReplies.map((s, i) => {
+    const draft =
+      s.reply_drafts[s.selected_draft_index ?? 0]?.text ||
+      s.reply_drafts[0]?.text ||
+      "（本文未取得・管理画面で入力）";
+    return (
+      `${i + 1}. @${s.source_author || "?"} / ${s.status}` +
+      `\n   理由: ${(s.selection_reason || "—").slice(0, 80)}` +
+      `\n   案: ${draft.replace(/\s+/g, " ").slice(0, 100)}` +
+      `\n   元: ${s.source_url}` +
+      `\n   charter=${s.charter_compliance ?? "-"} promo=${s.promo_score ?? "-"}`
+    );
+  });
+
+  const fingerprint = fingerprintFor({ jstDate, candidateIds, replyIds });
 
   if (await alreadySent(fingerprint)) {
     await writeLog({
@@ -251,6 +283,7 @@ export async function sendMarketingOpsDigest(): Promise<OpsDigestResult> {
   const message = buildMessage({
     jstDate,
     candidates,
+    replyLines,
     visits,
     registrations,
     callStarted,

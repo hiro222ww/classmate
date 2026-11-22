@@ -300,3 +300,10 @@ DB結合・OpenAI実呼び出し・本番 Cron は未実施（キー/本番DBな
 - 管理: `/admin/marketing/charter`
 
 - 承認して今すぐ投稿: Buffer `mode: shareNow`。詳細は `docs/AI_MARKETING_APPROVE_PUBLISH_NOW.md`
+
+### 初期露出：返信候補（人手実行）
+
+- 詳細: `docs/AI_MARKETING_REPLY_SUGGESTIONS.md`
+- テーブル: `marketing_reply_suggestions`（マイグレーション要承認）
+- API: `/api/admin/marketing/reply-suggestions`
+- AIは下書きのみ。X自動返信・DMなし。夕方ダイジェストに候補を追記（既存ゲートは変更しない）
