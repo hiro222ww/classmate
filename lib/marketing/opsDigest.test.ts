@@ -41,5 +41,7 @@ describe("sendMarketingOpsDigest", () => {
     );
     expect(src).toMatch(/getMarketingPostReviewUrl/);
     expect(src).toMatch(/承認して今すぐ投稿/);
+    expect(src).toMatch(/listReplySuggestions/);
+    expect(src).toMatch(/初期露出：返信候補/);
   });
 });
