@@ -145,8 +145,9 @@ BEGIN
     ) VALUES (
       COALESCE(nullif(btrim(v_event.title), ''), '期間限定の体験会'),
       '体験会専用ルーム',
-      'experience',
-      'experience_session',
+      -- Must reference existing worlds.world_key (FK). topic_key left null.
+      'default',
+      NULL,
       18,
       false,
       false,

@@ -22,4 +22,9 @@ describe("experience_event_join SQL capacity guards", () => {
     expect(sql).not.toMatch(/DROP TABLE/);
     expect(sql).not.toMatch(/match_join_atomic/);
   });
+
+  it("uses existing world_key default (FK-safe) instead of inventing experience world", () => {
+    expect(sql).toMatch(/'default'/);
+    expect(sql).not.toMatch(/'experience',\s*\n\s*'experience_session'/);
+  });
 });
