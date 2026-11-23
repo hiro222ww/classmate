@@ -3640,6 +3640,120 @@
   }
 }
 
+/* Experience session (体験会) — quieter than random talk CTA */
+.cm-experience-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(255, 255, 255, 0.5), transparent 50%),
+    linear-gradient(135deg, #ffe8d6 0%, #ffd9c8 42%, #f5d0e8 100%);
+  border: 1px solid rgba(232, 140, 110, 0.28);
+  box-shadow: 0 4px 14px rgba(180, 100, 80, 0.1);
+}
+
+.cm-experience-card-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.cm-experience-card-glyph {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.72);
+  color: #c45c3e;
+  flex-shrink: 0;
+}
+
+.cm-experience-card-copy {
+  min-width: 0;
+}
+
+.cm-experience-card-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: rgba(140, 70, 50, 0.75);
+}
+
+.cm-experience-card-heading {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 900;
+  color: #5c2e22;
+  line-height: 1.25;
+}
+
+.cm-experience-card-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: rgba(80, 45, 35, 0.82);
+  line-height: 1.4;
+}
+
+.cm-experience-card-note {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  color: rgba(80, 45, 35, 0.7);
+}
+
+.cm-experience-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cm-experience-card-primary,
+.cm-experience-card-secondary {
+  flex: 1;
+  min-height: 42px;
+  border-radius: 12px;
+  font-weight: 850;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.cm-experience-card-primary {
+  border: 1px solid rgba(196, 92, 62, 0.35);
+  background: rgba(255, 255, 255, 0.88);
+  color: #8a3d28;
+}
+
+.cm-experience-card-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.cm-experience-card-secondary {
+  border: 1px solid rgba(52, 120, 246, 0.28);
+  background: rgba(255, 255, 255, 0.75);
+  color: #2759c7;
+}
+
+@media (max-width: 480px) {
+  .cm-experience-card {
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .cm-experience-card-heading {
+    font-size: 14px;
+  }
+}
+
 .cm-home-discover {
   display: flex;
   align-items: center;

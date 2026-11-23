@@ -66,6 +66,11 @@ const cards = [
     href: "/admin/categories",
   },
   {
+    title: "期間限定の体験会",
+    desc: "開催日時の設定・中止・機能ON/OFF（暫定集客。初期OFF）",
+    href: "/admin/experience",
+  },
+  {
     title: "運用設定",
     desc: "スロット/テーマ課金ON/OFF・入学受付時間・募集締切・未成年登録",
     href: "/admin/settings",

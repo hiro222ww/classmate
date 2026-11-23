@@ -20,6 +20,8 @@ import { HomeThemeGrid } from "@/components/home/HomeThemeGrid";
 import { MyClassCard } from "@/components/home/MyClassCard";
 import { MyClassEmpty } from "@/components/home/MyClassEmpty";
 import { RandomTalkCta } from "@/components/home/RandomTalkCta";
+import { ExperienceSessionCard } from "@/components/home/ExperienceSessionCard";
+import type { ExperiencePhase } from "@/lib/experience/types";
 import HomeMenuSheet from "@/components/HomeMenuSheet";
 import {
   buildShellAwareLoginUrl,
@@ -509,6 +511,17 @@ export default function HomeClient() {
     useState(false);
   const [error, setError] = useState("");
   const [quickBusy, setQuickBusy] = useState(false);
+  const [experienceBusy, setExperienceBusy] = useState(false);
+  const [experiencePhase, setExperiencePhase] =
+    useState<ExperiencePhase>("hidden");
+  const [experienceEvent, setExperienceEvent] = useState<{
+    id: string;
+    title: string;
+    startsAtLabelJst: string;
+    endsAtLabelJst: string;
+    memberCount: number;
+    maxMembers: number;
+  } | null>(null);
   const [joinWindowOpen, setJoinWindowOpen] = useState(false);
   const [joinWindowLoadState, setJoinWindowLoadState] =
     useState<AdmissionLoadState>("loading");
@@ -1054,7 +1067,47 @@ export default function HomeClient() {
     };
   }, [reloadJoinWindow]);
 
-  
+  const reloadExperienceStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/experience/status", { cache: "no-store" });
+      const json = await readJsonSafe(res);
+      if (!json?.ok) {
+        setExperiencePhase("hidden");
+        setExperienceEvent(null);
+        return;
+      }
+      const phase = String(json.phase ?? "hidden") as ExperiencePhase;
+      setExperiencePhase(
+        phase === "upcoming" || phase === "live" || phase === "full"
+          ? phase
+          : "hidden"
+      );
+      const ev = json.event;
+      if (ev && typeof ev === "object") {
+        setExperienceEvent({
+          id: String(ev.id ?? ""),
+          title: String(ev.title ?? "期間限定の体験会"),
+          startsAtLabelJst: String(ev.startsAtLabelJst ?? ""),
+          endsAtLabelJst: String(ev.endsAtLabelJst ?? ""),
+          memberCount: Number(ev.memberCount ?? 0),
+          maxMembers: Number(ev.maxMembers ?? 5),
+        });
+      } else {
+        setExperienceEvent(null);
+      }
+    } catch {
+      setExperiencePhase("hidden");
+      setExperienceEvent(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadExperienceStatus();
+    const timer = window.setInterval(() => {
+      void reloadExperienceStatus();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [reloadExperienceStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2549,6 +2602,76 @@ console.log("[home] resolved ids", { classId, sessionId, json });
   }
   openClassRef.current = openClass;
 
+  async function joinExperienceSession() {
+    if (!experienceEvent?.id || experienceBusy) return;
+    if (!hasMinimumProfile(profile)) {
+      router.push("/onboarding");
+      return;
+    }
+    setExperienceBusy(true);
+    try {
+      const deviceId = getDeviceId();
+      const res = await fetch("/api/experience/join", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(await buildDeviceAuthHeaders(deviceId)),
+        },
+        body: JSON.stringify({
+          eventId: experienceEvent.id,
+          deviceId,
+        }),
+      });
+      const json = await readJsonSafe(res);
+      if (!json?.ok) {
+        if (json?.error === "event_full") {
+          alert("体験会は満員です。ランダム通話をご利用ください。");
+          void reloadExperienceStatus();
+          return;
+        }
+        alert(
+          json?.error === "event_not_started"
+            ? "まだ開始前です。"
+            : json?.error === "event_ended"
+              ? "体験会は終了しました。"
+              : json?.error === "feature_disabled"
+                ? "体験会は現在ご利用いただけません。"
+                : "体験会に入れませんでした。"
+        );
+        void reloadExperienceStatus();
+        return;
+      }
+      const entry = prepareMatchedCallEntry({
+        classId: String(json.classId ?? ""),
+        sessionId: String(json.sessionId ?? ""),
+        deviceId,
+      });
+      if (!entry.ok) {
+        alert("通話画面を開けませんでした。");
+        return;
+      }
+      const endsAt = String(json.endsAt ?? "");
+      const path =
+        entry.callPath +
+        `&experience=1` +
+        (endsAt ? `&experienceEndsAt=${encodeURIComponent(endsAt)}` : "");
+      void trackFunnelEvent({
+        eventName: "call_started",
+        deviceId,
+        sessionId: String(json.sessionId ?? ""),
+        classId: String(json.classId ?? ""),
+        meta: { source: "experience_session", eventId: experienceEvent.id },
+      });
+      router.push(path);
+    } catch (e: unknown) {
+      console.error("[home experience join]", e);
+      alert("体験会への参加に失敗しました。");
+    } finally {
+      setExperienceBusy(false);
+      void reloadExperienceStatus();
+    }
+  }
+
   async function quickJoinFreeMatch(entryMode: "voice" | "chat") {
     try {
       if (
@@ -2979,6 +3102,19 @@ console.log("[home] resolved ids", { classId, sessionId, json });
       <HomeThemeGrid className="cm-stagger-3" />
 
       <div className="cm-stagger-5 cm-home-talk-hero">
+        <ExperienceSessionCard
+          phase={experiencePhase}
+          event={experienceEvent}
+          busy={experienceBusy}
+          joinDisabled={experienceBusy || quickBusy}
+          onJoin={() => {
+            void joinExperienceSession();
+          }}
+          onGoRandom={() => {
+            const el = document.getElementById("cm-home-random");
+            el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }}
+        />
         <RandomTalkCta
           voiceBusy={quickBusy}
           chatBusy={quickBusy}

@@ -391,12 +391,30 @@ export default function CallClient() {
 
   const sessionId = searchParams.get("sessionId") || "";
   const classId = searchParams.get("classId") || "";
+  const isExperienceSession = searchParams.get("experience") === "1";
+  const experienceEndsAtParam = String(
+    searchParams.get("experienceEndsAt") ?? ""
+  ).trim();
   const openJoinedClassParam = (() => {
     const raw = (searchParams.get("openJoinedClass") ?? "").trim();
     return raw === "1" || raw === "true";
   })();
 
   const [deviceId] = useState(() => getDeviceId());
+  const [experienceWindowEnded, setExperienceWindowEnded] = useState(false);
+
+  useEffect(() => {
+    if (!isExperienceSession || !experienceEndsAtParam) {
+      setExperienceWindowEnded(false);
+      return;
+    }
+    const endsMs = new Date(experienceEndsAtParam).getTime();
+    if (!Number.isFinite(endsMs)) return;
+    const tick = () => setExperienceWindowEnded(Date.now() >= endsMs);
+    tick();
+    const timer = window.setInterval(tick, 15_000);
+    return () => window.clearInterval(timer);
+  }, [isExperienceSession, experienceEndsAtParam]);
 
   useEffect(() => {
     if (!deviceId) return;
@@ -3724,9 +3742,13 @@ export default function CallClient() {
       showCallStuckReconnect={showCallStuckReconnect}
       onCallStuckReconnect={() => handleCallStuckReconnect()}
       meetingPlanLabel={
-        meetingPlan && !meetingPlan.is_past
-          ? `次の集合：${meetingPlan.display_label}`
-          : null
+        experienceWindowEnded
+          ? "体験会の開催時間は終了しました。通話は続行できます。退出はいつでも可能です。"
+          : isExperienceSession
+            ? "期間限定の体験会（出入り自由・最大5人）"
+            : meetingPlan && !meetingPlan.is_past
+              ? `次の集合：${meetingPlan.display_label}`
+              : null
       }
       callRequestLabel={
         callRequest?.is_active ? callRequest.display_label : null

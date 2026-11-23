@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * After removing a session_member row, close the session when no real members remain.
+ * Live experience-session rooms stay open until the event window ends (0 members OK).
  */
 export async function closeEmptySessionIfNeeded(
   sb: SupabaseClient,
@@ -35,6 +36,19 @@ export async function closeEmptySessionIfNeeded(
 
   if (remaining > 0) {
     return { closed: false, remaining };
+  }
+
+  const nowIso = new Date().toISOString();
+  const { data: liveExperience } = await sb
+    .from("experience_events")
+    .select("id")
+    .eq("session_id", normalizedSessionId)
+    .eq("status", "scheduled")
+    .gt("ends_at", nowIso)
+    .limit(1)
+    .maybeSingle();
+  if (liveExperience?.id) {
+    return { closed: false, remaining: 0 };
   }
 
   const { error: closeErr } = await sb

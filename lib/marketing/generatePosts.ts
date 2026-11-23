@@ -153,7 +153,14 @@ export async function generateMarketingPosts(params: {
 
   const runId = runRow.id as string;
   const activeStrategy = await getActiveStrategy().catch(() => null);
-  const strategyAddon = activeStrategy?.prompt_addon ?? null;
+  const { buildExperienceMarketingAddon } = await import(
+    "@/lib/experience/marketingContext"
+  );
+  const experienceAddon = await buildExperienceMarketingAddon().catch(() => null);
+  const strategyAddon = [activeStrategy?.prompt_addon, experienceAddon]
+    .map((s) => String(s ?? "").trim())
+    .filter(Boolean)
+    .join("\n\n") || null;
   const preferredFromStrategy = activeStrategy?.guidance?.preferredTypes;
   const charterPolicies = await listActivePolicies();
   const charterAddon = buildCharterPromptAddon(charterPolicies);
