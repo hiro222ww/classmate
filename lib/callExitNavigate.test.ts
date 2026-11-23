@@ -101,6 +101,17 @@ describe("shouldExitCallToWaitingRoom", () => {
       })
     ).toBe(false);
   });
+
+  it("keeps experience sessions on home even for official lifecycle", () => {
+    expect(
+      shouldExitCallToWaitingRoom({
+        classId: "class-a",
+        lifecycle: "official",
+        openJoinedClass: true,
+        isExperienceSession: true,
+      })
+    ).toBe(false);
+  });
 });
 
 describe("navigateCallExit", () => {

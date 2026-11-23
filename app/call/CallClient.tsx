@@ -401,7 +401,13 @@ export default function CallClient() {
   })();
 
   const [deviceId] = useState(() => getDeviceId());
+  const [sessionIsExperience, setSessionIsExperience] =
+    useState(isExperienceSession);
   const [experienceWindowEnded, setExperienceWindowEnded] = useState(false);
+
+  useEffect(() => {
+    if (isExperienceSession) setSessionIsExperience(true);
+  }, [isExperienceSession]);
 
   useEffect(() => {
     if (!isExperienceSession || !experienceEndsAtParam) {
@@ -957,6 +963,9 @@ export default function CallClient() {
           json.lifecycle != null ? String(json.lifecycle) : null
         );
         const experienceFromApi = json.isExperienceSession === true;
+        if (experienceFromApi) {
+          setSessionIsExperience(true);
+        }
         setClassVoteCanShow(
           !isExperienceSession &&
             !experienceFromApi &&
@@ -3598,15 +3607,17 @@ export default function CallClient() {
     </>
   ) : null;
 
+  const inExperienceRoom = isExperienceSession || sessionIsExperience;
+
   const showClassVotePanel =
-    !isExperienceSession &&
+    !inExperienceRoom &&
     (classVoteCanShow ||
       shouldShowClassVoteUi({
         memberCount: members.length,
         membersLocked: classVoteMembersLocked,
         lifecycle: classVoteLifecycle,
         promoted: classVotePromoted,
-        isExperienceSession,
+        isExperienceSession: inExperienceRoom,
       }));
 
   const classVoteSubmitReady = canSubmitClassVote({
@@ -3751,7 +3762,7 @@ export default function CallClient() {
       meetingPlanLabel={
         experienceWindowEnded
           ? "体験会の開催時間は終了しました。通話は続行できます。退出はいつでも可能です。"
-          : isExperienceSession
+          : inExperienceRoom
             ? "期間限定の体験会（出入り自由・最大5人）"
             : meetingPlan && !meetingPlan.is_past
               ? `次の集合：${meetingPlan.display_label}`
@@ -3810,6 +3821,7 @@ export default function CallClient() {
           classId,
           lifecycle: classVoteLifecycle,
           openJoinedClass: openJoinedClassParam,
+          isExperienceSession: inExperienceRoom,
         });
         const exitHref = exitToWaitingRoom
           ? buildCallExitWaitingRoomHref({
@@ -3845,6 +3857,21 @@ export default function CallClient() {
           markSelfLeftCall();
         } catch (e) {
           console.warn("[call] markSelfLeftCall threw during exit", e);
+        }
+
+        // Experience: free the seat (delete session_members) so count is not cumulative.
+        if (inExperienceRoom && sessionId && deviceId) {
+          try {
+            void fetch("/api/experience/leave", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ sessionId, deviceId }),
+              keepalive: true,
+              cache: "no-store",
+            });
+          } catch (e) {
+            console.warn("[call] experience leave failed during exit", e);
+          }
         }
         try {
           clearAutoCallOnce(sessionId, deviceId);

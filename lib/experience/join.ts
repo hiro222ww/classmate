@@ -29,6 +29,7 @@ export async function joinExperienceEvent(params: {
       .from("session_members")
       .select("device_id")
       .eq("session_id", sessionId)
+      .eq("is_in_call", true)
       .not("device_id", "is", null);
     const peerIds = (members ?? [])
       .map((m) => String((m as { device_id?: string }).device_id ?? "").trim())
@@ -91,15 +92,31 @@ export async function leaveExperienceEvent(params: {
     return { ok: false, error: "missing_session_or_device" };
   }
 
+  const now = new Date();
+  const { data: experienceEvent } = await supabaseAdmin
+    .from("experience_events")
+    .select("id, class_id, ends_at, status")
+    .eq("session_id", sessionId)
+    .maybeSingle();
+
+  if (!experienceEvent?.id) {
+    return { ok: false, error: "not_experience_session" };
+  }
+
+  const eventId =
+    String(params.eventId ?? "").trim() || String(experienceEvent.id);
+
   const joinedAtRes = await supabaseAdmin
     .from("experience_participations")
     .select("id, joined_at, event_id")
+    .eq("event_id", eventId)
     .eq("device_id", deviceId)
     .is("left_at", null)
     .order("joined_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
+  // Free the seat immediately (出入り自由 — do not keep cumulative roster rows).
   const { error: deleteErr } = await supabaseAdmin
     .from("session_members")
     .delete()
@@ -108,7 +125,19 @@ export async function leaveExperienceEvent(params: {
 
   if (deleteErr) return { ok: false, error: deleteErr.message };
 
-  const now = new Date();
+  const classId = String(experienceEvent.class_id ?? "").trim();
+  if (classId) {
+    await supabaseAdmin
+      .from("class_memberships")
+      .update({
+        status: "left",
+        left_at: now.toISOString(),
+      })
+      .eq("class_id", classId)
+      .eq("device_id", deviceId)
+      .eq("status", "active");
+  }
+
   if (joinedAtRes.data?.id) {
     const joinedAt = new Date(String(joinedAtRes.data.joined_at)).getTime();
     const talkSeconds = Number.isFinite(joinedAt)
@@ -124,18 +153,17 @@ export async function leaveExperienceEvent(params: {
   }
 
   // Keep room open while event is live (even at 0 members).
-  const { data: liveEvent } = await supabaseAdmin
-    .from("experience_events")
-    .select("id, ends_at, status")
-    .eq("session_id", sessionId)
-    .eq("status", "scheduled")
-    .gt("ends_at", now.toISOString())
-    .maybeSingle();
+  const liveEvent =
+    String(experienceEvent.status ?? "") === "scheduled" &&
+    new Date(String(experienceEvent.ends_at)).getTime() > now.getTime()
+      ? experienceEvent
+      : null;
 
   const { count } = await supabaseAdmin
     .from("session_members")
     .select("device_id", { count: "exact", head: true })
     .eq("session_id", sessionId)
+    .eq("is_in_call", true)
     .not("device_id", "is", null)
     .neq("device_id", "");
 
