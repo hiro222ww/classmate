@@ -5305,12 +5305,13 @@ button.cm-room-session-status:focus-visible {
   pointer-events: auto;
 }
 
-/* When connection/action notices are visible, keep them above the dock visually
-   but leave the dock higher in the stacking order for hit-testing. */
+/* When any banner above the dock has content (meeting plan / notices),
+   don't yank the dock upward over it. Use ~ so an empty notices strip
+   after a filled meeting-plan banner still counts. */
 .cm-call-root--hero-v2
   .cm-call-hero-stack
   > .cm-call-inline-banners:has(*)
-  + .cm-call-dock {
+  ~ .cm-call-dock {
   margin-top: 10px;
 }
 
@@ -5424,12 +5425,19 @@ button.cm-room-session-status:focus-visible {
   border-top-right-radius: 22px;
 }
 
-/* Random-call → formal class promote (near avatar strip) */
+/* Random-call → formal class promote (below dock; never overlap mute/exit) */
 .cm-call-class-promote-slot {
   position: relative;
   z-index: 2;
-  margin: -40px 14px 0;
+  margin: 10px 14px 0;
   max-width: calc(100% - 28px);
+}
+
+.cm-call-root--hero-v2
+  .cm-call-hero-stack
+  > .cm-call-dock
+  + .cm-call-class-promote-slot {
+  margin-top: 12px;
 }
 
 .cm-call-class-promote {

@@ -956,14 +956,19 @@ export default function CallClient() {
         setClassVoteLifecycle(
           json.lifecycle != null ? String(json.lifecycle) : null
         );
+        const experienceFromApi = json.isExperienceSession === true;
         setClassVoteCanShow(
-          json.canShowVoteUi === true ||
-            shouldShowClassVoteUi({
-              memberCount: Number(json.memberCount ?? members.length),
-              membersLocked: json.membersLocked === true,
-              lifecycle: json.lifecycle != null ? String(json.lifecycle) : null,
-              promoted: json.promoted === true,
-            })
+          !isExperienceSession &&
+            !experienceFromApi &&
+            (json.canShowVoteUi === true ||
+              shouldShowClassVoteUi({
+                memberCount: Number(json.memberCount ?? members.length),
+                membersLocked: json.membersLocked === true,
+                lifecycle:
+                  json.lifecycle != null ? String(json.lifecycle) : null,
+                promoted: json.promoted === true,
+                isExperienceSession: experienceFromApi,
+              }))
         );
       } catch {
         // Keep last known vote status on transient errors.
@@ -977,7 +982,7 @@ export default function CallClient() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [sessionId, deviceId, members.length]);
+  }, [sessionId, deviceId, members.length, isExperienceSession]);
 
   const handleClassVote = useCallback(async () => {
     if (!sessionId || !deviceId || classVoteBusy || classVoteSelfVoted) return;
@@ -3594,13 +3599,15 @@ export default function CallClient() {
   ) : null;
 
   const showClassVotePanel =
-    classVoteCanShow ||
-    shouldShowClassVoteUi({
-      memberCount: members.length,
-      membersLocked: classVoteMembersLocked,
-      lifecycle: classVoteLifecycle,
-      promoted: classVotePromoted,
-    });
+    !isExperienceSession &&
+    (classVoteCanShow ||
+      shouldShowClassVoteUi({
+        memberCount: members.length,
+        membersLocked: classVoteMembersLocked,
+        lifecycle: classVoteLifecycle,
+        promoted: classVotePromoted,
+        isExperienceSession,
+      }));
 
   const classVoteSubmitReady = canSubmitClassVote({
     memberCount: members.length,
