@@ -101,7 +101,7 @@ BEGIN
   ELSIF jsonb_typeof(v_setting) = 'number' THEN
     v_enabled := ((v_setting #>> '{}')::numeric <> 0);
   ELSE
-    v_enabled := lower(btrim(both '"' from COALESCE(v_setting #>> '{}', '')))
+    v_enabled := lower(trim(both '"' from COALESCE(v_setting #>> '{}', '')))
       IN ('1', 'true', 'yes', 'on');
   END IF;
 
