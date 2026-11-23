@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
-import { safeEqualString } from "@/lib/adminAuth";
 import {
-  getMarketingCronSecret,
   getMarketingWeeklyCronScheduleHint,
   isMarketingWeeklyCronEnabled,
   MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST,
 } from "@/lib/marketing/config";
+import {
+  hasMarketingCronSecretConfigured,
+  matchesMarketingCronSecret,
+} from "@/lib/marketing/cronAuth";
 import { getAdminNotifyChannelCapability } from "@/lib/marketing/adminNotify";
 import { runWeeklyMarketingAnalysis } from "@/lib/marketing/weeklyReport";
 
@@ -18,6 +20,8 @@ export const runtime = "nodejs";
  * Creates report + proposals, auto-activates SNS generation strategy (not SNS publish),
  * and may email operators when MARKETING_ADMIN_NOTIFY_ENABLED=1.
  * UI/image changes are never auto-applied.
+ *
+ * Auth: Bearer CRON_SECRET or MARKETING_CRON_SECRET.
  */
 export async function POST(req: Request) {
   if (!isMarketingWeeklyCronEnabled()) {
@@ -31,8 +35,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const secret = getMarketingCronSecret();
-  if (!secret) {
+  if (!hasMarketingCronSecretConfigured()) {
     return NextResponse.json(
       { ok: false, error: "cron_secret_missing" },
       { status: 500 }
@@ -44,7 +47,7 @@ export async function POST(req: Request) {
     header.replace(/^Bearer\s+/i, "").trim() ||
     new URL(req.url).searchParams.get("secret") ||
     "";
-  if (!safeEqualString(provided, secret)) {
+  if (!matchesMarketingCronSecret(provided)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
@@ -61,7 +64,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     enabled: isMarketingWeeklyCronEnabled(),
-    hasSecret: Boolean(getMarketingCronSecret()),
+    hasSecret: hasMarketingCronSecretConfigured(),
     scheduleHint: getMarketingWeeklyCronScheduleHint(),
     vercelCronExpr: MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST,
     notifyCapability: notify,

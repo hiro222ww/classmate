@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { safeEqualString } from "@/lib/adminAuth";
+import { isMarketingCronEnabled } from "@/lib/marketing/config";
 import {
-  getMarketingCronSecret,
-  isMarketingCronEnabled,
-} from "@/lib/marketing/config";
+  hasMarketingCronSecretConfigured,
+  matchesMarketingCronSecret,
+} from "@/lib/marketing/cronAuth";
 import { generateMarketingPosts } from "@/lib/marketing/generatePosts";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,8 @@ export const runtime = "nodejs";
 
 /**
  * Daily AI draft generation hook (intended JST 09:00).
- * Disabled unless MARKETING_CRON_ENABLED=1 and MARKETING_CRON_SECRET matches.
+ * Disabled unless MARKETING_CRON_ENABLED=1.
+ * Auth: Bearer CRON_SECRET or MARKETING_CRON_SECRET.
  * Does NOT auto-publish — creates draft rows only.
  */
 export async function POST(req: Request) {
@@ -26,8 +27,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const secret = getMarketingCronSecret();
-  if (!secret) {
+  if (!hasMarketingCronSecretConfigured()) {
     return NextResponse.json(
       { ok: false, error: "cron_secret_missing" },
       { status: 500 }
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     new URL(req.url).searchParams.get("secret") ||
     "";
 
-  if (!safeEqualString(provided, secret)) {
+  if (!matchesMarketingCronSecret(provided)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
@@ -57,7 +57,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     ok: true,
     enabled: isMarketingCronEnabled(),
-    hasSecret: Boolean(getMarketingCronSecret()),
+    hasSecret: hasMarketingCronSecretConfigured(),
     scheduleHint: "0 0 9 * * * Asia/Tokyo via Vercel Cron when enabled",
   });
 }

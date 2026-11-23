@@ -38,9 +38,10 @@ export function isMarketingWeeklyCronEnabled(): boolean {
 }
 
 /**
- * Shared secret for daily/weekly marketing cron.
- * Prefers MARKETING_CRON_SECRET; falls back to Vercel `CRON_SECRET`
- * (auto-sent as Authorization: Bearer on scheduled invocations).
+ * Preferred display/config secret for marketing cron.
+ * Auth checks must use `matchesMarketingCronSecret` so Vercel Cron
+ * (`CRON_SECRET`) and manual (`MARKETING_CRON_SECRET`) both succeed
+ * when the two values differ.
  */
 export function getMarketingCronSecret(): string {
   return (

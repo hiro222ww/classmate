@@ -142,9 +142,10 @@ SNS運用開始前の詳細チェックリスト・試験投稿手順・通知�
 - 週次: **日曜 20:00 JST** = UTC 11:00 → `0 11 * * 0`（`MARKETING_WEEKLY_CRON_EXPR_SUNDAY_20_JST`）→ `/api/admin/marketing/cron/weekly`
 
 ※ Vercel Cron は UTC。  
-必須 env: `MARKETING_CRON_ENABLED=1` / `MARKETING_WEEKLY_CRON_ENABLED=1`（それぞれ明示）と `MARKETING_CRON_SECRET`（または Vercel `CRON_SECRET`）。  
-Vercel は `CRON_SECRET` を設定すると `Authorization: Bearer <CRON_SECRET>` を付与する。アプリは両方を受理する。  
-`proxy.ts` は一致する Bearer（または `?secret=`）があるときだけ管理 Cookie なしで Cron 経路を通す。ルート側で再度ゲート+秘密を検証する。
+必須 env: `MARKETING_CRON_ENABLED=1` / `MARKETING_WEEKLY_CRON_ENABLED=1`（それぞれ明示）と `MARKETING_CRON_SECRET` および/または Vercel `CRON_SECRET`。  
+Vercel は `CRON_SECRET` を設定すると `Authorization: Bearer <CRON_SECRET>` を付与する。`MARKETING_CRON_SECRET` と値が異なっていても **両方を受理**する（`lib/marketing/cronAuth.ts`）。片方だけを優先すると Vercel の定期実行が 401 になる。  
+`proxy.ts` は一致する Bearer（または `?secret=`）があるときだけ管理 Cookie なしで Cron 経路を通す。ルート側で再度ゲート+秘密を検証する。  
+夕方ダイジェストは JST 日次キーで重複防止し、候補 0 件でも「本日の新規候補なし」を送る。
 
 ### Buffer 接続手順（ローカル）
 

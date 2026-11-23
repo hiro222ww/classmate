@@ -66,13 +66,14 @@ function preferredNightTypes(jstDate: string): string[] {
   return cycle[day % cycle.length];
 }
 
-function fingerprintFor(params: {
-  jstDate: string;
-  candidateIds: string[];
-}): string {
-  const ids = [...params.candidateIds].sort().join(",");
+/**
+ * One successful digest per JST calendar day.
+ * Candidate IDs are logged separately; they must not gate next-day delivery
+ * when the draft set is unchanged (or empty again).
+ */
+function fingerprintFor(jstDate: string): string {
   return createHash("sha256")
-    .update(`ops_digest|${params.jstDate}|${ids}`)
+    .update(`ops_digest|day|${jstDate}`)
     .digest("hex")
     .slice(0, 40);
 }
@@ -150,7 +151,9 @@ function buildMessage(params: {
   lines.push("");
   lines.push("■ 今夜こう出しましょう（案・未承認）");
   if (!params.candidates.length) {
-    lines.push("- 候補draftがありません。朝の生成または手動生成を確認してください。");
+    lines.push(
+      "- 本日の新規候補なし（draft 0件）。状況のみ共有します。朝の生成または手動生成を確認してください。"
+    );
   } else {
     params.candidates.forEach((c, i) => {
       const reviewUrl = getMarketingPostReviewUrl(c.id);
@@ -206,7 +209,7 @@ export async function sendMarketingOpsDigest(): Promise<OpsDigestResult> {
   const preferred = preferredNightTypes(jstDate);
   const candidates = pickCandidates(drafts, preferred);
   const candidateIds = candidates.map((c) => c.id);
-  const fingerprint = fingerprintFor({ jstDate, candidateIds });
+  const fingerprint = fingerprintFor(jstDate);
 
   if (await alreadySent(fingerprint)) {
     await writeLog({
@@ -219,6 +222,7 @@ export async function sendMarketingOpsDigest(): Promise<OpsDigestResult> {
       ok: true,
       fingerprint,
       candidateIds,
+      detail: "already_sent_today_jst",
       email: { channel: "none", status: "skipped_dup" },
       discord: { channel: "none", status: "skipped_dup" },
     };

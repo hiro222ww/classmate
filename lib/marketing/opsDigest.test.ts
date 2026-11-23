@@ -42,4 +42,30 @@ describe("sendMarketingOpsDigest", () => {
     expect(src).toMatch(/getMarketingPostReviewUrl/);
     expect(src).toMatch(/承認して今すぐ投稿/);
   });
+
+  it("dedupes by JST calendar day, not by candidate id set", () => {
+    const src = readFileSync(
+      join(process.cwd(), "lib/marketing/opsDigest.ts"),
+      "utf8"
+    );
+    expect(src).toMatch(/ops_digest\|day\|\$\{jstDate\}/);
+    expect(src).not.toMatch(/ops_digest\|\$\{params\.jstDate\}\|\$\{ids\}/);
+    expect(src).toMatch(/本日の新規候補なし/);
+    expect(src).toMatch(/already_sent_today_jst/);
+  });
+
+  it("proxy and digest route accept either CRON secret", () => {
+    const proxy = readFileSync(join(process.cwd(), "proxy.ts"), "utf8");
+    expect(proxy).toMatch(/unique\.includes\(provided\)/);
+    expect(proxy).toMatch(/MARKETING_CRON_SECRET/);
+    expect(proxy).toMatch(/CRON_SECRET/);
+
+    const digest = readFileSync(
+      join(process.cwd(), "app/api/admin/marketing/cron/digest/route.ts"),
+      "utf8"
+    );
+    expect(digest).toMatch(/matchesMarketingCronSecret/);
+    expect(digest).toMatch(/\[marketing\/cron\/digest\] failed/);
+  });
 });
+

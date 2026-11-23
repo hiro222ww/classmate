@@ -64,20 +64,23 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Vercel Cron (and manual Bearer tests) must reach route handlers without
-  // an admin cookie. Route still enforces MARKETING_CRON_* gates + secret.
+  // Vercel Cron sends Bearer CRON_SECRET; operators may use MARKETING_CRON_SECRET.
+  // Accept either when both are set (preferring only one breaks the other).
+  // Route still enforces MARKETING_CRON_* gates + secret.
   if (isMarketingCronApi) {
-    const cronSecret = (
-      process.env.MARKETING_CRON_SECRET ||
-      process.env.CRON_SECRET ||
-      ""
-    ).trim();
+    const secrets = [
+      process.env.MARKETING_CRON_SECRET,
+      process.env.CRON_SECRET,
+    ]
+      .map((s) => String(s ?? "").trim())
+      .filter(Boolean);
+    const unique = [...new Set(secrets)];
     const auth = req.headers.get("authorization") || "";
     const provided =
       auth.replace(/^Bearer\s+/i, "").trim() ||
       req.nextUrl.searchParams.get("secret") ||
       "";
-    if (cronSecret && provided && provided === cronSecret) {
+    if (unique.length && provided && unique.includes(provided)) {
       return NextResponse.next();
     }
   }
