@@ -56,6 +56,10 @@ export async function createExperienceEvent(input: {
     )
     .single();
   if (error || !data) return { ok: false, error: error?.message ?? "insert_failed" };
+
+  // Creating a schedule implies the home card should be visible.
+  await setExperienceFeatureEnabled(true);
+
   return { ok: true, event: data as ExperienceEventRow };
 }
 
@@ -110,6 +114,12 @@ export async function updateExperienceEvent(input: {
   if (new Date(event.ends_at) <= new Date(event.starts_at)) {
     return { ok: false, error: "ends_before_starts" };
   }
+
+  // Restoring / keeping a scheduled event should surface it on home.
+  if (event.status === "scheduled") {
+    await setExperienceFeatureEnabled(true);
+  }
+
   return { ok: true, event };
 }
 

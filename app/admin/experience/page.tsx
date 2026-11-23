@@ -80,8 +80,8 @@ export default function AdminExperiencePage() {
           </h1>
         </div>
         <p style={{ color: "#4b5563", fontWeight: 650, lineHeight: 1.5 }}>
-          暫定の集客施策です。初期はOFF・開催なし。機能OFFにするとホームカードは完全非表示になります。
-          タイムゾーンは Asia/Tokyo。通話は既存の音声ルーム（最大5人）を再利用します。
+          暫定の集客施策です。開催予定を作成するとホームに日時が表示されます（機能は自動でON）。
+          機能OFFにするとホームカードは完全非表示になります。タイムゾーンは Asia/Tokyo。
         </p>
 
         {error ? (
