@@ -73,13 +73,16 @@ export function parsePromoteRpcResult(raw: unknown): PromoteRpcResult {
  * Decide whether the in-call "make a class" panel should appear.
  * Visible for any provisional free-match call (and after promote) so the
  * path is discoverable before members lock — submit stays gated separately.
+ * Experience (体験会) rooms never show the panel.
  */
 export function shouldShowClassVoteUi(params: {
   memberCount: number;
   membersLocked: boolean;
   lifecycle: string | null | undefined;
   promoted: boolean;
+  isExperienceSession?: boolean;
 }): boolean {
+  if (params.isExperienceSession) return false;
   const lifecycle = String(params.lifecycle ?? "")
     .trim()
     .toLowerCase();
@@ -142,6 +145,7 @@ export function buildClassVoteStatusView(params: {
   lifecycle: string | null;
   membersLocked: boolean;
   memberCount: number;
+  isExperienceSession?: boolean;
 }): ClassVoteStatusView {
   return {
     voteCount: Math.max(0, Math.floor(Number(params.voteCount) || 0)),
@@ -156,6 +160,7 @@ export function buildClassVoteStatusView(params: {
       membersLocked: params.membersLocked,
       lifecycle: params.lifecycle,
       promoted: params.promoted,
+      isExperienceSession: params.isExperienceSession === true,
     }),
   };
 }

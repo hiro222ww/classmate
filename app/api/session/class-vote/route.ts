@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveApiActor } from "@/lib/actorIdentity";
+import { sessionBelongsToExperienceEvent } from "@/lib/experience/session";
 import {
   normalizeClassVoteDeviceId,
   normalizeOptionalClassId,
@@ -110,6 +111,13 @@ export async function POST(req: Request) {
     if (!sessionMember) {
       return NextResponse.json(
         { ok: false, error: "not_session_member" },
+        { status: 403 }
+      );
+    }
+
+    if (await sessionBelongsToExperienceEvent(sessionId)) {
+      return NextResponse.json(
+        { ok: false, error: "experience_session_no_class_vote" },
         { status: 403 }
       );
     }

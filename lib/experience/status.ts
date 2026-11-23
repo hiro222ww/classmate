@@ -28,6 +28,7 @@ export function resolveExperiencePhase(params: {
   return "live";
 }
 
+/** Current in-call occupancy for experience rooms (not cumulative join history). */
 async function countSessionMembers(sessionId: string | null): Promise<number> {
   const sid = String(sessionId ?? "").trim();
   if (!sid) return 0;
@@ -35,6 +36,7 @@ async function countSessionMembers(sessionId: string | null): Promise<number> {
     .from("session_members")
     .select("device_id")
     .eq("session_id", sid)
+    .eq("is_in_call", true)
     .not("device_id", "is", null)
     .neq("device_id", "");
   if (error) return 0;

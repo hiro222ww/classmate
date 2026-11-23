@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { sessionBelongsToExperienceEvent } from "@/lib/experience/session";
 import {
   buildClassVoteStatusView,
   normalizeClassVoteDeviceId,
@@ -127,6 +128,7 @@ export async function GET(req: Request) {
       ? String(classRow.promoted_from_session_id)
       : null;
     const promoted = lifecycle === "official" && promotedFrom === sessionId;
+    const isExperienceSession = await sessionBelongsToExperienceEvent(sessionId);
 
     const view = buildClassVoteStatusView({
       voteCount: Number(voteCount ?? 0),
@@ -137,6 +139,7 @@ export async function GET(req: Request) {
       lifecycle,
       membersLocked: Boolean(session.members_locked_at),
       memberCount: Number(memberCount ?? 0),
+      isExperienceSession,
     });
 
     return NextResponse.json(
@@ -152,6 +155,7 @@ export async function GET(req: Request) {
         membersLocked: view.membersLocked,
         memberCount: Number(memberCount ?? 0),
         canShowVoteUi: view.canShowVoteUi,
+        isExperienceSession,
       },
       {
         headers: {

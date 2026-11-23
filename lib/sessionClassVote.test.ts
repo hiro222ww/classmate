@@ -94,6 +94,16 @@ describe("sessionClassVote helpers", () => {
         promoted: true,
       })
     ).toBe(true);
+
+    expect(
+      shouldShowClassVoteUi({
+        memberCount: 3,
+        membersLocked: true,
+        lifecycle: "provisional",
+        promoted: false,
+        isExperienceSession: true,
+      })
+    ).toBe(false);
   });
 
   it("only allows submit when locked provisional with 3+ members", () => {
@@ -142,6 +152,19 @@ describe("sessionClassVote helpers", () => {
     expect(view.selfVoted).toBe(true);
     expect(view.canShowVoteUi).toBe(true);
     expect(view.voteCount).toBe(1);
+
+    const experienceView = buildClassVoteStatusView({
+      voteCount: 0,
+      selfVoted: false,
+      promoted: false,
+      classId: "c1",
+      className: "期間限定の体験会",
+      lifecycle: "provisional",
+      membersLocked: false,
+      memberCount: 1,
+      isExperienceSession: true,
+    });
+    expect(experienceView.canShowVoteUi).toBe(false);
   });
 
   it("returns helpful hints before submit is ready", () => {

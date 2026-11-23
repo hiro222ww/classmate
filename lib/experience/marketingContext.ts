@@ -45,6 +45,7 @@ export async function buildExperienceMarketingAddon(): Promise<string | null> {
       .from("session_members")
       .select("device_id", { count: "exact", head: true })
       .eq("session_id", event.session_id)
+      .eq("is_in_call", true)
       .not("device_id", "is", null)
       .neq("device_id", "");
     if (typeof count === "number") {

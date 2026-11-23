@@ -43,12 +43,15 @@ export function buildCallExitWaitingRoomHref(params: {
 /**
  * Normal class / My Class / promoted official → waiting room.
  * Random / provisional match → keep legacy home exit.
+ * Experience (体験会) is free entry/exit → always home, never waiting room.
  */
 export function shouldExitCallToWaitingRoom(params: {
   classId?: string | null;
   lifecycle?: string | null;
   openJoinedClass?: boolean | null;
+  isExperienceSession?: boolean | null;
 }): boolean {
+  if (params.isExperienceSession === true) return false;
   const classId = String(params.classId ?? "").trim();
   if (!classId) return false;
   if (params.openJoinedClass === true) return true;
