@@ -130,6 +130,9 @@ APIキーは DB に保存しない。
 SNS運用開始前の詳細チェックリスト・試験投稿手順・通知設計:
 → `docs/AI_MARKETING_SNS_OPS_PREP.md` / `docs/env.marketing.openai.example` / `docs/env.marketing.notify.example`
 
+14日間の初期運用実験プラン（ペース・切り口・計測・週次反映・評価）:
+→ `docs/AI_MARKETING_14DAY_OPS.md`
+
 ### マイグレーション
 1. ステージングで `20261116120000_marketing_ai_posts.sql` 適用
 2. 管理画面で生成・承認フロー確認
