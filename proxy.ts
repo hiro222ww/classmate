@@ -64,25 +64,13 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Vercel Cron sends Bearer CRON_SECRET; operators may use MARKETING_CRON_SECRET.
-  // Accept either when both are set (preferring only one breaks the other).
-  // Route still enforces MARKETING_CRON_* gates + secret.
+  // Marketing cron routes: always pass the Edge proxy.
+  // CRON_SECRET / MARKETING_CRON_SECRET are Vercel "Secret" env vars and are
+  // often unavailable in Edge middleware — gating here caused Vercel Cron
+  // (Bearer only, no admin cookie) to 401 before the Node route ran.
+  // Auth + feature gates stay in the Node route handlers (cronAuth).
   if (isMarketingCronApi) {
-    const secrets = [
-      process.env.MARKETING_CRON_SECRET,
-      process.env.CRON_SECRET,
-    ]
-      .map((s) => String(s ?? "").trim())
-      .filter(Boolean);
-    const unique = [...new Set(secrets)];
-    const auth = req.headers.get("authorization") || "";
-    const provided =
-      auth.replace(/^Bearer\s+/i, "").trim() ||
-      req.nextUrl.searchParams.get("secret") ||
-      "";
-    if (unique.length && provided && unique.includes(provided)) {
-      return NextResponse.next();
-    }
+    return NextResponse.next();
   }
 
   if (!isAdminPage && !isAdminApi && !isCallDemoPage) {
