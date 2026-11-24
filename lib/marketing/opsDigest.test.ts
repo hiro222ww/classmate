@@ -54,11 +54,11 @@ describe("sendMarketingOpsDigest", () => {
     expect(src).toMatch(/already_sent_today_jst/);
   });
 
-  it("proxy and digest route accept either CRON secret", () => {
+  it("proxy lets cron through; digest route still checks cron secrets", () => {
     const proxy = readFileSync(join(process.cwd(), "proxy.ts"), "utf8");
-    expect(proxy).toMatch(/unique\.includes\(provided\)/);
-    expect(proxy).toMatch(/MARKETING_CRON_SECRET/);
-    expect(proxy).toMatch(/CRON_SECRET/);
+    expect(proxy).toMatch(/isMarketingCronApi/);
+    // Edge must not gate on Secret env vars (breaks Vercel Cron Bearer-only).
+    expect(proxy).not.toMatch(/unique\.includes\(provided\)/);
 
     const digest = readFileSync(
       join(process.cwd(), "app/api/admin/marketing/cron/digest/route.ts"),
